@@ -1,0 +1,9 @@
+#pragma once
+
+namespace tvs::app {
+
+inline constexpr const char* kProductName = "DVBStreamer5";
+inline constexpr const char* kProgramVersion = "203.73";
+inline constexpr const char* kSupportEmail = "monkipnet@gmail.com";
+
+} // namespace tvs::app

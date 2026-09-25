@@ -1,0 +1,116 @@
+#pragma once
+
+#include <boost/asio.hpp>
+#include <boost/beast/http.hpp>
+#include <jsoncpp/json/json.h>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <string>
+#include <thread>
+#include <functional>
+#include <unordered_map>
+
+#include "ConfigManager.h"
+#include "StreamManager.h"
+
+using tcp = boost::asio::ip::tcp;
+namespace http = boost::beast::http;
+
+class HttpServer {
+public:
+    HttpServer(boost::asio::io_context& ioc, ConfigManager& cfg, StreamManager& sm);
+    bool start();
+    void addEndpoint(const std::string& path, std::function<void(const boost::asio::ip::tcp::socket&)> handler);
+
+private:
+    struct QualitySample {
+        int64_t timestamp = 0;
+        bool active = false;
+        uint64_t inputKbps = 0;
+        uint64_t outputKbps = 0;
+        uint64_t targetKbps = 0;
+        uint64_t inputCcErrors = 0;
+        uint64_t outputCcErrors = 0;
+        // 203.16: keep cumulative continuity counters alongside the per-history
+        // interval deltas. The StreamManager delta fields are ~1-second windows,
+        // while quality history is sampled every 30 seconds; storing totals lets
+        // us derive the complete CC-error count for every graph interval.
+        uint64_t inputCcErrorsTotal = 0;
+        uint64_t outputCcErrorsTotal = 0;
+        std::string status;
+        std::string level;
+        std::string message;
+    };
+
+    void doAccept(std::shared_ptr<tcp::acceptor> listener, int port, uint64_t generation);
+    void handleSession(tcp::socket socket);
+    bool requiresAuthentication(const std::string& target) const;
+    bool isAuthorized(const http::request<http::string_body>& req) const;
+    bool isStreamClientAllowed(const tcp::socket& socket, const std::string& target) const;
+    bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
+    void writeUnauthorized(http::response<http::string_body>& res) const;
+    std::set<int> configuredHttpPorts() const;
+    bool bindHttpPorts(const std::set<int>& ports);
+    void refreshHttpPorts();
+    bool validateHttpPortsForConfig(const AppConfig& config, std::string& error) const;
+    std::string listInterfaces();
+    std::string systemMetrics();
+    std::string currentState();
+    std::string qualityHistory(const std::string& target);
+    std::string dvbAdapters();
+    std::string caManagerStatus();
+    std::string handleCamClientSettings(const std::string& body);
+    std::string handleDvbTune(const std::string& body, bool scan);
+    std::string handleDvbAddChannels(const std::string& body);
+    bool handleHttpStream(tcp::socket& socket, const std::string& target);
+    bool serveHlsFile(const tcp::socket& socket, const std::string& target, http::response<http::string_body>& res);
+    std::string handleSaveConfig(const std::string& body);
+    std::string handleMptsSave(const std::string& body);
+    std::string handleMptsAction(const std::string& body);
+    std::string listBackupFiles();
+    std::string handleUploadBackupFile(const std::string& target, const std::string& body);
+    std::string handleDeleteBackupFile(const std::string& body);
+    std::string handleStartStream(const std::string& body);
+    std::string handleStopStream(const std::string& body);
+    void handleRestartProgram();
+    void handleDeleteStream(const std::string& body);
+    void handleSaveSubscribers(const std::string& body);
+    void handleResetSubscriber(const std::string& body);
+    void handleBlockStreamClient(const std::string& body, bool blocked);
+    std::string renderIndexPage();
+    void recordQualitySample(const StreamConfig& cfg, const Json::Value& state);
+
+    boost::asio::io_context& ioContext;
+    boost::asio::thread_pool sessionPool;
+    std::atomic<uint32_t> queuedHttpSessions{0};
+    std::unordered_map<int, std::shared_ptr<tcp::acceptor>> acceptors;
+    mutable std::mutex acceptorsMutex;
+    std::atomic<uint64_t> acceptGeneration{0};
+    ConfigManager& configManager;
+    StreamManager& streamManager;
+    std::mutex qualityMutex;
+    std::mutex metricsMutex;
+    uint64_t previousCpuTotal = 0;
+    uint64_t previousCpuIdle = 0;
+    std::chrono::steady_clock::time_point previousMetricsSample;
+    std::chrono::steady_clock::time_point lastMemoryDiagLog;
+    // 202.67: read-only HTTP allocator diagnostics. These counters let MEMORY
+    // DIAG distinguish retained media objects from allocator high-water caused
+    // by repeatedly building/serializing the large /api/state response.
+    std::atomic<uint64_t> httpStateRequestCount{0};
+    std::atomic<uint64_t> httpStateResponseBytes{0};
+    std::atomic<uint64_t> httpStateLastResponseBytes{0};
+    std::atomic<uint64_t> httpMetricsRequestCount{0};
+    std::mutex httpDiagMutex;
+    std::set<std::thread::id> httpStateWorkerThreads;
+    std::map<std::string, std::pair<uint64_t, uint64_t>> previousNetworkBytes;
+    std::unordered_map<std::string, std::deque<QualitySample>> qualitySamples;
+    std::unordered_map<std::string, int64_t> qualityLastCompaction;
+    std::unordered_map<std::string, std::function<void(const boost::asio::ip::tcp::socket&)>> endpointHandlers;
+};

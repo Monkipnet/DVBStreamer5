@@ -1,0 +1,14 @@
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+dvbstreamer5-config.json
+dvbstreamer5-subscribers.json
+dvbstreamer5-ui.key
+tvstreammersat5-config.json
+tvstreammersat5-subscribers.json
+tvstreammersat5-ui.key
+backup-files/
+.vscode/
+*.log
