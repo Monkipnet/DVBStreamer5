@@ -19,6 +19,8 @@ pipeline.
 резервного источника и MPTS-маршрутизации. Для HTTP(S) MPEG-TS доступны
 access-key в HTTP-заголовке или query string. Для сетевых UDP/RTP-входов
 поддерживаются несколько UDP VBR, UDP CBR и RTP-выходов одновременно. Для
+входов UDP/RTP с выбранным сетевым интерфейсом native-маршрут сохраняет
+multicast membership и на Linux применяет `SO_BINDTODEVICE` для unicast/wildcard.
 локальных MPEG-TS-файлов доступен paced UDP CBR с заданным битрейтом и
 завершением потока по EOF; VBR/RTP для файла пока не поддерживается. DVB,
 HLS, SRT, RTSP, RTMP, веб-превью, MPTS и remap пока не переносятся.

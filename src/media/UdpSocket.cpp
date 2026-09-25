@@ -104,15 +104,23 @@ bool UdpSocket::openReceiver(
     const std::string& multicastGroup,
     const std::string& interfaceAddress,
     int receiveBufferBytes,
-    std::string& error) {
+    std::string& error,
+    const std::string& interfaceDevice) {
     close();
     if (!ensureSocketRuntime(error)) {
         return false;
     }
-    if (receiveBufferBytes < 0 || (multicastGroup.empty() && !interfaceAddress.empty())) {
+    if (receiveBufferBytes < 0 ||
+        (multicastGroup.empty() && !interfaceAddress.empty() && interfaceDevice.empty())) {
         error = "invalid UDP receiver buffer or interface settings";
         return false;
     }
+#if !defined(__linux__)
+    if (!interfaceDevice.empty() && multicastGroup.empty()) {
+        error = "binding a UDP receiver to a network device is supported only on Linux";
+        return false;
+    }
+#endif
 
     in_addr localAddress {};
     if (!parseIpv4(bindAddress, localAddress)) {
@@ -139,6 +147,19 @@ bool UdpSocket::openReceiver(
         closeSocket(socket);
         return false;
     }
+#if defined(__linux__) && defined(SO_BINDTODEVICE)
+    if (!interfaceDevice.empty() && multicastGroup.empty() &&
+        setSocketOption(
+            socket,
+            SOL_SOCKET,
+            SO_BINDTODEVICE,
+            interfaceDevice.c_str(),
+            static_cast<socklen_t>(interfaceDevice.size() + 1)) != 0) {
+        setSocketError(error, "SO_BINDTODEVICE");
+        closeSocket(socket);
+        return false;
+    }
+#endif
     if (receiveBufferBytes > 0 &&
         setSocketOption(
             socket, SOL_SOCKET, SO_RCVBUF, &receiveBufferBytes, sizeof(receiveBufferBytes)) != 0) {

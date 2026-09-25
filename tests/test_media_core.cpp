@@ -461,6 +461,11 @@ void testNativeUdpTsRelay() {
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
+#if defined(__linux__)
+    config.inputInterfaceAddress = "127.0.0.1";
+    config.inputInterfaceDeviceName = "lo";
+    config.inputInterfaceAddressConfigured = true;
+#endif
     config.outputType = "udp-vbr";
     config.outputHost = "127.0.0.1";
     config.outputPort = outputReceiver.localPort();

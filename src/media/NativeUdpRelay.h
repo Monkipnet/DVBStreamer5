@@ -28,6 +28,7 @@ struct NativeUdpRelayOutputConfig {
 struct NativeUdpRelayConfig {
     std::string inputUri;
     std::string inputInterfaceAddress;
+    std::string inputInterfaceDeviceName;
     bool inputInterfaceAddressConfigured = false;
     std::string accessKeyMode;
     std::string accessKeyName;

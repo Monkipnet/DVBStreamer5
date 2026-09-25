@@ -281,7 +281,8 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
                 multicastInput ? input.host : std::string(),
                 inputInterface,
                 16 * 1024 * 1024,
-                error)) {
+                error,
+                config_.inputInterfaceDeviceName)) {
             error = "native UDP input setup failed: " + error;
             return false;
         }

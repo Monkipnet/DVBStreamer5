@@ -21,7 +21,8 @@ public:
         const std::string& multicastGroup,
         const std::string& interfaceAddress,
         int receiveBufferBytes,
-        std::string& error);
+        std::string& error,
+        const std::string& interfaceDevice = {});
     bool openSender(
         const std::string& host,
         std::uint16_t port,

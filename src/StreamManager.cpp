@@ -6431,6 +6431,36 @@ GstElement* StreamManager::createTranscodedUdpRelayPipeline(StreamState* state, 
 
 namespace {
 
+bool nativeInputNeedsDeviceBinding(const StreamConfig& config) {
+    const auto input = tvs::stream_protocols::inputKind(config);
+    const std::string interface = config.inputInterfaceAddressConfigured
+        ? config.inputInterfaceAddress
+        : config.interfaceAddress;
+    if ((input != tvs::stream_protocols::InputProtocolKind::Udp &&
+         input != tvs::stream_protocols::InputProtocolKind::Rtp) ||
+        interface.empty()) {
+        return false;
+    }
+    const std::string uri = normalizeInputUri(config.inputUri);
+    const std::size_t schemeEnd = uri.find("://");
+    if (schemeEnd == std::string::npos) return false;
+    std::size_t hostStart = schemeEnd + 3;
+    if (hostStart < uri.size() && uri[hostStart] == '@') ++hostStart;
+    const std::size_t hostEnd = uri.find(':', hostStart);
+    const std::string host = hostEnd == std::string::npos
+        ? std::string()
+        : uri.substr(hostStart, hostEnd - hostStart);
+    if (host.empty() || host == "0.0.0.0") return true;
+    if (!config.inputInterfaceAddressConfigured) return false;
+    const std::size_t firstDot = host.find('.');
+    try {
+        const int firstOctet = std::stoi(host.substr(0, firstDot));
+        return firstOctet < 224 || firstOctet > 239;
+    } catch (const std::exception&) {
+        return true;
+    }
+}
+
 bool nativeUdpRelayEligible(const StreamConfig& config) {
     const auto input = tvs::stream_protocols::inputKind(config);
     const auto outputs = outputConfigs(config);
@@ -6450,13 +6480,14 @@ bool nativeUdpRelayEligible(const StreamConfig& config) {
         std::all_of(outputs.begin(), outputs.end(), [](const StreamConfig& output) {
             return tvs::protocols::normalizedOutputType(output) == "udp-cbr";
         });
+#if !defined(__linux__)
+    if (nativeInputNeedsDeviceBinding(config)) return false;
+#endif
     return (networkInput || pacedFileInput) &&
         !config.testPattern &&
         !config.transcodeEnabled &&
         !config.remapEnabled &&
         config.inputServiceId == 0 &&
-        (!config.inputInterfaceAddressConfigured ||
-            config.inputInterfaceAddress.empty()) &&
         config.backupInputUri.empty() &&
         config.conditionalAccessClient.empty();
 }
@@ -6464,9 +6495,11 @@ bool nativeUdpRelayEligible(const StreamConfig& config) {
 bool resolveNativeInterface(
     const std::string& configured,
     std::string& address,
-    std::string& error) {
+    std::string& error,
+    std::string* interfaceName = nullptr) {
     if (configured.empty()) {
         address.clear();
+        if (interfaceName) interfaceName->clear();
         return true;
     }
     for (const auto& interface : enumerateNetworkInterfaces(true)) {
@@ -6479,6 +6512,7 @@ bool resolveNativeInterface(
             return false;
         }
         address = interface.address;
+        if (interfaceName) *interfaceName = interface.name;
         return true;
     }
     error = "selected native UDP interface was not found: " + configured;
@@ -6511,7 +6545,6 @@ std::string nativeInputInterface(const StreamConfig& config) {
     }
     return {};
 }
-
 } // namespace
 
 bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* error) {
@@ -6627,12 +6660,16 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (nativeUdpRelayEligible(effectiveConfig) && !hasMptsOutput) {
         std::string interfaceError;
         std::string inputInterface;
+        std::string inputInterfaceDeviceName;
         if (!resolveNativeInterface(
                 tvs::stream_protocols::inputKind(effectiveConfig) ==
                         tvs::stream_protocols::InputProtocolKind::File
                     ? std::string()
                     : nativeInputInterface(effectiveConfig),
-                inputInterface, interfaceError)) {
+                inputInterface, interfaceError,
+                nativeInputNeedsDeviceBinding(effectiveConfig)
+                    ? &inputInterfaceDeviceName
+                    : nullptr)) {
             state->statusMessage = "native UDP interface setup failed: " + interfaceError;
             if (error) *error = interfaceError;
             return false;
@@ -6641,6 +6678,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tvs::media::network::NativeUdpRelayConfig relayConfig;
         relayConfig.inputUri = normalizeInputUri(effectiveConfig.inputUri);
         relayConfig.inputInterfaceAddress = inputInterface;
+        relayConfig.inputInterfaceDeviceName = inputInterfaceDeviceName;
         relayConfig.inputInterfaceAddressConfigured = true;
         relayConfig.accessKeyMode = effectiveConfig.hlsAccessKeyMode;
         relayConfig.accessKeyName = effectiveConfig.hlsAccessKeyName;
