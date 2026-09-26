@@ -93,3 +93,20 @@ timestamps, continuity, and mux bitrate accounting. The standalone encoder
 test does not depend on runtime-created GStreamer elements.
 
 No MPEG-2 video encoder work is planned.
+
+## Native DVB scan, service selection, and CA
+
+The DVB scan/signal path uses `LinuxDvbInput` directly: tune the Linux kernel
+DVB frontend, read the DVR tap, and feed the existing PSI scanner. For a
+selected service, the native UDP relay can use the MPEG-TS remapper to form a
+single-program output. When a conditional-access client is configured, the
+relay captures full TS so ECM/EMM packets are available, filters to the selected
+program, then supplies aligned 77-packet batches to the existing in-place CA
+backend before output. Network CA backends still require the application CA
+plugin; this does not add a decoder or expose control words.
+
+This route is restricted to Linux DVB selected-service streams with UDP VBR,
+UDP CBR, or RTP outputs. It cannot share a frontend already owned by the
+legacy shared-DVB GStreamer path; physical frontend behavior and real CAM/plugin
+decryption still require hardware validation. Multi-section CA tables and PSI
+sections spanning TS packets are not supported by the current native remapper.

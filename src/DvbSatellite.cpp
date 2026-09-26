@@ -1,6 +1,6 @@
 #include "DvbSatellite.h"
+#include "media/LinuxDvbInput.h"
 
-#include <gst/app/gstappsink.h>
 #include <glib.h>
 #include <linux/dvb/frontend.h>
 
@@ -632,60 +632,6 @@ std::string servicePidsString(const DvbService& service) {
     return out.str();
 }
 
-bool waitForTune(GstElement* pipeline, GstElement* sink, const DvbSatelliteParams& params,
-                 int timeoutMs, PsiScanner* scanner, FrontendStats& bestStats, std::string& error) {
-    GstBus* bus = gst_element_get_bus(pipeline);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-    auto lastStatsRead = std::chrono::steady_clock::time_point{};
-    bool receivedData = false;
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        GstMessage* message = gst_bus_pop_filtered(bus, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
-        if (message) {
-            if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
-                GError* gstError = nullptr;
-                gchar* debug = nullptr;
-                gst_message_parse_error(message, &gstError, &debug);
-                error = gstError ? gstError->message : "DVB tuning failed";
-                if (gstError) g_error_free(gstError);
-                if (debug) g_free(debug);
-                gst_message_unref(message);
-                gst_object_unref(bus);
-                return false;
-            }
-            gst_message_unref(message);
-        }
-
-        GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 150 * GST_MSECOND);
-        if (sample) {
-            receivedData = true;
-            if (scanner) {
-                GstBuffer* buffer = gst_sample_get_buffer(sample);
-                GstMapInfo map{};
-                if (buffer && gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-                    scanner->feed(map.data, map.size);
-                    gst_buffer_unmap(buffer, &map);
-                }
-            }
-            gst_sample_unref(sample);
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (lastStatsRead.time_since_epoch().count() == 0 || now - lastStatsRead >= std::chrono::milliseconds(350)) {
-            FrontendStats stats = readFrontendStats(params);
-            bestStats.available = bestStats.available || stats.available;
-            if (stats.signalPercent >= bestStats.signalPercent) bestStats.signalPercent = stats.signalPercent;
-            if (stats.qualityPercent >= bestStats.qualityPercent) bestStats.qualityPercent = stats.qualityPercent;
-            bestStats.locked = bestStats.locked || stats.locked;
-            if (stats.hasSignalDb) bestStats.signalDb = stats.signalDb, bestStats.hasSignalDb = true;
-            if (stats.hasCnrDb) bestStats.cnrDb = stats.cnrDb, bestStats.hasCnrDb = true;
-            lastStatsRead = now;
-        }
-    }
-    gst_object_unref(bus);
-    return receivedData || bestStats.locked;
-}
-
 std::mutex& frontendTuneMutex(const DvbSatelliteParams& params) {
     // The web scan modal polls /api/dvb-signal and /api/dvb-scan can be
     // requested from the same or another browser.  Serialize tune pipelines
@@ -695,36 +641,6 @@ std::mutex& frontendTuneMutex(const DvbSatelliteParams& params) {
     const int adapter = std::clamp(params.adapter, 0, 31);
     const int frontend = std::clamp(params.frontend, 0, 31);
     return locks[static_cast<std::size_t>(adapter * 32 + frontend)];
-}
-
-std::string takePipelineError(GstElement* pipeline, GstClockTime timeout) {
-    if (!pipeline) return {};
-    GstBus* bus = gst_element_get_bus(pipeline);
-    if (!bus) return {};
-    GstMessage* message = gst_bus_timed_pop_filtered(bus, timeout, GST_MESSAGE_ERROR);
-    if (!message) {
-        gst_object_unref(bus);
-        return {};
-    }
-
-    GError* gstError = nullptr;
-    gchar* debug = nullptr;
-    gst_message_parse_error(message, &gstError, &debug);
-    std::string error = gstError && gstError->message
-        ? std::string(gstError->message)
-        : std::string("DVB frontend could not start tuning");
-    if (gstError) g_error_free(gstError);
-    if (debug) g_free(debug);
-    gst_message_unref(message);
-    gst_object_unref(bus);
-    return error;
-}
-
-void resetTunePipeline(GstElement* pipeline) {
-    if (!pipeline) return;
-    gst_element_set_state(pipeline, GST_STATE_NULL);
-    // Wait for dvbsrc to actually close /dev/dvb before another attempt.
-    gst_element_get_state(pipeline, nullptr, nullptr, GST_SECOND);
 }
 
 Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int timeoutMs) {
@@ -746,50 +662,6 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         return result;
     }
 
-    GstElement* pipeline = gst_pipeline_new("satellite_scan");
-    GstElement* source = gst_element_factory_make("dvbsrc", "satellite_source");
-    GstElement* queue = gst_element_factory_make("queue", "satellite_scan_queue");
-    GstElement* sink = gst_element_factory_make("appsink", "satellite_scan_sink");
-    if (!pipeline || !source || !queue || !sink) {
-        result["error"] = "GStreamer DVB plugin is unavailable (dvbsrc/appsink)";
-        if (pipeline) gst_object_unref(pipeline);
-        else {
-            if (source) gst_object_unref(source);
-            if (queue) gst_object_unref(queue);
-            if (sink) gst_object_unref(sink);
-        }
-        return result;
-    }
-
-    std::string configureError;
-    if (!DvbSatellite::configureSource(source, params, configureError)) {
-        result["error"] = configureError;
-        gst_object_unref(pipeline);
-        gst_object_unref(source);
-        gst_object_unref(queue);
-        gst_object_unref(sink);
-        return result;
-    }
-
-    g_object_set(sink,
-        "sync", FALSE,
-        "emit-signals", FALSE,
-        "max-buffers", 64U,
-        "drop", TRUE,
-        nullptr);
-    g_object_set(queue,
-        "max-size-buffers", 0U,
-        "max-size-bytes", 8U * 1024U * 1024U,
-        "max-size-time", static_cast<guint64>(2 * GST_SECOND),
-        nullptr);
-
-    gst_bin_add_many(GST_BIN(pipeline), source, queue, sink, nullptr);
-    if (!gst_element_link_many(source, queue, sink, nullptr)) {
-        result["error"] = "Failed to build DVB scan pipeline";
-        gst_object_unref(pipeline);
-        return result;
-    }
-
     std::unique_lock<std::mutex> frontendLock(frontendTuneMutex(params));
 
     PsiScanner scanner;
@@ -803,30 +675,79 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         PsiScanner attemptScanner;
         FrontendStats attemptStats;
         std::string attemptError;
+        const auto attemptDeadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        tvs::media::network::LinuxDvbTuneConfig tune;
+        tune.adapter = params.adapter;
+        tune.frontend = params.frontend;
+        tune.frequencyKHz = params.frequencyKHz;
+        tune.symbolRateK = params.symbolRateK;
+        tune.polarity = params.polarity;
+        tune.deliverySystem = params.deliverySystem;
+        tune.modulation = params.modulation;
+        tune.fec = params.fec;
+        tune.diseqcSource = params.diseqcSource;
+        tune.lnbLof1KHz = params.lnbLof1KHz;
+        tune.lnbLof2KHz = params.lnbLof2KHz;
+        tune.lnbSlofKHz = params.lnbSlofKHz;
+        tune.streamId = params.streamId;
+        tune.pids = "8192";
+        tune.lockTimeoutMs = timeoutMs;
 
-        const GstStateChangeReturn stateResult =
-            gst_element_set_state(pipeline, GST_STATE_PLAYING);
-        if (stateResult == GST_STATE_CHANGE_FAILURE) {
-            attemptError = takePipelineError(pipeline, 250 * GST_MSECOND);
-            if (attemptError.empty()) attemptError = "DVB frontend could not start tuning";
+        tvs::media::network::LinuxDvbInput input;
+        tuned = input.open(tune, attemptError);
+        if (tuned) {
+            attemptStats = readFrontendStats(params);
+            attemptStats.locked = true;
+            auto lastStatsRead = std::chrono::steady_clock::time_point{};
+            std::array<std::uint8_t, 188 * 128> buffer {};
+            while (std::chrono::steady_clock::now() < attemptDeadline) {
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    attemptDeadline - std::chrono::steady_clock::now());
+                const int waitMs = std::max(1, static_cast<int>(
+                    std::min(remaining, std::chrono::milliseconds(150)).count()));
+                std::size_t received = 0;
+                if (!input.read(buffer.data(), buffer.size(), received, waitMs, attemptError)) {
+                    break;
+                }
+                if (received && collectServices) {
+                    attemptScanner.feed(buffer.data(), received);
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                if (lastStatsRead.time_since_epoch().count() == 0 ||
+                    now - lastStatsRead >= std::chrono::milliseconds(350)) {
+                    const FrontendStats current = readFrontendStats(params);
+                    attemptStats.available = attemptStats.available || current.available;
+                    attemptStats.signalPercent =
+                        std::max(attemptStats.signalPercent, current.signalPercent);
+                    attemptStats.qualityPercent =
+                        std::max(attemptStats.qualityPercent, current.qualityPercent);
+                    attemptStats.locked = attemptStats.locked || current.locked;
+                    if (current.hasSignalDb) {
+                        attemptStats.signalDb = current.signalDb;
+                        attemptStats.hasSignalDb = true;
+                    }
+                    if (current.hasCnrDb) {
+                        attemptStats.cnrDb = current.cnrDb;
+                        attemptStats.hasCnrDb = true;
+                    }
+                    lastStatsRead = now;
+                }
+            }
+            input.close();
         } else {
-            tuned = waitForTune(
-                pipeline, sink, params, timeoutMs,
-                collectServices ? &attemptScanner : nullptr,
-                attemptStats, attemptError);
+            attemptStats = readFrontendStats(params);
         }
 
         scanner = std::move(attemptScanner);
         stats = attemptStats;
         tuneError = attemptError;
 
-        // A normal no-lock/no-data result is not an open/start failure. Do not
-        // triple the scan timeout in that case. Retry only GStreamer/frontend
-        // startup failures (notably the transient EBUSY observed right after
-        // a previous DVB pipeline has been stopped).
-        if (tuned || tuneError.empty()) break;
-
-        resetTunePipeline(pipeline);
+        // A normal no-lock/no-data result is not a startup failure. Retry only
+        // native frontend/tap errors, such as a transient driver EBUSY.
+        if (tuned || tuneError.empty() ||
+            tuneError.find("did not lock") != std::string::npos) break;
         if (attempt < kTuneStartupAttempts) {
             std::cerr << "DVB " << (collectServices ? "scan" : "signal")
                       << " startup retry: adapter=" << params.adapter
@@ -839,12 +760,8 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         }
     }
 
-    resetTunePipeline(pipeline);
-    gst_object_unref(pipeline);
-    // Keep the per-frontend tune guard for a short driver-settle window after
-    // dvbsrc has closed the device. Some DVB drivers release frontend/demux
-    // ownership just after the NULL transition; without this handoff window a
-    // stream started immediately after a scan can see a transient EBUSY.
+    // Let DVB drivers finish releasing the frontend/demux after closing the
+    // native tap before a live stream starts on the same frontend.
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
 
     result["locked"] = stats.locked;
@@ -1015,6 +932,11 @@ bool configureSource(GstElement* source, const DvbSatelliteParams& params, std::
 Json::Value adapters() {
     Json::Value root;
     Json::Value list(Json::arrayValue);
+#ifdef __linux__
+    constexpr bool nativeDvbAvailable = true;
+#else
+    constexpr bool nativeDvbAvailable = false;
+#endif
     const std::filesystem::path base("/dev/dvb");
     std::error_code ec;
     if (std::filesystem::exists(base, ec) && !ec) {
@@ -1040,9 +962,8 @@ Json::Value adapters() {
     }
     root["adapters"] = list;
     root["available"] = !list.empty();
-    GstElementFactory* dvbFactory = gst_element_factory_find("dvbsrc");
-    root["dvbsrc_available"] = dvbFactory != nullptr;
-    if (dvbFactory) gst_object_unref(dvbFactory);
+    root["native_dvb_available"] = nativeDvbAvailable;
+    root["dvbsrc_available"] = nativeDvbAvailable;
     return root;
 }
 

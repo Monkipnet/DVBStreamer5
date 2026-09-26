@@ -25,6 +25,7 @@ public:
 
 private:
     bool processPat(const Packet& input, std::string& error);
+    bool processCat(const Packet& input, std::string& error);
     bool processPmt(const Packet& input, std::vector<Packet>& output, std::string& error);
     bool processSdt(const Packet& input, Packet& output, std::string& error);
     bool isAllowed(std::uint16_t pid) const noexcept;
@@ -33,6 +34,7 @@ private:
 
     RemapConfig config_;
     std::array<bool, 8192> allowedPids_ {};
+    std::array<bool, 8192> caPids_ {};
     std::uint16_t inputServiceId_ = 0;
     std::uint16_t pmtPid_ = 0x1fff;
     std::uint16_t inputVideoPid_ = 0;

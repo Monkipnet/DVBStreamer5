@@ -22,6 +22,7 @@ struct LinuxDvbTuneConfig {
     std::uint32_t lnbSlofKHz = 11700000;
     int streamId = -1;
     std::string pids = "8192";
+    int lockTimeoutMs = 8000;
 };
 
 class LinuxDvbInput {

@@ -154,8 +154,37 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     originalNetworkId_ = 1;
     patContinuity_ = 0;
     allowedPids_.fill(false);
+    caPids_.fill(false);
     remapReady_ = false;
     initialized_ = true;
+    return true;
+}
+
+bool Remapper::processCat(const Packet& input, std::string& error) {
+    auto packet = input;
+    std::uint8_t* section = nullptr;
+    std::size_t size = 0;
+    if (!sectionView(packet, 0x01, section, size, error) || !section) {
+        return error.empty();
+    }
+    if (size < 12) return true;
+    if (section[6] != 0 || section[7] != 0) {
+        error = "native remap does not support multi-section CAT tables";
+        return false;
+    }
+
+    std::array<bool, 8192> caPids {};
+    if (!addCaPids(section + 8, size - 12, caPids)) {
+        error = "native remap encountered malformed CAT descriptors";
+        return false;
+    }
+    caPids_ = caPids;
+    if (remapReady_) {
+        allowedPids_[0x01] = true;
+        for (std::size_t pid = 0; pid < caPids_.size(); ++pid) {
+            if (caPids_[pid]) allowedPids_[pid] = true;
+        }
+    }
     return true;
 }
 
@@ -220,9 +249,13 @@ bool Remapper::processPmt(const Packet& input,
 
     std::array<bool, 8192> allowed {};
     allowed[0] = true;
+    allowed[0x01] = true;
     allowed[0x11] = true;
     allowed[pmtPid_] = true;
     allowed[kNullPid] = true;
+    for (std::size_t pid = 0; pid < caPids_.size(); ++pid) {
+        if (caPids_[pid]) allowed[pid] = true;
+    }
     std::uint16_t inputVideo = 0;
     std::uint16_t inputAudio = 0;
 
@@ -427,6 +460,11 @@ bool Remapper::process(const Packet& input, std::vector<Packet>& output, std::st
     if (info.pid == 0) {
         if (!processPat(input, error)) return false;
         if (remapReady_) output.push_back(makePat(info.continuityCounter));
+        return true;
+    }
+    if (info.pid == 0x01) {
+        if (!processCat(input, error)) return false;
+        if (remapReady_) output.push_back(input);
         return true;
     }
     if (info.pid == pmtPid_ && pmtPid_ != 0x1fff) {

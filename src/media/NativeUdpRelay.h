@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -33,6 +34,7 @@ struct NativeUdpRelayConfig {
     LinuxDvbTuneConfig dvbTuneConfig;
     bool remapEnabled = false;
     mpegts::RemapConfig remapConfig;
+    std::function<bool(std::uint8_t*, std::size_t)> processTransport;
     std::string inputInterfaceAddress;
     std::string inputInterfaceDeviceName;
     bool inputInterfaceAddressConfigured = false;

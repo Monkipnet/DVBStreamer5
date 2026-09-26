@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cctype>
 #include <climits>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <regex>
@@ -855,6 +856,38 @@ void NativeUdpRelay::run() {
             }
             if (!running_.load(std::memory_order_acquire)) break;
             packets.swap(remappedPackets);
+        }
+
+        if (!packets.empty() && config_.processTransport) {
+            constexpr std::size_t kCaBatchPackets = 77;
+            std::array<std::uint8_t,
+                kCaBatchPackets * tvs::media::mpegts::kPacketSize> caBatch {};
+            for (std::size_t first = 0; first < packets.size(); first += kCaBatchPackets) {
+                const std::size_t count = (std::min)(
+                    kCaBatchPackets, packets.size() - first);
+                const std::size_t bytes =
+                    count * tvs::media::mpegts::kPacketSize;
+                for (std::size_t index = 0; index < count; ++index) {
+                    std::memcpy(
+                        caBatch.data() + index * tvs::media::mpegts::kPacketSize,
+                        packets[first + index].data(),
+                        tvs::media::mpegts::kPacketSize);
+                }
+                if (!config_.processTransport(caBatch.data(), bytes)) {
+                    error = "native conditional-access transport processing failed";
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_ = error;
+                    running_.store(false, std::memory_order_release);
+                    break;
+                }
+                for (std::size_t index = 0; index < count; ++index) {
+                    std::memcpy(
+                        packets[first + index].data(),
+                        caBatch.data() + index * tvs::media::mpegts::kPacketSize,
+                        tvs::media::mpegts::kPacketSize);
+                }
+            }
+            if (!running_.load(std::memory_order_acquire)) break;
         }
 
         if (!packets.empty()) {

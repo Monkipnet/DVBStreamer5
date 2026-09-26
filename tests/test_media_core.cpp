@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <climits>
@@ -114,6 +115,17 @@ std::vector<std::uint8_t> makePmtSection(
     return section;
 }
 
+std::vector<std::uint8_t> makeCatSection(std::uint16_t emmPid) {
+    std::vector<std::uint8_t> section = {
+        0x01, 0xb0, 0x0f, 0x00, 0x01, 0xc1, 0x00, 0x00,
+        0x09, 0x04, 0x01, 0x00,
+        static_cast<std::uint8_t>(0xe0 | ((emmPid >> 8) & 0x1f)),
+        static_cast<std::uint8_t>(emmPid)
+    };
+    appendSectionCrc(section);
+    return section;
+}
+
 std::uint16_t pidOf(const Packet& packet) {
     return static_cast<std::uint16_t>(
         ((static_cast<std::uint16_t>(packet[1] & 0x1f) << 8) | packet[2]));
@@ -148,6 +160,13 @@ void testMpegTsRemapper() {
     assert(output[1][18] == 0xE2 && output[1][19] == 0x00);
     assert(output[1][23] == 0xE2 && output[1][24] == 0x01);
     assert(sectionCrc(output[1].data() + 5, 26) == 0);
+    output.clear();
+
+    assert(remapper.process(sectionPacket(0x0001, 0, makeCatSection(0x120)), output, error));
+    assert(output.size() == 1 && pidOf(output.front()) == 0x0001);
+    output.clear();
+    assert(remapper.process(packet(0x0120, 0), output, error));
+    assert(output.size() == 1 && pidOf(output.front()) == 0x0120);
     output.clear();
 
     auto video = packet(0x100, 1);
@@ -605,17 +624,27 @@ void testNativeUdpTsRelay() {
     config.outputType = "udp-vbr";
     config.outputHost = "127.0.0.1";
     config.outputPort = outputReceiver.localPort();
+    std::atomic<unsigned> caCalls{0};
+    config.processTransport = [&caCalls](std::uint8_t* data, std::size_t size) {
+        assert(size == tvs::media::mpegts::kPacketSize);
+        data[3] |= 0x80;
+        caCalls.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    };
     assert(relay.start(config, error));
     assert(relay.isRunning());
 
-    const Packet expected = packet(0x0137, 8);
-    assert(inputSender.send(expected.data(), expected.size(), error));
+    const Packet sourcePacket = packet(0x0137, 8);
+    Packet expected = sourcePacket;
+    expected[3] |= 0x80;
+    assert(inputSender.send(sourcePacket.data(), sourcePacket.size(), error));
 
     std::array<std::uint8_t, 2048> received {};
     std::size_t size = 0;
     assert(outputReceiver.receive(received.data(), received.size(), size, 2000, error));
     assert(size == expected.size());
     assert(std::equal(expected.begin(), expected.end(), received.begin()));
+    assert(caCalls.load(std::memory_order_relaxed) == 1);
     const auto counterDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (relay.outputBytes() < expected.size() &&
         std::chrono::steady_clock::now() < counterDeadline) {

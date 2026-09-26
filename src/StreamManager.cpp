@@ -6492,9 +6492,11 @@ bool nativeUdpRelayEligible(const StreamConfig& config) {
     return (networkInput || pacedFileInput || dvbInput) &&
         !config.testPattern &&
         !config.transcodeEnabled &&
-        (config.remapEnabled || config.inputServiceId == 0) &&
+        (config.remapEnabled || config.inputServiceId == 0 ||
+         (dvbInput && config.inputServiceId > 0)) &&
         config.backupInputUri.empty() &&
-        config.conditionalAccessClient.empty();
+        (config.conditionalAccessClient.empty() ||
+         (dvbInput && config.inputServiceId > 0));
 }
 
 bool resolveNativeInterface(
@@ -6685,6 +6687,29 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             nativeDvbFrontendReserved = true;
         }
     }
+    if (useNativeRelay && nativeDvbInput &&
+        effectiveConfig.inputServiceId > 0 &&
+        (nativeDvbParams.pids.empty() || nativeDvbParams.pids == "8192")) {
+        std::string resolvedPids;
+        bool scrambled = false;
+        std::string resolveError;
+        if (DvbSatellite::resolveServicePids(
+                nativeDvbParams, effectiveConfig.inputServiceId,
+                resolvedPids, scrambled, resolveError)) {
+            nativeDvbParams.pids = resolvedPids;
+            std::cerr << "Native DVB service PID auto-resolve: stream="
+                      << effectiveConfig.id
+                      << " SID=" << effectiveConfig.inputServiceId
+                      << " access=" << (scrambled ? "CA" : "FTA")
+                      << " pids=" << resolvedPids << std::endl;
+        } else {
+            std::cerr << "Native DVB service PID auto-resolve failed: stream="
+                      << effectiveConfig.id << " SID=" << effectiveConfig.inputServiceId
+                      << " error=" << resolveError
+                      << "; full-TS capture with native service filter will be used"
+                      << std::endl;
+        }
+    }
     if (useNativeRelay) {
         std::string interfaceError;
         std::string inputInterface;
@@ -6709,10 +6734,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
         tvs::media::network::NativeUdpRelayConfig relayConfig;
         relayConfig.inputUri = normalizeInputUri(effectiveConfig.inputUri);
-        relayConfig.remapEnabled = effectiveConfig.remapEnabled;
-        if (effectiveConfig.remapEnabled) {
+        const bool selectDvbService = nativeDvbInput &&
+            effectiveConfig.inputServiceId > 0;
+        relayConfig.remapEnabled = effectiveConfig.remapEnabled || selectDvbService;
+        if (relayConfig.remapEnabled) {
+            const std::uint32_t outputServiceId = effectiveConfig.remapEnabled
+                ? effectiveConfig.serviceId
+                : effectiveConfig.inputServiceId;
             if (effectiveConfig.inputServiceId > 0xffff ||
-                effectiveConfig.serviceId == 0 || effectiveConfig.serviceId > 0xffff ||
+                outputServiceId == 0 || outputServiceId > 0xffff ||
                 effectiveConfig.videoPid > 0xffff || effectiveConfig.audioPid > 0xffff) {
                 if (nativeDvbFrontendReserved) {
                     std::lock_guard<std::mutex> lock(managerMutex);
@@ -6724,11 +6754,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             relayConfig.remapConfig.inputServiceId =
                 static_cast<std::uint16_t>(effectiveConfig.inputServiceId);
             relayConfig.remapConfig.outputServiceId =
-                static_cast<std::uint16_t>(effectiveConfig.serviceId);
+                static_cast<std::uint16_t>(outputServiceId);
             relayConfig.remapConfig.outputVideoPid =
-                static_cast<std::uint16_t>(effectiveConfig.videoPid);
+                effectiveConfig.remapEnabled
+                    ? static_cast<std::uint16_t>(effectiveConfig.videoPid)
+                    : 0;
             relayConfig.remapConfig.outputAudioPid =
-                static_cast<std::uint16_t>(effectiveConfig.audioPid);
+                effectiveConfig.remapEnabled
+                    ? static_cast<std::uint16_t>(effectiveConfig.audioPid)
+                    : 0;
             relayConfig.remapConfig.serviceName =
                 effectiveConfig.serviceName.empty()
                     ? effectiveConfig.name
@@ -6750,7 +6784,18 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             relayConfig.dvbTuneConfig.lnbLof2KHz = nativeDvbParams.lnbLof2KHz;
             relayConfig.dvbTuneConfig.lnbSlofKHz = nativeDvbParams.lnbSlofKHz;
             relayConfig.dvbTuneConfig.streamId = nativeDvbParams.streamId;
-            relayConfig.dvbTuneConfig.pids = nativeDvbParams.pids;
+            relayConfig.dvbTuneConfig.pids =
+                !effectiveConfig.conditionalAccessClient.empty()
+                    ? "8192"
+                    : nativeDvbParams.pids;
+        }
+        if (!effectiveConfig.conditionalAccessClient.empty()) {
+            const std::string caStreamId = effectiveConfig.id;
+            relayConfig.processTransport =
+                [caStreamId](std::uint8_t* data, std::size_t size) {
+                    return CaBackendManager::instance().processTransport(
+                        caStreamId, data, size);
+                };
         }
         relayConfig.inputInterfaceAddress = inputInterface;
         relayConfig.inputInterfaceDeviceName = inputInterfaceDeviceName;

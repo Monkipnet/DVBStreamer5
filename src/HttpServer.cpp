@@ -5283,9 +5283,9 @@ async function loadSatelliteAdapters() {
     const adapterBeforeLoad = Number(document.getElementById('satAdapter')?.value || 0);
     const frontendBeforeLoad = Number(document.getElementById('satFrontend')?.value || 0);
     dvbAdapters = Array.isArray(data.adapters) ? data.adapters : [];
-    if (!data.dvbsrc_available) {
+    if (!(data.native_dvb_available ?? data.dvbsrc_available)) {
       refreshSatelliteAdapterOptions(adapterBeforeLoad, frontendBeforeLoad);
-      if (info) info.textContent = 'GStreamer dvbsrc не найден. Установите gstreamer1.0-plugins-bad.';
+      if (info) info.textContent = 'Нативный DVB-S/S2 frontend доступен только в Linux.';
       return;
     }
     if (!dvbAdapters.length) {

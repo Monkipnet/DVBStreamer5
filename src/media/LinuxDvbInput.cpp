@@ -74,7 +74,8 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         (config.polarity != "H" && config.polarity != "V") ||
         (config.deliverySystem != "dvb-s" && config.deliverySystem != "dvb-s2") ||
         config.diseqcSource < -1 || config.diseqcSource > 7 ||
-        config.streamId < -1 || config.streamId > 255) {
+        config.streamId < -1 || config.streamId > 255 ||
+        config.lockTimeoutMs <= 0 || config.lockTimeoutMs > 120000) {
         error = "invalid DVB-S/S2 tuning parameters";
         return false;
     }
@@ -147,13 +148,15 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     properties[count].cmd = DTV_TUNE;
     if (!setFrontendProperties(fd, properties, error)) return false;
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(config.lockTimeoutMs);
     while (std::chrono::steady_clock::now() < deadline) {
         fe_status_t status {};
         if (ioctl(fd, FE_READ_STATUS, &status) == 0 && (status & FE_HAS_LOCK)) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    error = "DVB frontend did not lock within 8 seconds";
+    error = "DVB frontend did not lock within " +
+        std::to_string(config.lockTimeoutMs) + " milliseconds";
     return false;
 }
 #endif

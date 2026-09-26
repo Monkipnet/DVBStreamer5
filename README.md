@@ -23,8 +23,12 @@ access-key в HTTP-заголовке или query string. Для сетевых
 multicast membership и на Linux применяет `SO_BINDTODEVICE` для unicast/wildcard.
 Для DVB-S/S2 нативный вход на Linux самостоятельно настраивает frontend через
 kernel DVB API, управляет LNB/DiSEqC, ставит PID-фильтры и читает TS через
-demux/dvr. Нативный DVB пока ограничен прямой передачей TS: выбор отдельного
-сервиса и CA используют прежний маршрут. Пакетный SID/PID remap доступен в
+demux/dvr. Сканирование сервисов и чтение signal/quality также используют
+Linux DVB API и больше не требуют `dvbsrc`/`appsink`. Нативный DVB-маршрут
+может выбрать сервис по SID, сформировать SPTS и передать выровненные пакеты
+в выбранный in-place CA backend; для CA захватывается полный TS, чтобы не
+терять ECM/EMM. Это пока ограничено отдельными UDP/RTP-выходами и одним
+потоком на физический frontend. Пакетный SID/PID remap доступен в
 нативном UDP/RTP/HTTP/file/DVB passthrough для выбранной программы и требует
 PAT/PMT/SDT-секции, помещающиеся в один TS-пакет. Один физический
 frontend пока нельзя одновременно занять двумя нативными потоками.
@@ -118,7 +122,7 @@ src/protocols/stream/outputs/  выходы обычного поточного 
 | RTSP | сетевые камеры и медиасерверы |
 | RTMP | RTMP-источники |
 | Файл | локальный файл, в том числе файл замены с циклическим воспроизведением |
-| DVB-S/S2 | Linux DVB frontend через `dvbsrc` |
+| DVB-S/S2 | Linux DVB frontend через native kernel API |
 | Тестовый сигнал | встроенный `test://bars` |
 
 ### Выходы
