@@ -1,0 +1,10 @@
+#ifndef DVBSTREAMER5_TWOLAME_CONFIG_H
+#define DVBSTREAMER5_TWOLAME_CONFIG_H
+
+#define HAVE_STDLIB_H 1
+#define HAVE_STRING_H 1
+#define PACKAGE_VERSION "0.4.0"
+#define PACKAGE_URL "https://www.twolame.org/"
+#define PACKAGE_BUGREPORT "support@twolame.org"
+
+#endif

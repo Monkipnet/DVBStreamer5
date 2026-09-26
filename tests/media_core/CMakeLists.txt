@@ -12,9 +12,11 @@ pkg_check_modules(LIBCURL REQUIRED libcurl)
 add_executable(media_core_tests
     ../test_media_core.cpp
     ../../src/media/CbrTsPacer.cpp
+    ../../src/media/MpegTsRemapper.cpp
     ../../src/media/TransportStream.cpp
     ../../src/media/RtpMpegTs.cpp
     ../../src/media/UdpSocket.cpp
+    ../../src/media/LinuxDvbInput.cpp
     ../../src/media/NativeUdpRelay.cpp
 )
 target_include_directories(media_core_tests PRIVATE ../../src)

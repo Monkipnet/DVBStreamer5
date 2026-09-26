@@ -1,7 +1,7 @@
-# Local browser-preview library
+# Local browser-preview libraries
 
-The HTTP-only browser preview uses `mpegts.min.js` (mpegts.js, UMD build) and the browser's MediaSource support. Keep the built JS file at `web/vendor/mpegts.min.js` in the project and deploy it under `web/vendor/` alongside the executable. The browser receives it from `/preview/mpegts.min.js`; no external player or browser-side CDN is used.
+The browser preview uses the vendored `mpegts.min.js` and `hls.min.js` files. CMake embeds these JavaScript libraries and their license texts into the DVBStreamer5 executable, which serves them at `/preview/` and `/licenses/`. The deployed executable does not need a `web/` directory or access to a CDN.
 
-If the library is not already present, `bash scripts/vendor_preview_libs.sh` fetches the pinned library and its license on an Internet-connected build machine. The script may also fetch hls.js for compatibility with older builds; this HTTP-only preview does not load hls.js.
+If a library is not already present, `bash scripts/vendor_preview_libs.sh` fetches the pinned version and license on an Internet-connected build machine. Reconfigure/rebuild after changing these source assets so the executable embeds the updated content.
 
-Existing checked-in `web/vendor/*.js` files on a Git working copy must NOT be deleted or overwritten by unpacking an archive that omits them. Apply the supplied source patch instead.
+Keep the vendor license files alongside the source assets; they are embedded and served by the application as well.

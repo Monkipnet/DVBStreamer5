@@ -1,6 +1,8 @@
 #include "media/RtpMpegTs.h"
 #include "media/NativeUdpRelay.h"
 #include "media/CbrTsPacer.h"
+#include "media/LinuxDvbInput.h"
+#include "media/MpegTsRemapper.h"
 #include "media/UdpSocket.h"
 
 #ifdef NDEBUG
@@ -50,6 +52,123 @@ Packet packet(std::uint16_t pid, std::uint8_t counter, bool payload = true) {
         result[5] = 0;
     }
     return result;
+}
+
+std::uint32_t sectionCrc(const std::uint8_t* data, std::size_t size) {
+    std::uint32_t crc = 0xffffffffU;
+    for (std::size_t index = 0; index < size; ++index) {
+        crc ^= static_cast<std::uint32_t>(data[index]) << 24;
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 0x80000000U) ? (crc << 1) ^ 0x04c11db7U : crc << 1;
+        }
+    }
+    return crc;
+}
+
+void appendSectionCrc(std::vector<std::uint8_t>& section) {
+    const auto crc = sectionCrc(section.data(), section.size());
+    section.push_back(static_cast<std::uint8_t>(crc >> 24));
+    section.push_back(static_cast<std::uint8_t>(crc >> 16));
+    section.push_back(static_cast<std::uint8_t>(crc >> 8));
+    section.push_back(static_cast<std::uint8_t>(crc));
+}
+
+Packet sectionPacket(std::uint16_t pid, std::uint8_t continuity,
+                     const std::vector<std::uint8_t>& section) {
+    assert(section.size() <= 183);
+    Packet result = packet(pid, continuity);
+    result[1] |= 0x40;
+    result[4] = 0;
+    std::copy(section.begin(), section.end(), result.begin() + 5);
+    return result;
+}
+
+std::vector<std::uint8_t> makePatSection(std::uint16_t sid, std::uint16_t pmtPid) {
+    std::vector<std::uint8_t> section = {
+        0x00, 0xb0, 0x0d, 0x12, 0x34, 0xc1, 0x00, 0x00,
+        static_cast<std::uint8_t>(sid >> 8), static_cast<std::uint8_t>(sid),
+        static_cast<std::uint8_t>(0xe0 | ((pmtPid >> 8) & 0x1f)),
+        static_cast<std::uint8_t>(pmtPid)
+    };
+    appendSectionCrc(section);
+    return section;
+}
+
+std::vector<std::uint8_t> makePmtSection(
+    std::uint16_t sid, std::uint16_t videoPid, std::uint16_t audioPid) {
+    std::vector<std::uint8_t> section = {
+        0x02, 0xb0, 0x17,
+        static_cast<std::uint8_t>(sid >> 8), static_cast<std::uint8_t>(sid),
+        0xc1, 0x00, 0x00,
+        static_cast<std::uint8_t>(0xe0 | ((videoPid >> 8) & 0x1f)),
+        static_cast<std::uint8_t>(videoPid),
+        0xf0, 0x00,
+        0x02,
+        static_cast<std::uint8_t>(0xe0 | ((videoPid >> 8) & 0x1f)),
+        static_cast<std::uint8_t>(videoPid), 0xf0, 0x00,
+        0x03,
+        static_cast<std::uint8_t>(0xe0 | ((audioPid >> 8) & 0x1f)),
+        static_cast<std::uint8_t>(audioPid), 0xf0, 0x00
+    };
+    appendSectionCrc(section);
+    return section;
+}
+
+std::uint16_t pidOf(const Packet& packet) {
+    return static_cast<std::uint16_t>(
+        ((static_cast<std::uint16_t>(packet[1] & 0x1f) << 8) | packet[2]));
+}
+
+void testMpegTsRemapper() {
+    tvs::media::mpegts::Remapper remapper;
+    tvs::media::mpegts::RemapConfig config;
+    config.inputServiceId = 10;
+    config.outputServiceId = 42;
+    config.outputVideoPid = 0x200;
+    config.outputAudioPid = 0x201;
+    config.serviceName = "Remapped";
+    config.serviceProvider = "DVBStreamer5";
+    std::string error;
+    assert(remapper.initialize(config, error));
+
+    std::vector<Packet> output;
+    assert(remapper.process(packet(0x300, 0), output, error));
+    assert(output.empty());
+    const auto pat = sectionPacket(0, 3, makePatSection(10, 0x1000));
+    assert(remapper.process(pat, output, error));
+    assert(output.empty());
+    const auto pmt = sectionPacket(0x1000, 5, makePmtSection(10, 0x100, 0x101));
+    assert(remapper.process(pmt, output, error));
+    assert(output.size() == 2);
+    assert(pidOf(output[0]) == 0);
+    assert(pidOf(output[1]) == 0x1000);
+    assert(output[0][13] == 0 && output[0][14] == 42);
+    assert(sectionCrc(output[0].data() + 5, 16) == 0);
+    assert(output[1][8] == 0 && output[1][9] == 42);
+    assert(output[1][18] == 0xE2 && output[1][19] == 0x00);
+    assert(output[1][23] == 0xE2 && output[1][24] == 0x01);
+    assert(sectionCrc(output[1].data() + 5, 26) == 0);
+    output.clear();
+
+    auto video = packet(0x100, 1);
+    assert(remapper.process(video, output, error));
+    assert(output.size() == 1 && pidOf(output.front()) == 0x200);
+    output.clear();
+    assert(remapper.process(packet(0x300, 1), output, error));
+    assert(output.empty());
+    assert(remapper.process(pat, output, error));
+    assert(output.size() == 1 && pidOf(output.front()) == 0);
+    assert((output.front()[3] & 0x0f) == 3);
+    output.clear();
+
+    auto fragmentedPat = packet(0, 4);
+    fragmentedPat[1] |= 0x40;
+    fragmentedPat[4] = 0;
+    fragmentedPat[5] = 0x00;
+    fragmentedPat[6] = 0xb0;
+    fragmentedPat[7] = 0xc0;
+    assert(!remapper.process(fragmentedPat, output, error));
+    assert(error.find("one TS packet") != std::string::npos);
 }
 
 class HttpTsTestServer {
@@ -437,6 +556,23 @@ void testUdpLoopback() {
     assert(receiver.receive(buffer.data(), buffer.size(), received, 5, error));
     assert(received == 0);
     assert(!sender.send(nullptr, 0, error));
+}
+
+void testLinuxDvbPidListParsing() {
+    using tvs::media::network::LinuxDvbInput;
+    std::vector<std::uint16_t> pids;
+    std::string error;
+    assert(LinuxDvbInput::parsePidList("0:17:256:256:8191", pids, error));
+    assert((pids == std::vector<std::uint16_t>{0, 17, 256, 8191}));
+    assert(error.empty());
+    assert(LinuxDvbInput::parsePidList("8192", pids, error));
+    assert(pids.empty());
+    assert(!LinuxDvbInput::parsePidList("17::256", pids, error));
+    assert(pids.empty() && !error.empty());
+    assert(!LinuxDvbInput::parsePidList("8192:17", pids, error));
+    assert(pids.empty() && !error.empty());
+    assert(!LinuxDvbInput::parsePidList("not-a-pid", pids, error));
+    assert(pids.empty() && !error.empty());
 }
 
 std::uint16_t reserveLocalUdpPort() {
@@ -1044,6 +1180,8 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
 } // namespace
 
 int main() {
+    testLinuxDvbPidListParsing();
+    testMpegTsRemapper();
     testPacketInspectionAndPidRewrite();
     testFraming();
     testContinuityTracking();

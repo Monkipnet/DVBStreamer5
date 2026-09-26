@@ -218,6 +218,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     fileInput_.clear();
     fileInputSource_ = false;
     httpInputSource_ = false;
+    dvbInputSource_ = false;
     {
         std::lock_guard<std::mutex> lock(httpQueueMutex_);
         httpQueue_.clear();
@@ -235,11 +236,16 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     UdpInputEndpoint input;
     const bool networkInput = parseInputEndpoint(config.inputUri, input);
     httpInputSource_ = !networkInput && isHttpInput(config.inputUri);
+    dvbInputSource_ = config.dvbInputSource;
     std::string filePath;
     fileInputSource_ = !networkInput && !httpInputSource_ &&
         resolveFileInputPath(config.inputUri, filePath);
-    if (!networkInput && !httpInputSource_ && !fileInputSource_) {
-        error = "native relay requires a valid UDP/RTP, HTTP(S), or local file input";
+    if (!networkInput && !httpInputSource_ && !fileInputSource_ && !dvbInputSource_) {
+        error = "native relay requires a valid UDP/RTP, HTTP(S), DVB, or local file input";
+        return false;
+    }
+    if (config_.remapEnabled &&
+        !remapper_.initialize(config_.remapConfig, error)) {
         return false;
     }
     if (fileInputSource_ &&
@@ -270,7 +276,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
             error = "native file input could not be opened: " + filePath;
             return false;
         }
-    } else if (!httpInputSource_) {
+    } else if (!httpInputSource_ && !dvbInputSource_) {
         const bool multicastInput = isMulticastIpv4(input.host);
         const bool wildcardInput = input.host.empty() || input.host == "0.0.0.0";
         const std::string inputInterface =
@@ -287,6 +293,10 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
             return false;
         }
     }
+    if (dvbInputSource_ && !dvbInput_.open(config_.dvbTuneConfig, error)) {
+        error = "native DVB input setup failed: " + error;
+        return false;
+    }
 
     outputSockets_.clear();
     for (const auto& output : config_.outputs) {
@@ -295,6 +305,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
         if (!parseOutputEndpoint(
                 output.outputHost, output.outputPort, outputHost, parsedOutputPort)) {
             inputSocket_.close();
+            dvbInput_.close();
             fileInput_.close();
             outputSockets_.clear();
             error = "native UDP relay output endpoint is invalid";
@@ -304,6 +315,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
         if (!outputSocket->openSender(
                 outputHost, parsedOutputPort, output.interfaceAddress, error)) {
             inputSocket_.close();
+            dvbInput_.close();
             fileInput_.close();
             outputSockets_.clear();
             error = "native UDP output setup failed: " + error;
@@ -607,7 +619,8 @@ void NativeUdpRelay::run() {
     UdpInputEndpoint inputEndpoint;
     const bool networkInput = parseInputEndpoint(config_.inputUri, inputEndpoint);
     const bool httpInput = httpInputSource_;
-    if (!networkInput && !httpInput && !fileInputSource_) {
+    const bool dvbInput = dvbInputSource_;
+    if (!networkInput && !httpInput && !fileInputSource_ && !dvbInput) {
         std::lock_guard<std::mutex> lock(errorMutex_);
         lastError_ = "native input endpoint became invalid";
         running_.store(false, std::memory_order_release);
@@ -621,6 +634,7 @@ void NativeUdpRelay::run() {
     tvs::media::mpegts::PacketFramer framer;
     tvs::media::mpegts::ContinuityTracker continuity;
     std::vector<tvs::media::mpegts::Packet> packets;
+    std::vector<tvs::media::mpegts::Packet> remappedPackets;
     std::vector<OutputWorker> outputs;
     outputs.reserve(config_.outputs.size());
     auto seed = static_cast<std::uint64_t>(
@@ -796,14 +810,20 @@ void NativeUdpRelay::run() {
                             remaining + std::chrono::milliseconds(1)).count()));
                 receiveTimeoutMs = (std::min)(receiveTimeoutMs, outputTimeout);
             }
-            if (!inputSocket_.receive(
-                    datagram.data(), datagram.size(), received, receiveTimeoutMs, error)) {
+            const bool receivedOk = dvbInput
+                ? dvbInput_.read(
+                    datagram.data(), datagram.size(), received, receiveTimeoutMs, error)
+                : inputSocket_.receive(
+                    datagram.data(), datagram.size(), received, receiveTimeoutMs, error);
+            if (!receivedOk) {
                 if (!running_.load(std::memory_order_acquire)) {
                     break;
                 }
                 {
                     std::lock_guard<std::mutex> lock(errorMutex_);
-                    lastError_ = error.empty() ? "UDP receive failed" : error;
+                    lastError_ = error.empty()
+                        ? (dvbInput ? "DVB input read failed" : "UDP receive failed")
+                        : error;
                 }
                 break;
             }
@@ -821,6 +841,20 @@ void NativeUdpRelay::run() {
                     framer.push(datagram.data(), received, packets);
                 }
             }
+        }
+
+        if (!packets.empty() && config_.remapEnabled) {
+            remappedPackets.clear();
+            for (const auto& packet : packets) {
+                if (!remapper_.process(packet, remappedPackets, error)) {
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_ = error.empty() ? "native MPEG-TS remap failed" : error;
+                    running_.store(false, std::memory_order_release);
+                    break;
+                }
+            }
+            if (!running_.load(std::memory_order_acquire)) break;
+            packets.swap(remappedPackets);
         }
 
         if (!packets.empty()) {
@@ -887,6 +921,8 @@ void NativeUdpRelay::run() {
         fileInput_.close();
     }
     fileInputSource_ = false;
+    dvbInputSource_ = false;
+    dvbInput_.close();
 }
 
 } // namespace tvs::media::network

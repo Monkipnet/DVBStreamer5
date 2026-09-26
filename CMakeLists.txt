@@ -1,15 +1,22 @@
 cmake_minimum_required(VERSION 3.10)
-project(DVBStreamer5 CXX)
+project(DVBStreamer5 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+include(${CMAKE_SOURCE_DIR}/cmake/EmbedWebAssets.cmake)
+dvbstreamer5_generate_embedded_web_assets(
+    ${CMAKE_SOURCE_DIR}/web/vendor
+    ${CMAKE_BINARY_DIR}/generated
+    EMBEDDED_WEB_ASSET_SOURCE
+)
 
 find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_library(CRYPT_LIBRARY crypt)
 
-pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
+pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
 pkg_check_modules(LIBCURL REQUIRED libcurl)
 pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 pkg_check_modules(DVBCSA QUIET libdvbcsa)
@@ -26,11 +33,16 @@ endif()
 
 find_package(Boost REQUIRED COMPONENTS thread)
 
+add_subdirectory(third_party/twolame)
+
 add_library(dvbstreamer5_media_core
     src/media/CbrTsPacer.cpp
+    src/media/MpegTsRemapper.cpp
+    src/media/Mp2Encoder.cpp
     src/media/TransportStream.cpp
     src/media/RtpMpegTs.cpp
     src/media/UdpSocket.cpp
+    src/media/LinuxDvbInput.cpp
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core
@@ -41,6 +53,7 @@ target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
     ${LIBCURL_LIBRARIES}
 )
+target_link_libraries(dvbstreamer5_media_core PRIVATE dvbstreamer5_twolame)
 if(WIN32)
     target_link_libraries(dvbstreamer5_media_core PUBLIC ws2_32)
 endif()
@@ -78,6 +91,7 @@ add_executable(DVBStreamer5
     src/mpts/MptsOutputManager.cpp
     src/StreamManager.cpp
     src/TranscoderModule.cpp
+    src/media/GstMp2Encoder.cpp
     src/GstTranscoderProcess.cpp
     src/protocols/GstProtocolTypes.cpp
     src/protocols/GstInputProtocols.cpp
@@ -117,6 +131,7 @@ add_executable(DVBStreamer5
     src/protocols/outputs/GstRtspOutputProtocol.cpp
     src/protocols/outputs/GstRtmpOutputProtocol.cpp
     src/HttpServer.cpp
+    ${EMBEDDED_WEB_ASSET_SOURCE}
     src/OscamMiniManager.cpp
 )
 
@@ -142,6 +157,10 @@ if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
 endif()
 
+option(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
+if(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS)
+    add_subdirectory(tests/mp2_encoder)
+endif()
 
 if(DEFINED TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
     set(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "${TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE}" CACHE BOOL

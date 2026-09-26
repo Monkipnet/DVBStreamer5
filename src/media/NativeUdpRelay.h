@@ -1,6 +1,8 @@
 #pragma once
 
 #include "media/CbrTsPacer.h"
+#include "media/LinuxDvbInput.h"
+#include "media/MpegTsRemapper.h"
 #include "media/UdpSocket.h"
 
 #include <curl/curl.h>
@@ -27,6 +29,10 @@ struct NativeUdpRelayOutputConfig {
 
 struct NativeUdpRelayConfig {
     std::string inputUri;
+    bool dvbInputSource = false;
+    LinuxDvbTuneConfig dvbTuneConfig;
+    bool remapEnabled = false;
+    mpegts::RemapConfig remapConfig;
     std::string inputInterfaceAddress;
     std::string inputInterfaceDeviceName;
     bool inputInterfaceAddressConfigured = false;
@@ -75,6 +81,9 @@ private:
     std::ifstream fileInput_;
     bool fileInputSource_ = false;
     bool httpInputSource_ = false;
+    bool dvbInputSource_ = false;
+    LinuxDvbInput dvbInput_;
+    mpegts::Remapper remapper_;
     std::thread httpWorker_;
     std::mutex httpQueueMutex_;
     std::condition_variable httpQueueCondition_;

@@ -5550,6 +5550,10 @@ bool StreamManager::acquireSharedDvbFrontend(StreamState* state, std::string& er
             std::cerr << "DVB frontend release barrier cleared: " << frontendKey << std::endl;
         }
         auto existing = sharedDvbFrontends.find(frontendKey);
+        if (nativeDvbFrontends.count(frontendKey) != 0) {
+            error = "DVB frontend is already owned by a native input stream";
+            return false;
+        }
         if (existing != sharedDvbFrontends.end()) {
             if (existing->second->tuningSignature != tuningSignature) {
                 std::ostringstream ss;
@@ -6475,6 +6479,7 @@ bool nativeUdpRelayEligible(const StreamConfig& config) {
         input == tvs::stream_protocols::InputProtocolKind::Udp ||
         input == tvs::stream_protocols::InputProtocolKind::Rtp ||
         input == tvs::stream_protocols::InputProtocolKind::Http;
+    const bool dvbInput = input == tvs::stream_protocols::InputProtocolKind::Dvb;
     const bool pacedFileInput =
         input == tvs::stream_protocols::InputProtocolKind::File &&
         std::all_of(outputs.begin(), outputs.end(), [](const StreamConfig& output) {
@@ -6482,12 +6487,12 @@ bool nativeUdpRelayEligible(const StreamConfig& config) {
         });
 #if !defined(__linux__)
     if (nativeInputNeedsDeviceBinding(config)) return false;
+    if (dvbInput) return false;
 #endif
-    return (networkInput || pacedFileInput) &&
+    return (networkInput || pacedFileInput || dvbInput) &&
         !config.testPattern &&
         !config.transcodeEnabled &&
-        !config.remapEnabled &&
-        config.inputServiceId == 0 &&
+        (config.remapEnabled || config.inputServiceId == 0) &&
         config.backupInputUri.empty() &&
         config.conditionalAccessClient.empty();
 }
@@ -6657,7 +6662,30 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     return service.streamId == effectiveConfig.id;
                 });
         });
-    if (nativeUdpRelayEligible(effectiveConfig) && !hasMptsOutput) {
+    const bool nativeDvbInput =
+        tvs::stream_protocols::inputKind(effectiveConfig) ==
+        tvs::stream_protocols::InputProtocolKind::Dvb;
+    DvbSatelliteParams nativeDvbParams;
+    std::string nativeDvbFrontendKey;
+    bool nativeDvbFrontendReserved = false;
+    bool useNativeRelay = nativeUdpRelayEligible(effectiveConfig) && !hasMptsOutput;
+    if (useNativeRelay && nativeDvbInput) {
+        std::string dvbError;
+        if (!DvbSatellite::parseUri(effectiveConfig.inputUri, nativeDvbParams, dvbError)) {
+            if (error) *error = dvbError.empty() ? "invalid DVB URI" : dvbError;
+            return false;
+        }
+        nativeDvbFrontendKey = sharedDvbFrontendKey(nativeDvbParams);
+        std::lock_guard<std::mutex> lock(managerMutex);
+        if (sharedDvbFrontends.count(nativeDvbFrontendKey) != 0 ||
+            nativeDvbFrontends.count(nativeDvbFrontendKey) != 0) {
+            useNativeRelay = false;
+        } else {
+            nativeDvbFrontends.insert(nativeDvbFrontendKey);
+            nativeDvbFrontendReserved = true;
+        }
+    }
+    if (useNativeRelay) {
         std::string interfaceError;
         std::string inputInterface;
         std::string inputInterfaceDeviceName;
@@ -6672,11 +6700,58 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     : nullptr)) {
             state->statusMessage = "native UDP interface setup failed: " + interfaceError;
             if (error) *error = interfaceError;
+            if (nativeDvbFrontendReserved) {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                nativeDvbFrontends.erase(nativeDvbFrontendKey);
+            }
             return false;
         }
 
         tvs::media::network::NativeUdpRelayConfig relayConfig;
         relayConfig.inputUri = normalizeInputUri(effectiveConfig.inputUri);
+        relayConfig.remapEnabled = effectiveConfig.remapEnabled;
+        if (effectiveConfig.remapEnabled) {
+            if (effectiveConfig.inputServiceId > 0xffff ||
+                effectiveConfig.serviceId == 0 || effectiveConfig.serviceId > 0xffff ||
+                effectiveConfig.videoPid > 0xffff || effectiveConfig.audioPid > 0xffff) {
+                if (nativeDvbFrontendReserved) {
+                    std::lock_guard<std::mutex> lock(managerMutex);
+                    nativeDvbFrontends.erase(nativeDvbFrontendKey);
+                }
+                if (error) *error = "native remap service and PID values are outside MPEG-TS ranges";
+                return false;
+            }
+            relayConfig.remapConfig.inputServiceId =
+                static_cast<std::uint16_t>(effectiveConfig.inputServiceId);
+            relayConfig.remapConfig.outputServiceId =
+                static_cast<std::uint16_t>(effectiveConfig.serviceId);
+            relayConfig.remapConfig.outputVideoPid =
+                static_cast<std::uint16_t>(effectiveConfig.videoPid);
+            relayConfig.remapConfig.outputAudioPid =
+                static_cast<std::uint16_t>(effectiveConfig.audioPid);
+            relayConfig.remapConfig.serviceName =
+                effectiveConfig.serviceName.empty()
+                    ? effectiveConfig.name
+                    : effectiveConfig.serviceName;
+            relayConfig.remapConfig.serviceProvider = effectiveConfig.serviceProvider;
+        }
+        if (nativeDvbInput) {
+            relayConfig.dvbInputSource = true;
+            relayConfig.dvbTuneConfig.adapter = nativeDvbParams.adapter;
+            relayConfig.dvbTuneConfig.frontend = nativeDvbParams.frontend;
+            relayConfig.dvbTuneConfig.frequencyKHz = nativeDvbParams.frequencyKHz;
+            relayConfig.dvbTuneConfig.symbolRateK = nativeDvbParams.symbolRateK;
+            relayConfig.dvbTuneConfig.polarity = nativeDvbParams.polarity;
+            relayConfig.dvbTuneConfig.deliverySystem = nativeDvbParams.deliverySystem;
+            relayConfig.dvbTuneConfig.modulation = nativeDvbParams.modulation;
+            relayConfig.dvbTuneConfig.fec = nativeDvbParams.fec;
+            relayConfig.dvbTuneConfig.diseqcSource = nativeDvbParams.diseqcSource;
+            relayConfig.dvbTuneConfig.lnbLof1KHz = nativeDvbParams.lnbLof1KHz;
+            relayConfig.dvbTuneConfig.lnbLof2KHz = nativeDvbParams.lnbLof2KHz;
+            relayConfig.dvbTuneConfig.lnbSlofKHz = nativeDvbParams.lnbSlofKHz;
+            relayConfig.dvbTuneConfig.streamId = nativeDvbParams.streamId;
+            relayConfig.dvbTuneConfig.pids = nativeDvbParams.pids;
+        }
         relayConfig.inputInterfaceAddress = inputInterface;
         relayConfig.inputInterfaceDeviceName = inputInterfaceDeviceName;
         relayConfig.inputInterfaceAddressConfigured = true;
@@ -6692,6 +6767,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 state->statusMessage =
                     "native UDP interface setup failed: " + interfaceError;
                 if (error) *error = interfaceError;
+                if (nativeDvbFrontendReserved) {
+                    std::lock_guard<std::mutex> lock(managerMutex);
+                    nativeDvbFrontends.erase(nativeDvbFrontendKey);
+                }
                 return false;
             }
             relayConfig.outputs.push_back({
@@ -6702,7 +6781,18 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
         auto relay = std::make_unique<tvs::media::network::NativeUdpRelay>();
         std::string relayError;
-        if (!relay->start(relayConfig, relayError)) {
+        bool relayStarted = false;
+        {
+            auto frontendTuneGuard = nativeDvbInput
+                ? DvbSatellite::acquireFrontendTuneGuard(nativeDvbParams)
+                : std::unique_lock<std::mutex>();
+            relayStarted = relay->start(relayConfig, relayError);
+        }
+        if (!relayStarted) {
+            if (nativeDvbFrontendReserved) {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                nativeDvbFrontends.erase(nativeDvbFrontendKey);
+            }
             state->statusMessage = "native UDP relay failed: " + relayError;
             if (error) *error = relayError;
             return false;
@@ -6723,6 +6813,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 duplicateStart = true;
             } else {
                 StreamState* nativeState = state.get();
+                nativeState->nativeDvbFrontendKey = nativeDvbFrontendKey;
                 streams[streamConfig.id] = std::move(state);
                 try {
                     streams[streamConfig.id]->busThread =
@@ -6734,6 +6825,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                         std::string("native UDP monitor thread failed: ") + exception.what();
                     const std::string threadError = nativeState->statusMessage;
                     nativeState->nativeUdpRelay->stop();
+                    if (nativeDvbFrontendReserved) {
+                        nativeDvbFrontends.erase(nativeDvbFrontendKey);
+                    }
                     streams.erase(streamConfig.id);
                     monitorStarted = false;
                     if (error) *error = threadError;
@@ -6742,6 +6836,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
         if (duplicateStart) {
             if (state && state->nativeUdpRelay) state->nativeUdpRelay->stop();
+            if (nativeDvbFrontendReserved) {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                nativeDvbFrontends.erase(nativeDvbFrontendKey);
+            }
             if (error) *error = "duplicate stream start detected: " + streamConfig.id;
             return false;
         }
@@ -6785,6 +6883,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (effectiveConfig.transcodeEnabled &&
         effectiveConfig.transcodeVideoCodec != "copy" &&
         effectiveConfig.transcodeAudioCodec != "copy" &&
+        effectiveConfig.transcodeAudioCodec != "mp2" &&
         allOutputsUseStableUdp(effectiveConfig) &&
         GstTranscoderProcess::isAvailable()) {
         std::string relayError;
@@ -6900,6 +6999,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (effectiveConfig.transcodeEnabled &&
         effectiveConfig.transcodeVideoCodec != "copy" &&
         effectiveConfig.transcodeAudioCodec != "copy" &&
+        effectiveConfig.transcodeAudioCodec != "mp2" &&
         GstTranscoderProcess::isAvailable()) {
         std::string srtRelayError;
         if (!startExternalSrtOutputs(state.get(), srtRelayError)) {
@@ -7184,6 +7284,11 @@ bool StreamManager::teardownStreamState(
     stopExternalSrtOutputs(&state);
     if (state.nativeUdpRelay) {
         state.nativeUdpRelay->stop();
+    }
+    if (!state.nativeDvbFrontendKey.empty()) {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        nativeDvbFrontends.erase(state.nativeDvbFrontendKey);
+        state.nativeDvbFrontendKey.clear();
     }
     releaseSharedDvbInput(&state);
     std::cerr << "STREAM TEARDOWN 203.62: stream=" << id

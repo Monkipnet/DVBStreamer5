@@ -300,6 +300,7 @@ struct StreamState {
     std::unique_ptr<RemapContext> sourceContext;
     std::unique_ptr<GstTranscoderProcess> gstTranscoder;
     std::unique_ptr<tvs::media::network::NativeUdpRelay> nativeUdpRelay;
+    std::string nativeDvbFrontendKey;
     std::vector<std::unique_ptr<ExternalSrtOutputState>> externalSrtOutputs;
     std::vector<std::unique_ptr<RemapContext>> outputContexts;
 };
@@ -420,6 +421,7 @@ private:
     std::atomic<uint64_t> hlsRecoveryRebuildCount{0};
     std::atomic<uint64_t> hlsRecoverySuppressedCount{0};
     std::map<std::string, std::unique_ptr<SharedDvbFrontendState>> sharedDvbFrontends;
+    std::set<std::string> nativeDvbFrontends;
     std::unique_ptr<MptsOutputManager> mptsOutputManager;
     // When the last consumer stops, frontend shutdown happens on the stop
     // thread. Keep a short release barrier so a new transponder cannot race

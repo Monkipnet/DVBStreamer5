@@ -1,5 +1,6 @@
 #include "TranscoderModule.h"
 #include "TranscodeVideoGeometry.h"
+#include "media/GstMp2Encoder.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -43,6 +44,32 @@ bool factoryAvailable(const char* name) {
     if (!factory) return false;
     gst_object_unref(factory);
     return true;
+}
+
+bool mpegTsMuxSupportsMp2() {
+    GstElementFactory* factory = gst_element_factory_find("mpegtsmux");
+    if (!factory) return false;
+
+    GstCaps* mp2Caps = gst_caps_new_simple(
+        "audio/mpeg",
+        "mpegversion", G_TYPE_INT, 1,
+        "layer", G_TYPE_INT, 2,
+        "parsed", G_TYPE_BOOLEAN, TRUE,
+        "rate", GST_TYPE_INT_RANGE, 32000, 48000,
+        "channels", GST_TYPE_INT_RANGE, 1, 2,
+        nullptr);
+    bool supported = false;
+    const GList* templates = gst_element_factory_get_static_pad_templates(factory);
+    for (const GList* item = templates; item && !supported; item = item->next) {
+        auto* padTemplate = static_cast<GstStaticPadTemplate*>(item->data);
+        if (padTemplate->direction != GST_PAD_SINK) continue;
+        GstCaps* templateCaps = gst_static_caps_get(&padTemplate->static_caps);
+        supported = templateCaps && gst_caps_can_intersect(mp2Caps, templateCaps);
+        if (templateCaps) gst_caps_unref(templateCaps);
+    }
+    gst_caps_unref(mp2Caps);
+    gst_object_unref(factory);
+    return supported;
 }
 
 struct EncoderProbeResult {
@@ -338,7 +365,9 @@ AudioEncoderSelection makeAudioEncoder(const std::string& codec) {
     const char* const* factories = nullptr;
     static const char* aacFactories[] = {"fdkaacenc", "voaacenc", "avenc_aac", nullptr};
     static const char* mp3Factories[] = {"lamemp3enc", "avenc_mp3", nullptr};
-    factories = codec == "mp3" ? mp3Factories : aacFactories;
+    static const char* mp2Factories[] = {"dvbstreamer5mp2enc", nullptr};
+    factories = codec == "mp3" ? mp3Factories :
+        (codec == "mp2" ? mp2Factories : aacFactories);
     for (const char* const* name = factories; *name; ++name) {
         GstElementFactory* factory = gst_element_factory_find(*name);
         if (factory) {
@@ -365,6 +394,11 @@ void configureAudioBitrate(GstElement* encoder, const std::string& factory, uint
         if (g_object_class_find_property(G_OBJECT_GET_CLASS(encoder), "bitrate")) {
             g_object_set(encoder, "bitrate", static_cast<gint>(bitrate / 1000), nullptr);
         }
+        return;
+    }
+
+    if (factory == "dvbstreamer5mp2enc") {
+        g_object_set(encoder, "bitrate", static_cast<guint>(bitrate), nullptr);
         return;
     }
 
@@ -515,7 +549,8 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
         if (sinkPad) gst_object_unref(sinkPad);
         for (GstElement* e : {queue, convert, deinterlace, scale, postScaleConvert, filter, encoder, parser, outQueue}) sync(e);
     } else if (media.rfind("audio/x-raw", 0) == 0 && !context->audioLinked) {
-        const std::string codec = context->config.transcodeAudioCodec == "mp3" ? "mp3" : "aac";
+        const std::string codec = context->config.transcodeAudioCodec == "mp3" ? "mp3" :
+            (context->config.transcodeAudioCodec == "mp2" ? "mp2" : "aac");
         GstElement* queue = gst_element_factory_make("queue", nullptr);
         GstElement* convert = gst_element_factory_make("audioconvert", nullptr);
         GstElement* resample = gst_element_factory_make("audioresample", nullptr);
@@ -532,13 +567,15 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
         if (g_object_class_find_property(G_OBJECT_GET_CLASS(rate), "tolerance")) {
             g_object_set(rate, "tolerance", static_cast<guint64>(20 * GST_MSECOND), nullptr);
         }
-        GstElement* parser = gst_element_factory_make(codec == "mp3" ? "mpegaudioparse" : "aacparse", nullptr);
-        // MP3 keeps an explicit caps filter. AAC must negotiate directly from aacparse
-        // to mpegtsmux so codec_data (AudioSpecificConfig) is preserved unchanged.
-        GstElement* encodedFilter = codec == "mp3" ? gst_element_factory_make("capsfilter", nullptr) : nullptr;
+        GstElement* parser = gst_element_factory_make(
+            (codec == "mp3" || codec == "mp2") ? "mpegaudioparse" : "aacparse", nullptr);
+        // MPEG audio gets fixed layer/rate caps for MPEG-TS stream-type selection.
+        // AAC must negotiate directly from aacparse so codec_data is preserved.
+        GstElement* encodedFilter = (codec == "mp3" || codec == "mp2")
+            ? gst_element_factory_make("capsfilter", nullptr) : nullptr;
         GstElement* outQueue = gst_element_factory_make("queue", nullptr);
         if (!queue || !convert || !resample || !rate || !filter || !encoder || !parser ||
-            (codec == "mp3" && !encodedFilter) || !outQueue) {
+            ((codec == "mp3" || codec == "mp2") && !encodedFilter) || !outQueue) {
             std::cerr << "Transcoder: missing " << codec << " audio elements" << std::endl;
             gst_caps_unref(caps);
             drainPad(context->bin, pad);
@@ -568,20 +605,25 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
             g_object_set(parser, "disable-passthrough", TRUE, nullptr);
         }
 
-        if (codec == "mp3") {
-            GstCaps* encodedCaps = gst_caps_from_string(
-                "audio/mpeg,mpegversion=(int)1,layer=(int)3,parsed=(boolean)true,rate=(int)48000,channels=(int)2");
+        if (codec == "mp3" || codec == "mp2") {
+            const int layer = codec == "mp2" ? 2 : 3;
+            GstCaps* encodedCaps = gst_caps_new_simple(
+                "audio/mpeg",
+                "mpegversion", G_TYPE_INT, 1,
+                "layer", G_TYPE_INT, layer,
+                "parsed", G_TYPE_BOOLEAN, TRUE,
+                "rate", G_TYPE_INT, 48000,
+                "channels", G_TYPE_INT, 2,
+                nullptr);
             g_object_set(encodedFilter, "caps", encodedCaps, nullptr);
             gst_caps_unref(encodedCaps);
         }
 
-        // Normalize timestamps on the last encoded element before the mux. For AAC this
-        // is aacparse itself, deliberately with no downstream capsfilter that could strip
-        // codec_data. For MP3 it remains the explicit encoded caps filter.
-        const GstClockTime audioFrameDuration = codec == "mp3"
+        // Normalize timestamps on the last encoded element before the mux.
+        const GstClockTime audioFrameDuration = (codec == "mp3" || codec == "mp2")
             ? gst_util_uint64_scale_int(GST_SECOND, 1152, 48000)
             : gst_util_uint64_scale_int(GST_SECOND, 1024, 48000);
-        attachTimestampNormalizer(codec == "mp3" ? encodedFilter : parser, audioFrameDuration);
+        attachTimestampNormalizer(encodedFilter ? encodedFilter : parser, audioFrameDuration);
 
         bool branchBuilt = add(context->bin, queue) && add(context->bin, convert) &&
             add(context->bin, resample) && add(context->bin, rate) && add(context->bin, filter) &&
@@ -613,7 +655,8 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
             context->audioLinked = true;
             std::cerr << "Transcoder: audio linked using " << encoderSelection.factory
                       << " input=" << rawAudioFormat << "/" << rawAudioLayout << "/48000/stereo"
-                      << " output=" << (codec == "aac" ? "AAC negotiated by aacparse" : "MP3")
+                      << " output=" << (codec == "aac" ? "AAC negotiated by aacparse" :
+                          (codec == "mp2" ? "MPEG-1 Layer II" : "MP3"))
                       << " at " << context->config.transcodeAudioBitrate << " bit/s" << std::endl;
         }
         if (sinkPad) gst_object_unref(sinkPad);
@@ -856,6 +899,8 @@ std::string TranscoderModule::workingIntelVideoEncoderFactory() {
 
 TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     TranscoderCapabilities result;
+    result.mp2EncoderAvailable = tvs_gst_mp2_encoder_register() &&
+        factoryAvailable("mpegaudioparse") && mpegTsMuxSupportsMp2();
     std::string gstLaunchPath;
     if (!executableInPath("gst-launch-1.0", &gstLaunchPath)) {
         result.missingElements.emplace_back("gst-launch-1.0");
@@ -906,7 +951,9 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
             }
         }
     }
-    result.audioEncoder = !result.aacEncoder.empty() ? result.aacEncoder : result.mp3Encoder;
+    result.audioEncoder = !result.aacEncoder.empty() ? result.aacEncoder :
+        (!result.mp3Encoder.empty() ? result.mp3Encoder :
+         (result.mp2EncoderAvailable ? "dvbstreamer5mp2enc" : std::string()));
     if (GstElementFactory* factory = gst_element_factory_find("deinterlace")) {
         result.deinterlaceAvailable = true;
         gst_object_unref(factory);
@@ -975,11 +1022,21 @@ GstElement* TranscoderModule::createBin(const StreamConfig& config, std::string&
     }
 
     const std::string audioCodec = config.transcodeAudioCodec == "copy" ? "copy" :
-        (config.transcodeAudioCodec == "mp3" ? "mp3" : "aac");
+        (config.transcodeAudioCodec == "mp3" ? "mp3" :
+         (config.transcodeAudioCodec == "mp2" ? "mp2" : "aac"));
     if ((audioCodec == "aac" && capabilities.aacEncoder.empty()) ||
-        (audioCodec == "mp3" && capabilities.mp3Encoder.empty())) {
+        (audioCodec == "mp3" && capabilities.mp3Encoder.empty()) ||
+        (audioCodec == "mp2" && !capabilities.mp2EncoderAvailable)) {
         error = audioCodec + " encoder is not available";
         return nullptr;
+    }
+    if (audioCodec == "mp2") {
+        const uint64_t bitrate = config.transcodeAudioBitrate;
+        if (bitrate != 96000 && bitrate != 128000 && bitrate != 160000 &&
+            bitrate != 192000 && bitrate != 256000 && bitrate != 320000) {
+            error = "MP2 audio bitrate must be one of 96, 128, 160, 192, 256, or 320 kbit/s";
+            return nullptr;
+        }
     }
 
     GstElement* bin = gst_bin_new("transcoder_bin");

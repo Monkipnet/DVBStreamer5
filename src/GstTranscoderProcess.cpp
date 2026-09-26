@@ -896,6 +896,10 @@ std::vector<std::string> GstTranscoderProcess::buildSharedCommand(
     const std::vector<StreamConfig>& outputConfigs,
     std::string& description,
     std::string& error) {
+    if (baseConfig.transcodeAudioCodec == "mp2") {
+        error = "MP2 encoding uses the in-process DVBStreamer5 transcoder path";
+        return {};
+    }
     std::vector<std::string> args = {"gst-launch-1.0", "-e"};
     std::vector<SharedOutputBranch> outputs;
     outputs.reserve(outputConfigs.size());
@@ -971,6 +975,10 @@ std::vector<std::string> GstTranscoderProcess::buildSharedCommand(
 bool GstTranscoderProcess::start(const StreamConfig& config, std::string& error) {
     stop();
     stopping = false;
+    if (config.transcodeAudioCodec == "mp2") {
+        error = "MP2 encoding uses the in-process DVBStreamer5 transcoder path";
+        return false;
+    }
 
     std::string availableMessage;
     if (!isAvailable(&availableMessage)) {
