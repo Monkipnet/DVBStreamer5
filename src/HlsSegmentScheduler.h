@@ -4,7 +4,9 @@
 
 #include <gst/gst.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -33,7 +35,11 @@ inline constexpr const char* kPipelineMediaBitrateKey =
 // only media clock. Consumption is tracked in a private byte/duration ledger.
 class Scheduler {
 public:
+    using DataCallback = std::function<bool(
+        const std::uint8_t* data, std::size_t size, bool discontinuity)>;
+
     Scheduler(GstElement* pipeline, GstElement* appsrc, GstElement* terminalQueue, StreamConfig config);
+    Scheduler(StreamConfig config, DataCallback callback);
     ~Scheduler();
 
     Scheduler(const Scheduler&) = delete;
@@ -41,6 +47,9 @@ public:
 
     bool start(std::string& error);
     void stop(bool sendEos = true);
+    int sourceUnavailableHttpStatus() const;
+    uint64_t guaranteedBufferedAheadMilliseconds() const;
+    uint64_t durationBasedMediaBitrate() const;
 
 private:
     class Impl;

@@ -30,11 +30,13 @@ struct NativeUdpRelayOutputConfig {
 
 struct NativeUdpRelayConfig {
     std::string inputUri;
+    bool externallyFedInput = false;
     bool dvbInputSource = false;
     LinuxDvbTuneConfig dvbTuneConfig;
     bool remapEnabled = false;
     mpegts::RemapConfig remapConfig;
     std::function<bool(std::uint8_t*, std::size_t)> processTransport;
+    std::function<void(const std::uint8_t*, std::size_t)> observeTransport;
     std::string inputInterfaceAddress;
     std::string inputInterfaceDeviceName;
     bool inputInterfaceAddressConfigured = false;
@@ -59,6 +61,8 @@ public:
     NativeUdpRelay& operator=(const NativeUdpRelay&) = delete;
 
     bool start(const NativeUdpRelayConfig& config, std::string& error);
+    bool pushInput(const std::uint8_t* data, std::size_t size);
+    void finishInput(const std::string& error = {});
     void stop() noexcept;
 
     bool isRunning() const noexcept;
@@ -83,6 +87,7 @@ private:
     std::ifstream fileInput_;
     bool fileInputSource_ = false;
     bool httpInputSource_ = false;
+    bool externalInputSource_ = false;
     bool dvbInputSource_ = false;
     LinuxDvbInput dvbInput_;
     mpegts::Remapper remapper_;

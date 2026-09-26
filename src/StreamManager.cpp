@@ -6478,7 +6478,8 @@ bool nativeUdpRelayEligible(const StreamConfig& config) {
     const bool networkInput =
         input == tvs::stream_protocols::InputProtocolKind::Udp ||
         input == tvs::stream_protocols::InputProtocolKind::Rtp ||
-        input == tvs::stream_protocols::InputProtocolKind::Http;
+        input == tvs::stream_protocols::InputProtocolKind::Http ||
+        input == tvs::stream_protocols::InputProtocolKind::Hls;
     const bool dvbInput = input == tvs::stream_protocols::InputProtocolKind::Dvb;
     const bool pacedFileInput =
         input == tvs::stream_protocols::InputProtocolKind::File &&
@@ -6670,7 +6671,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     DvbSatelliteParams nativeDvbParams;
     std::string nativeDvbFrontendKey;
     bool nativeDvbFrontendReserved = false;
-    bool useNativeRelay = nativeUdpRelayEligible(effectiveConfig) && !hasMptsOutput;
+    bool useNativeRelay = nativeUdpRelayEligible(effectiveConfig);
     if (useNativeRelay && nativeDvbInput) {
         std::string dvbError;
         if (!DvbSatellite::parseUri(effectiveConfig.inputUri, nativeDvbParams, dvbError)) {
@@ -6734,6 +6735,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
         tvs::media::network::NativeUdpRelayConfig relayConfig;
         relayConfig.inputUri = normalizeInputUri(effectiveConfig.inputUri);
+        const bool nativeHlsInput =
+            tvs::stream_protocols::inputKind(effectiveConfig) ==
+            tvs::stream_protocols::InputProtocolKind::Hls;
+        relayConfig.externallyFedInput = nativeHlsInput;
         const bool selectDvbService = nativeDvbInput &&
             effectiveConfig.inputServiceId > 0;
         relayConfig.remapEnabled = effectiveConfig.remapEnabled || selectDvbService;
@@ -6797,6 +6802,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                         caStreamId, data, size);
                 };
         }
+        if (hasMptsOutput && state->mptsOutputManager) {
+            MptsOutputManager* const manager = state->mptsOutputManager;
+            const std::string streamId = effectiveConfig.id;
+            relayConfig.observeTransport =
+                [manager, streamId](const std::uint8_t* data, std::size_t size) {
+                    manager->pushBytes(streamId, data, size);
+                };
+        }
         relayConfig.inputInterfaceAddress = inputInterface;
         relayConfig.inputInterfaceDeviceName = inputInterfaceDeviceName;
         relayConfig.inputInterfaceAddressConfigured = true;
@@ -6843,7 +6856,32 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return false;
         }
 
+        std::unique_ptr<tvs::hls_scheduler::Scheduler> nativeHlsScheduler;
+        if (nativeHlsInput) {
+            auto* const relayTarget = relay.get();
+            nativeHlsScheduler = std::make_unique<tvs::hls_scheduler::Scheduler>(
+                effectiveConfig,
+                [relayTarget](const std::uint8_t* data, std::size_t size, bool) {
+                    return relayTarget->pushInput(data, size);
+                });
+            std::string hlsError;
+            if (!nativeHlsScheduler->start(hlsError)) {
+                relay->stop();
+                if (nativeDvbFrontendReserved) {
+                    std::lock_guard<std::mutex> lock(managerMutex);
+                    nativeDvbFrontends.erase(nativeDvbFrontendKey);
+                }
+                if (error) {
+                    *error = hlsError.empty()
+                        ? "native HLS scheduler failed to start"
+                        : hlsError;
+                }
+                return false;
+            }
+        }
+
         state->nativeUdpRelay = std::move(relay);
+        state->nativeHlsScheduler = std::move(nativeHlsScheduler);
         state->running = true;
         state->active = true;
         state->statusMessage = "running (native MPEG-TS)";
@@ -6869,6 +6907,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     nativeState->statusMessage =
                         std::string("native UDP monitor thread failed: ") + exception.what();
                     const std::string threadError = nativeState->statusMessage;
+                    if (nativeState->nativeHlsScheduler) nativeState->nativeHlsScheduler->stop(false);
                     nativeState->nativeUdpRelay->stop();
                     if (nativeDvbFrontendReserved) {
                         nativeDvbFrontends.erase(nativeDvbFrontendKey);
@@ -6880,6 +6919,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         }
         if (duplicateStart) {
+            if (state && state->nativeHlsScheduler) state->nativeHlsScheduler->stop(false);
             if (state && state->nativeUdpRelay) state->nativeUdpRelay->stop();
             if (nativeDvbFrontendReserved) {
                 std::lock_guard<std::mutex> lock(managerMutex);
@@ -7328,6 +7368,10 @@ bool StreamManager::teardownStreamState(
     stopHttpMpegTsInput(&state);
     stopExternalSrtOutputs(&state);
     if (state.nativeUdpRelay) {
+        if (state.nativeHlsScheduler) {
+            state.nativeHlsScheduler->stop(false);
+            state.nativeHlsScheduler.reset();
+        }
         state.nativeUdpRelay->stop();
     }
     if (!state.nativeDvbFrontendKey.empty()) {
@@ -11525,7 +11569,12 @@ GstPadProbeReturn StreamManager::outputPadProbe(GstPad* pad, GstPadProbeInfo* in
             updateOutputContinuityErrors(state, buffer);
             updateOutputScramblingStats(state, buffer);
             if (state->mptsOutputManager) {
-                state->mptsOutputManager->pushBuffer(state->config.id, buffer);
+                GstMapInfo map{};
+                if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+                    state->mptsOutputManager->pushBytes(
+                        state->config.id, map.data, map.size);
+                    gst_buffer_unmap(buffer, &map);
+                }
             }
         }
     } else if (info->type & GST_PAD_PROBE_TYPE_BUFFER_LIST) {
@@ -11537,7 +11586,12 @@ GstPadProbeReturn StreamManager::outputPadProbe(GstPad* pad, GstPadProbeInfo* in
             const guint count = gst_buffer_list_length(list);
             for (guint i = 0; i < count; ++i) {
                 if (GstBuffer* buffer = gst_buffer_list_get(list, i)) {
-                    state->mptsOutputManager->pushBuffer(state->config.id, buffer);
+                    GstMapInfo map{};
+                    if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+                        state->mptsOutputManager->pushBytes(
+                            state->config.id, map.data, map.size);
+                        gst_buffer_unmap(buffer, &map);
+                    }
                 }
             }
         }

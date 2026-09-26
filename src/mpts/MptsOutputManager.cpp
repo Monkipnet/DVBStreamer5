@@ -317,7 +317,7 @@ struct MptsOutputManager::Runtime {
         bool ready = false;
         uint64_t inputPackets = 0;
         std::chrono::steady_clock::time_point lastData{};
-        // GstBuffer boundaries are not guaranteed to match 188-byte TS packet
+        // Producer buffer boundaries are not guaranteed to match 188-byte TS packet
         // boundaries. Keep at most one partial packet between callbacks so a
         // split packet is never discarded by the MPTS tap.
         std::vector<uint8_t> tsRemainder;
@@ -1105,8 +1105,10 @@ void MptsOutputManager::stopAll() {
     for (auto& runtime : runtimes) runtime->stop();
 }
 
-void MptsOutputManager::pushBuffer(const std::string& streamId, GstBuffer* buffer) {
-    if (!buffer || streamId.empty()) return;
+void MptsOutputManager::pushBytes(const std::string& streamId,
+                                 const std::uint8_t* data,
+                                 std::size_t size) {
+    if (!data || size == 0 || streamId.empty()) return;
     std::vector<std::shared_ptr<Runtime>> targets;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -1118,10 +1120,7 @@ void MptsOutputManager::pushBuffer(const std::string& streamId, GstBuffer* buffe
     }
     if (targets.empty()) return;
 
-    GstMapInfo map{};
-    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) return;
-    for (auto& runtime : targets) runtime->enqueue(streamId, map.data, map.size);
-    gst_buffer_unmap(buffer, &map);
+    for (auto& runtime : targets) runtime->enqueue(streamId, data, size);
 }
 
 Json::Value MptsOutputManager::snapshot() const {

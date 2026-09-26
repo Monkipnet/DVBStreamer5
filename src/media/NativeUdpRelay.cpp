@@ -219,6 +219,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     fileInput_.clear();
     fileInputSource_ = false;
     httpInputSource_ = false;
+    externalInputSource_ = false;
     dvbInputSource_ = false;
     {
         std::lock_guard<std::mutex> lock(httpQueueMutex_);
@@ -237,12 +238,14 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     UdpInputEndpoint input;
     const bool networkInput = parseInputEndpoint(config.inputUri, input);
     httpInputSource_ = !networkInput && isHttpInput(config.inputUri);
+    externalInputSource_ = config.externallyFedInput;
     dvbInputSource_ = config.dvbInputSource;
     std::string filePath;
-    fileInputSource_ = !networkInput && !httpInputSource_ &&
+    fileInputSource_ = !networkInput && !httpInputSource_ && !externalInputSource_ &&
         resolveFileInputPath(config.inputUri, filePath);
-    if (!networkInput && !httpInputSource_ && !fileInputSource_ && !dvbInputSource_) {
-        error = "native relay requires a valid UDP/RTP, HTTP(S), DVB, or local file input";
+    if (!networkInput && !httpInputSource_ && !externalInputSource_ &&
+        !fileInputSource_ && !dvbInputSource_) {
+        error = "native relay requires a valid UDP/RTP, HTTP(S), externally-fed, DVB, or local file input";
         return false;
     }
     if (config_.remapEnabled &&
@@ -277,7 +280,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
             error = "native file input could not be opened: " + filePath;
             return false;
         }
-    } else if (!httpInputSource_ && !dvbInputSource_) {
+    } else if (!httpInputSource_ && !externalInputSource_ && !dvbInputSource_) {
         const bool multicastInput = isMulticastIpv4(input.host);
         const bool wildcardInput = input.host.empty() || input.host == "0.0.0.0";
         const std::string inputInterface =
@@ -368,6 +371,7 @@ void NativeUdpRelay::stop() noexcept {
     fileInput_.close();
     fileInputSource_ = false;
     httpInputSource_ = false;
+    externalInputSource_ = false;
     for (auto& outputSocket : outputSockets_) {
         outputSocket->close();
     }
@@ -430,6 +434,16 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         offset += chunkSize;
     }
     return true;
+}
+
+bool NativeUdpRelay::pushInput(const std::uint8_t* data, std::size_t size) {
+    if (!externalInputSource_) return false;
+    return enqueueHttpData(data, size);
+}
+
+void NativeUdpRelay::finishInput(const std::string& error) {
+    if (!externalInputSource_) return;
+    finishHttpInput(error);
 }
 
 void NativeUdpRelay::finishHttpInput(const std::string& error) {
@@ -619,7 +633,7 @@ void NativeUdpRelay::run() {
 
     UdpInputEndpoint inputEndpoint;
     const bool networkInput = parseInputEndpoint(config_.inputUri, inputEndpoint);
-    const bool httpInput = httpInputSource_;
+    const bool httpInput = httpInputSource_ || externalInputSource_;
     const bool dvbInput = dvbInputSource_;
     if (!networkInput && !httpInput && !fileInputSource_ && !dvbInput) {
         std::lock_guard<std::mutex> lock(errorMutex_);
@@ -636,6 +650,7 @@ void NativeUdpRelay::run() {
     tvs::media::mpegts::ContinuityTracker continuity;
     std::vector<tvs::media::mpegts::Packet> packets;
     std::vector<tvs::media::mpegts::Packet> remappedPackets;
+    std::vector<std::uint8_t> observedTransport;
     std::vector<OutputWorker> outputs;
     outputs.reserve(config_.outputs.size());
     auto seed = static_cast<std::uint64_t>(
@@ -900,6 +915,20 @@ void NativeUdpRelay::run() {
                     continuityStatus == tvs::media::mpegts::ContinuityStatus::InvalidPacket) {
                     continuityErrors_.fetch_add(1, std::memory_order_relaxed);
                 }
+            }
+
+            if (config_.observeTransport) {
+                observedTransport.resize(
+                    packets.size() * tvs::media::mpegts::kPacketSize);
+                for (std::size_t index = 0; index < packets.size(); ++index) {
+                    std::memcpy(
+                        observedTransport.data() +
+                            index * tvs::media::mpegts::kPacketSize,
+                        packets[index].data(),
+                        tvs::media::mpegts::kPacketSize);
+                }
+                config_.observeTransport(
+                    observedTransport.data(), observedTransport.size());
             }
 
             for (auto& output : outputs) {

@@ -6,7 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 enable_testing()
-add_subdirectory(../../third_party/twolame "${CMAKE_CURRENT_BINARY_DIR}/twolame")
+if(NOT TARGET dvbstreamer5_twolame)
+    add_subdirectory(../../third_party/twolame "${CMAKE_CURRENT_BINARY_DIR}/twolame")
+endif()
 
 add_executable(mp2_encoder_tests
     ../test_mp2_encoder.cpp

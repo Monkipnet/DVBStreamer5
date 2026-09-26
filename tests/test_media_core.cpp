@@ -625,11 +625,17 @@ void testNativeUdpTsRelay() {
     config.outputHost = "127.0.0.1";
     config.outputPort = outputReceiver.localPort();
     std::atomic<unsigned> caCalls{0};
+    std::atomic<unsigned> observerCalls{0};
     config.processTransport = [&caCalls](std::uint8_t* data, std::size_t size) {
         assert(size == tvs::media::mpegts::kPacketSize);
         data[3] |= 0x80;
         caCalls.fetch_add(1, std::memory_order_relaxed);
         return true;
+    };
+    config.observeTransport = [&observerCalls](const std::uint8_t* data, std::size_t size) {
+        assert(size == tvs::media::mpegts::kPacketSize);
+        assert((data[3] & 0x80U) != 0);
+        observerCalls.fetch_add(1, std::memory_order_relaxed);
     };
     assert(relay.start(config, error));
     assert(relay.isRunning());
@@ -645,6 +651,7 @@ void testNativeUdpTsRelay() {
     assert(size == expected.size());
     assert(std::equal(expected.begin(), expected.end(), received.begin()));
     assert(caCalls.load(std::memory_order_relaxed) == 1);
+    assert(observerCalls.load(std::memory_order_relaxed) == 1);
     const auto counterDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (relay.outputBytes() < expected.size() &&
         std::chrono::steady_clock::now() < counterDeadline) {
@@ -699,6 +706,35 @@ void testNativeRtpTsRelay() {
     }
     assert(relay.inputBytes() == sourceDatagrams.front().size());
     assert(relay.outputBytes() == expected.size());
+    relay.stop();
+}
+
+void testNativeExternallyFedTsRelay() {
+    using namespace tvs::media::network;
+
+    UdpSocket outputReceiver;
+    std::string error;
+    assert(outputReceiver.openReceiver("127.0.0.1", 0, "", "", 0, error));
+
+    NativeUdpRelay relay;
+    NativeUdpRelayConfig config;
+    config.inputUri = "external://hls";
+    config.externallyFedInput = true;
+    config.outputType = "udp-vbr";
+    config.outputHost = "127.0.0.1";
+    config.outputPort = outputReceiver.localPort();
+    assert(relay.start(config, error));
+
+    const Packet expected = packet(0x0317, 10);
+    assert(relay.pushInput(expected.data(), expected.size()));
+
+    std::array<std::uint8_t, 2048> received {};
+    std::size_t size = 0;
+    assert(outputReceiver.receive(received.data(), received.size(), size, 2000, error));
+    assert(size == expected.size());
+    assert(std::equal(expected.begin(), expected.end(), received.begin()));
+
+    relay.finishInput();
     relay.stop();
 }
 
@@ -1219,6 +1255,7 @@ int main() {
     testUdpLoopback();
     testNativeUdpTsRelay();
     testNativeRtpTsRelay();
+    testNativeExternallyFedTsRelay();
     testCbrTsPacer();
     testNativeUdpCbrRelay();
     testNativeUdpFanoutRelay();

@@ -1,8 +1,9 @@
 #pragma once
 
-#include <gst/gst.h>
 #include <jsoncpp/json/json.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,9 +27,12 @@ public:
     bool stop(const std::string& id);
     void stopAll();
 
-    // Called from the normal StreamManager output probe. This method performs
-    // only a bounded buffer copy and never blocks on network I/O or PSI work.
-    void pushBuffer(const std::string& streamId, GstBuffer* buffer);
+    // Called by any transport pipeline after its final SPTS normalization.
+    // This method performs only a bounded buffer copy and never blocks on
+    // network I/O or PSI work.
+    void pushBytes(const std::string& streamId,
+                   const std::uint8_t* data,
+                   std::size_t size);
 
     Json::Value snapshot() const;
 

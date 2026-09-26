@@ -19,6 +19,7 @@
 #include "ConfigManager.h"
 #include "UdpMediaDeliveryHealth.h"
 #include "GstTranscoderProcess.h"
+#include "HlsSegmentScheduler.h"
 #include "media/NativeUdpRelay.h"
 #include "TelegramNotifier.h"
 #include "utils.h"
@@ -300,6 +301,7 @@ struct StreamState {
     std::unique_ptr<RemapContext> sourceContext;
     std::unique_ptr<GstTranscoderProcess> gstTranscoder;
     std::unique_ptr<tvs::media::network::NativeUdpRelay> nativeUdpRelay;
+    std::unique_ptr<tvs::hls_scheduler::Scheduler> nativeHlsScheduler;
     std::string nativeDvbFrontendKey;
     std::vector<std::unique_ptr<ExternalSrtOutputState>> externalSrtOutputs;
     std::vector<std::unique_ptr<RemapContext>> outputContexts;

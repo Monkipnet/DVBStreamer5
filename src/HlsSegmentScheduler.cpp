@@ -368,6 +368,9 @@ public:
         if (terminalQueue_) gst_object_ref(terminalQueue_);
     }
 
+    Impl(StreamConfig config, Scheduler::DataCallback callback)
+        : config_(std::move(config)), dataCallback_(std::move(callback)) {}
+
     ~Impl() {
         stop();
         if (terminalProbePad_ && terminalProbeId_ != 0) {
@@ -380,6 +383,11 @@ public:
     }
 
     bool start(std::string& error) {
+        if (dataCallback_) {
+            stopping_.store(false, std::memory_order_relaxed);
+            worker_ = std::thread([this] { run(); });
+            return true;
+        }
         if (!appsrc_ || !GST_IS_APP_SRC(appsrc_) || !terminalQueue_) {
             error = "HLS scheduler: invalid appsrc/terminal queue";
             return false;
@@ -421,6 +429,41 @@ private:
         return static_cast<Impl*>(userData)->onTerminalBuffer(info);
     }
 
+    void accountConsumedBytes(std::size_t bytes) {
+        uint64_t consumedNs = 0;
+        {
+            std::lock_guard<std::mutex> lock(consumptionMutex_);
+            while (bytes > 0 && !consumptionSpans_.empty()) {
+                auto& span = consumptionSpans_.front();
+                if (span.remainingBytes == 0) {
+                    consumptionSpans_.pop_front();
+                    continue;
+                }
+                const std::size_t take = (std::min)(bytes, span.remainingBytes);
+                uint64_t takeNs = 0;
+                if (take == span.remainingBytes) {
+                    takeNs = span.remainingDurationNs;
+                } else if (span.remainingDurationNs > 0) {
+                    takeNs = static_cast<uint64_t>(
+                        (static_cast<long double>(span.remainingDurationNs) *
+                         static_cast<long double>(take)) /
+                        static_cast<long double>(span.remainingBytes));
+                    if (takeNs == 0) takeNs = 1;
+                    takeNs = (std::min)(takeNs, span.remainingDurationNs);
+                }
+                span.remainingBytes -= take;
+                span.remainingDurationNs -= takeNs;
+                bytes -= take;
+                consumedNs += takeNs;
+                if (span.remainingBytes == 0) consumptionSpans_.pop_front();
+            }
+        }
+        if (consumedNs > 0) {
+            consumedDurationNs_.fetch_add(consumedNs, std::memory_order_relaxed);
+            wake_.notify_one();
+        }
+    }
+
     struct ConsumptionSpan {
         std::size_t remainingBytes = 0;
         uint64_t remainingDurationNs = 0;
@@ -441,43 +484,7 @@ private:
         // bytes that cross the terminal queue against the EXTINF duration ledger.
         // This clock is used ONLY to decide when another HTTP segment may be
         // fetched; it is never written into GstBuffer timestamps.
-        std::size_t bytes = gst_buffer_get_size(buffer);
-        uint64_t consumedNs = 0;
-        {
-            std::lock_guard<std::mutex> lock(consumptionMutex_);
-            while (bytes > 0 && !consumptionSpans_.empty()) {
-                auto& span = consumptionSpans_.front();
-                if (span.remainingBytes == 0) {
-                    consumptionSpans_.pop_front();
-                    continue;
-                }
-
-                const std::size_t take = std::min(bytes, span.remainingBytes);
-                uint64_t takeNs = 0;
-                if (take == span.remainingBytes) {
-                    // Give the final bytes the exact remaining duration so
-                    // integer rounding cannot accumulate across a segment.
-                    takeNs = span.remainingDurationNs;
-                } else if (span.remainingDurationNs > 0) {
-                    takeNs = static_cast<uint64_t>(
-                        (static_cast<__uint128_t>(span.remainingDurationNs) * take) /
-                        span.remainingBytes);
-                    if (takeNs == 0) takeNs = 1;
-                    takeNs = std::min(takeNs, span.remainingDurationNs);
-                }
-
-                span.remainingBytes -= take;
-                span.remainingDurationNs -= takeNs;
-                bytes -= take;
-                consumedNs += takeNs;
-                if (span.remainingBytes == 0) consumptionSpans_.pop_front();
-            }
-        }
-
-        if (consumedNs > 0) {
-            consumedDurationNs_.fetch_add(consumedNs, std::memory_order_relaxed);
-            wake_.notify_one();
-        }
+        accountConsumedBytes(gst_buffer_get_size(buffer));
         return GST_PAD_PROBE_OK;
     }
 
@@ -495,7 +502,8 @@ private:
 
     uint64_t aheadNs() const {
         const uint64_t consumed = effectiveConsumedNs();
-        return pushedDurationNs_ > consumed ? pushedDurationNs_ - consumed : 0;
+        const uint64_t pushed = pushedDurationNs_.load(std::memory_order_relaxed);
+        return pushed > consumed ? pushed - consumed : 0;
     }
 
     uint64_t publishDurationMediaRate(
@@ -543,6 +551,7 @@ private:
                 G_OBJECT(pipeline_), kPipelineMediaBitrateKey,
                 GUINT_TO_POINTER(static_cast<guint>(bitrate)));
         }
+        mediaBitrate_.store(bitrate, std::memory_order_relaxed);
         return bitrate;
     }
 
@@ -896,6 +905,17 @@ private:
         bool first = true;
         while (offset < usable && !stopping_.load(std::memory_order_relaxed)) {
             const std::size_t chunkBytes = std::min<std::size_t>(kPushChunkBytes, usable - offset);
+            if (dataCallback_) {
+                if (!dataCallback_(bytes.data() + start + offset, chunkBytes,
+                                   first && segment.discontinuity)) {
+                    return false;
+                }
+                accountConsumedBytes(chunkBytes);
+                offset += chunkBytes;
+                first = false;
+                continue;
+            }
+
             GstBuffer* buffer = gst_buffer_new_allocate(nullptr, chunkBytes, nullptr);
             if (!buffer) return false;
             gst_buffer_fill(buffer, 0, bytes.data() + start + offset, chunkBytes);
@@ -922,7 +942,7 @@ private:
             first = false;
         }
         if (stopping_.load(std::memory_order_relaxed)) return false;
-        pushedDurationNs_ += segmentDurationNs;
+        pushedDurationNs_.fetch_add(segmentDurationNs, std::memory_order_relaxed);
         publishDurationMediaRate(
             static_cast<uint64_t>(usable), segmentDurationNs, segment.discontinuity);
         // 203.22: publish a conservative wall-clock reservoir deadline.
@@ -967,7 +987,7 @@ private:
                   << " segment=" << segment.sequence
                   << " duration_ms=" << static_cast<uint64_t>(segment.durationSeconds * 1000.0)
                   << " bytes=" << bytes.size()
-                  << " media_rate_bps=" << durationBasedMediaBitrate(pipeline_)
+                  << " media_rate_bps=" << mediaBitrate_.load(std::memory_order_relaxed)
                   << " ahead_ms=" << ahead / 1000000ULL
                   << " downloaded=" << segmentsDownloaded_
                   << " consumed_effective_ms=" << effectiveConsumedNs() / 1000000ULL
@@ -1151,7 +1171,8 @@ private:
     std::atomic<bool> controlUnavailable_{false};
     unsigned consecutiveUnavailableResponses_ = 0;
     std::atomic<uint64_t> consumedDurationNs_{0};
-    uint64_t pushedDurationNs_ = 0;
+    std::atomic<uint64_t> pushedDurationNs_{0};
+    std::atomic<uint64_t> mediaBitrate_{0};
     std::mutex consumptionMutex_;
     std::deque<ConsumptionSpan> consumptionSpans_;
     std::deque<MediaRateSpan> mediaRateWindow_;
@@ -1168,13 +1189,32 @@ private:
     std::string activePlaylistUrl_;
     std::string cachedKeyUri_;
     std::vector<uint8_t> cachedKey_;
+    Scheduler::DataCallback dataCallback_;
+
+public:
+    int sourceUnavailableStatus() const {
+        return sourceUnavailableStatus_.load(std::memory_order_relaxed);
+    }
+    uint64_t bufferedAheadMilliseconds() const {
+        return aheadNs() / 1000000ULL;
+    }
+    uint64_t mediaBitrate() const {
+        return mediaBitrate_.load(std::memory_order_relaxed);
+    }
 };
 
 Scheduler::Scheduler(GstElement* pipeline, GstElement* appsrc, GstElement* terminalQueue, StreamConfig config)
     : impl_(std::make_unique<Impl>(pipeline, appsrc, terminalQueue, std::move(config))) {}
+Scheduler::Scheduler(StreamConfig config, DataCallback callback)
+    : impl_(std::make_unique<Impl>(std::move(config), std::move(callback))) {}
 Scheduler::~Scheduler() = default;
 bool Scheduler::start(std::string& error) { return impl_->start(error); }
 void Scheduler::stop(bool sendEos) { impl_->stop(sendEos); }
+int Scheduler::sourceUnavailableHttpStatus() const { return impl_->sourceUnavailableStatus(); }
+uint64_t Scheduler::guaranteedBufferedAheadMilliseconds() const {
+    return impl_->bufferedAheadMilliseconds();
+}
+uint64_t Scheduler::durationBasedMediaBitrate() const { return impl_->mediaBitrate(); }
 
 int sourceUnavailableHttpStatus(GstElement* pipeline) {
     if (!pipeline) return 0;
