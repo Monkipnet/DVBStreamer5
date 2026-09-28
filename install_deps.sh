@@ -32,6 +32,7 @@ echo "Installing DVBStreamer5 dependencies..."
 "${APT_GET[@]}" install -y --no-install-recommends \
     build-essential \
     cmake \
+    nodejs \
     pkg-config \
     libpcsclite-dev \
     pcscd \

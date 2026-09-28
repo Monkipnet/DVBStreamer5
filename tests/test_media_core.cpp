@@ -1,5 +1,6 @@
 #include "media/RtpMpegTs.h"
 #include "media/NativeUdpRelay.h"
+#include "media/NativePreviewHub.h"
 #include "media/CbrTsPacer.h"
 #include "media/LinuxDvbInput.h"
 #include "media/MpegTsRemapper.h"
@@ -1242,6 +1243,33 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
     assert(request.find("X-Stream-Key: must-not-leak") != std::string::npos);
 }
 
+void testNativePreviewHubFanout() {
+#if !defined(_WIN32)
+    using tvs::media::network::NativePreviewHub;
+    NativePreviewHub hub;
+    std::string error;
+    const int first = hub.subscribe(error);
+    const int second = hub.subscribe(error);
+    assert(first >= 0 && second >= 0);
+
+    const Packet source = packet(0x0123, 4);
+    hub.publish(source.data(), source.size());
+    std::array<std::uint8_t, 2048> received {};
+    assert(::read(first, received.data(), received.size()) ==
+        static_cast<ssize_t>(source.size()));
+    assert(std::equal(source.begin(), source.end(), received.begin()));
+    assert(::read(second, received.data(), received.size()) ==
+        static_cast<ssize_t>(source.size()));
+    assert(std::equal(source.begin(), source.end(), received.begin()));
+
+    hub.unsubscribe(first);
+    ::close(first);
+    hub.close();
+    assert(::read(second, received.data(), received.size()) == 0);
+    ::close(second);
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -1265,5 +1293,6 @@ int main() {
     testNativeHttpVbrAndRtpFanout();
     testNativeHttpFailureIsReported();
     testNativeHttpDoesNotRedirectAccessKeys();
+    testNativePreviewHubFanout();
     std::cout << "PASS: native MPEG-TS/RTP and CBR output relay over UDP\n";
 }

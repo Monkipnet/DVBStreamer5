@@ -17,5 +17,5 @@ assert(branch.includes('gst_element_link_many(sourceTail, queue, sink, nullptr)'
 assert(branch.indexOf('if (privateDvbPreview)') < branch.indexOf('const bool strictTsNetworkOutput'));
 assert(cpp.includes('HTTP PREVIEW DELIVERY 203.73: stream='));
 assert(cpp.includes('event=no-upstream-media-after-10s bytes=0'));
-assert(version.includes('"203.73"'));
+assert(version.includes('"1.0.0"'));
 console.log('PASS: 203.73 selected DVB private preview direct TS; per-session delivery telemetry');

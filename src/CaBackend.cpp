@@ -1,4 +1,5 @@
 #include "CaBackend.h"
+#include "ca/backends/newcamd/NewcamdBuiltin.h"
 
 #include <algorithm>
 #include <chrono>
@@ -66,12 +67,24 @@ CaBackendManager::CaBackendManager() {
     passthrough.builtin = true;
     passthrough.usable = true;
     backends_.emplace(passthrough.id, std::move(passthrough));
+
+    if (!registerBuiltinBackendLocked(
+            dvbstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
+        std::cerr << "Built-in Newcamd CA backend registration failed" << std::endl;
+    }
 }
 
 CaBackendManager::~CaBackendManager() {
     stopAll();
     std::lock_guard<std::mutex> lock(mutex_);
     unloadPluginsLocked();
+    for (auto& [id, backend] : backends_) {
+        (void)id;
+        if (backend.instance && backend.api && backend.api->destroy) {
+            backend.api->destroy(backend.instance);
+            backend.instance = nullptr;
+        }
+    }
 }
 
 void CaBackendManager::hostLog(int level, const char* backendId, const char* message) {
@@ -191,6 +204,43 @@ void CaBackendManager::loadPluginsLocked() {
         }
         if (loadPluginFileLocked(path) && !filename.empty()) loadedPluginFilenames.insert(filename);
     }
+}
+
+bool CaBackendManager::registerBuiltinBackendLocked(
+    const tvs_ca_backend_api_v1* api, const std::string& path) {
+    std::string error;
+    if (!validPluginApi(api, error)) {
+        std::cerr << "Built-in CA backend rejected: " << path
+                  << ": " << error << std::endl;
+        return false;
+    }
+    const std::string id = safeString(api->backend_id);
+    if (backends_.count(id)) {
+        std::cerr << "Built-in CA backend duplicate id ignored: " << id << std::endl;
+        return false;
+    }
+    void* instance = api->create(&hostApi_);
+    if (!instance) {
+        std::cerr << "Built-in CA backend create failed: " << id << std::endl;
+        return false;
+    }
+
+    LoadedBackend backend;
+    backend.id = id;
+    backend.displayName = safeString(api->display_name);
+    if (backend.displayName.empty()) backend.displayName = id;
+    backend.vendor = safeString(api->vendor);
+    backend.path = path;
+    backend.capabilities = api->capabilities;
+    backend.builtin = true;
+    backend.usable = true;
+    backend.api = api;
+    backend.instance = instance;
+    backends_.emplace(id, std::move(backend));
+    std::cerr << "Built-in CA backend registered: id=" << id
+              << " capabilities=0x" << std::hex << api->capabilities
+              << std::dec << std::endl;
+    return true;
 }
 
 bool CaBackendManager::loadPluginFileLocked(const std::string& path) {

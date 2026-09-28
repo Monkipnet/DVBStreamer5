@@ -1,8 +1,10 @@
 build/
+build-wsl*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+!third_party/oscam-mini/webif/Makefile
 dvbstreamer5-config.json
 dvbstreamer5-subscribers.json
 dvbstreamer5-ui.key

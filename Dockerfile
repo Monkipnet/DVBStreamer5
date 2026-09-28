@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     pkg-config \
+    libpcsclite-dev \
     libboost-system-dev \
     libboost-thread-dev \
     libcurl4-openssl-dev \
@@ -38,6 +39,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4t64 \
     libssl3t64 \
     libcrypt1 \
+    libpcsclite1 \
+    pcscd \
+    libccid \
     libdvbcsa1 \
     libjsoncpp25 \
     libgstreamer1.0-0 \

@@ -1,5 +1,6 @@
 #include "../../CaBackendPluginApi.h"
 #include "NewcamdClient.h"
+#include "NewcamdBuiltin.h"
 extern "C" {
 #include <dvbcsa/dvbcsa.h>
 }

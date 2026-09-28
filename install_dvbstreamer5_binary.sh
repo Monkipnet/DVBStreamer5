@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DVBStreamer5 203.68 — safe binary + web installer / updater for Ubuntu/Debian.
+# DVBStreamer5 1.0.0 — safe binary + web installer / updater for Ubuntu/Debian.
 set -Eeuo pipefail
 umask 022
 

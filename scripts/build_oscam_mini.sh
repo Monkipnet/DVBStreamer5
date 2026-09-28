@@ -11,6 +11,12 @@ for cmd in cmake gcc make pkg-config; do
   command -v "$cmd" >/dev/null || { echo "Missing build dependency: $cmd" >&2; exit 1; }
 done
 
+if ! pkg-config --exists openssl; then
+  echo "OSCam-mini requires OpenSSL development files (libssl-dev)." >&2
+  echo "Install: sudo apt-get install libssl-dev" >&2
+  exit 6
+fi
+
 if [[ ! -f "$SRC/config.sh" || ! -f "$SRC/CMakeLists.txt" ]]; then
   echo "ERROR: OSCam source is incomplete in: $SRC" >&2
   echo "Expected at least config.sh and CMakeLists.txt." >&2
@@ -30,9 +36,19 @@ rm -rf "$WORK" "$BUILD"
 mkdir -p "$OUT"
 cp -a "$SRC" "$WORK"
 mkdir -p "$WORK/Distribution" "$WORK/webif"
-# The vendored source may be extracted on Windows with CRLF shell scripts.
-sed -i 's/\r$//' "$WORK/config.sh"
-chmod +x "$WORK/config.sh"
+# The vendored source may be checked out or extracted on Windows with CRLF
+# shell scripts. Normalize every script executed by the OSCam CMake/WebIf
+# build; a CRLF shebang otherwise fails in WSL with a misleading "not found".
+for script in \
+  "$WORK/config.sh" \
+  "$WORK/webif/pages_mkdep" \
+  "$WORK/webif/pages_index_check"; do
+  sed -i 's/\r$//' "$script"
+  chmod +x "$script"
+done
+# pages_gen parses file names and preprocessor conditions directly from this
+# index, so a trailing CR corrupts every entry and leaves pages.c incomplete.
+sed -i 's/\r$//' "$WORK/webif/pages_index.txt"
 
 cd "$WORK"
 ./config.sh --disable all

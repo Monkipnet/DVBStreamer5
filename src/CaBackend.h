@@ -99,6 +99,8 @@ private:
 
     void unloadPluginsLocked();
     void loadPluginsLocked();
+    bool registerBuiltinBackendLocked(const tvs_ca_backend_api_v1* api,
+                                      const std::string& path);
     bool loadPluginFileLocked(const std::string& path);
     LoadedBackend* findBackendLocked(const std::string& id);
     const LoadedBackend* findBackendLocked(const std::string& id) const;

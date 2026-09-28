@@ -6802,14 +6802,19 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                         caStreamId, data, size);
                 };
         }
-        if (hasMptsOutput && state->mptsOutputManager) {
-            MptsOutputManager* const manager = state->mptsOutputManager;
-            const std::string streamId = effectiveConfig.id;
-            relayConfig.observeTransport =
-                [manager, streamId](const std::uint8_t* data, std::size_t size) {
-                    manager->pushBytes(streamId, data, size);
-                };
-        }
+        auto nativePreviewHub =
+            std::make_shared<tvs::media::network::NativePreviewHub>();
+        MptsOutputManager* const nativeMptsManager =
+            hasMptsOutput ? state->mptsOutputManager : nullptr;
+        const std::string nativeStreamId = effectiveConfig.id;
+        relayConfig.observeTransport =
+            [nativePreviewHub, nativeMptsManager, nativeStreamId](
+                const std::uint8_t* data, std::size_t size) {
+                if (nativeMptsManager) {
+                    nativeMptsManager->pushBytes(nativeStreamId, data, size);
+                }
+                nativePreviewHub->publish(data, size);
+            };
         relayConfig.inputInterfaceAddress = inputInterface;
         relayConfig.inputInterfaceDeviceName = inputInterfaceDeviceName;
         relayConfig.inputInterfaceAddressConfigured = true;
@@ -6881,6 +6886,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
 
         state->nativeUdpRelay = std::move(relay);
+        state->nativePreviewHub = std::move(nativePreviewHub);
         state->nativeHlsScheduler = std::move(nativeHlsScheduler);
         state->running = true;
         state->active = true;
@@ -6907,6 +6913,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     nativeState->statusMessage =
                         std::string("native UDP monitor thread failed: ") + exception.what();
                     const std::string threadError = nativeState->statusMessage;
+                    if (nativeState->nativePreviewHub) nativeState->nativePreviewHub->close();
                     if (nativeState->nativeHlsScheduler) nativeState->nativeHlsScheduler->stop(false);
                     nativeState->nativeUdpRelay->stop();
                     if (nativeDvbFrontendReserved) {
@@ -6919,6 +6926,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         }
         if (duplicateStart) {
+            if (state && state->nativePreviewHub) state->nativePreviewHub->close();
             if (state && state->nativeHlsScheduler) state->nativeHlsScheduler->stop(false);
             if (state && state->nativeUdpRelay) state->nativeUdpRelay->stop();
             if (nativeDvbFrontendReserved) {
@@ -7368,6 +7376,7 @@ bool StreamManager::teardownStreamState(
     stopHttpMpegTsInput(&state);
     stopExternalSrtOutputs(&state);
     if (state.nativeUdpRelay) {
+        if (state.nativePreviewHub) state.nativePreviewHub->close();
         if (state.nativeHlsScheduler) {
             state.nativeHlsScheduler->stop(false);
             state.nativeHlsScheduler.reset();
@@ -7973,6 +7982,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                                   const std::string& previewSession) {
     uint16_t relayPort = 0;
     std::shared_ptr<std::atomic<uint32_t>> privateDemand;
+    std::shared_ptr<tvs::media::network::NativePreviewHub> nativePreviewHub;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         auto found = streams.find(id);
@@ -7996,10 +8006,11 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         // Both passthrough and transcoded HTTP now terminate in the same private
         // tcpserversink port.  HttpServer owns the public HTTP socket and relays
         // raw MPEG-TS bytes from this local-only endpoint.
+        nativePreviewHub = found->second->nativePreviewHub;
         relayPort = tvs::protocols::transcodedHttpInternalPort(found->second->config);
         // The in-process preview tee probe is demand-controlled. The separate
         // gst-launch transcoder is not in this process and has no such probe.
-        if (!hasTranscodedHttpOutput(found->second->config) &&
+        if (!nativePreviewHub && !hasTranscodedHttpOutput(found->second->config) &&
             !found->second->gstTranscoder) {
             privateDemand = found->second->privatePreviewDemand;
             privateDemand->fetch_add(1, std::memory_order_relaxed);
@@ -8007,7 +8018,9 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
     }
 
     std::string relayError;
-    int upstreamFd = connectLocalTcpWithRetry(relayPort, relayError);
+    int upstreamFd = nativePreviewHub
+        ? nativePreviewHub->subscribe(relayError)
+        : connectLocalTcpWithRetry(relayPort, relayError);
     if (upstreamFd < 0) {
         if (privateDemand) privateDemand->fetch_sub(1, std::memory_order_relaxed);
         std::cerr << "HTTP relay failed for stream " << id
@@ -8025,6 +8038,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
              cancelled->second > std::chrono::steady_clock::now()) ||
             found == streams.end() || !found->second->active.load() ||
             !found->second->running.load()) {
+            if (nativePreviewHub) nativePreviewHub->unsubscribe(upstreamFd);
             ::close(upstreamFd);
             ::close(fd);
             if (privateDemand) privateDemand->fetch_sub(1, std::memory_order_relaxed);
@@ -8035,7 +8049,8 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
     }
 
     try {
-        std::thread([this, id, fd, upstreamFd, privateDemand, previewSession]() {
+        std::thread([this, id, fd, upstreamFd, privateDemand, nativePreviewHub,
+                     previewSession]() {
             std::array<char, 65536> buffer {};
             // For preview, watch the browser socket even if the upstream stops
             // producing data. A blocked read previously delayed teardown by ~1 min.
@@ -8109,6 +8124,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             {
                 std::lock_guard<std::mutex> relayLock(managerMutex);
                 httpClients.erase(fd);
+                if (nativePreviewHub) nativePreviewHub->unsubscribe(upstreamFd);
                 ::close(upstreamFd);
                 ::close(fd);
             }
@@ -8120,6 +8136,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                   << id << " error=" << ex.what() << std::endl;
         std::lock_guard<std::mutex> lock(managerMutex);
         httpClients.erase(fd);
+        if (nativePreviewHub) nativePreviewHub->unsubscribe(upstreamFd);
         ::close(upstreamFd);
         ::close(fd);
         return false;

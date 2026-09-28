@@ -43,6 +43,7 @@ add_library(dvbstreamer5_media_core
     src/media/RtpMpegTs.cpp
     src/media/UdpSocket.cpp
     src/media/LinuxDvbInput.cpp
+    src/media/NativePreviewHub.cpp
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core
@@ -82,6 +83,8 @@ add_executable(DVBStreamer5
     src/DvbSatellite.cpp
     src/CardManager.cpp
     src/CaBackend.cpp
+    src/ca/backends/newcamd/NewcamdPlugin.cpp
+    src/ca/backends/newcamd/NewcamdClient.cpp
     src/TelegramNotifier.cpp
     src/UdpInput.cpp
     src/StableUdpOutput.cpp
@@ -140,10 +143,12 @@ target_link_libraries(DVBStreamer5
     ${GSTREAMER_LIBRARIES}
     ${LIBCURL_LIBRARIES}
     ${JSONCPP_LIBRARIES}
+    ${DVBCSA_LIBRARIES}
     ${Boost_LIBRARIES}
     OpenSSL::Crypto
     pthread
     dl
+    $<$<BOOL:${CRYPT_LIBRARY}>:${CRYPT_LIBRARY}>
     glib-2.0
     gio-2.0
 )
@@ -180,25 +185,6 @@ if(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
     )
 endif()
 
-add_library(dvbstreamer5_ca_newcamd SHARED
-    src/ca/backends/newcamd/NewcamdPlugin.cpp
-    src/ca/backends/newcamd/NewcamdClient.cpp
-)
-target_include_directories(dvbstreamer5_ca_newcamd PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-)
-target_link_libraries(dvbstreamer5_ca_newcamd PRIVATE
-    ${Boost_LIBRARIES}
-    ${JSONCPP_LIBRARIES}
-    ${DVBCSA_LIBRARIES}
-    OpenSSL::Crypto
-    $<$<BOOL:${CRYPT_LIBRARY}>:${CRYPT_LIBRARY}>
-)
-set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
-    PREFIX ""
-    OUTPUT_NAME "dvbstreamer5-ca-newcamd"
-)
 install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)
-install(TARGETS dvbstreamer5_ca_newcamd LIBRARY DESTINATION /opt/dvbstreamer5/ca-plugins)
 
 include(${CMAKE_SOURCE_DIR}/cmake/OscamMini.cmake)
