@@ -220,11 +220,12 @@ http://SERVER_IP:9000/oscam-mini
 
 ## Системные требования
 
+- Linux `x86_64` (`amd64`); ARM/AArch64 не поддерживается;
 - Ubuntu 24.04 или совместимая Debian/Ubuntu система;
 - CMake 3.10 или новее;
 - компилятор с поддержкой C++17;
 - GStreamer 1.0 и наборы Base/Good/Bad/Ugly/Libav;
-- Boost Thread/System, JsonCpp, libcurl, OpenSSL и libdvbcsa;
+- Boost headers, JsonCpp, libcurl, OpenSSL и libdvbcsa;
 - Linux DVB и Phoenix/SmartMouse устройства - только для соответствующих функций.
 
 ## Сборка
@@ -236,7 +237,7 @@ chmod +x install_deps.sh
 sudo ./install_deps.sh
 ```
 
-Соберите приложение, Newcamd CA-плагин и OSCam-mini:
+Соберите приложение со встроенным Newcamd backend и OSCam-mini:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -247,9 +248,11 @@ cmake --build build --parallel
 
 ```text
 build/TVStreamer5
-build/tvstreamer5-ca-newcamd.so
 build/oscam-mini/oscam-mini
 ```
+
+Проверить архитектуру ELF и оставшиеся динамические зависимости можно командой
+`scripts/audit_runtime_deps.sh build/TVStreamer5`.
 
 ## Запуск
 

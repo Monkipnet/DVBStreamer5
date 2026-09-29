@@ -27,14 +27,14 @@ playlist. Исправление CryptoWorks из upstream не копирова
 
 ## Что означает «один бинарник для любого Linux»
 
-Абсолютно универсального ELF-бинарника нет. Отдельные сборки нужны как минимум
-для `x86_64` и `aarch64`. Требуются достаточно новое ядро, DVB/GPU/USB drivers и
+Целевая платформа проекта — только Linux `x86_64` (`amd64`). Требуются достаточно
+новое ядро, DVB/GPU/USB drivers и
 совместимый userspace ABI. NVIDIA NVENC, Intel VA/QSV и PC/SC неизбежно зависят
 от драйверов целевой машины.
 
 Практическая цель проекта:
 
-1. Один самодостаточный пакет на архитектуру.
+1. Один самодостаточный пакет для Linux `x86_64`.
 2. Нативный passthrough/remap работает без GStreamer plugins.
 3. Транскодирование подключается как опциональный bundled runtime.
 4. На целевой машине остаются только kernel drivers, `/dev/dvb`, GPU driver и,
@@ -72,7 +72,7 @@ GStreamer — framework с registry, динамическими plugins, codec m
   wrapper с собственными `LD_LIBRARY_PATH`, `GST_PLUGIN_PATH` и
   `GST_PLUGIN_SCANNER`.
 - `oscam-mini`: отдельный optional companion process.
-- отдельные пакеты `linux-x86_64-glibc` и `linux-aarch64-glibc`.
+- один пакет `linux-x86_64-glibc`; ARM/AArch64 не поддерживается.
 - сборка на старом поддерживаемом glibc baseline; это надёжнее, чем собирать на
   новом дистрибутиве и ожидать обратной совместимости.
 
@@ -88,7 +88,7 @@ bundle, а не один статический ELF.
    optional на уровне CMake.
 4. Разделить `TVStreamer5-core` и `TVStreamer5-transcode` profiles.
 5. Собирать и тестировать bundle в контейнерах с минимальным glibc baseline на
-   обеих архитектурах.
+   целевой архитектуре `x86_64`.
 6. Проверять каждый release через `scripts/audit_runtime_deps.sh`, smoke tests и
    запуск в чистых Debian/Ubuntu/Fedora/RHEL-compatible containers.
 

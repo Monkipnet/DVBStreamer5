@@ -31,7 +31,7 @@ Options:
   --dry-run          Print actions without changing the system
   -h, --help         Show this help
 
-Supported targets: glibc-based x86_64/aarch64 Linux. Debian/Ubuntu, Fedora/RHEL/
+Supported target: glibc-based x86_64 Linux. Debian/Ubuntu, Fedora/RHEL/
 Rocky/Alma, openSUSE/SLES and Arch package managers are detected for host-only
 PC/SC/CCID dependencies. Bundled application/GStreamer libraries are used for
 all application runtime dependencies. Alpine/musl is intentionally rejected.
@@ -67,6 +67,12 @@ run() {
 [[ -r /etc/os-release ]] && . /etc/os-release || true
 ARCH_EXPECTED="$(cat "$PAYLOAD_DIR/ARCH")"
 ARCH_ACTUAL="$(uname -m)"
+[[ "$ARCH_EXPECTED" == "x86_64" ]] || {
+  echo "Unsupported package architecture: $ARCH_EXPECTED (TVStreamer5 targets x86_64 only)" >&2; exit 1;
+}
+[[ "$ARCH_ACTUAL" == "x86_64" ]] || {
+  echo "Unsupported host architecture: $ARCH_ACTUAL (TVStreamer5 targets x86_64 only)" >&2; exit 1;
+}
 [[ "$ARCH_EXPECTED" == "$ARCH_ACTUAL" ]] || {
   echo "Architecture mismatch: package=$ARCH_EXPECTED host=$ARCH_ACTUAL" >&2; exit 1;
 }

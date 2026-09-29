@@ -81,6 +81,8 @@ ask_yes() {
 }
 
 [[ "$MODE" == '' || "$MODE" == install || "$MODE" == update ]] || fail 'Use --mode install or --mode update.'
+[[ "$(uname -s)" == Linux ]] || fail 'TVStreamer5 installation is supported only on Linux.'
+[[ "$(uname -m)" == x86_64 ]] || fail "Unsupported architecture: $(uname -m); TVStreamer5 targets x86_64 only."
 [[ -d "$SOURCE_DIR" ]] || fail "Source directory does not exist: $SOURCE_DIR"
 SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd -P)"
 
