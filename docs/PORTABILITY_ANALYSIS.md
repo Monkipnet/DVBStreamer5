@@ -48,9 +48,9 @@ playlist. Исправление CryptoWorks из upstream не копирова
 | Boost headers | Asio/Beast, string helpers, circular buffer | header-only; binary Boost dependency удалена | оставить header-only, затем постепенно заменить небольшие helpers STL-кодом |
 | libcrypt | только MD5-crypt для Newcamd login | удалена; алгоритм реализован через уже используемый OpenSSL EVP | готово |
 | OpenSSL libcrypto | AES-256-GCM config, DES/Newcamd, HLS key crypto | динамическая | статически линковать либо класть совместимую `libcrypto` в bundle; не копировать отдельные crypto-функции вручную |
-| JsonCpp | config/API/state JSON | динамическая | собрать JsonCpp как vendored static target с сохранением MIT notice |
+| JsonCpp 1.9.8 | config/API/state JSON | встроенный amalgamated static target | готово; системная `libjsoncpp` не нужна, лицензия сохранена в `third_party/jsoncpp/LICENSE` |
 | libcurl | HTTP/HLS input и Telegram HTTPS | динамическая | сначала static libcurl; затем можно заменить plain HTTP на Beast, но TLS всё равно требует backend |
-| libdvbcsa | MPEG-TS CSA descrambling | динамическая | vendor/static build при совместимой GPL-лицензии |
+| libdvbcsa 1.1.0 | MPEG-TS CSA descrambling | встроенный SSE2 static target для x86_64 | готово; GPL-2.0-or-later совместима с GPL-проектом, исходник и лицензия сохранены |
 | GStreamer/GLib/GIO | transcoding и оставшиеся protocol paths | динамическая + runtime plugins | оставить optional; bundle core/plugins или постепенно заменить passthrough paths нативным кодом |
 | TwoLAME | MP2 audio encoding | vendored static target | готово; соблюдать LGPL-2.1 |
 | OSCam-mini | smart-card server | vendored отдельный процесс | оставить отдельным companion binary; прямое включение в основной процесс создаёт ABI, isolation и GPL boundary риски |
@@ -82,8 +82,8 @@ bundle, а не один статический ELF.
 
 ## Порядок дальнейшего удаления runtime-зависимостей
 
-1. Vendor/static JsonCpp и libdvbcsa.
-2. Static libcurl + OpenSSL с CA bundle внутри пакета.
+1. Заменить libcurl собственным HTTP(S)-клиентом на Boost.Asio/Beast + OpenSSL (JsonCpp и libdvbcsa уже встроены).
+2. Отделить типы транспортных буферов от `GstBuffer` и сделать GStreamer опциональным.
 3. Завершить нативные HTTP/HLS/SRT paths для passthrough и сделать GStreamer
    optional на уровне CMake.
 4. Разделить `TVStreamer5-core` и `TVStreamer5-transcode` profiles.

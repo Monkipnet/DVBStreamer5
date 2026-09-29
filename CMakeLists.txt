@@ -17,22 +17,16 @@ find_package(Threads REQUIRED)
 
 pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
 pkg_check_modules(LIBCURL REQUIRED libcurl)
-pkg_check_modules(JSONCPP REQUIRED jsoncpp)
-pkg_check_modules(DVBCSA QUIET libdvbcsa)
-if(NOT DVBCSA_FOUND)
-    pkg_check_modules(DVBCSA QUIET dvbcsa)
-endif()
-if(NOT DVBCSA_FOUND)
-    find_path(DVBCSA_INCLUDE_DIRS dvbcsa/dvbcsa.h)
-    find_library(DVBCSA_LIBRARIES dvbcsa)
-    if(NOT DVBCSA_INCLUDE_DIRS OR NOT DVBCSA_LIBRARIES)
-        message(FATAL_ERROR "libdvbcsa development files were not found")
-    endif()
-endif()
 
-find_package(Boost REQUIRED)
+add_library(tvstreamer5_jsoncpp STATIC
+    third_party/jsoncpp/jsoncpp.cpp
+)
+target_include_directories(tvstreamer5_jsoncpp PUBLIC
+    ${CMAKE_SOURCE_DIR}/third_party
+)
 
 add_subdirectory(third_party/twolame)
+add_subdirectory(third_party/libdvbcsa)
 
 add_library(tvstreamer5_media_core
     src/media/CbrTsPacer.cpp
@@ -62,17 +56,11 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src
     ${GSTREAMER_INCLUDE_DIRS}
     ${LIBCURL_INCLUDE_DIRS}
-    ${JSONCPP_INCLUDE_DIRS}
-    ${Boost_INCLUDE_DIRS}
-    ${DVBCSA_INCLUDE_DIRS}
 )
 
 link_directories(
     ${GSTREAMER_LIBRARY_DIRS}
     ${LIBCURL_LIBRARY_DIRS}
-    ${JSONCPP_LIBRARY_DIRS}
-    ${Boost_LIBRARY_DIRS}
-    ${DVBCSA_LIBRARY_DIRS}
 )
 
 add_executable(TVStreamer5
@@ -139,10 +127,10 @@ add_executable(TVStreamer5
 
 target_link_libraries(TVStreamer5
     tvstreamer5_media_core
+    tvstreamer5_jsoncpp
     ${GSTREAMER_LIBRARIES}
     ${LIBCURL_LIBRARIES}
-    ${JSONCPP_LIBRARIES}
-    ${DVBCSA_LIBRARIES}
+    tvstreamer5_dvbcsa
     OpenSSL::Crypto
     pthread
     dl
@@ -170,6 +158,11 @@ endif()
 option(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
 if(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS)
     add_subdirectory(tests/mp2_encoder)
+endif()
+
+option(TVSTREAMER5_BUILD_VENDOR_TESTS "Build tests for vendored third-party libraries" OFF)
+if(TVSTREAMER5_BUILD_VENDOR_TESTS)
+    add_subdirectory(tests/vendor)
 endif()
 
 if(DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)

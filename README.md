@@ -225,7 +225,7 @@ http://SERVER_IP:9000/oscam-mini
 - CMake 3.10 или новее;
 - компилятор с поддержкой C++17;
 - GStreamer 1.0 и наборы Base/Good/Bad/Ugly/Libav;
-- Boost headers, JsonCpp, libcurl, OpenSSL и libdvbcsa;
+- Boost headers, libcurl и OpenSSL; JsonCpp, libdvbcsa и TwoLAME встроены в исходное дерево;
 - Linux DVB и Phoenix/SmartMouse устройства - только для соответствующих функций.
 
 ## Сборка

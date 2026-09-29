@@ -221,8 +221,7 @@ fi
 (( EUID == 0 )) || fail 'Run this command with sudo (or as root).'
 command -v systemctl >/dev/null 2>&1 || fail 'systemctl is not available.'
 
-DEPS=(ca-certificates libcurl4-openssl-dev libjsoncpp-dev libssl-dev
-      libdvbcsa-dev libboost-dev gstreamer1.0-tools
+DEPS=(ca-certificates libcurl4-openssl-dev libssl-dev libboost-dev gstreamer1.0-tools
       gstreamer1.0-plugins-base gstreamer1.0-plugins-good
       gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
       gstreamer1.0-libav gstreamer1.0-rtsp gstreamer1.0-vaapi

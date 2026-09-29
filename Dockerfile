@@ -11,11 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libboost-dev \
     libcurl4-openssl-dev \
     libssl-dev \
-    libdvbcsa-dev \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     libgstreamer-plugins-bad1.0-dev \
-    libjsoncpp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -37,8 +35,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcsclite1 \
     pcscd \
     libccid \
-    libdvbcsa1 \
-    libjsoncpp25 \
     libgstreamer1.0-0 \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
