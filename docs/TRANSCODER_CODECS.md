@@ -30,7 +30,7 @@ libraries; their wrapper sources do not contain the codec algorithms.
   `third_party/twolame/`; `COPYING`, `AUTHORS`, `README.md`, `NEWS.md`, per-file
   notices, and `UPSTREAM_REVISION` are preserved. CMake builds only the
   upstream `libtwolame` source list as the static target
-  `dvbstreamer5_twolame`.
+  `tvstreamer5_twolame`.
 - The wrapper source is LGPL-2.0-or-later. TwoLAME's upstream `COPYING` is
   LGPL-2.1. The static library is linked in-tree; no runtime TwoLAME library
   is required. Distributions must also honor LGPL-2.1 static-linking terms,
@@ -39,7 +39,7 @@ libraries; their wrapper sources do not contain the codec algorithms.
   corresponding library source.
 - TwoLAME upstream: <https://github.com/njh/twolame>
 
-The DVBStreamer5-owned `tvs::media::Mp2Encoder` adapter in
+The TVStreamer5-owned `tvs::media::Mp2Encoder` adapter in
 `src/media/Mp2Encoder.h` accepts interleaved signed 16-bit PCM and appends
 encoded bytes to a caller-owned vector. Its currently supported input profile
 is mono or stereo at 32, 44.1, or 48 kHz, with fixed MPEG-1 Layer II bitrates
@@ -56,7 +56,7 @@ and drains with `twolame_encode_flush`.
 Layer II frame headers and sizes, checks chunk-boundary invariance, and rejects
 an unsupported channel layout. It does not use GStreamer or libcurl.
 It is available as an independent CMake project under `tests/mp2_encoder/` or
-through the `DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS` root option. The standalone
+through the `TVSTREAMER5_BUILD_MP2_ENCODER_TESTS` root option. The standalone
 test intentionally does not create runtime GStreamer elements; MPEG-TS mux
 integration remains part of the application path, not a test dependency.
 

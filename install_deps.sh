@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DVBStreamer5 host build/runtime dependencies for Ubuntu/Debian.
+# TVStreamer5 host build/runtime dependencies for Ubuntu/Debian.
 # This script intentionally installs only libraries used by the current CMake
 # target plus GStreamer runtime plugins used by the protocol/transcoder modules.
 
@@ -20,13 +20,10 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 APT_GET=("${SUDO[@]}" apt-get)
-BOOST_SYSTEM_DEV_PACKAGE="libboost-dev"
-if apt-cache show libboost-system-dev >/dev/null 2>&1; then
-    BOOST_SYSTEM_DEV_PACKAGE="libboost-system-dev"
-fi
+BOOST_DEV_PACKAGE="libboost-dev"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Installing DVBStreamer5 dependencies..."
+echo "Installing TVStreamer5 dependencies..."
 
 "${APT_GET[@]}" update
 "${APT_GET[@]}" install -y --no-install-recommends \
@@ -44,10 +41,8 @@ echo "Installing DVBStreamer5 dependencies..."
     libcurl4-openssl-dev \
     libjsoncpp-dev \
     libssl-dev \
-    libcrypt-dev \
     libdvbcsa-dev \
-    "${BOOST_SYSTEM_DEV_PACKAGE}" \
-    libboost-thread-dev \
+    "${BOOST_DEV_PACKAGE}" \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \

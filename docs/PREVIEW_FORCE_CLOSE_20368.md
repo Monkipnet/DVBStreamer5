@@ -1,4 +1,4 @@
-# DVBStreamer5 203.68 — forced temporary HTTP preview disconnect
+# TVStreamer5 203.68 — forced temporary HTTP preview disconnect
 
 This patch is based on 203.67 plus the `idle-preview-gate` update, not on a
 clean pre-preview tree. Apply it once to that exact baseline.

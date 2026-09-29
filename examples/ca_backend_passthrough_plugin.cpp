@@ -1,4 +1,4 @@
-// Minimal external plugin example for the DVBStreamer5 CaBackend ABI.
+// Minimal external plugin example for the TVStreamer5 CaBackend ABI.
 // It intentionally DOES NOT descramble anything.  It is useful to validate
 // loading, reader/service lifecycle, TS callbacks and telemetry before wiring
 // an authorised operator/manufacturer SDK behind the same ABI.
@@ -54,7 +54,7 @@ const tvs_ca_backend_api_v1 api = {
     TVS_CA_BACKEND_ABI_V1,
     "passthrough-example",
     "Passthrough example plugin",
-    "DVBStreamer5 SDK example",
+    "TVStreamer5 SDK example",
     TVS_CA_CAP_MULTI_SERVICE,
     &create,
     &destroy,
@@ -67,6 +67,11 @@ const tvs_ca_backend_api_v1 api = {
 };
 } // namespace
 
+extern "C" const tvs_ca_backend_api_v1* tvstreamer5_ca_backend_get_api_v1() {
+    return &api;
+}
+
+// Keep ABI compatibility with plugins/hosts built under the former product name.
 extern "C" const tvs_ca_backend_api_v1* dvbstreamer5_ca_backend_get_api_v1() {
     return &api;
 }

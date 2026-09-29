@@ -63,7 +63,7 @@ struct StreamConfig {
     std::string hlsAccessKeyMode = "none";
     std::string hlsAccessKeyName = "Authorization";
     std::string hlsAccessKeyValue;
-    std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
+    std::string hlsUserAgent = "Mozilla/5.0 TVStreamer5";
     // Manual per-stream provider-PCR rate clock (203.36). Existing streams default off.
     bool hlsSlowPcrAssist = false;
     // 203.40: manual HLS pre-buffered provider-PCR interval pacing. The existing
@@ -77,14 +77,19 @@ struct StreamConfig {
     uint64_t targetBitrate = 2000000;
     bool transcodeEnabled = false;
     std::string transcodeResolution = "1920x1080";
-    std::string transcodeVideoCodec = "h264"; // h264 | copy
-    std::string transcodeVideoEncoder = "auto"; // auto | x264 | nvenc | intel
+    std::string transcodeVideoCodec = "h264"; // h264 | hevc | copy
+    std::string transcodeVideoEncoder = "auto"; // auto | x264/x265 CPU | nvenc | intel
     uint64_t transcodeVideoBitrate = 6000000;
+    // 203.75: adaptive HLS is opt-in. The configured rendition remains the
+    // primary/highest profile; lower renditions are generated automatically.
+    bool transcodeMultibitrateEnabled = false;
+    // Runtime-only rendition directory. Empty means the primary rendition.
+    std::string hlsVariantName;
     // HLS DVR archive. When enabled, live HLS segments are retained on disk and
     // exposed through Flussonic-compatible archive/timeshift playlist URLs.
     bool hlsArchiveEnabled = false;
     uint32_t hlsArchiveHours = 24;
-    std::string hlsArchivePath = "/var/lib/dvbstreamer5/archive";
+    std::string hlsArchivePath = "/var/lib/tvstreamer5/archive";
     std::string transcodeAudioCodec = "aac";
     uint64_t transcodeAudioBitrate = 192000;
     uint32_t audioPid = 0;
@@ -117,7 +122,7 @@ struct CamClientConfig {
 struct AppConfig {
     std::string login = "admin";
     std::string password = "admin";
-    std::string serverName = "DVBStreamer5";
+    std::string serverName = "TVStreamer5";
     int httpPort = 9000;
     std::string language = "en";
     std::string telegramToken;

@@ -8,11 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     pkg-config \
     libpcsclite-dev \
-    libboost-system-dev \
-    libboost-thread-dev \
+    libboost-dev \
     libcurl4-openssl-dev \
     libssl-dev \
-    libcrypt-dev \
     libdvbcsa-dev \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
@@ -34,11 +32,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # gstreamer1.0-rtsp is required for rtspclientsink used by RTSP push output.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libboost-system1.83.0 \
-    libboost-thread1.83.0 \
     libcurl4t64 \
     libssl3t64 \
-    libcrypt1 \
     libpcsclite1 \
     pcscd \
     libccid \
@@ -60,7 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN set -eux; \
     for element in \
       uridecodebin decodebin queue videoconvert deinterlace videoscale videorate \
-      capsfilter x264enc h264parse audioconvert audioresample audiorate aacparse \
+      capsfilter x264enc h264parse h265parse audioconvert audioresample audiorate aacparse \
       mpegtsmux udpsink dvbsrc tsparse tsdemux appsink; do \
         gst-inspect-1.0 "$element" >/dev/null; \
     done; \
@@ -69,11 +64,10 @@ RUN set -eux; \
     elif gst-inspect-1.0 avenc_aac >/dev/null 2>&1; then :; \
     else echo "No supported AAC encoder was found in the runtime image" >&2; exit 1; fi
 
-COPY --from=build /src/build/DVBStreamer5 /app/DVBStreamer5
-RUN mkdir -p /opt/dvbstreamer5/ca-plugins
-COPY --from=build /src/build/dvbstreamer5-ca-newcamd.so /opt/dvbstreamer5/ca-plugins/dvbstreamer5-ca-newcamd.so
+COPY --from=build /src/build/TVStreamer5 /app/TVStreamer5
+RUN mkdir -p /opt/tvstreamer5/ca-plugins
 
 WORKDIR /data
 EXPOSE 9000/tcp
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/app/DVBStreamer5"]
+ENTRYPOINT ["/app/TVStreamer5"]

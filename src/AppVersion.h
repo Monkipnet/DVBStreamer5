@@ -2,7 +2,7 @@
 
 namespace tvs::app {
 
-inline constexpr const char* kProductName = "DVBStreamer5";
+inline constexpr const char* kProductName = "TVStreamer5";
 inline constexpr const char* kProgramVersion = "1.0.0";
 inline constexpr const char* kSupportEmail = "monkipnet@gmail.com";
 

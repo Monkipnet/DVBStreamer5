@@ -7,10 +7,10 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE_NAME="${IMAGE_NAME:-dvbstreamer5:202.28}"
-CONFIG_FILE="${CONFIG_FILE:-${ROOT_DIR}/dvbstreamer5-config.json}"
+IMAGE_NAME="${IMAGE_NAME:-tvstreamer5:202.28}"
+CONFIG_FILE="${CONFIG_FILE:-${ROOT_DIR}/tvstreamer5-config.json}"
 DETACH="${DETACH:-0}"
-CONTAINER_NAME="${CONTAINER_NAME:-dvbstreamer5}"
+CONTAINER_NAME="${CONTAINER_NAME:-tvstreamer5}"
 RESTART_POLICY="${RESTART_POLICY:-unless-stopped}"
 RECREATE="${RECREATE:-0}"
 
@@ -29,7 +29,7 @@ fi
 CONFIG_FILE="$(realpath -m "${CONFIG_FILE}")"
 DATA_DIR="$(dirname "${CONFIG_FILE}")"
 CONFIG_BASENAME="$(basename "${CONFIG_FILE}")"
-if [[ "${CONFIG_BASENAME}" == "dvbstreamer5-config.json" &&
+if [[ "${CONFIG_BASENAME}" == "tvstreamer5-config.json" &&
       ! -f "${CONFIG_FILE}" && -f "${DATA_DIR}/tvstreammersat5-config.json" ]]; then
     CONFIG_FILE="${DATA_DIR}/tvstreammersat5-config.json"
     CONFIG_BASENAME="tvstreammersat5-config.json"
@@ -40,10 +40,10 @@ if [[ -e "${CONFIG_FILE}" && ! -f "${CONFIG_FILE}" ]]; then
     exit 1
 fi
 
-if [[ ! -f "${CONFIG_FILE}" && "${CONFIG_BASENAME}" != "dvbstreamer5-config.json" &&
+if [[ ! -f "${CONFIG_FILE}" && "${CONFIG_BASENAME}" != "tvstreamer5-config.json" &&
       "${CONFIG_BASENAME}" != "tvstreammersat5-config.json" ]]; then
     echo "Custom config file not found: ${CONFIG_FILE}" >&2
-    echo "Create it first, or use the standard filename dvbstreamer5-config.json" >&2
+    echo "Create it first, or use the standard filename tvstreamer5-config.json" >&2
     exit 1
 fi
 
@@ -59,10 +59,10 @@ if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
 fi
 
 VOLUME_ARGS=(-v "${DATA_DIR}:/data")
-if [[ "${CONFIG_BASENAME}" != "dvbstreamer5-config.json" ]]; then
+if [[ "${CONFIG_BASENAME}" != "tvstreamer5-config.json" ]]; then
     # Keep the whole data directory mounted so subscriber/backup files persist,
     # while exposing a custom config filename under the canonical app name.
-    VOLUME_ARGS+=(-v "${CONFIG_FILE}:/data/dvbstreamer5-config.json")
+    VOLUME_ARGS+=(-v "${CONFIG_FILE}:/data/tvstreamer5-config.json")
 fi
 
 DEVICE_ARGS=()

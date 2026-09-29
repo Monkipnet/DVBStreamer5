@@ -1,4 +1,4 @@
-function(dvbstreamer5_generate_embedded_web_assets asset_dir output_dir output_var)
+function(tvstreamer5_generate_embedded_web_assets asset_dir output_dir output_var)
     set(asset_names
         mpegts.min.js
         hls.min.js

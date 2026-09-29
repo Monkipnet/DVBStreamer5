@@ -140,7 +140,7 @@ void testMpegTsRemapper() {
     config.outputVideoPid = 0x200;
     config.outputAudioPid = 0x201;
     config.serviceName = "Remapped";
-    config.serviceProvider = "DVBStreamer5";
+    config.serviceProvider = "TVStreamer5";
     std::string error;
     assert(remapper.initialize(config, error));
 
@@ -1042,7 +1042,7 @@ void testNativeHttpCbrRelay() {
     config.accessKeyMode = "header";
     config.accessKeyName = "X-Stream-Key";
     config.accessKeyValue = "test-secret";
-    config.userAgent = "DVBStreamer5-test";
+    config.userAgent = "TVStreamer5-test";
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
     };
@@ -1084,7 +1084,7 @@ void testNativeHttpCbrRelay() {
     assert(relay.outputBytes() == 2 * 7 * 188);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: test-secret") != std::string::npos);
-    assert(request.find("DVBStreamer5-test") != std::string::npos);
+    assert(request.find("TVStreamer5-test") != std::string::npos);
 }
 
 void testNativeHttpQueryAccessKey() {

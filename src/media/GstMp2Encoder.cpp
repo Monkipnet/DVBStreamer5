@@ -215,10 +215,10 @@ static void tvs_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass) {
 
     gst_element_class_set_static_metadata(
         elementClass,
-        "DVBStreamer5 MP2 audio encoder",
+        "TVStreamer5 MP2 audio encoder",
         "Codec/Encoder/Audio",
         "Encodes signed 16-bit PCM to MPEG-1 Layer II using vendored TwoLAME",
-        "DVBStreamer5 contributors");
+        "TVStreamer5 contributors");
     gst_element_class_add_static_pad_template(elementClass, &kSinkTemplate);
     gst_element_class_add_static_pad_template(elementClass, &kSrcTemplate);
 
@@ -237,11 +237,11 @@ static void tvs_gst_mp2_encoder_init(TvsGstMp2Encoder* self) {
 }
 
 gboolean tvs_gst_mp2_encoder_register(void) {
-    GstElementFactory* factory = gst_element_factory_find("dvbstreamer5mp2enc");
+    GstElementFactory* factory = gst_element_factory_find("tvstreamer5mp2enc");
     if (factory) {
         gst_object_unref(factory);
         return TRUE;
     }
     return gst_element_register(
-        nullptr, "dvbstreamer5mp2enc", GST_RANK_NONE, tvs_gst_mp2_encoder_get_type());
+        nullptr, "tvstreamer5mp2enc", GST_RANK_NONE, tvs_gst_mp2_encoder_get_type());
 }

@@ -1,4 +1,4 @@
-# DVBStreamer5 v203.67 — temporary HTTP MPEG-TS browser preview
+# TVStreamer5 v203.67 — temporary HTTP MPEG-TS browser preview
 
 Double-click a running stream tile to open one browser preview. The dialog has no SRT/HLS/UDP selector: it always plays MPEG-TS over HTTP with the bundled `mpegts.js` library and the browser MediaSource API.
 
@@ -10,7 +10,7 @@ The existing configured SRT/HLS/UDP outputs and their settings remain unchanged.
 
 The double click ignores buttons, links, form controls and content-editable elements. Closing the dialog destroys the `mpegts.js` MediaSource player and closes its HTTP request.
 
-`web/preview/preview-player.js` and `.css` are editing/test copies; their contents are embedded in `src/HttpServer.cpp` and must remain identical. `web/vendor/mpegts.min.js` is served locally by DVBStreamer5; no CDN is required while viewing.
+`web/preview/preview-player.js` and `.css` are editing/test copies; their contents are embedded in `src/HttpServer.cpp` and must remain identical. `web/vendor/mpegts.min.js` is served locally by TVStreamer5; no CDN is required while viewing.
 
 ## Test and build
 
@@ -18,8 +18,8 @@ The double click ignores buttons, links, form controls and content-editable elem
 cd /home/svettv/Tvstreamer_sat
 node tests/test_browser_preview.js
 wc -c web/vendor/mpegts.min.js
-cmake -S . -B build-preview-temp-http -DCMAKE_BUILD_TYPE=Release -DDVBSTREAMER5_BUILD_OSCAM_MINI=OFF
-nice -n 10 cmake --build build-preview-temp-http --parallel 2 --target DVBStreamer5 dvbstreamer5_ca_newcamd
+cmake -S . -B build-preview-temp-http -DCMAKE_BUILD_TYPE=Release -DTVSTREAMER5_BUILD_OSCAM_MINI=OFF
+nice -n 10 cmake --build build-preview-temp-http --parallel 2 --target TVStreamer5 tvstreamer5_ca_newcamd
 ```
 
 Build output is separate from the installed service. Building does not replace the running binary. Deployment/restart remains a separate maintenance action.

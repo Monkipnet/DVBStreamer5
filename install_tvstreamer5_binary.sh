@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# DVBStreamer5 1.0.0 — safe binary + web installer / updater for Ubuntu/Debian.
+# TVStreamer5 1.0.0 — safe binary + web installer / updater for Ubuntu/Debian.
 set -Eeuo pipefail
 umask 022
 
-APP=DVBStreamer5
-UNIT=dvbstreamer5.service
-DEFAULT_INSTALL_DIR=/opt/DVBStreamer5
+APP=TVStreamer5
+UNIT=tvstreamer5.service
+DEFAULT_INSTALL_DIR=/opt/TVStreamer5
 LEGACY_APP=TVStreammerSAT5
 LEGACY_UNIT=tvstreammersat5.service
 LEGACY_INSTALL_DIR=/opt/TVStreammerSAT5
@@ -23,14 +23,14 @@ WITH_OSCAM=0
 
 usage() {
     cat <<'EOF'
-DVBStreamer5 installer / updater (binary + web + optional CA plugin).
-Usage: sudo bash install_dvbstreamer5_binary.sh [options]
+TVStreamer5 installer / updater (binary + web + optional CA plugin).
+Usage: sudo bash install_tvstreamer5_binary.sh [options]
 
   --source DIR       Project root containing web/ and a compiled binary
   --build-dir DIR    Exact CMake build directory (recommended for updates)
   --web-dir DIR      Exact directory containing preview/ and vendor/
   --install-dir DIR  Installation directory; existing systemd WorkingDirectory
-                     is detected when possible (fallback /opt/DVBStreamer5)
+                     is detected when possible (fallback /opt/TVStreamer5)
   --mode install|update    Skip the interactive mode selection
   --restart         Start/restart the main service AFTER updating (interrupts streams)
   --no-restart      Deploy files WITHOUT restarting the service
@@ -125,13 +125,13 @@ if [[ -n "$BUILD_DIR" ]]; then
     [[ "$BUILD_DIR" == /* ]] || BUILD_DIR="$SOURCE_DIR/$BUILD_DIR"
     [[ -d "$BUILD_DIR" ]] || fail "Build directory does not exist: $BUILD_DIR"
     BINARY="$BUILD_DIR/$APP"
-    PLUGIN="$BUILD_DIR/dvbstreamer5-ca-newcamd.so"
+    PLUGIN="$BUILD_DIR/tvstreamer5-ca-newcamd.so"
 elif [[ -f "$SOURCE_DIR/$APP" ]]; then
     BINARY="$SOURCE_DIR/$APP"
-    PLUGIN="$SOURCE_DIR/dvbstreamer5-ca-newcamd.so"
+    PLUGIN="$SOURCE_DIR/tvstreamer5-ca-newcamd.so"
 elif [[ -f "$SOURCE_DIR/build/$APP" ]]; then
     BINARY="$SOURCE_DIR/build/$APP"
-    PLUGIN="$SOURCE_DIR/build/dvbstreamer5-ca-newcamd.so"
+    PLUGIN="$SOURCE_DIR/build/tvstreamer5-ca-newcamd.so"
 else
     fail "No executable in $SOURCE_DIR or its build/ directory. Specify --build-dir build-preview-20368-fixed."
 fi
@@ -171,9 +171,9 @@ fi
 if [[ -z "$RESTART" ]]; then
     if [[ "$MODE" == update ]]; then
         echo 'Restarting the running service interrupts ALL currently streaming channels.'
-        if ask_yes 'Restart DVBStreamer5 after deployment?'; then RESTART=yes; else RESTART=no; fi
+        if ask_yes 'Restart TVStreamer5 after deployment?'; then RESTART=yes; else RESTART=no; fi
     else
-        if ask_yes 'Start DVBStreamer5 after installation?'; then RESTART=yes; else RESTART=no; fi
+        if ask_yes 'Start TVStreamer5 after installation?'; then RESTART=yes; else RESTART=no; fi
     fi
 fi
 if [[ -z "$INSTALL_DEPS" ]]; then
@@ -219,8 +219,8 @@ fi
 (( EUID == 0 )) || fail 'Run this command with sudo (or as root).'
 command -v systemctl >/dev/null 2>&1 || fail 'systemctl is not available.'
 
-DEPS=(ca-certificates libcurl4-openssl-dev libjsoncpp-dev libssl-dev libcrypt-dev
-      libdvbcsa-dev libboost-thread-dev gstreamer1.0-tools
+DEPS=(ca-certificates libcurl4-openssl-dev libjsoncpp-dev libssl-dev
+      libdvbcsa-dev libboost-dev gstreamer1.0-tools
       gstreamer1.0-plugins-base gstreamer1.0-plugins-good
       gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
       gstreamer1.0-libav gstreamer1.0-rtsp gstreamer1.0-vaapi
@@ -280,9 +280,9 @@ rollback() {
         mv -- "$BACKUP/$LEGACY_APP.previous" "$INSTALL_DIR/$LEGACY_APP" || true
     fi
     if (( PLUGIN_CHANGED )); then
-        if [[ -f "$BACKUP/dvbstreamer5-ca-newcamd.so" ]]; then
-            cp -a -- "$BACKUP/dvbstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so" || true
-        else rm -f -- "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"; fi
+        if [[ -f "$BACKUP/tvstreamer5-ca-newcamd.so" ]]; then
+            cp -a -- "$BACKUP/tvstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so" || true
+        else rm -f -- "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so"; fi
     fi
     if (( OSCAM_CHANGED )); then
         if [[ -f "$BACKUP/oscam-mini" ]]; then
@@ -313,7 +313,7 @@ cp -a -- "$WEB_DIR/." "$STAGE/web/"
 [[ -s "$STAGE/web/vendor/mpegts.min.js" && -s "$STAGE/web/preview/preview-player.js" ]] || \
     fail 'Staged web content is incomplete.'
 if [[ -n "$PLUGIN" ]]; then
-    install -m 0644 "$PLUGIN" "$STAGE/dvbstreamer5-ca-newcamd.so"
+    install -m 0644 "$PLUGIN" "$STAGE/tvstreamer5-ca-newcamd.so"
 fi
 if [[ -n "$OSCAM_BINARY" ]]; then
     install -m 0755 "$OSCAM_BINARY" "$STAGE/oscam-mini"
@@ -329,8 +329,8 @@ fi
 if [[ -d "$INSTALL_DIR/web" ]]; then
     cp -a -- "$INSTALL_DIR/web" "$BACKUP/web"   # persistent rollback copy
 fi
-if [[ -n "$PLUGIN" && -f "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so" ]]; then
-    cp -a -- "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so" "$BACKUP/dvbstreamer5-ca-newcamd.so"
+if [[ -n "$PLUGIN" && -f "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so" ]]; then
+    cp -a -- "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so" "$BACKUP/tvstreamer5-ca-newcamd.so"
 fi
 if [[ -n "$OSCAM_BINARY" && -f "$INSTALL_DIR/oscam-mini/oscam-mini" ]]; then
     cp -a -- "$INSTALL_DIR/oscam-mini/oscam-mini" "$BACKUP/oscam-mini"
@@ -360,7 +360,7 @@ mv -- "$STAGE/web" "$INSTALL_DIR/web"
 if [[ -n "$PLUGIN" ]]; then
     install -d -m 0755 "$INSTALL_DIR/ca-plugins"
     PLUGIN_CHANGED=1
-    mv -f -- "$STAGE/dvbstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
+    mv -f -- "$STAGE/tvstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so"
 fi
 if [[ -n "$OSCAM_BINARY" ]]; then
     install -d -m 0755 "$INSTALL_DIR/oscam-mini/config"
@@ -374,7 +374,7 @@ if [[ "$MODE" == install ]] || ! systemctl list-unit-files "$UNIT" --no-legend 2
         install -d -m 0755 /etc/systemd/system
         cat > "/etc/systemd/system/$UNIT" <<EOFUNIT
 [Unit]
-Description=DVBStreamer5 streaming service
+Description=TVStreamer5 streaming service
 Wants=network-online.target
 After=network-online.target
 
@@ -398,7 +398,7 @@ EOFUNIT
 fi
 
 if [[ "$RESTART" == yes ]]; then
-    log 'Restarting DVBStreamer5 (this interrupts the channels)'
+    log 'Restarting TVStreamer5 (this interrupts the channels)'
     systemctl daemon-reload
     systemctl enable "$UNIT" >/dev/null
     if [[ "$legacy_unit_present" == yes ]]; then

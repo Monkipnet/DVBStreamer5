@@ -52,7 +52,7 @@ public:
     Json::Value streamState(const std::string& streamId) const;
     Json::Value snapshot() const;
 
-    static constexpr const char* kDefaultPluginDirectory = "/opt/dvbstreamer5/ca-plugins";
+    static constexpr const char* kDefaultPluginDirectory = "/opt/tvstreamer5/ca-plugins";
 
 private:
     CaBackendManager();

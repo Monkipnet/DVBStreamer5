@@ -62,14 +62,14 @@ CaBackendManager::CaBackendManager() {
     LoadedBackend passthrough;
     passthrough.id = "passthrough";
     passthrough.displayName = "Passthrough (без декодирования)";
-    passthrough.vendor = "DVBStreamer5";
+    passthrough.vendor = "TVStreamer5";
     passthrough.path = "builtin";
     passthrough.builtin = true;
     passthrough.usable = true;
     backends_.emplace(passthrough.id, std::move(passthrough));
 
     if (!registerBuiltinBackendLocked(
-            dvbstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
+            tvstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
         std::cerr << "Built-in Newcamd CA backend registration failed" << std::endl;
     }
 }
@@ -160,7 +160,8 @@ void CaBackendManager::unloadPluginsLocked() {
 
 void CaBackendManager::loadPluginsLocked() {
     std::vector<std::filesystem::path> directories;
-    const char* pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
+    const char* pluginDirectory = std::getenv("TVSTREAMER5_CA_PLUGIN_DIR");
+    if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
     if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("TVSTREAMMERSAT5_CA_PLUGIN_DIR");
     if (pluginDirectory && *pluginDirectory) directories.emplace_back(pluginDirectory);
 
@@ -172,6 +173,8 @@ void CaBackendManager::loadPluginsLocked() {
         directories.push_back(executableDir);
     }
     directories.emplace_back(kDefaultPluginDirectory);
+    directories.emplace_back("/opt/DVBStreamer5/ca-plugins");
+    directories.emplace_back("/opt/dvbstreamer5/ca-plugins");
     directories.emplace_back("/opt/TVStreammerSAT5/ca-plugins");
     directories.emplace_back("/opt/tvstreammersat5/ca-plugins");
 
@@ -253,6 +256,12 @@ bool CaBackendManager::loadPluginFileLocked(const std::string& path) {
     dlerror();
     auto entry = reinterpret_cast<tvs_ca_backend_get_api_v1_fn>(dlsym(library, TVS_CA_BACKEND_ENTRY_V1));
     const char* symbolError = dlerror();
+    if (symbolError || !entry) {
+        dlerror();
+        entry = reinterpret_cast<tvs_ca_backend_get_api_v1_fn>(
+            dlsym(library, TVS_CA_BACKEND_LEGACY_ENTRY_V1));
+        symbolError = dlerror();
+    }
     if (symbolError || !entry) {
         std::cerr << "CA backend plugin missing entry point: " << path << std::endl;
         dlclose(library);
@@ -636,7 +645,8 @@ Json::Value CaBackendManager::streamState(const std::string& streamId) const {
 Json::Value CaBackendManager::snapshot() const {
     Json::Value root;
     std::string directory = kDefaultPluginDirectory;
-    const char* pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
+    const char* pluginDirectory = std::getenv("TVSTREAMER5_CA_PLUGIN_DIR");
+    if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
     if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("TVSTREAMMERSAT5_CA_PLUGIN_DIR");
     if (pluginDirectory && *pluginDirectory) directory = pluginDirectory;
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);

@@ -1,11 +1,7 @@
 #include "NewcamdClient.h"
 
 #include <openssl/des.h>
-#if __has_include(<crypt.h>)
-#include <crypt.h>
-#else
-#include <unistd.h>
-#endif
+#include <openssl/evp.h>
 
 #include <algorithm>
 #include <cctype>
@@ -28,6 +24,93 @@ constexpr uint16_t kClientId = 0x8888;
 constexpr size_t kHeaderSize = 12;
 constexpr size_t kMaxMessageSize = 2048;
 constexpr size_t kMaxPendingEcms = 1;
+
+using Md5Digest = std::array<uint8_t, 16>;
+
+void append_bytes(std::vector<uint8_t>& out, const void* data, size_t size) {
+    if (size == 0) return;
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    out.insert(out.end(), bytes, bytes + size);
+}
+
+void append_string(std::vector<uint8_t>& out, const std::string& value) {
+    append_bytes(out, value.data(), value.size());
+}
+
+bool md5_digest(const std::vector<uint8_t>& input, Md5Digest& digest) {
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+    if (!context) return false;
+    unsigned int size = 0;
+    const bool ok = EVP_DigestInit_ex(context, EVP_md5(), nullptr) == 1 &&
+        EVP_DigestUpdate(context, input.data(), input.size()) == 1 &&
+        EVP_DigestFinal_ex(context, digest.data(), &size) == 1 &&
+        size == digest.size();
+    EVP_MD_CTX_free(context);
+    return ok;
+}
+
+void append_crypt_base64(std::string& output, uint8_t high, uint8_t middle,
+                         uint8_t low, int count) {
+    static constexpr char alphabet[] =
+        "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    uint32_t value = (static_cast<uint32_t>(high) << 16) |
+        (static_cast<uint32_t>(middle) << 8) | low;
+    while (count-- > 0) {
+        output.push_back(alphabet[value & 0x3FU]);
+        value >>= 6;
+    }
+}
+
+std::string md5_crypt(const std::string& password, const std::string& rawSalt) {
+    constexpr const char* magic = "$1$";
+    std::string salt = rawSalt;
+    if (salt.rfind(magic, 0) == 0) salt.erase(0, 3);
+    if (const size_t end = salt.find('$'); end != std::string::npos) salt.resize(end);
+    if (salt.size() > 8) salt.resize(8);
+
+    std::vector<uint8_t> alternateInput;
+    append_string(alternateInput, password);
+    append_string(alternateInput, salt);
+    append_string(alternateInput, password);
+    Md5Digest alternate{};
+    if (!md5_digest(alternateInput, alternate)) return {};
+
+    std::vector<uint8_t> initial;
+    append_string(initial, password);
+    append_string(initial, magic);
+    append_string(initial, salt);
+    for (size_t remaining = password.size(); remaining > 0;) {
+        const size_t count = std::min(remaining, alternate.size());
+        append_bytes(initial, alternate.data(), count);
+        remaining -= count;
+    }
+    for (size_t length = password.size(); length != 0; length >>= 1) {
+        const uint8_t byte = (length & 1U) ? 0 : static_cast<uint8_t>(password.front());
+        initial.push_back(byte);
+    }
+
+    Md5Digest digest{};
+    if (!md5_digest(initial, digest)) return {};
+    for (int round = 0; round < 1000; ++round) {
+        std::vector<uint8_t> input;
+        if (round & 1) append_string(input, password);
+        else append_bytes(input, digest.data(), digest.size());
+        if (round % 3 != 0) append_string(input, salt);
+        if (round % 7 != 0) append_string(input, password);
+        if (round & 1) append_bytes(input, digest.data(), digest.size());
+        else append_string(input, password);
+        if (!md5_digest(input, digest)) return {};
+    }
+
+    std::string output = std::string(magic) + salt + '$';
+    append_crypt_base64(output, digest[0], digest[6], digest[12], 4);
+    append_crypt_base64(output, digest[1], digest[7], digest[13], 4);
+    append_crypt_base64(output, digest[2], digest[8], digest[14], 4);
+    append_crypt_base64(output, digest[3], digest[9], digest[15], 4);
+    append_crypt_base64(output, digest[4], digest[10], digest[5], 4);
+    append_crypt_base64(output, 0, 0, digest[11], 2);
+    return output;
+}
 
 uint8_t hex_value(char ch) {
     if (ch >= '0' && ch <= '9') return static_cast<uint8_t>(ch - '0');
@@ -146,10 +229,7 @@ bool NewcamdClient::derive_key_from_seed(const uint8_t* seed, size_t seed_size) 
 }
 
 std::string NewcamdClient::md5_crypt_password() const {
-    static std::mutex cryptMutex;
-    std::lock_guard<std::mutex> lock(cryptMutex);
-    char* value = crypt(pass_.c_str(), "$1$abcdefgh$");
-    return value ? std::string(value) : std::string();
+    return md5_crypt(pass_, "abcdefgh");
 }
 
 bool NewcamdClient::connect() {
@@ -327,7 +407,7 @@ bool NewcamdClient::login() {
 
         const std::string cryptPass = md5_crypt_password();
         if (cryptPass.empty()) {
-            set_error("Newcamd password crypt() failed");
+            set_error("Newcamd password MD5-crypt failed");
             return false;
         }
 

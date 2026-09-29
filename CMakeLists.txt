@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
-project(DVBStreamer5 LANGUAGES C CXX)
+project(TVStreamer5 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedWebAssets.cmake)
-dvbstreamer5_generate_embedded_web_assets(
+tvstreamer5_generate_embedded_web_assets(
     ${CMAKE_SOURCE_DIR}/web/vendor
     ${CMAKE_BINARY_DIR}/generated
     EMBEDDED_WEB_ASSET_SOURCE
@@ -14,7 +14,6 @@ dvbstreamer5_generate_embedded_web_assets(
 find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
-find_library(CRYPT_LIBRARY crypt)
 
 pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
 pkg_check_modules(LIBCURL REQUIRED libcurl)
@@ -31,11 +30,11 @@ if(NOT DVBCSA_FOUND)
     endif()
 endif()
 
-find_package(Boost REQUIRED COMPONENTS thread)
+find_package(Boost REQUIRED)
 
 add_subdirectory(third_party/twolame)
 
-add_library(dvbstreamer5_media_core
+add_library(tvstreamer5_media_core
     src/media/CbrTsPacer.cpp
     src/media/MpegTsRemapper.cpp
     src/media/Mp2Encoder.cpp
@@ -46,17 +45,17 @@ add_library(dvbstreamer5_media_core
     src/media/NativePreviewHub.cpp
     src/media/NativeUdpRelay.cpp
 )
-target_include_directories(dvbstreamer5_media_core
+target_include_directories(tvstreamer5_media_core
     PUBLIC ${CMAKE_SOURCE_DIR}/src
     PRIVATE ${LIBCURL_INCLUDE_DIRS}
 )
-target_link_libraries(dvbstreamer5_media_core PUBLIC
+target_link_libraries(tvstreamer5_media_core PUBLIC
     Threads::Threads
     ${LIBCURL_LIBRARIES}
 )
-target_link_libraries(dvbstreamer5_media_core PRIVATE dvbstreamer5_twolame)
+target_link_libraries(tvstreamer5_media_core PRIVATE tvstreamer5_twolame)
 if(WIN32)
-    target_link_libraries(dvbstreamer5_media_core PUBLIC ws2_32)
+    target_link_libraries(tvstreamer5_media_core PUBLIC ws2_32)
 endif()
 
 include_directories(
@@ -76,7 +75,7 @@ link_directories(
     ${DVBCSA_LIBRARY_DIRS}
 )
 
-add_executable(DVBStreamer5
+add_executable(TVStreamer5
     src/main.cpp
     src/utils.cpp
     src/ConfigManager.cpp
@@ -138,53 +137,62 @@ add_executable(DVBStreamer5
     src/OscamMiniManager.cpp
 )
 
-target_link_libraries(DVBStreamer5
-    dvbstreamer5_media_core
+target_link_libraries(TVStreamer5
+    tvstreamer5_media_core
     ${GSTREAMER_LIBRARIES}
     ${LIBCURL_LIBRARIES}
     ${JSONCPP_LIBRARIES}
     ${DVBCSA_LIBRARIES}
-    ${Boost_LIBRARIES}
     OpenSSL::Crypto
     pthread
     dl
-    $<$<BOOL:${CRYPT_LIBRARY}>:${CRYPT_LIBRARY}>
     glib-2.0
     gio-2.0
 )
+target_compile_definitions(TVStreamer5 PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
 
-if(DEFINED TVSTREAMMERSAT5_BUILD_MEDIA_CORE_TESTS AND NOT DEFINED DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
-    set(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "${TVSTREAMMERSAT5_BUILD_MEDIA_CORE_TESTS}" CACHE BOOL
+if(DEFINED DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
+    set(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "${DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS}" CACHE BOOL
+        "Build standalone native MPEG-TS/RTP tests")
+elseif(DEFINED TVSTREAMMERSAT5_BUILD_MEDIA_CORE_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
+    set(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "${TVSTREAMMERSAT5_BUILD_MEDIA_CORE_TESTS}" CACHE BOOL
         "Build standalone native MPEG-TS/RTP tests")
 endif()
-option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
-if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
+option(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
+if(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
 endif()
 
-option(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
-if(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS)
+if(DEFINED DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MP2_ENCODER_TESTS)
+    set(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS "${DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS}" CACHE BOOL
+        "Build standalone PCM-to-MP2 encoder tests")
+endif()
+option(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
+if(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS)
     add_subdirectory(tests/mp2_encoder)
 endif()
 
-if(DEFINED TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
-    set(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "${TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE}" CACHE BOOL
+if(DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
+    set(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "${DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE}" CACHE BOOL
+        "Build non-decoding CaBackend ABI example plugin")
+elseif(DEFINED TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
+    set(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "${TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE}" CACHE BOOL
         "Build non-decoding CaBackend ABI example plugin")
 endif()
-option(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "Build non-decoding CaBackend ABI example plugin" OFF)
-if(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
-    add_library(dvbstreamer5_ca_passthrough_example SHARED
+option(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "Build non-decoding CaBackend ABI example plugin" OFF)
+if(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
+    add_library(tvstreamer5_ca_passthrough_example SHARED
         examples/ca_backend_passthrough_plugin.cpp
     )
-    target_include_directories(dvbstreamer5_ca_passthrough_example PRIVATE
+    target_include_directories(tvstreamer5_ca_passthrough_example PRIVATE
         ${CMAKE_SOURCE_DIR}/src
     )
-    set_target_properties(dvbstreamer5_ca_passthrough_example PROPERTIES
+    set_target_properties(tvstreamer5_ca_passthrough_example PROPERTIES
         PREFIX ""
-        OUTPUT_NAME "dvbstreamer5-ca-passthrough-example"
+        OUTPUT_NAME "tvstreamer5-ca-passthrough-example"
     )
 endif()
 
-install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)
+install(TARGETS TVStreamer5 RUNTIME DESTINATION bin)
 
 include(${CMAKE_SOURCE_DIR}/cmake/OscamMini.cmake)

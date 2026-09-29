@@ -1,7 +1,7 @@
-# DVBStreamer5 203.73: private satellite preview
+# TVStreamer5 203.73: private satellite preview
 
 Target: selected DVB service already presented as a single-program MPEG-TS in
-DVBStreamer5 203.72, where production output is healthy but the private HTTP
+TVStreamer5 203.72, where production output is healthy but the private HTTP
 preview returns HTTP 200 with no browser media buffer.
 
 Only the **synthetic on-demand** localhost HTTP preview of a selected DVB SPTS

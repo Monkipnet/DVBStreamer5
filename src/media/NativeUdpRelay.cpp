@@ -600,7 +600,7 @@ void NativeUdpRelay::runHttpInput() {
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, this);
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
         config_.userAgent.empty()
-            ? "Mozilla/5.0 DVBStreamer5"
+            ? "Mozilla/5.0 TVStreamer5"
             : config_.userAgent.c_str());
     if (headers) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);

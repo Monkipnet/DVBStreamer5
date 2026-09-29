@@ -1,6 +1,6 @@
 #pragma once
 
-// DVBStreamer5 Conditional-Access backend plugin ABI.
+// TVStreamer5 Conditional-Access backend plugin ABI.
 //
 // The host deliberately does not define or expose control-word APIs.  A backend
 // is an opaque, local transport processor intended for an operator/manufacturer
@@ -19,7 +19,8 @@ extern "C" {
 #endif
 
 #define TVS_CA_BACKEND_ABI_V1 0x00010000u
-#define TVS_CA_BACKEND_ENTRY_V1 "dvbstreamer5_ca_backend_get_api_v1"
+#define TVS_CA_BACKEND_ENTRY_V1 "tvstreamer5_ca_backend_get_api_v1"
+#define TVS_CA_BACKEND_LEGACY_ENTRY_V1 "dvbstreamer5_ca_backend_get_api_v1"
 
 // Capability flags advertised by a backend.
 enum tvs_ca_backend_capability_v1 {

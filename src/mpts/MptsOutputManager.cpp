@@ -342,12 +342,12 @@ struct MptsOutputManager::Runtime {
             if (source != byId.end()) {
                 service.name = source->second.name.empty() ? source->second.id : source->second.name;
                 service.provider = source->second.serviceProvider.empty()
-                    ? "DVBStreamer5" : source->second.serviceProvider;
+                    ? "TVStreamer5" : source->second.serviceProvider;
                 service.preferredSourceSid = static_cast<uint16_t>(
                     std::min<uint32_t>(source->second.serviceId, 0xFFFFU));
             } else {
                 service.name = service.config.streamId;
-                service.provider = "DVBStreamer5";
+                service.provider = "TVStreamer5";
             }
             uint32_t sid = service.config.serviceId;
             if (sid == 0) sid = config.serviceIdBase + static_cast<uint32_t>(index);
@@ -699,7 +699,7 @@ struct MptsOutputManager::Runtime {
             };
             while (index < ready.size()) {
                 const auto& service = *ready[index];
-                std::string provider = service.provider.empty() ? "DVBStreamer5" : service.provider;
+                std::string provider = service.provider.empty() ? "TVStreamer5" : service.provider;
                 std::string name = service.name.empty() ? service.config.streamId : service.name;
                 if (provider.size() > 63) provider.resize(63);
                 if (name.size() > 63) name.resize(63);

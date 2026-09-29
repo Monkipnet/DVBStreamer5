@@ -7,7 +7,7 @@ if [[ -z "$plugin" || ! -f "$plugin" ]]; then
   exit 2
 fi
 
-entry="dvbstreamer5_ca_backend_get_api_v1"
+entry="tvstreamer5_ca_backend_get_api_v1"
 if ! command -v nm >/dev/null 2>&1; then
   echo "nm is required (binutils)" >&2
   exit 3

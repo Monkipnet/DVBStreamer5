@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=/opt/DVBStreamer5/oscam-mini
+ROOT=/opt/TVStreamer5/oscam-mini
 CFG="$ROOT/config"
 DEFAULT="$ROOT/default-config"
 UNIT_SRC="$ROOT/oscam-mini.service"

@@ -1,4 +1,4 @@
-# DVBStreamer5 CaBackend plugin API (ABI v1)
+# TVStreamer5 CaBackend plugin API (ABI v1)
 
 Release v135 adds an in-process Conditional-Access backend boundary without a
 network card-sharing server.  The host application never defines a raw
@@ -16,23 +16,23 @@ plus MPEG-TS packet groups.
 
 Plugins are loaded from:
 
-`/opt/dvbstreamer5/ca-plugins`
+`/opt/tvstreamer5/ca-plugins`
 
 The directory may be overridden for development with:
 
-`DVBSTREAMER5_CA_PLUGIN_DIR=/path/to/plugins`. The previous
+`TVSTREAMER5_CA_PLUGIN_DIR=/path/to/plugins`. The previous
 `TVSTREAMMERSAT5_CA_PLUGIN_DIR` variable remains accepted for existing deployments.
 
 Every `.so` must export:
 
-`dvbstreamer5_ca_backend_get_api_v1`
+`tvstreamer5_ca_backend_get_api_v1`
 
 and return `tvs_ca_backend_api_v1` with ABI version
 `TVS_CA_BACKEND_ABI_V1`.
 
 ## Lifecycle
 
-For a stream explicitly bound to a Phoenix reader, DVBStreamer5 performs:
+For a stream explicitly bound to a Phoenix reader, TVStreamer5 performs:
 
 1. `open_reader()` once per backend + physical reader.
 2. `start_service()` once per channel/SID.
@@ -57,7 +57,7 @@ able to report that media packets are still scrambled.
 
 ## Reader configuration
 
-Each `ca_readers` item in `dvbstreamer5-config.json` can select a backend:
+Each `ca_readers` item in `tvstreamer5-config.json` can select a backend:
 
 ```json
 {
@@ -81,7 +81,7 @@ and intentionally does not decode anything.
 Enable the optional CMake target:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE=ON
 cmake --build build --parallel "$(nproc)"
 ```
 

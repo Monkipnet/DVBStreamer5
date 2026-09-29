@@ -192,7 +192,7 @@ bool httpGet(const std::string& rawUrl,
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        cfg.hlsUserAgent.empty() ? "Mozilla/5.0 DVBStreamer5" : cfg.hlsUserAgent.c_str());
+        cfg.hlsUserAgent.empty() ? "Mozilla/5.0 TVStreamer5" : cfg.hlsUserAgent.c_str());
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, transferProgress);

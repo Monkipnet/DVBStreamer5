@@ -9,7 +9,7 @@
 namespace tvs::protocols::srt_vps {
 
 // 203.67: optional global SRT profile for VPS/VDS/container hosts where the
-// kernel UDP socket limits and scheduler jitter are outside DVBStreamer5's
+// kernel UDP socket limits and scheduler jitter are outside TVStreamer5's
 // control.  Keep this opt-in so physical/LAN installations retain their proven
 // lower-latency defaults.
 inline constexpr int kLatencyMs = 1500;

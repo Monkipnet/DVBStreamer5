@@ -520,7 +520,7 @@ void scheduleAutomaticServiceRestart(
         std::thread([streamId, reason]() {
             std::this_thread::sleep_for(kAutomaticServiceRestartDelay);
             const int rc = std::system(
-                "/usr/bin/systemctl --no-block restart dvbstreamer5.service >/dev/null 2>&1");
+                "/usr/bin/systemctl --no-block restart tvstreamer5.service >/dev/null 2>&1");
             if (rc != 0) {
                 std::cerr << "PROGRAM RESTART 202.66: trigger=stuck-pipeline-teardown stream="
                           << streamId << " reason=" << reason
@@ -3324,7 +3324,7 @@ void runHttpMpegTsCurlInput(const std::shared_ptr<HttpMpegTsCurlInputState>& sta
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, state.get());
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
         state->config.hlsUserAgent.empty()
-            ? "Mozilla/5.0 DVBStreamer5"
+            ? "Mozilla/5.0 TVStreamer5"
             : state->config.hlsUserAgent.c_str());
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
@@ -3409,7 +3409,7 @@ bool probeHttpHlsManifest(const StreamConfig& cfg, const std::string& rawUri) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, hlsProbeWrite);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
     curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        cfg.hlsUserAgent.empty() ? "Mozilla/5.0 DVBStreamer5" : cfg.hlsUserAgent.c_str());
+        cfg.hlsUserAgent.empty() ? "Mozilla/5.0 TVStreamer5" : cfg.hlsUserAgent.c_str());
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     (void)curl_easy_perform(curl);
@@ -3812,7 +3812,7 @@ bool isMpegTsFile(const std::string& input) {
 std::string hlsDirectory(const StreamConfig& cfg) {
     return cfg.hlsArchiveEnabled
         ? (std::filesystem::path(cfg.hlsArchivePath) / cfg.id).string()
-        : (std::filesystem::path("/tmp/dvbstreamer5-hls") / cfg.id).string();
+        : (std::filesystem::path("/tmp/tvstreamer5-hls") / cfg.id).string();
 }
 
 std::string hlsPublicPathName(const StreamConfig& cfg) {
@@ -5035,7 +5035,7 @@ void sendServiceDescription(GstElement* mux, const StreamConfig& cfg) {
     GstMpegtsDescriptor* descriptor = gst_mpegts_descriptor_from_dvb_service(
         GST_DVB_SERVICE_DIGITAL_TELEVISION,
         cfg.serviceName.empty() ? cfg.name.c_str() : cfg.serviceName.c_str(),
-        cfg.serviceProvider.empty() ? "DVBStreamer5" : cfg.serviceProvider.c_str());
+        cfg.serviceProvider.empty() ? "TVStreamer5" : cfg.serviceProvider.c_str());
     if (descriptor) {
         g_ptr_array_add(service->descriptors, descriptor);
     }
@@ -5184,6 +5184,35 @@ GstElement* capsFilterForMux(
     g_object_set(filter, "caps", caps, nullptr);
     gst_caps_unref(caps);
     return filter;
+}
+
+struct RtspAacEncoderSelection {
+    GstElement* element = nullptr;
+    std::string factory;
+};
+
+RtspAacEncoderSelection makeRtspAacEncoder() {
+    for (const char* name : {"fdkaacenc", "voaacenc", "avenc_aac"}) {
+        if (!hasElementFactory(name)) continue;
+        return {gst_element_factory_make(name, nullptr), name};
+    }
+    return {};
+}
+
+void configureRtspAacEncoder(
+    GstElement* encoder, const std::string& factory, uint64_t requestedBitrate) {
+    if (!encoder) return;
+    const gint bitrate = static_cast<gint>(std::clamp<uint64_t>(requestedBitrate, 64000, 320000));
+    if (g_object_class_find_property(G_OBJECT_GET_CLASS(encoder), "bitrate")) {
+        g_object_set(encoder, "bitrate", bitrate, nullptr);
+    }
+    // libav AAC requires float PCM; the native AAC encoders use S16LE.
+    (void)factory;
+}
+
+bool rtspCapsEncoding(const std::string& capsLower, const char* encoding) {
+    return capsLower.find(std::string("encoding-name=(string)") + encoding) != std::string::npos ||
+           capsLower.find(std::string("encoding-name=") + encoding) != std::string::npos;
 }
 
 struct RtspPayloadFactories {
@@ -8609,7 +8638,7 @@ void StreamManager::notifyStreamState(
     const std::string& title,
     const std::string& details) {
     const std::string serverName = configManager.config.serverName.empty()
-        ? "DVBStreamer5"
+        ? "TVStreamer5"
         : configManager.config.serverName;
     std::ostringstream message;
     const bool english = telegramUsesEnglish(configManager);
@@ -9400,14 +9429,35 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
             return nullptr;
         }
 
+        const std::string rtspMode = toLower(cfg.inputMode);
+        // RTSP-over-TCP is the safest default for IPTV/camera ingest because it
+        // does not require a second pair of dynamically negotiated UDP/RTP ports.
+        // Users can explicitly select RTSP UDP or RTSP Auto in the stream form.
+        gint rtspProtocols = 4; // GST_RTSP_LOWER_TRANS_TCP
+        const char* rtspTransport = "tcp";
+        if (rtspMode == "rtsp-udp") {
+            rtspProtocols = 1; // GST_RTSP_LOWER_TRANS_UDP
+            rtspTransport = "udp";
+        } else if (rtspMode == "rtsp-auto") {
+            rtspProtocols = 7; // UDP | UDP multicast | TCP
+            rtspTransport = "auto";
+        }
+
         g_object_set(src,
             "location", input.c_str(),
-            "latency", 300,
+            "latency", 500,
             "do-rtsp-keep-alive", TRUE,
             nullptr);
+        setIntPropertyIfPresent(src, "protocols", rtspProtocols);
         setUInt64PropertyIfPresent(src, "timeout", 5000000);
+        setUInt64PropertyIfPresent(src, "tcp-timeout", 5000000);
         setBooleanPropertyIfPresent(src, "ntp-sync", FALSE);
         configureLiveQueue(outputQueue, 1000000000ULL);
+        std::cerr << "RTSP input 203.73: uri=" << input
+                  << " transport=" << rtspTransport
+                  << " latency_ms=500 timeout_us=5000000"
+                  << " payloads=h264,h265,aac,mpa,pcma,pcmu,mp2t"
+                  << std::endl;
         configureTsMux(mux, cfg);
 
         if (!gst_element_link(mux, outputQueue)) {
@@ -9824,12 +9874,18 @@ bool StreamManager::buildOutputBranch(
          (tvs::stream_protocols::isDvbInput(
               tvs::stream_protocols::inputKind(state->runtimeConfig)) &&
           state->runtimeConfig.inputServiceId > 0));
-    if (privateDvbPreview) {
+    const bool privateRtspPreview = type == "http" &&
+        outputConfig.outputHost == "127.0.0.1" && outputConfig.outputPort == 0 &&
+        state && !state->config.transcodeEnabled &&
+        tvs::stream_protocols::inputKind(state->runtimeConfig) ==
+            tvs::stream_protocols::InputProtocolKind::Rtsp &&
+        state->runtimeConfig.inputServiceId == 0;
+    if (privateDvbPreview || privateRtspPreview) {
         GstElement* queue = gst_element_factory_make(
-            "queue", branchName("private_dvb_preview_queue", branchIndex).c_str());
+            "queue", branchName(privateRtspPreview ? "private_rtsp_preview_queue" : "private_dvb_preview_queue", branchIndex).c_str());
         GstElement* sink = createOutputSink(
             state, outputConfig, pipeline,
-            branchName("private_dvb_preview_sink", branchIndex));
+            branchName(privateRtspPreview ? "private_rtsp_preview_sink" : "private_dvb_preview_sink", branchIndex));
         if (!queue || !sink || !addElementOrFail(pipeline, queue)) {
             if (queue && !GST_OBJECT_PARENT(queue)) gst_object_unref(queue);
             return false;
@@ -9839,10 +9895,17 @@ bool StreamManager::buildOutputBranch(
         // this channel's primary output while keeping TS packets intact.
         configureLiveQueue(queue, 1000000000ULL);
         const bool linked = gst_element_link_many(sourceTail, queue, sink, nullptr);
-        std::cerr << "SAT PREVIEW 203.73: stream=" << state->config.id
-                  << " transport=selected-SPTS-direct remux=off"
-                  << " service_reselection=off video_transcode=off"
-                  << " result=" << (linked ? "ready" : "link-failed") << std::endl;
+        if (privateRtspPreview) {
+            std::cerr << "RTSP PREVIEW 203.73: stream=" << state->config.id
+                      << " transport=input-rtsp-mux-SPTS-direct remux=off"
+                      << " service_reselection=off video_transcode=off"
+                      << " result=" << (linked ? "ready" : "link-failed") << std::endl;
+        } else {
+            std::cerr << "SAT PREVIEW 203.73: stream=" << state->config.id
+                      << " transport=selected-SPTS-direct remux=off"
+                      << " service_reselection=off video_transcode=off"
+                      << " result=" << (linked ? "ready" : "link-failed") << std::endl;
+        }
         return linked;
     }
 
@@ -10391,6 +10454,44 @@ bool StreamManager::buildHlsOutputPipeline(
     size_t branchIndex) {
     if (!state || !pipeline || !sourceTail) return false;
     const StreamConfig& cfg = outputConfig;
+
+    // 203.73 RTSP/HLS hotfix: RTSP input is already normalized to a clean
+    // single-program MPEG-TS by input_rtsp_ts_mux.  Demuxing that transport and
+    // immediately remuxing it again for HLS can stall at the second tsdemux on
+    // some live RTP timestamp layouts (observed signature: input bitrate is
+    // present, RTSP A/V pads are linked, remap_pre_demux_queue grows, but no
+    // video.m3u8/segment files are ever opened).  When no explicit remap is
+    // requested, feed the already-built SPTS directly to hlssink.  For CBR the
+    // input RTSP mux already owns target-rate NULL stuffing via configureTsMux().
+    const auto sourceProtocol = tvs::stream_protocols::inputKind(state->runtimeConfig);
+    const bool directRtspTs =
+        sourceProtocol == tvs::stream_protocols::InputProtocolKind::Rtsp &&
+        state->runtimeConfig.inputServiceId == 0 &&
+        !state->config.transcodeEnabled &&
+        !cfg.remapEnabled &&
+        hasElementFactory("hlssink");
+    if (directRtspTs) {
+        GstElement* queue = gst_element_factory_make(
+            "queue", branchName("hls_rtsp_direct_queue", branchIndex).c_str());
+        GstElement* sink = createOutputSink(
+            state, cfg, pipeline, branchName("hls_rtsp_direct_sink", branchIndex));
+        if (!queue || !sink || !addElementOrFail(pipeline, queue)) {
+            if (queue && !GST_OBJECT_PARENT(queue)) gst_object_unref(queue);
+            return false;
+        }
+        // Do not use a leaky queue here: dropping TS packets before a segmenter
+        // can create continuity gaps. Keep a bounded ten-second reservoir and
+        // preserve the PCR/PTS produced by input_rtsp_ts_mux.
+        configureQueue(queue, 10000000000ULL);
+        const bool linked = gst_element_link_many(sourceTail, queue, sink, nullptr);
+        std::cerr << "HLS RTSP direct TS 203.73: stream=" << state->config.id
+                  << " demux=off second_remux=off"
+                  << " input_mux=input_rtsp_ts_mux"
+                  << " cbr=" << (cbrMuxEnabled(cfg) ? std::to_string(cfg.targetBitrate) : "off")
+                  << " result=" << (linked ? "ready" : "link-failed")
+                  << std::endl;
+        return linked;
+    }
 
     // Explicit PID/SID remapping still needs our mpegtsmux so the configured
     // output mapping is preserved.  Feeding that freshly remuxed TS to the old
@@ -11077,6 +11178,169 @@ void StreamManager::onRtspPadAdded(GstElement* src, GstPad* pad, gpointer user_d
             g_free(capsText);
         }
         gst_caps_unref(caps);
+    }
+
+    const std::string capsLower = toLower(capsString);
+
+    // Some IPTV encoders expose a complete MPEG-TS as RTP payload MP2T rather
+    // than separate elementary RTP pads. Depayload -> demux -> reuse the normal
+    // elementary remap callback so the rest of the pipeline remains identical.
+    if (rtspCapsEncoding(capsLower, "mp2t")) {
+        if (ctx->rtspMpegTsLinked) return;
+        for (const char* factory : {"rtpmp2tdepay", "tsparse", "tsdemux"}) {
+            if (!hasElementFactory(factory)) {
+                std::cerr << "missing RTSP MP2T element: " << factory << std::endl;
+                return;
+            }
+        }
+
+        GstElement* pipeline = GST_ELEMENT(gst_element_get_parent(ctx->mux));
+        if (!pipeline) return;
+        GstElement* queue = gst_element_factory_make("queue", nullptr);
+        GstElement* depay = gst_element_factory_make("rtpmp2tdepay", nullptr);
+        GstElement* tsparse = gst_element_factory_make("tsparse", nullptr);
+        GstElement* demux = gst_element_factory_make("tsdemux", nullptr);
+        if (!queue || !depay || !tsparse || !demux ||
+            !gst_bin_add(GST_BIN(pipeline), queue) ||
+            !gst_bin_add(GST_BIN(pipeline), depay) ||
+            !gst_bin_add(GST_BIN(pipeline), tsparse) ||
+            !gst_bin_add(GST_BIN(pipeline), demux)) {
+            std::cerr << "RTSP MP2T branch create failed" << std::endl;
+            gst_object_unref(pipeline);
+            return;
+        }
+        configureQueue(queue, 5000000000ULL);
+        setIntPropertyIfPresent(tsparse, "alignment", 7);
+        if (ctx->config.inputServiceId > 0) {
+            setIntPropertyIfPresent(demux, "program-number", static_cast<gint>(ctx->config.inputServiceId));
+        }
+        g_signal_connect(demux, "pad-added", G_CALLBACK(StreamManager::onDemuxPadAdded), ctx);
+        if (!gst_element_link_many(queue, depay, tsparse, demux, nullptr)) {
+            std::cerr << "RTSP MP2T branch static link failed" << std::endl;
+            gst_object_unref(pipeline);
+            return;
+        }
+        GstPad* queueSinkPad = gst_element_get_static_pad(queue, "sink");
+        const bool linked = queueSinkPad && gst_pad_link(pad, queueSinkPad) == GST_PAD_LINK_OK;
+        if (queueSinkPad) gst_object_unref(queueSinkPad);
+        if (!linked) {
+            std::cerr << "RTSP MP2T RTP pad link failed: " << capsString << std::endl;
+            gst_object_unref(pipeline);
+            return;
+        }
+        gst_element_sync_state_with_parent(queue);
+        gst_element_sync_state_with_parent(depay);
+        gst_element_sync_state_with_parent(tsparse);
+        gst_element_sync_state_with_parent(demux);
+        ctx->rtspMpegTsLinked = true;
+        std::cerr << "RTSP input 203.73: payload=MP2T depay=rtpmp2tdepay demux=tsdemux"
+                  << " input_sid=" << ctx->config.inputServiceId << std::endl;
+        gst_object_unref(pipeline);
+        return;
+    }
+
+    // Most IP cameras use G.711 (PCMA/PCMU). MPEG-TS output cannot rely on
+    // G.711 passthrough across receivers, so normalize this one RTSP audio
+    // branch to AAC-LC 48 kHz stereo while leaving H.264/H.265 video untouched.
+    const bool rtspPcma = rtspCapsEncoding(capsLower, "pcma");
+    const bool rtspPcmu = rtspCapsEncoding(capsLower, "pcmu");
+    if ((rtspPcma || rtspPcmu) && !ctx->audioLinked) {
+        const char* depayFactory = rtspPcma ? "rtppcmadepay" : "rtppcmudepay";
+        const char* decoderFactory = rtspPcma ? "alawdec" : "mulawdec";
+        for (const char* factory : {depayFactory, decoderFactory, "audioconvert", "audioresample", "aacparse"}) {
+            if (!hasElementFactory(factory)) {
+                std::cerr << "missing RTSP G711 element: " << factory << std::endl;
+                return;
+            }
+        }
+        RtspAacEncoderSelection aac = makeRtspAacEncoder();
+        if (!aac.element) {
+            std::cerr << "missing RTSP G711 AAC encoder: fdkaacenc/voaacenc/avenc_aac" << std::endl;
+            return;
+        }
+
+        GstElement* pipeline = GST_ELEMENT(gst_element_get_parent(ctx->mux));
+        if (!pipeline) {
+            gst_object_unref(aac.element);
+            return;
+        }
+        GstElement* queue = gst_element_factory_make("queue", nullptr);
+        GstElement* depay = gst_element_factory_make(depayFactory, nullptr);
+        GstElement* decoder = gst_element_factory_make(decoderFactory, nullptr);
+        GstElement* convert = gst_element_factory_make("audioconvert", nullptr);
+        GstElement* resample = gst_element_factory_make("audioresample", nullptr);
+        GstElement* rawFilter = gst_element_factory_make("capsfilter", nullptr);
+        GstElement* parser = gst_element_factory_make("aacparse", nullptr);
+        if (!queue || !depay || !decoder || !convert || !resample || !rawFilter || !parser) {
+            gst_object_unref(aac.element);
+            gst_object_unref(pipeline);
+            return;
+        }
+
+        GstCaps* rawCaps = gst_caps_new_simple(
+            "audio/x-raw",
+            "format", G_TYPE_STRING, aac.factory == "avenc_aac" ? "F32LE" : "S16LE",
+            "layout", G_TYPE_STRING, "interleaved",
+            "rate", G_TYPE_INT, 48000,
+            "channels", G_TYPE_INT, 2,
+            nullptr);
+        g_object_set(rawFilter, "caps", rawCaps, nullptr);
+        gst_caps_unref(rawCaps);
+        configureRtspAacEncoder(aac.element, aac.factory, ctx->config.transcodeAudioBitrate);
+        if (g_object_class_find_property(G_OBJECT_GET_CLASS(parser), "disable-passthrough")) {
+            g_object_set(parser, "disable-passthrough", TRUE, nullptr);
+        }
+        configureQueue(queue, 5000000000ULL);
+
+        for (GstElement* element : {queue, depay, decoder, convert, resample, rawFilter, aac.element, parser}) {
+            if (!gst_bin_add(GST_BIN(pipeline), element)) {
+                std::cerr << "RTSP G711 branch add failed" << std::endl;
+                gst_object_unref(pipeline);
+                return;
+            }
+        }
+        if (!gst_element_link_many(queue, depay, decoder, convert, resample, rawFilter, aac.element, parser, nullptr)) {
+            std::cerr << "RTSP G711 branch static link failed" << std::endl;
+            gst_object_unref(pipeline);
+            return;
+        }
+        GstPad* queueSinkPad = gst_element_get_static_pad(queue, "sink");
+        if (!queueSinkPad || gst_pad_link(pad, queueSinkPad) != GST_PAD_LINK_OK) {
+            if (queueSinkPad) gst_object_unref(queueSinkPad);
+            std::cerr << "RTSP G711 RTP pad link failed: " << capsString << std::endl;
+            gst_object_unref(pipeline);
+            return;
+        }
+        gst_object_unref(queueSinkPad);
+
+        GstPad* parserSrcPad = gst_element_get_static_pad(parser, "src");
+        GstPad* muxSinkPad = requestMuxSinkPad(ctx->mux, ctx->config.audioPid);
+        if (!parserSrcPad || !muxSinkPad || gst_pad_link(parserSrcPad, muxSinkPad) != GST_PAD_LINK_OK) {
+            if (parserSrcPad) gst_object_unref(parserSrcPad);
+            if (muxSinkPad) {
+                gst_element_release_request_pad(ctx->mux, muxSinkPad);
+                gst_object_unref(muxSinkPad);
+            }
+            std::cerr << "RTSP G711 AAC -> MPEG-TS mux link failed" << std::endl;
+            gst_object_unref(pipeline);
+            return;
+        }
+        const gchar* padName = GST_PAD_NAME(muxSinkPad);
+        ctx->audioLinked = true;
+        ctx->audioPadName = padName ? padName : "";
+        updateMuxProgramMap(ctx);
+        gst_object_unref(parserSrcPad);
+        gst_object_unref(muxSinkPad);
+
+        for (GstElement* element : {queue, depay, decoder, convert, resample, rawFilter, aac.element, parser}) {
+            gst_element_sync_state_with_parent(element);
+        }
+        std::cerr << "RTSP input 203.73: payload=" << (rtspPcma ? "PCMA" : "PCMU")
+                  << " audio_normalize=AAC-LC/48000/2 encoder=" << aac.factory
+                  << " bitrate=" << std::clamp<uint64_t>(ctx->config.transcodeAudioBitrate, 64000, 320000)
+                  << std::endl;
+        gst_object_unref(pipeline);
+        return;
     }
 
     RtspPayloadFactories factories = rtspPayloadFactories(capsString);

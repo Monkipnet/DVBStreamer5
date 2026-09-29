@@ -83,7 +83,7 @@ int main() {
             std::cerr << "Auto-start unknown exception contained: stream=" << stream.id << std::endl;
         }
     }
-    std::cout << "DVBStreamer5 running on port " << configManager.config.httpPort << std::endl;
+    std::cout << "TVStreamer5 running on port " << configManager.config.httpPort << std::endl;
     std::cerr << "Calling ioc.run()" << std::endl;
 
     // A handler exception must not take down all 20+ active services.  Asio's

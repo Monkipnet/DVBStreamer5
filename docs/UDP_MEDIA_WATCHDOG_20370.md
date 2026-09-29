@@ -1,8 +1,8 @@
-# DVBStreamer5 203.70 — проверка реальных медиаданных на UDP-CBR
+# TVStreamer5 203.70 — проверка реальных медиаданных на UDP-CBR
 
 **Исходный материал:** полный архив 203.69, без изменения пользовательской конфигурации.
 **Статус:** исходники + патч; локальные unit/static tests пройдены. Полная сборка
-DVBStreamer5 с GStreamer и испытания на реальном HTTP/SRT → UDP пока не проводились.
+TVStreamer5 с GStreamer и испытания на реальном HTTP/SRT → UDP пока не проводились.
 Не устанавливать непосредственно на рабочий 43-канальный сервер без одноканального
 испытания на тестовой системе. Обновление основного бинарника требует перезапуска службы.
 
@@ -80,8 +80,8 @@ g++ -std=c++17 -O2 -Wall -Wextra -Werror \
   tests/test_udp_media_delivery_20370.cpp -o /tmp/test_udp_media_delivery_20370
 /tmp/test_udp_media_delivery_20370
 cmake -S . -B build-media-20370 -DCMAKE_BUILD_TYPE=Release \
-  -DDVBSTREAMER5_BUILD_OSCAM_MINI=OFF
-cmake --build build-media-20370 --parallel 2 --target DVBStreamer5
+  -DTVSTREAMER5_BUILD_OSCAM_MINI=OFF
+cmake --build build-media-20370 --parallel 2 --target TVStreamer5
 ```
 
 Для одноканального теста используйте отдельный экземпляр сервиса, не занимая
@@ -90,7 +90,7 @@ cmake --build build-media-20370 --parallel 2 --target DVBStreamer5
 переход на резерв с возвращением основного источника. Мониторьте записи:
 
 ```bash
-journalctl -u dvbstreamer5.service --since '30 minutes ago' --no-pager -l | \
+journalctl -u tvstreamer5.service --since '30 minutes ago' --no-pager -l | \
   grep -E 'UDP MEDIA WATCH 203.70|PRIMARY RECOVERY 203.70|MEDIA WATCH 203.69|NETWORK INPUT RECOVERY'
 ```
 

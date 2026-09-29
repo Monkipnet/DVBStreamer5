@@ -1,4 +1,4 @@
-# DVBStreamer5 v203.67 – idle preview resource guard (candidate)
+# TVStreamer5 v203.67 – idle preview resource guard (candidate)
 
 A production channel is not restarted on preview open/close. For **in-process**
 GStreamer channels without configured HTTP, an isolated tee pad feeding the

@@ -76,7 +76,7 @@ std::vector<std::string> multicastInterfaceNames(
 
         // Linux loopback normally does not advertise IFF_MULTICAST, but IPv4
         // multicast membership by interface index is supported on lo and is
-        // useful for local producers feeding DVBStreamer5 without leaving
+        // useful for local producers feeding TVStreamer5 without leaving
         // the host. Allow lo/127.0.0.0/8 as an input-only multicast interface.
         const bool loopbackInterface =
             iface.name == "lo" || iface.address.rfind("127.", 0) == 0;

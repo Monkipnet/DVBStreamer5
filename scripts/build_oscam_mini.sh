@@ -65,7 +65,7 @@ printf '\nEnabled OSCam-mini modules:\n'
 cmake -S "$WORK" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
   -DHAVE_PCSC=1 \
-  -DCS_CONFDIR=/opt/DVBStreamer5/oscam-mini/config
+  -DCS_CONFDIR=/opt/TVStreamer5/oscam-mini/config
 # Detect any unexpected configure fallback to non-PC/SC mode.
 if ! grep -Eq '(^CONFIG_CARDREADER_PCSC=y$|^USE_PCSC[=: ]|^WITH_PCSC[=: ]|^HAVE_PCSC(:INTERNAL|:UNINITIALIZED|:BOOL)?=1$)' \
      "$WORK/config.mak" "$BUILD/config.mak" "$BUILD/CMakeCache.txt" 2>/dev/null; then

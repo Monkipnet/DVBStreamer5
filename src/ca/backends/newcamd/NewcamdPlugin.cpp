@@ -953,7 +953,7 @@ static int newcamd_open_reader(void* instance, const struct tvs_ca_reader_info_v
 
     // v196: keep the reader probe alive as a dedicated AU/EMM Newcamd
     // connection.  Astra forwards addressed Irdeto EMMs over its CAM session;
-    // the old DVBStreamer5 probe disconnected immediately and therefore the
+    // the old TVStreamer5 probe disconnected immediately and therefore the
     // card never received entitlement updates while our service sessions ran.
     auto auSession = std::make_shared<NewcamdAuSession>();
     auSession->client = std::make_unique<NewcamdClient>(
@@ -1611,7 +1611,7 @@ static const tvs_ca_backend_api_v1 api = {
     newcamd_status_json
 };
 
-const tvs_ca_backend_api_v1* dvbstreamer5_ca_backend_get_api_v1(void) {
+const tvs_ca_backend_api_v1* tvstreamer5_ca_backend_get_api_v1(void) {
     return &api;
 }
 

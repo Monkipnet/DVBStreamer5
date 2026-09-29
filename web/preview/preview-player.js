@@ -1,4 +1,4 @@
-/* DVBStreamer5 browser preview: choose an existing HTTP MPEG-TS output,
+/* TVStreamer5 browser preview: choose an existing HTTP MPEG-TS output,
  * or the private on-demand HTTP session backed by the same channel pipeline.
  * Production SRT/HLS/UDP output configurations are not modified by the UI.
  */

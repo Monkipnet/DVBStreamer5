@@ -6,8 +6,8 @@ set -Eeuo pipefail
 
 ORIG_ARGS=("$@")
 PAYLOAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="${TVS_INSTALL_DIR:-/opt/DVBStreamer5}"
-STATE_DIR="${TVS_INSTALLER_STATE_DIR:-/var/lib/dvbstreamer5-installer}"
+INSTALL_DIR="${TVS_INSTALL_DIR:-/opt/TVStreamer5}"
+STATE_DIR="${TVS_INSTALLER_STATE_DIR:-/var/lib/tvstreamer5-installer}"
 LEGACY_INSTALL_DIR="/opt/TVStreammerSAT5"
 LEGACY_SERVICE="tvstreammersat5.service"
 INSTALL_DIR_EXPLICIT=0
@@ -19,12 +19,12 @@ NO_PCSC=0
 
 usage() {
   cat <<'USAGE'
-DVBStreamer5 universal .run installer
+TVStreamer5 universal .run installer
 
-Usage: sudo ./DVBStreamer5-*.run [options]
+Usage: sudo ./TVStreamer5-*.run [options]
 
 Options:
-  --install-dir DIR  Install prefix (default /opt/DVBStreamer5)
+  --install-dir DIR  Install prefix (default /opt/TVStreamer5)
   --no-start         Install files but do not start/restart services
   --offline          Do not use apt/dnf/yum/zypper/pacman
   --no-pcsc          Do not install/check PC/SC daemon and CCID reader support
@@ -50,8 +50,8 @@ while (($#)); do
   esac
 done
 
-if (( ! INSTALL_DIR_EXPLICIT )) && [[ "$INSTALL_DIR" == "/opt/DVBStreamer5" &&
-      ! -f "$INSTALL_DIR/DVBStreamer5" && -f "$LEGACY_INSTALL_DIR/TVStreammerSAT5" ]]; then
+if (( ! INSTALL_DIR_EXPLICIT )) && [[ "$INSTALL_DIR" == "/opt/TVStreamer5" &&
+      ! -f "$INSTALL_DIR/TVStreamer5" && -f "$LEGACY_INSTALL_DIR/TVStreammerSAT5" ]]; then
   INSTALL_DIR="$LEGACY_INSTALL_DIR"
 fi
 
@@ -83,7 +83,7 @@ if ! (cd "$PAYLOAD_DIR" && sha256sum -c SHA256SUMS >/dev/null); then
 fi
 
 VERSION="$(cat "$PAYLOAD_DIR/VERSION")"
-echo "DVBStreamer5 $VERSION universal installer"
+echo "TVStreamer5 $VERSION universal installer"
 echo "Host: ${PRETTY_NAME:-Linux} / $ARCH_ACTUAL"
 echo "Install dir: $INSTALL_DIR"
 
@@ -137,12 +137,12 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="$STATE_DIR/backups/$STAMP"
 run mkdir -p "$BACKUP" "$STATE_DIR"
 for f in \
-  "$INSTALL_DIR/DVBStreamer5" \
+  "$INSTALL_DIR/TVStreamer5" \
   "$INSTALL_DIR/TVStreammerSAT5" \
-  "$INSTALL_DIR/dvbstreamer5-run" \
+  "$INSTALL_DIR/tvstreamer5-run" \
   "$INSTALL_DIR/oscam-mini/oscam-mini" \
   "$INSTALL_DIR/oscam-mini/oscam-mini-run" \
-  /etc/systemd/system/dvbstreamer5.service \
+  /etc/systemd/system/tvstreamer5.service \
   /etc/systemd/system/tvstreammersat5.service \
   /etc/systemd/system/oscam-mini.service; do
   if [[ -e "$f" ]]; then
@@ -156,25 +156,25 @@ done
 # processes. --no-start can be used when the operator wants a manual cutover.
 if command -v systemctl >/dev/null 2>&1; then
   run systemctl stop "$LEGACY_SERVICE" || true
-  run systemctl stop dvbstreamer5.service || true
+  run systemctl stop tvstreamer5.service || true
   run systemctl stop oscam-mini.service || true
 elif command -v rc-service >/dev/null 2>&1; then
-  run rc-service dvbstreamer5 stop || true
+  run rc-service tvstreamer5 stop || true
   run rc-service oscam-mini stop || true
 elif command -v service >/dev/null 2>&1; then
-  run service dvbstreamer5 stop || true
+  run service tvstreamer5 stop || true
   run service oscam-mini stop || true
 fi
 
 run mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/ca-plugins" "$INSTALL_DIR/oscam-mini/config" \
              "$INSTALL_DIR/oscam-mini/default-config"
-run install -m0755 "$PAYLOAD_DIR/app/DVBStreamer5" "$INSTALL_DIR/DVBStreamer5"
+run install -m0755 "$PAYLOAD_DIR/app/TVStreamer5" "$INSTALL_DIR/TVStreamer5"
 if [[ -e "$INSTALL_DIR/TVStreammerSAT5" && ! -L "$INSTALL_DIR/TVStreammerSAT5" ]]; then
   run mv "$INSTALL_DIR/TVStreammerSAT5" "$BACKUP/legacy-binary"
 fi
-run ln -sfn DVBStreamer5 "$INSTALL_DIR/TVStreammerSAT5"
-run install -m0755 "$PAYLOAD_DIR/app/dvbstreamer5-run" "$INSTALL_DIR/dvbstreamer5-run"
-run install -m0755 "$PAYLOAD_DIR/app/ca-plugins/dvbstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
+run ln -sfn TVStreamer5 "$INSTALL_DIR/TVStreammerSAT5"
+run install -m0755 "$PAYLOAD_DIR/app/tvstreamer5-run" "$INSTALL_DIR/tvstreamer5-run"
+run install -m0755 "$PAYLOAD_DIR/app/ca-plugins/tvstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so"
 run install -m0755 "$PAYLOAD_DIR/app/oscam-mini/oscam-mini" "$INSTALL_DIR/oscam-mini/oscam-mini"
 run install -m0755 "$PAYLOAD_DIR/app/oscam-mini/oscam-mini-run" "$INSTALL_DIR/oscam-mini/oscam-mini-run"
 
@@ -208,9 +208,9 @@ run sysctl --system >/dev/null 2>&1 || true
 install_systemd() {
   run mkdir -p /etc/systemd/system
   if (( ! DRY_RUN )); then
-    cat > /etc/systemd/system/dvbstreamer5.service <<UNIT
+    cat > /etc/systemd/system/tvstreamer5.service <<UNIT
 [Unit]
-Description=DVBStreamer5 IPTV/DVB streaming server
+Description=TVStreamer5 IPTV/DVB streaming server
 Wants=network-online.target
 After=network-online.target pcscd.service
 
@@ -219,7 +219,7 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/dvbstreamer5-run
+ExecStart=$INSTALL_DIR/tvstreamer5-run
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=35
@@ -230,7 +230,7 @@ WantedBy=multi-user.target
 UNIT
     cat > /etc/systemd/system/oscam-mini.service <<UNIT
 [Unit]
-Description=DVBStreamer5 OSCam-mini Newcamd/PCSC/Phoenix card server
+Description=TVStreamer5 OSCam-mini Newcamd/PCSC/Phoenix card server
 After=network.target pcscd.service
 Conflicts=oscam.service
 ConditionPathExists=$INSTALL_DIR/oscam-mini/config/oscam.conf
@@ -255,20 +255,20 @@ UNIT
   fi
   run systemctl daemon-reload
   run systemctl disable "$LEGACY_SERVICE" || true
-  run systemctl enable dvbstreamer5.service oscam-mini.service
+  run systemctl enable tvstreamer5.service oscam-mini.service
   if systemctl list-unit-files oscam.service >/dev/null 2>&1; then run systemctl disable --now oscam.service || true; fi
   if (( ! NO_START )); then
     run systemctl restart oscam-mini.service
-    run systemctl restart dvbstreamer5.service
+    run systemctl restart tvstreamer5.service
   fi
 }
 
 install_openrc() {
-  for name in dvbstreamer5 oscam-mini; do
+  for name in tvstreamer5 oscam-mini; do
     if (( ! DRY_RUN )); then
       cat > "/etc/init.d/$name" <<RC
 #!/sbin/openrc-run
-command="$INSTALL_DIR/$([[ $name == dvbstreamer5 ]] && echo dvbstreamer5-run || echo oscam-mini/oscam-mini-run)"
+command="$INSTALL_DIR/$([[ $name == tvstreamer5 ]] && echo tvstreamer5-run || echo oscam-mini/oscam-mini-run)"
 $([[ $name == oscam-mini ]] && echo 'command_args="-c '$INSTALL_DIR'/oscam-mini/config"' || true)
 command_background="no"
 pidfile="/run/$name.pid"
@@ -280,13 +280,13 @@ RC
     fi
     run rc-update add "$name" default || true
   done
-  if (( ! NO_START )); then run rc-service oscam-mini restart; run rc-service dvbstreamer5 restart; fi
+  if (( ! NO_START )); then run rc-service oscam-mini restart; run rc-service tvstreamer5 restart; fi
 }
 
 install_sysv() {
   # Minimal LSB scripts for legacy glibc systems without systemd/OpenRC.
-  for name in dvbstreamer5 oscam-mini; do
-    bin="$INSTALL_DIR/$([[ $name == dvbstreamer5 ]] && echo dvbstreamer5-run || echo oscam-mini/oscam-mini-run)"
+  for name in tvstreamer5 oscam-mini; do
+    bin="$INSTALL_DIR/$([[ $name == tvstreamer5 ]] && echo tvstreamer5-run || echo oscam-mini/oscam-mini-run)"
     args=""; [[ $name == oscam-mini ]] && args="-c $INSTALL_DIR/oscam-mini/config"
     if (( ! DRY_RUN )); then
       cat > "/etc/init.d/$name" <<SYSV
@@ -311,9 +311,9 @@ SYSV
       echo "+ write SysV init script $name"
     fi
   done
-  command -v update-rc.d >/dev/null 2>&1 && { run update-rc.d dvbstreamer5 defaults; run update-rc.d oscam-mini defaults; }
-  command -v chkconfig >/dev/null 2>&1 && { run chkconfig --add dvbstreamer5; run chkconfig --add oscam-mini; }
-  if (( ! NO_START )); then run service oscam-mini restart; run service dvbstreamer5 restart; fi
+  command -v update-rc.d >/dev/null 2>&1 && { run update-rc.d tvstreamer5 defaults; run update-rc.d oscam-mini defaults; }
+  command -v chkconfig >/dev/null 2>&1 && { run chkconfig --add tvstreamer5; run chkconfig --add oscam-mini; }
+  if (( ! NO_START )); then run service oscam-mini restart; run service tvstreamer5 restart; fi
 }
 
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
@@ -344,8 +344,8 @@ if (( ! DRY_RUN )); then
   export GST_PLUGIN_SCANNER="$INSTALL_DIR/runtime/libexec/gstreamer-1.0/gst-plugin-scanner"
   export GST_REGISTRY="$INSTALL_DIR/runtime/gstreamer-registry.bin"
 
-  if ldd "$INSTALL_DIR/DVBStreamer5" | grep -q 'not found'; then
-    echo "Missing application library:" >&2; ldd "$INSTALL_DIR/DVBStreamer5" | grep 'not found' >&2; exit 1
+  if ldd "$INSTALL_DIR/TVStreamer5" | grep -q 'not found'; then
+    echo "Missing application library:" >&2; ldd "$INSTALL_DIR/TVStreamer5" | grep 'not found' >&2; exit 1
   fi
   if ldd "$INSTALL_DIR/oscam-mini/oscam-mini" | grep -q 'not found'; then
     echo "Missing OSCam-mini library:" >&2; ldd "$INSTALL_DIR/oscam-mini/oscam-mini" | grep 'not found' >&2; exit 1
@@ -371,10 +371,10 @@ if (( ! DRY_RUN )); then
 fi
 
 echo
-echo "DVBStreamer5 $VERSION installation complete."
-echo "Application : $INSTALL_DIR/DVBStreamer5"
+echo "TVStreamer5 $VERSION installation complete."
+echo "Application : $INSTALL_DIR/TVStreamer5"
 echo "OSCam-mini  : $INSTALL_DIR/oscam-mini/oscam-mini"
 echo "Backup      : $BACKUP"
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
-  echo "Status      : systemctl status dvbstreamer5 oscam-mini --no-pager"
+  echo "Status      : systemctl status tvstreamer5 oscam-mini --no-pager"
 fi

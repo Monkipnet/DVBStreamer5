@@ -831,8 +831,8 @@ body{font-family:Arial,sans-serif;background:#0f1218;color:#eee;margin:0}.w{max-
 </style>
 </head>
 <body><div class="w">
-<div class="row"><a class="btn alt" href="/">← DVBStreamer5</a><h2 style="margin:0">OSCam-mini</h2><span id="state"></span></div>
-<div class="c"><div class="row"><button onclick="act('start')">Старт</button><button class="alt" onclick="act('restart')">Перезапуск</button><button class="alt" onclick="act('stop')">Стоп</button><button class="alt" onclick="loadAll()">Обновить</button></div><p>Конфиги: /opt/DVBStreamer5/oscam-mini/config</p></div>
+<div class="row"><a class="btn alt" href="/">← TVStreamer5</a><h2 style="margin:0">OSCam-mini</h2><span id="state"></span></div>
+<div class="c"><div class="row"><button onclick="act('start')">Старт</button><button class="alt" onclick="act('restart')">Перезапуск</button><button class="alt" onclick="act('stop')">Стоп</button><button class="alt" onclick="loadAll()">Обновить</button></div><p>Конфиги: /opt/TVStreamer5/oscam-mini/config</p></div>
 
 <div class="c">
   <h3>Newcamd</h3>

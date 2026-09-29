@@ -1,6 +1,6 @@
 # OSCam-mini integration
 
-OSCam-mini is a standalone third-party card-server module for DVBStreamer5. It uses Phoenix/Smartmouse or USB OMNIKEY (via PC/SC) with licensed smartcards -> Newcamd and is managed from the DVBStreamer5 web interface at `/oscam-mini`.
+OSCam-mini is a standalone third-party card-server module for TVStreamer5. It uses Phoenix/Smartmouse or USB OMNIKEY (via PC/SC) with licensed smartcards -> Newcamd and is managed from the TVStreamer5 web interface at `/oscam-mini`.
 
 ## Source layout
 
@@ -74,7 +74,7 @@ cmake --build build --target oscam-mini -j1
 
 ```bash
 sudo cmake --install build
-sudo bash /opt/DVBStreamer5/oscam-mini/install_oscam_mini.sh
+sudo bash /opt/TVStreamer5/oscam-mini/install_oscam_mini.sh
 ```
 
 `cmake --install` now installs the systemd unit directly to:
@@ -88,9 +88,9 @@ The installer performs `systemctl daemon-reload`, stops/disables legacy OSCam so
 Runtime configuration exists only in:
 
 ```text
-/opt/DVBStreamer5/oscam-mini/config/oscam.conf
-/opt/DVBStreamer5/oscam-mini/config/oscam.server
-/opt/DVBStreamer5/oscam-mini/config/oscam.user
+/opt/TVStreamer5/oscam-mini/config/oscam.conf
+/opt/TVStreamer5/oscam-mini/config/oscam.server
+/opt/TVStreamer5/oscam-mini/config/oscam.user
 ```
 
 Existing runtime configuration is never overwritten during installation. Templates are stored separately in `default-config`.
@@ -106,7 +106,7 @@ The OSCam-mini page supports multiple Newcamd accounts. Each UI entry has:
 - reader groups;
 - AU/EMM flag.
 
-DVBStreamer5 automatically generates the OSCam Newcamd port list, for example:
+TVStreamer5 automatically generates the OSCam Newcamd port list, for example:
 
 ```ini
 [newcamd]
@@ -118,7 +118,7 @@ keepalive = 1
 
 and creates one `[account]` section per user in `oscam.user`, including `caid`, `ident`, `group` and `allowedprotocols = newcamd`. The UI rejects duplicate ports and duplicate usernames.
 
-Important OSCam detail: Newcamd listening ports are server endpoints, while OSCam accounts are not intrinsically bound to one TCP port. DVBStreamer5 treats each account/port pair as one configured endpoint and additionally restricts that account by CAID/Provider/group. Configure TVStreamer clients with the corresponding port and account shown in the UI.
+Important OSCam detail: Newcamd listening ports are server endpoints, while OSCam accounts are not intrinsically bound to one TCP port. TVStreamer5 treats each account/port pair as one configured endpoint and additionally restricts that account by CAID/Provider/group. Configure TVStreamer clients with the corresponding port and account shown in the UI.
 
 Legacy single-account configurations are read automatically and shown as the first user entry; additional port definitions are also imported into the UI.
 
@@ -134,7 +134,7 @@ The module provides service controls, multiple Newcamd endpoints/accounts, Phoen
 
 
 ### Irdeto reader keys
-OSCam-mini reader settings support optional `boxkey`, `rsakey`, `auprovid` and editable `emmcache`. Existing runtime values are loaded from `/opt/DVBStreamer5/oscam-mini/config/oscam.server` and preserved when saving through the web UI. Real card keys are intentionally not stored in repository default configs.
+OSCam-mini reader settings support optional `boxkey`, `rsakey`, `auprovid` and editable `emmcache`. Existing runtime values are loaded from `/opt/TVStreamer5/oscam-mini/config/oscam.server` and preserved when saving through the web UI. Real card keys are intentionally not stored in repository default configs.
 
 ## Compact activity rows
 

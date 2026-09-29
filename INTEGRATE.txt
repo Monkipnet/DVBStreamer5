@@ -1,4 +1,4 @@
-1. Add this source inside add_executable(DVBStreamer5 ...):
+1. Add this source inside add_executable(TVStreamer5 ...):
     src/OscamMiniManager.cpp
 
 2. Add near the end of top-level CMakeLists.txt:
