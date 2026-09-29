@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libpcsclite-dev \
     libboost-dev \
-    libcurl4-openssl-dev \
     libssl-dev \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
@@ -26,11 +25,9 @@ FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Ubuntu 24.04 uses the time64 curl runtime package (libcurl4t64).
 # gstreamer1.0-rtsp is required for rtspclientsink used by RTSP push output.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libcurl4t64 \
     libssl3t64 \
     libpcsclite1 \
     pcscd \

@@ -15,6 +15,7 @@
 #include "protocols/stream/StreamInputProtocol.h"
 #include "protocols/stream/StreamOutputProtocol.h"
 #include "protocols/SrtVpsProfile.h"
+#include "NativeHttpClient.h"
 
 #include <algorithm>
 #include <array>
@@ -31,6 +32,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <functional>
 #include <thread>
@@ -44,7 +46,6 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <curl/curl.h>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -3119,29 +3120,25 @@ std::string appendHlsAccessQuery(const std::string& uri, const StreamConfig& cfg
     if (cfg.hlsAccessKeyMode != "query" || cfg.hlsAccessKeyName.empty() || cfg.hlsAccessKeyValue.empty()) {
         return uri;
     }
-    gchar* escapedName = g_uri_escape_string(cfg.hlsAccessKeyName.c_str(), nullptr, TRUE);
-    gchar* escapedValue = g_uri_escape_string(cfg.hlsAccessKeyValue.c_str(), nullptr, TRUE);
-    if (!escapedName || !escapedValue) {
-        if (escapedName) g_free(escapedName);
-        if (escapedValue) g_free(escapedValue);
-        return uri;
-    }
-    const std::string keyPrefix = std::string(escapedName) + "=";
+    const std::string escapedName = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyName);
+    const std::string escapedValue = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyValue);
+    const auto fragmentPosition = uri.find('#');
+    std::string result = uri.substr(0, fragmentPosition);
+    const std::string fragment = fragmentPosition == std::string::npos
+        ? std::string()
+        : uri.substr(fragmentPosition);
+    const std::string keyPrefix = escapedName + "=";
     // Do not duplicate a key already present in a provider URL.
-    const auto queryPos = uri.find('?');
+    const auto queryPos = result.find('?');
     if (queryPos != std::string::npos) {
-        const std::string query = uri.substr(queryPos + 1);
+        const std::string query = result.substr(queryPos + 1);
         if (query.rfind(keyPrefix, 0) == 0 || query.find("&" + keyPrefix) != std::string::npos) {
-            g_free(escapedName);
-            g_free(escapedValue);
             return uri;
         }
     }
-    const std::string result = uri + (queryPos == std::string::npos ? "?" : "&") +
-        escapedName + "=" + escapedValue;
-    g_free(escapedName);
-    g_free(escapedValue);
-    return result;
+    result += queryPos == std::string::npos ? "?" : "&";
+    result += escapedName + "=" + escapedValue;
+    return result + fragment;
 }
 
 void configureHlsHttpSource(GstElement* element, const StreamConfig& cfg);
@@ -3217,7 +3214,7 @@ void onHlsDeepElementAdded(GstBin*, GstBin*, GstElement* element, gpointer userD
 }
 
 
-struct HttpMpegTsCurlInputState {
+struct HttpMpegTsInputState {
     std::atomic<bool> stopping{false};
     std::atomic<uint64_t> bytesReceived{0};
     GstElement* appsrc = nullptr;
@@ -3225,12 +3222,12 @@ struct HttpMpegTsCurlInputState {
     StreamConfig config;
     std::string location;
 
-    HttpMpegTsCurlInputState(GstElement* source, const StreamConfig& cfg, std::string uri)
+    HttpMpegTsInputState(GstElement* source, const StreamConfig& cfg, std::string uri)
         : appsrc(source ? GST_ELEMENT(gst_object_ref(source)) : nullptr),
           config(cfg),
           location(std::move(uri)) {}
 
-    ~HttpMpegTsCurlInputState() {
+    ~HttpMpegTsInputState() {
         stop();
         if (appsrc) {
             gst_object_unref(appsrc);
@@ -3249,37 +3246,30 @@ struct HttpMpegTsCurlInputState {
     }
 };
 
-size_t httpMpegTsCurlWrite(char* ptr, size_t size, size_t nmemb, void* userData) {
-    auto* state = static_cast<HttpMpegTsCurlInputState*>(userData);
-    const size_t bytes = size * nmemb;
-    if (!state || !ptr || bytes == 0) return bytes;
-    if (state->stopping.load(std::memory_order_relaxed) || !state->appsrc) return 0;
+bool pushHttpMpegTsData(HttpMpegTsInputState* state, const std::uint8_t* data, std::size_t bytes) {
+    if (!state || !data || bytes == 0) return true;
+    if (state->stopping.load(std::memory_order_relaxed) || !state->appsrc) return false;
 
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, bytes, nullptr);
-    if (!buffer) return 0;
+    if (!buffer) return false;
     GstMapInfo map{};
     if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
         gst_buffer_unref(buffer);
-        return 0;
+        return false;
     }
-    std::memcpy(map.data, ptr, bytes);
+    std::memcpy(map.data, data, bytes);
     gst_buffer_unmap(buffer, &map);
 
     const GstFlowReturn flow = gst_app_src_push_buffer(GST_APP_SRC(state->appsrc), buffer);
     if (flow != GST_FLOW_OK) {
         state->stopping.store(true, std::memory_order_relaxed);
-        return 0;
+        return false;
     }
     state->bytesReceived.fetch_add(bytes, std::memory_order_relaxed);
-    return bytes;
+    return true;
 }
 
-int httpMpegTsCurlProgress(void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-    auto* state = static_cast<HttpMpegTsCurlInputState*>(userData);
-    return state && state->stopping.load(std::memory_order_relaxed) ? 1 : 0;
-}
-
-void postHttpMpegTsError(HttpMpegTsCurlInputState* state, const std::string& message) {
+void postHttpMpegTsError(HttpMpegTsInputState* state, const std::string& message) {
     if (!state || !state->appsrc) return;
     GError* error = g_error_new_literal(
         g_quark_from_static_string("tvs-http-mpegts"), 1, message.c_str());
@@ -3289,62 +3279,43 @@ void postHttpMpegTsError(HttpMpegTsCurlInputState* state, const std::string& mes
     gst_element_post_message(state->appsrc, gstMessage);
 }
 
-void runHttpMpegTsCurlInput(const std::shared_ptr<HttpMpegTsCurlInputState>& state) {
+void runHttpMpegTsInput(const std::shared_ptr<HttpMpegTsInputState>& state) {
     if (!state || !state->appsrc) return;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        postHttpMpegTsError(state.get(), "HTTP MPEG-TS: curl_easy_init failed");
-        return;
-    }
-
-    struct curl_slist* headers = nullptr;
+    tvs::http::RequestOptions options;
+    options.connectTimeoutMs = kHttpConnectTimeoutMs;
+    options.readTimeoutMs = kHttpLowSpeedTimeSeconds * 1000L;
+    options.writeTimeoutMs = kHttpConnectTimeoutMs;
+    options.maxRedirects = 8;
+    options.forwardHeadersAcrossOrigins = true;
+    options.maxBodyBytes = (std::numeric_limits<std::size_t>::max)();
+    options.stopping = &state->stopping;
+    options.userAgent = state->config.hlsUserAgent.empty()
+        ? "Mozilla/5.0 TVStreamer5"
+        : state->config.hlsUserAgent;
     if (state->config.hlsAccessKeyMode == "header" &&
         !state->config.hlsAccessKeyName.empty() &&
         !state->config.hlsAccessKeyValue.empty()) {
-        const std::string header = state->config.hlsAccessKeyName + ": " + state->config.hlsAccessKeyValue;
-        headers = curl_slist_append(headers, header.c_str());
+        options.headers.emplace_back(
+            state->config.hlsAccessKeyName, state->config.hlsAccessKeyValue);
     }
-    headers = curl_slist_append(headers, "Accept: */*");
-    headers = curl_slist_append(headers, "Accept-Encoding: identity");
-    if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-    curl_easy_setopt(curl, CURLOPT_URL, state->location.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 8L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, kHttpConnectTimeoutMs);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, kHttpLowSpeedTimeSeconds);
-    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, httpMpegTsCurlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, state.get());
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, httpMpegTsCurlProgress);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, state.get());
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        state->config.hlsUserAgent.empty()
-            ? "Mozilla/5.0 TVStreamer5"
-            : state->config.hlsUserAgent.c_str());
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-
-    std::cerr << "HTTP MPEG-TS curl input: single_request=1 uri=" << state->location
+    std::cerr << "HTTP MPEG-TS native input: single_request=1 uri=" << state->location
               << " access=" << (state->config.hlsAccessKeyMode.empty() ? "none" : state->config.hlsAccessKeyMode)
-              << " source=libcurl-appsrc" << std::endl;
+              << " source=native-http-appsrc" << std::endl;
 
-    const CURLcode result = curl_easy_perform(curl);
-    long httpCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+    tvs::http::Response response;
+    std::string requestError;
+    const bool ok = tvs::http::get(
+        state->location, options, response, requestError,
+        [state](const std::uint8_t* data, std::size_t size) {
+            return pushHttpMpegTsData(state.get(), data, size);
+        });
     const uint64_t received = state->bytesReceived.load(std::memory_order_relaxed);
 
-    if (headers) curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    if (!state->stopping.load(std::memory_order_relaxed) && result != CURLE_OK) {
+    if (!state->stopping.load(std::memory_order_relaxed) && !ok) {
         std::ostringstream message;
-        message << "HTTP MPEG-TS input failed: " << curl_easy_strerror(result)
-                << " http=" << httpCode << " bytes=" << received;
+        message << "HTTP MPEG-TS input failed: " << requestError
+                << " http=" << response.status << " bytes=" << received;
         std::cerr << message.str() << std::endl;
         postHttpMpegTsError(state.get(), message.str());
     }
@@ -3355,18 +3326,18 @@ void runHttpMpegTsCurlInput(const std::shared_ptr<HttpMpegTsCurlInputState>& sta
 
 void stopHttpMpegTsInput(StreamState* state) {
     if (!state || !state->httpMpegTsInputState) return;
-    auto httpState = std::static_pointer_cast<HttpMpegTsCurlInputState>(state->httpMpegTsInputState);
+    auto httpState = std::static_pointer_cast<HttpMpegTsInputState>(state->httpMpegTsInputState);
     if (httpState) httpState->stop();
     state->httpMpegTsInputState.reset();
 }
 
 void startHttpMpegTsInput(StreamState* state) {
     if (!state || !state->httpMpegTsInputState) return;
-    auto httpState = std::static_pointer_cast<HttpMpegTsCurlInputState>(state->httpMpegTsInputState);
+    auto httpState = std::static_pointer_cast<HttpMpegTsInputState>(state->httpMpegTsInputState);
     if (!httpState || httpState->worker.joinable() ||
         httpState->stopping.load(std::memory_order_relaxed)) return;
     try {
-        httpState->worker = std::thread(runHttpMpegTsCurlInput, httpState);
+        httpState->worker = std::thread(runHttpMpegTsInput, httpState);
     } catch (const std::exception& ex) {
         httpState->stopping.store(true, std::memory_order_relaxed);
         const std::string message = std::string("HTTP MPEG-TS worker thread creation failed: ") + ex.what();
@@ -3375,49 +3346,31 @@ void startHttpMpegTsInput(StreamState* state) {
     }
 }
 
-size_t hlsProbeWrite(char* ptr, size_t size, size_t nmemb, void* userData) {
-    auto* body = static_cast<std::string*>(userData);
-    const size_t bytes = size * nmemb;
-    if (!body || !ptr || bytes == 0) return bytes;
-    constexpr size_t kProbeLimit = 128 * 1024;
-    const size_t remaining = body->size() < kProbeLimit ? kProbeLimit - body->size() : 0;
-    const size_t copy = std::min(bytes, remaining);
-    body->append(ptr, copy);
-    // Playlists are small. Abort large media downloads once the sniff buffer is full.
-    return remaining == 0 ? 0 : bytes;
-}
-
 bool probeHttpHlsManifest(const StreamConfig& cfg, const std::string& rawUri) {
     const std::string lower = toLower(rawUri);
     if (lower.rfind("http://", 0) != 0 && lower.rfind("https://", 0) != 0) return false;
     if (lower.find(".m3u8") != std::string::npos || toLower(cfg.inputMode) == "hls") return true;
 
-    CURL* curl = curl_easy_init();
-    if (!curl) return false;
     const std::string uri = appendHlsAccessQuery(rawUri, cfg);
-    std::string body;
-    struct curl_slist* headers = nullptr;
+    tvs::http::RequestOptions options;
+    options.connectTimeoutMs = 2500;
+    options.readTimeoutMs = 5000;
+    options.writeTimeoutMs = 2500;
+    options.totalTimeoutMs = 5000;
+    options.maxRedirects = 8;
+    options.forwardHeadersAcrossOrigins = true;
+    options.maxBodyBytes = 128U * 1024U;
+    options.userAgent = cfg.hlsUserAgent.empty()
+        ? "Mozilla/5.0 TVStreamer5"
+        : cfg.hlsUserAgent;
     if (cfg.hlsAccessKeyMode == "header" && !cfg.hlsAccessKeyName.empty() && !cfg.hlsAccessKeyValue.empty()) {
-        const std::string header = cfg.hlsAccessKeyName + ": " + cfg.hlsAccessKeyValue;
-        headers = curl_slist_append(headers, header.c_str());
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        options.headers.emplace_back(cfg.hlsAccessKeyName, cfg.hlsAccessKeyValue);
     }
-    curl_easy_setopt(curl, CURLOPT_URL, uri.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2500L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, hlsProbeWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        cfg.hlsUserAgent.empty() ? "Mozilla/5.0 TVStreamer5" : cfg.hlsUserAgent.c_str());
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-    (void)curl_easy_perform(curl);
-    char* contentType = nullptr;
-    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &contentType);
-    const std::string ct = contentType ? toLower(contentType) : "";
-    if (headers) curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
+    tvs::http::Response response;
+    std::string requestError;
+    (void)tvs::http::get(uri, options, response, requestError);
+    const std::string body(response.body.begin(), response.body.end());
+    const std::string ct = toLower(response.contentType);
 
     const auto first = body.find_first_not_of(" \t\r\n");
     const bool bodyHls = first != std::string::npos && body.compare(first, 7, "#EXTM3U") == 0;

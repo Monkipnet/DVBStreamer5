@@ -49,7 +49,7 @@ playlist. Исправление CryptoWorks из upstream не копирова
 | libcrypt | только MD5-crypt для Newcamd login | удалена; алгоритм реализован через уже используемый OpenSSL EVP | готово |
 | OpenSSL libcrypto | AES-256-GCM config, DES/Newcamd, HLS key crypto | динамическая | статически линковать либо класть совместимую `libcrypto` в bundle; не копировать отдельные crypto-функции вручную |
 | JsonCpp 1.9.8 | config/API/state JSON | встроенный amalgamated static target | готово; системная `libjsoncpp` не нужна, лицензия сохранена в `third_party/jsoncpp/LICENSE` |
-| libcurl | HTTP/HLS input и Telegram HTTPS | динамическая | сначала static libcurl; затем можно заменить plain HTTP на Beast, но TLS всё равно требует backend |
+| cpp-httplib 0.58.0 | HTTP/HLS input и Telegram HTTPS | встроенная header-only библиотека поверх OpenSSL | готово; системная `libcurl` не нужна, лицензия сохранена в `third_party/cpp-httplib/LICENSE` |
 | libdvbcsa 1.1.0 | MPEG-TS CSA descrambling | встроенный SSE2 static target для x86_64 | готово; GPL-2.0-or-later совместима с GPL-проектом, исходник и лицензия сохранены |
 | GStreamer/GLib/GIO | transcoding и оставшиеся protocol paths | динамическая + runtime plugins | оставить optional; bundle core/plugins или постепенно заменить passthrough paths нативным кодом |
 | TwoLAME | MP2 audio encoding | vendored static target | готово; соблюдать LGPL-2.1 |
@@ -82,20 +82,19 @@ bundle, а не один статический ELF.
 
 ## Порядок дальнейшего удаления runtime-зависимостей
 
-1. Заменить libcurl собственным HTTP(S)-клиентом на Boost.Asio/Beast + OpenSSL (JsonCpp и libdvbcsa уже встроены).
-2. Отделить типы транспортных буферов от `GstBuffer` и сделать GStreamer опциональным.
-3. Завершить нативные HTTP/HLS/SRT paths для passthrough и сделать GStreamer
+1. Отделить типы транспортных буферов от `GstBuffer` и сделать GStreamer опциональным (libcurl уже удалена).
+2. Завершить нативные HTTP/HLS/SRT paths для passthrough и сделать GStreamer
    optional на уровне CMake.
-4. Разделить `TVStreamer5-core` и `TVStreamer5-transcode` profiles.
-5. Собирать и тестировать bundle в контейнерах с минимальным glibc baseline на
+3. Разделить `TVStreamer5-core` и `TVStreamer5-transcode` profiles.
+4. Собирать и тестировать bundle в контейнерах с минимальным glibc baseline на
    целевой архитектуре `x86_64`.
-6. Проверять каждый release через `scripts/audit_runtime_deps.sh`, smoke tests и
+5. Проверять каждый release через `scripts/audit_runtime_deps.sh`, smoke tests и
    запуск в чистых Debian/Ubuntu/Fedora/RHEL-compatible containers.
 
 ## Лицензии
 
 В корне проекта находится GPL-3.0 text; OSCam-mini также GPL, TwoLAME —
-LGPL-2.1, browser libraries — Apache-2.0. Перед публичной бинарной поставкой
+LGPL-2.1, cpp-httplib и JsonCpp — MIT, browser libraries — Apache-2.0. Перед публичной бинарной поставкой
 нужно дополнить единый `THIRD_PARTY_NOTICES` точными версиями и способами
 линковки. Статическое включение LGPL-компонентов требует соблюдения условий о
 релинковке/исходниках. Этот раздел фиксирует инженерные риски и не является

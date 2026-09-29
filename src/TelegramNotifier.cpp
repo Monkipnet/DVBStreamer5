@@ -1,6 +1,6 @@
 #include "TelegramNotifier.h"
+#include "NativeHttpClient.h"
 
-#include <curl/curl.h>
 #include <chrono>
 #include <exception>
 #include <iostream>
@@ -10,10 +10,6 @@
 namespace {
 constexpr auto kRepeatedStreamEventWindow = std::chrono::minutes(30);
 constexpr std::size_t kTelegramQueueMax = 64;
-
-size_t discardTelegramResponse(char*, size_t size, size_t nmemb, void*) {
-    return size * nmemb;
-}
 
 std::string extractBetween(
     const std::string& text, const std::string& begin, const std::string& end,
@@ -149,54 +145,28 @@ void TelegramNotifier::sendMessageBlocking(const std::string& text) {
         }
     };
 
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        rollbackRepeatReservation();
-        return;
-    }
-
-    // 202.48: curl_easy_escape() returns curl-allocated strings. The old
-    // notifier streamed those pointers directly into ostringstream and never
-    // released them, leaking memory on every Telegram status notification.
-    char* escapedToken = curl_easy_escape(curl, config.telegramToken.c_str(), 0);
-    char* escapedChatId = curl_easy_escape(curl, config.telegramChatId.c_str(), 0);
-    char* escapedText = curl_easy_escape(curl, text.c_str(), 0);
-    if (!escapedToken || !escapedChatId || !escapedText) {
-        if (escapedToken) curl_free(escapedToken);
-        if (escapedChatId) curl_free(escapedChatId);
-        if (escapedText) curl_free(escapedText);
-        curl_easy_cleanup(curl);
-        rollbackRepeatReservation();
-        return;
-    }
-
     std::ostringstream url;
     url << "https://api.telegram.org/bot"
-        << escapedToken
+        << tvs::http::encodeQueryComponent(config.telegramToken)
         << "/sendMessage?chat_id="
-        << escapedChatId
+        << tvs::http::encodeQueryComponent(config.telegramChatId)
         << "&parse_mode=HTML"
         << "&disable_web_page_preview=true"
-        << "&text=" << escapedText;
-    curl_free(escapedToken);
-    curl_free(escapedChatId);
-    curl_free(escapedText);
+        << "&text=" << tvs::http::encodeQueryComponent(text);
 
     const std::string requestUrl = url.str();
-    curl_easy_setopt(curl, CURLOPT_URL, requestUrl.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    // 203.19: this request still has a strict timeout, but it executes only on
-    // the notifier worker and therefore cannot serialize stream startup.
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discardTelegramResponse);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2000L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 4000L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        std::cerr << "Telegram send error: " << curl_easy_strerror(res) << std::endl;
+    tvs::http::RequestOptions options;
+    options.connectTimeoutMs = 2000;
+    options.readTimeoutMs = 4000;
+    options.writeTimeoutMs = 2000;
+    options.totalTimeoutMs = 4000;
+    options.maxRedirects = 4;
+    options.maxBodyBytes = 1024U * 1024U;
+    options.verifyTlsPeer = true;
+    tvs::http::Response response;
+    std::string error;
+    if (!tvs::http::get(requestUrl, options, response, error)) {
+        std::cerr << "Telegram send error: " << error << std::endl;
         rollbackRepeatReservation();
     }
-    curl_easy_cleanup(curl);
 }

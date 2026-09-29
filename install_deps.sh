@@ -38,7 +38,6 @@ echo "Installing TVStreamer5 dependencies..."
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     libgstreamer-plugins-bad1.0-dev \
-    libcurl4-openssl-dev \
     libssl-dev \
     "${BOOST_DEV_PACKAGE}" \
     gstreamer1.0-tools \

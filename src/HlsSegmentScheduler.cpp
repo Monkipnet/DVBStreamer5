@@ -1,9 +1,10 @@
 #include "HlsSegmentScheduler.h"
 
+#include "NativeHttpClient.h"
+
 #include "protocols/inputs/GstHlsInputProtocol.h"
 
 #include <gst/app/gstappsrc.h>
-#include <curl/curl.h>
 #include <openssl/evp.h>
 
 #include <algorithm>
@@ -64,8 +65,6 @@ constexpr std::size_t kMediaRateWindowMaxSegments = 12;
 constexpr uint64_t kMinimumPublishedMediaBitrate = 100000ULL;
 constexpr uint64_t kMaximumPublishedMediaBitrate = 200000000ULL;
 
-std::once_flag gCurlInitOnce;
-
 uint64_t monotonicNanoseconds() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -116,43 +115,23 @@ std::string appendQueryAccess(const std::string& uri, const StreamConfig& cfg) {
     if (toLower(cfg.hlsAccessKeyMode) != "query" || cfg.hlsAccessKeyName.empty() ||
         cfg.hlsAccessKeyValue.empty()) return uri;
 
-    CURL* easy = curl_easy_init();
-    if (!easy) return uri;
-    char* escapedName = curl_easy_escape(easy, cfg.hlsAccessKeyName.c_str(), 0);
-    char* escapedValue = curl_easy_escape(easy, cfg.hlsAccessKeyValue.c_str(), 0);
-    std::string result = uri;
-    if (escapedName && escapedValue) {
-        const std::string key = std::string(escapedName) + "=";
-        const auto q = uri.find('?');
-        const std::string query = q == std::string::npos ? std::string{} : uri.substr(q + 1);
-        if (query.rfind(key, 0) != 0 && query.find("&" + key) == std::string::npos) {
-            result += (q == std::string::npos ? "?" : "&");
-            result += escapedName;
-            result += "=";
-            result += escapedValue;
-        }
+    const std::string escapedName = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyName);
+    const std::string escapedValue = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyValue);
+    const auto fragmentPosition = uri.find('#');
+    std::string result = uri.substr(0, fragmentPosition);
+    const std::string fragment = fragmentPosition == std::string::npos
+        ? std::string()
+        : uri.substr(fragmentPosition);
+    const std::string key = escapedName + "=";
+    const auto q = result.find('?');
+    const std::string query = q == std::string::npos ? std::string{} : result.substr(q + 1);
+    if (query.rfind(key, 0) != 0 && query.find("&" + key) == std::string::npos) {
+        result += (q == std::string::npos ? "?" : "&");
+        result += escapedName;
+        result += "=";
+        result += escapedValue;
     }
-    if (escapedName) curl_free(escapedName);
-    if (escapedValue) curl_free(escapedValue);
-    curl_easy_cleanup(easy);
-    return result;
-}
-
-size_t writeVector(void* ptr, size_t size, size_t nmemb, void* userdata) {
-    const size_t bytes = size * nmemb;
-    auto* out = static_cast<std::vector<uint8_t>*>(userdata);
-    const auto* begin = static_cast<const uint8_t*>(ptr);
-    out->insert(out->end(), begin, begin + bytes);
-    return bytes;
-}
-
-struct HttpContext {
-    std::atomic<bool>* stopping = nullptr;
-};
-
-int transferProgress(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-    auto* ctx = static_cast<HttpContext*>(userdata);
-    return (ctx && ctx->stopping && ctx->stopping->load(std::memory_order_relaxed)) ? 1 : 0;
+    return result + fragment;
 }
 
 bool httpGet(const std::string& rawUrl,
@@ -163,59 +142,30 @@ bool httpGet(const std::string& rawUrl,
              std::string& effectiveUrl,
              std::string& error,
              long transferTimeoutMs) {
-    std::call_once(gCurlInitOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        error = "curl_easy_init failed";
-        return false;
-    }
-
     body.clear();
     status = 0;
     effectiveUrl.clear();
     const std::string url = appendQueryAccess(rawUrl, cfg);
-    struct curl_slist* headers = nullptr;
+    tvs::http::RequestOptions options;
+    options.connectTimeoutMs = std::min<long>(kHttpConnectTimeoutMs, transferTimeoutMs);
+    options.readTimeoutMs = transferTimeoutMs;
+    options.writeTimeoutMs = options.connectTimeoutMs;
+    options.totalTimeoutMs = transferTimeoutMs;
+    options.maxRedirects = 8;
+    options.forwardHeadersAcrossOrigins = true;
+    options.userAgent = cfg.hlsUserAgent.empty() ? "Mozilla/5.0 TVStreamer5" : cfg.hlsUserAgent;
+    options.stopping = &stopping;
     if (toLower(cfg.hlsAccessKeyMode) == "header" && !cfg.hlsAccessKeyName.empty() &&
         !cfg.hlsAccessKeyValue.empty()) {
-        const std::string header = cfg.hlsAccessKeyName + ": " + cfg.hlsAccessKeyValue;
-        headers = curl_slist_append(headers, header.c_str());
+        options.headers.emplace_back(cfg.hlsAccessKeyName, cfg.hlsAccessKeyValue);
     }
 
-    HttpContext progress{&stopping};
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 8L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS,
-        std::min<long>(kHttpConnectTimeoutMs, transferTimeoutMs));
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, transferTimeoutMs);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeVector);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        cfg.hlsUserAgent.empty() ? "Mozilla/5.0 TVStreamer5" : cfg.hlsUserAgent.c_str());
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, transferProgress);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress);
-    if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    const CURLcode rc = curl_easy_perform(curl);
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-    char* effective = nullptr;
-    curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effective);
-    if (effective) effectiveUrl = effective;
-
-    if (headers) curl_slist_free_all(headers);
-    if (rc != CURLE_OK) error = curl_easy_strerror(rc);
-    curl_easy_cleanup(curl);
-
-    if (stopping.load(std::memory_order_relaxed)) return false;
-    if (rc != CURLE_OK) return false;
-    if (status < 200 || status >= 300) {
-        error = "HTTP " + std::to_string(status);
-        return false;
-    }
-    return true;
+    tvs::http::Response response;
+    const bool ok = tvs::http::get(url, options, response, error);
+    status = response.status;
+    effectiveUrl = response.effectiveUrl;
+    body = std::move(response.body);
+    return ok;
 }
 
 struct Variant {
@@ -750,7 +700,7 @@ private:
                 // Do not advance nextSequence_ and do not terminate the scheduler.
                 // The outer loop refreshes the playlist and retries this exact
                 // media sequence if it is still in the live window. Partial bytes
-                // from failed curl transfers are discarded by the next httpGet().
+                // from failed transfers are discarded by the next httpGet().
                 body.clear();
                 effectiveUrl.clear();
                 return SegmentFetchResult::RetryLater;

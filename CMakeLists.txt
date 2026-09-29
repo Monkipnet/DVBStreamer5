@@ -16,7 +16,6 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
-pkg_check_modules(LIBCURL REQUIRED libcurl)
 
 add_library(tvstreamer5_jsoncpp STATIC
     third_party/jsoncpp/jsoncpp.cpp
@@ -24,6 +23,23 @@ add_library(tvstreamer5_jsoncpp STATIC
 target_include_directories(tvstreamer5_jsoncpp PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party
 )
+
+add_library(tvstreamer5_http_client STATIC
+    src/NativeHttpClient.cpp
+)
+target_include_directories(tvstreamer5_http_client PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_compile_definitions(tvstreamer5_http_client PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+target_link_libraries(tvstreamer5_http_client PUBLIC
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    Threads::Threads
+)
+if(WIN32)
+    target_link_libraries(tvstreamer5_http_client PUBLIC ws2_32)
+endif()
 
 add_subdirectory(third_party/twolame)
 add_subdirectory(third_party/libdvbcsa)
@@ -41,11 +57,10 @@ add_library(tvstreamer5_media_core
 )
 target_include_directories(tvstreamer5_media_core
     PUBLIC ${CMAKE_SOURCE_DIR}/src
-    PRIVATE ${LIBCURL_INCLUDE_DIRS}
 )
 target_link_libraries(tvstreamer5_media_core PUBLIC
     Threads::Threads
-    ${LIBCURL_LIBRARIES}
+    tvstreamer5_http_client
 )
 target_link_libraries(tvstreamer5_media_core PRIVATE tvstreamer5_twolame)
 if(WIN32)
@@ -55,12 +70,10 @@ endif()
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
     ${GSTREAMER_INCLUDE_DIRS}
-    ${LIBCURL_INCLUDE_DIRS}
 )
 
 link_directories(
     ${GSTREAMER_LIBRARY_DIRS}
-    ${LIBCURL_LIBRARY_DIRS}
 )
 
 add_executable(TVStreamer5
@@ -129,7 +142,6 @@ target_link_libraries(TVStreamer5
     tvstreamer5_media_core
     tvstreamer5_jsoncpp
     ${GSTREAMER_LIBRARIES}
-    ${LIBCURL_LIBRARIES}
     tvstreamer5_dvbcsa
     OpenSSL::Crypto
     pthread
@@ -163,6 +175,7 @@ endif()
 option(TVSTREAMER5_BUILD_VENDOR_TESTS "Build tests for vendored third-party libraries" OFF)
 if(TVSTREAMER5_BUILD_VENDOR_TESTS)
     add_subdirectory(tests/vendor)
+    add_subdirectory(tests/http_client)
 endif()
 
 if(DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)

@@ -1,5 +1,6 @@
 #include "media/NativeUdpRelay.h"
 
+#include "NativeHttpClient.h"
 #include "media/CbrTsPacer.h"
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
@@ -8,7 +9,6 @@
 #include <array>
 #include <chrono>
 #include <cctype>
-#include <climits>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -329,6 +329,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     }
 
     running_.store(true, std::memory_order_release);
+    httpStopRequested_.store(false, std::memory_order_release);
     try {
         worker_ = std::thread(&NativeUdpRelay::run, this);
     } catch (const std::exception& exception) {
@@ -359,6 +360,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
 }
 
 void NativeUdpRelay::stop() noexcept {
+    httpStopRequested_.store(true, std::memory_order_release);
     running_.store(false, std::memory_order_release);
     httpQueueCondition_.notify_all();
     if (httpWorker_.joinable() && httpWorker_.get_id() != std::this_thread::get_id()) {
@@ -420,7 +422,7 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         std::vector<std::uint8_t> chunk(
             data + offset, data + offset + chunkSize);
         std::unique_lock<std::mutex> lock(httpQueueMutex_);
-        httpQueueCondition_.wait(lock, [this, chunkSize] {
+        httpQueueCondition_.wait(lock, [this, chunkSize, kMaximumHttpQueueBytes] {
             return !running_.load(std::memory_order_acquire) ||
                 httpQueuedBytes_ + chunkSize <= kMaximumHttpQueueBytes;
         });
@@ -458,99 +460,31 @@ void NativeUdpRelay::finishHttpInput(const std::string& error) {
     httpQueueCondition_.notify_all();
 }
 
-std::size_t NativeUdpRelay::curlWrite(
-    char* data, std::size_t size, std::size_t count, void* userData) {
-    auto* relay = static_cast<NativeUdpRelay*>(userData);
-    if (!relay || (size != 0 && count >
-            (std::numeric_limits<std::size_t>::max)() / size)) {
-        return 0;
-    }
-    const std::size_t bytes = size * count;
-    if (bytes == 0) {
-        return 0;
-    }
-    return relay->enqueueHttpData(
-        reinterpret_cast<const std::uint8_t*>(data), bytes)
-        ? bytes
-        : 0;
-}
-
-int NativeUdpRelay::curlProgress(
-    void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-    const auto* relay = static_cast<const NativeUdpRelay*>(userData);
-    return !relay || !relay->running_.load(std::memory_order_acquire) ? 1 : 0;
-}
-
 void NativeUdpRelay::runHttpInput() {
-    static std::once_flag curlInitialization;
-    static CURLcode initializationResult = CURLE_FAILED_INIT;
-    std::call_once(curlInitialization, [] {
-        initializationResult = curl_global_init(CURL_GLOBAL_DEFAULT);
-    });
-    if (initializationResult != CURLE_OK) {
-        finishHttpInput("native HTTP input: curl_global_init failed");
-        return;
-    }
-
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        finishHttpInput("native HTTP input: curl_easy_init failed");
-        return;
-    }
-
     std::string location = config_.inputUri;
-    struct curl_slist* headers = nullptr;
-    auto appendHeader = [&headers](const std::string& value) {
-        struct curl_slist* updated = curl_slist_append(headers, value.c_str());
-        if (!updated) {
-            return false;
-        }
-        headers = updated;
-        return true;
-    };
-    auto cleanup = [&headers, curl] {
-        if (headers) {
-            curl_slist_free_all(headers);
-        }
-        curl_easy_cleanup(curl);
-    };
+    tvs::http::RequestOptions options;
+    options.connectTimeoutMs = 10000;
+    options.readTimeoutMs = 15000;
+    options.writeTimeoutMs = 10000;
+    options.userAgent = config_.userAgent.empty()
+        ? "Mozilla/5.0 TVStreamer5"
+        : config_.userAgent;
+    options.stopping = &httpStopRequested_;
+    options.maxBodyBytes = (std::numeric_limits<std::size_t>::max)();
+
     if (config_.accessKeyMode == "header" &&
         !config_.accessKeyName.empty() && !config_.accessKeyValue.empty()) {
         if (config_.accessKeyName.find_first_of("\r\n") != std::string::npos ||
             config_.accessKeyValue.find_first_of("\r\n") != std::string::npos) {
-            cleanup();
             finishHttpInput("native HTTP input: access header contains a line break");
             return;
         }
-        const std::string header =
-            config_.accessKeyName + ": " + config_.accessKeyValue;
-        if (!appendHeader(header)) {
-            cleanup();
-            finishHttpInput("native HTTP input: failed to allocate access header");
-            return;
-        }
+        options.headers.emplace_back(config_.accessKeyName, config_.accessKeyValue);
     } else if (config_.accessKeyMode == "query" &&
         !config_.accessKeyName.empty() && !config_.accessKeyValue.empty()) {
-        if (config_.accessKeyName.size() > static_cast<std::size_t>(INT_MAX) ||
-            config_.accessKeyValue.size() > static_cast<std::size_t>(INT_MAX)) {
-            cleanup();
-            finishHttpInput("native HTTP input: access query value is too large");
-            return;
-        }
-        char* name = curl_easy_escape(
-            curl, config_.accessKeyName.c_str(),
-            static_cast<int>(config_.accessKeyName.size()));
-        char* value = curl_easy_escape(
-            curl, config_.accessKeyValue.c_str(),
-            static_cast<int>(config_.accessKeyValue.size()));
-        if (!name || !value) {
-            if (name) curl_free(name);
-            if (value) curl_free(value);
-            cleanup();
-            finishHttpInput("native HTTP input: failed to encode access query");
-            return;
-        }
-        const std::string key = std::string(name) + "=";
+        const std::string name = tvs::http::encodeQueryComponent(config_.accessKeyName);
+        const std::string value = tvs::http::encodeQueryComponent(config_.accessKeyValue);
+        const std::string key = name + "=";
         const auto fragmentPosition = location.find('#');
         const std::string fragment = fragmentPosition == std::string::npos
             ? std::string()
@@ -570,56 +504,26 @@ void NativeUdpRelay::runHttpInput() {
             location += value;
         }
         location += fragment;
-        curl_free(name);
-        curl_free(value);
     }
-    if (!appendHeader("Accept: */*") ||
-        !appendHeader("Accept-Encoding: identity")) {
-        cleanup();
-        finishHttpInput("native HTTP input: failed to allocate request headers");
-        return;
-    }
-    curl_easy_setopt(curl, CURLOPT_URL, location.c_str());
+
     const bool hasAccessKey =
         !config_.accessKeyName.empty() && !config_.accessKeyValue.empty() &&
         (config_.accessKeyMode == "header" ||
             config_.accessKeyMode == "query");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, hasAccessKey ? 0L : 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 8L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 15L);
-    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, &NativeUdpRelay::curlWrite);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, this);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, &NativeUdpRelay::curlProgress);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, this);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT,
-        config_.userAgent.empty()
-            ? "Mozilla/5.0 TVStreamer5"
-            : config_.userAgent.c_str());
-    if (headers) {
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    }
+    options.maxRedirects = hasAccessKey ? 0 : 8;
 
-    const CURLcode result = curl_easy_perform(curl);
-    long responseCode = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
+    tvs::http::Response response;
+    std::string requestError;
+    const bool ok = tvs::http::get(location, options, response, requestError,
+        [this](const std::uint8_t* data, std::size_t size) {
+            return enqueueHttpData(data, size);
+        });
     const bool cancelled = !running_.load(std::memory_order_acquire);
     std::string error;
-    if (!cancelled &&
-        (result != CURLE_OK || responseCode < 200 || responseCode >= 300)) {
-        error = std::string("native HTTP input failed: ") +
-            (result == CURLE_OK
-                ? "unexpected HTTP response"
-                : curl_easy_strerror(result)) +
-            " (HTTP " + std::to_string(responseCode) + ")";
+    if (!cancelled && !ok) {
+        error = "native HTTP input failed: " + requestError;
+        if (response.status != 0) error += " (HTTP " + std::to_string(response.status) + ")";
     }
-    cleanup();
     finishHttpInput(error);
 }
 

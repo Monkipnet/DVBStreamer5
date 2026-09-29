@@ -47,6 +47,12 @@ if [[ -n "$missing" ]]; then
   exit 1
 fi
 
+if command -v readelf >/dev/null 2>&1 &&
+    readelf -d "$binary" 2>/dev/null | grep -Eq 'libcurl|libjsoncpp|libdvbcsa'; then
+  echo "Unexpected external dependency: libcurl, libjsoncpp or libdvbcsa" >&2
+  exit 1
+fi
+
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   echo "GStreamer registry:"
   echo "  scanner: ${GST_PLUGIN_SCANNER:-auto}"

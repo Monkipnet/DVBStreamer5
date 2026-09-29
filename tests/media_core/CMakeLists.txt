@@ -6,8 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Threads REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBCURL REQUIRED libcurl)
+find_package(OpenSSL REQUIRED)
 
 add_executable(media_core_tests
     ../test_media_core.cpp
@@ -19,12 +18,11 @@ add_executable(media_core_tests
     ../../src/media/LinuxDvbInput.cpp
     ../../src/media/NativePreviewHub.cpp
     ../../src/media/NativeUdpRelay.cpp
+    ../../src/NativeHttpClient.cpp
 )
-target_include_directories(media_core_tests PRIVATE ../../src)
-target_include_directories(media_core_tests PRIVATE ${LIBCURL_INCLUDE_DIRS})
-target_link_directories(media_core_tests PRIVATE ${LIBCURL_LIBRARY_DIRS})
-target_link_libraries(media_core_tests PRIVATE Threads::Threads ${LIBCURL_LIBRARIES})
-target_link_options(media_core_tests PRIVATE ${LIBCURL_LDFLAGS_OTHER})
+target_include_directories(media_core_tests PRIVATE ../../src ../../third_party)
+target_compile_definitions(media_core_tests PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+target_link_libraries(media_core_tests PRIVATE Threads::Threads OpenSSL::SSL OpenSSL::Crypto)
 
 if(MSVC)
     target_compile_options(media_core_tests PRIVATE /W4 /permissive-)

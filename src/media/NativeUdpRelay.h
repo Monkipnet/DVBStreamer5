@@ -5,8 +5,6 @@
 #include "media/MpegTsRemapper.h"
 #include "media/UdpSocket.h"
 
-#include <curl/curl.h>
-
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -76,10 +74,6 @@ private:
     void runHttpInput();
     bool enqueueHttpData(const std::uint8_t* data, std::size_t size);
     void finishHttpInput(const std::string& error);
-    static std::size_t curlWrite(
-        char* data, std::size_t size, std::size_t count, void* userData);
-    static int curlProgress(
-        void* userData, curl_off_t, curl_off_t, curl_off_t, curl_off_t);
 
     NativeUdpRelayConfig config_;
     UdpSocket inputSocket_;
@@ -97,6 +91,7 @@ private:
     std::deque<std::vector<std::uint8_t>> httpQueue_;
     std::size_t httpQueuedBytes_ = 0;
     bool httpFinished_ = false;
+    std::atomic<bool> httpStopRequested_{false};
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> inputBytes_{0};
     std::atomic<std::uint64_t> outputBytes_{0};

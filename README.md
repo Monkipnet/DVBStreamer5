@@ -6,7 +6,7 @@
 
 В `src/media/` реализовано собственное MPEG-TS/RTP ядро на C++ без
 GStreamer: разбор и синхронизация 188-байтовых пакетов, continuity counter,
-RTP-пакетизация, UDP-сокеты и нативный HTTP(S) MPEG-TS приём через libcurl.
+RTP-пакетизация, UDP-сокеты и нативный HTTP(S) MPEG-TS приём через встроенный cpp-httplib.
 Маршруты UDP/RTP и HTTP(S) MPEG-TS к UDP VBR/CBR/RTP, файловый TS к paced
 UDP CBR и DVB-S/S2 full-transport-stream к UDP VBR/CBR/RTP подключены к
 управлению потоками и не создают GStreamer pipeline.
@@ -47,8 +47,8 @@ TwoLAME; автономный тест кодека не проверяет ин
 Для нативных потоков встроенное веб-превью пока недоступно. Остальные
 протоколы будут переноситься отдельными этапами.
 
-Ядро и его тесты можно собрать отдельно от GStreamer; для HTTP-входа тестовая
-сборка использует libcurl и pkg-config:
+Ядро и его тесты можно собрать отдельно от GStreamer; встроенный HTTP(S)-клиент
+использует OpenSSL для TLS:
 
 ```sh
 cmake -S tests/media_core -B build/media-core
@@ -225,7 +225,7 @@ http://SERVER_IP:9000/oscam-mini
 - CMake 3.10 или новее;
 - компилятор с поддержкой C++17;
 - GStreamer 1.0 и наборы Base/Good/Bad/Ugly/Libav;
-- Boost headers, libcurl и OpenSSL; JsonCpp, libdvbcsa и TwoLAME встроены в исходное дерево;
+- Boost headers и OpenSSL; cpp-httplib, JsonCpp, libdvbcsa и TwoLAME встроены в исходное дерево;
 - Linux DVB и Phoenix/SmartMouse устройства - только для соответствующих функций.
 
 ## Сборка
@@ -499,7 +499,7 @@ GST_DEBUG=2 ./build/TVStreamer5
 
 ## Лицензии сторонних компонентов
 
-Исходники OSCam-mini находятся в `third_party/oscam-mini` вместе с собственными файлами лицензии и сведениями об upstream revision. Лицензии остальных библиотек определяются установленными системными пакетами.
+Исходники OSCam-mini и встроенные библиотеки находятся в `third_party/` вместе с файлами лицензий и сведениями об upstream revision. Системные GStreamer, OpenSSL и Boost сохраняют лицензии соответствующих пакетов дистрибутива.
 
 ## Контакты
 

@@ -343,7 +343,7 @@ GstElement* buildHttp(
     terminalElement = queue;
     std::cerr << "Network TS input 202.72: protocol=HTTP transport=souphttpsrc direct_queue=on capsfilter=off"
               << " queue_ms=6000 queue_max_mb=64 leaky=off prebuffer=off"
-              << " do_timestamp=on libcurl_appsrc=off input_pacing=off"
+              << " do_timestamp=on native_http_appsrc=off input_pacing=off"
               << " http_retries=gstreamer-default recovery=watchdog+error+eos"
               << " access=" << (cfg.hlsAccessKeyMode.empty() ? "none" : cfg.hlsAccessKeyMode)
               << std::endl;

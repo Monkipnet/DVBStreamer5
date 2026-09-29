@@ -54,7 +54,7 @@ and drains with `twolame_encode_flush`.
 
 `mp2_encoder_tests` exercises deterministic encode output, validates MPEG-1
 Layer II frame headers and sizes, checks chunk-boundary invariance, and rejects
-an unsupported channel layout. It does not use GStreamer or libcurl.
+an unsupported channel layout. It does not use GStreamer or a system HTTP library.
 It is available as an independent CMake project under `tests/mp2_encoder/` or
 through the `TVSTREAMER5_BUILD_MP2_ENCODER_TESTS` root option. The standalone
 test intentionally does not create runtime GStreamer elements; MPEG-TS mux
