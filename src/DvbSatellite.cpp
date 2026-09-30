@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -50,6 +51,13 @@ struct FrontendStats {
     double cnrDb = 0.0;
     bool hasSignalDb = false;
     bool hasCnrDb = false;
+};
+
+struct FrontendMetadata {
+    std::string name;
+    std::string model;
+    std::string driverModule;
+    int driverMode = -1;
 };
 
 std::string lower(std::string value) {
@@ -195,6 +203,116 @@ DvbSatelliteParams paramsFromJson(const Json::Value& root, std::string& error) {
 
 std::string frontendPath(const DvbSatelliteParams& params) {
     return "/dev/dvb/adapter" + std::to_string(params.adapter) + "/frontend" + std::to_string(params.frontend);
+}
+
+std::string trim(std::string value) {
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) value.pop_back();
+    const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    });
+    value.erase(value.begin(), first);
+    return value;
+}
+
+bool readTextFile(const std::filesystem::path& path, std::string& value) {
+    std::ifstream input(path);
+    if (!input) return false;
+    std::getline(input, value);
+    value = trim(value);
+    return !value.empty();
+}
+
+std::string normalizedTbsModel(const std::string& frontendName) {
+    const std::string name = lower(frontendName);
+    if (name.find("6909x") != std::string::npos || name.find("6909-x") != std::string::npos) {
+        return "TBS6909-X v2";
+    }
+    if (name.find("6909") != std::string::npos) return "TBS6909";
+    return frontendName;
+}
+
+int readDriverMode(const std::string& module) {
+    if (module.empty()) return -1;
+    std::string value;
+    if (!readTextFile(std::filesystem::path("/sys/module") / module / "parameters/mode", value)) {
+        return -1;
+    }
+    try {
+        std::size_t used = 0;
+        const int mode = std::stoi(value, &used);
+        return used == value.size() && mode >= 0 && mode <= 2 ? mode : -1;
+    } catch (...) {
+        return -1;
+    }
+}
+
+FrontendMetadata readFrontendMetadata(int adapter, int frontend) {
+    FrontendMetadata metadata;
+#ifdef __linux__
+    const std::string device = "/dev/dvb/adapter" + std::to_string(adapter) +
+        "/frontend" + std::to_string(frontend);
+    const int fd = open(device.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd >= 0) {
+        dvb_frontend_info info {};
+        if (ioctl(fd, FE_GET_INFO, &info) == 0) {
+            metadata.name = trim(std::string(info.name, strnlen(info.name, sizeof(info.name))));
+        }
+        close(fd);
+    }
+
+    const std::filesystem::path moduleLink = std::filesystem::path("/sys/class/dvb") /
+        ("dvb" + std::to_string(adapter) + ".frontend" + std::to_string(frontend)) /
+        "device/driver/module";
+    std::error_code ec;
+    const auto resolved = std::filesystem::canonical(moduleLink, ec);
+    if (!ec) metadata.driverModule = resolved.filename().string();
+
+    metadata.model = normalizedTbsModel(metadata.name);
+    const std::string model = lower(metadata.model);
+    if (model.find("tbs6909-x") != std::string::npos) {
+        metadata.driverModule = "stid135";
+    } else if (model.find("tbs6909") != std::string::npos) {
+        metadata.driverModule = "mxl58x";
+    }
+    metadata.driverMode = readDriverMode(metadata.driverModule);
+#else
+    (void)adapter;
+    (void)frontend;
+#endif
+    return metadata;
+}
+
+const char* driverModeName(int mode) {
+    switch (mode) {
+        case 0: return "multiswitch";
+        case 1: return "direct-diseqc";
+        case 2: return "unicable";
+        default: return "unknown";
+    }
+}
+
+struct DvbsrcCapabilities {
+    bool available = false;
+    bool streamId = false;
+    bool diseqcSource = false;
+};
+
+bool hasWritableProperty(GObjectClass* objectClass, const char* name) {
+    if (!objectClass || !name) return false;
+    GParamSpec* property = g_object_class_find_property(objectClass, name);
+    return property && (property->flags & G_PARAM_WRITABLE) != 0;
+}
+
+DvbsrcCapabilities inspectDvbsrcCapabilities() {
+    DvbsrcCapabilities capabilities;
+    GstElement* source = gst_element_factory_make("dvbsrc", nullptr);
+    if (!source) return capabilities;
+    capabilities.available = true;
+    GObjectClass* objectClass = G_OBJECT_GET_CLASS(source);
+    capabilities.streamId = hasWritableProperty(objectClass, "stream-id");
+    capabilities.diseqcSource = hasWritableProperty(objectClass, "diseqc-source");
+    gst_object_unref(source);
+    return capabilities;
 }
 
 int clampPercent(double value) {
@@ -649,6 +767,14 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
     result["adapter"] = params.adapter;
     result["frontend"] = params.frontend;
     result["device"] = device;
+    result["stream_id"] = params.streamId;
+    result["diseqc_source"] = params.diseqcSource;
+    const FrontendMetadata metadata = readFrontendMetadata(params.adapter, params.frontend);
+    result["frontend_name"] = metadata.name;
+    result["frontend_model"] = metadata.model;
+    result["driver_module"] = metadata.driverModule;
+    result["driver_mode"] = metadata.driverMode;
+    result["driver_mode_name"] = driverModeName(metadata.driverMode);
     std::cerr << "DVB " << (collectServices ? "scan" : "signal")
               << " tune request: adapter=" << params.adapter
               << " frontend=" << params.frontend
@@ -656,6 +782,10 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
               << " frequency_khz=" << params.frequencyKHz
               << " symbol_rate=" << params.symbolRateK
               << " polarity=" << params.polarity
+              << " isi=" << params.streamId
+              << " diseqc_source=" << params.diseqcSource
+              << " frontend_model=" << metadata.model
+              << " driver_mode=" << metadata.driverMode
               << std::endl;
     if (!std::filesystem::exists(device)) {
         result["error"] = "DVB frontend not found: " + device;
@@ -888,13 +1018,25 @@ bool configureSource(GstElement* source, const DvbSatelliteParams& params, std::
         return false;
     }
 
+    GObjectClass* objectClass = G_OBJECT_GET_CLASS(source);
+    const bool hasDiseqcSource = hasWritableProperty(objectClass, "diseqc-source");
+    const bool hasStreamId = hasWritableProperty(objectClass, "stream-id");
+    if (params.diseqcSource >= 0 && !hasDiseqcSource) {
+        error = factoryName + ": installed dvbsrc has no diseqc-source property";
+        return false;
+    }
+    if (params.streamId >= 0 && !hasStreamId) {
+        error = factoryName + ": installed dvbsrc has no stream-id property required for ISI " +
+            std::to_string(params.streamId);
+        return false;
+    }
+
     g_object_set(source,
         "adapter", params.adapter,
         "frontend", params.frontend,
         "frequency", params.frequencyKHz,
         "symbol-rate", params.symbolRateK,
         "polarity", params.polarity.c_str(),
-        "diseqc-source", params.diseqcSource,
         "lnb-lof1", params.lnbLof1KHz,
         "lnb-lof2", params.lnbLof2KHz,
         "lnb-slof", params.lnbSlofKHz,
@@ -902,6 +1044,8 @@ bool configureSource(GstElement* source, const DvbSatelliteParams& params, std::
         "stats-reporting-interval", 20U,
         "tuning-timeout", static_cast<guint64>(5000000),
         nullptr);
+    if (hasDiseqcSource) g_object_set(source, "diseqc-source", params.diseqcSource, nullptr);
+    if (hasStreamId) g_object_set(source, "stream-id", params.streamId, nullptr);
 
     gint configuredAdapter = -1;
     gint configuredFrontend = -1;
@@ -923,8 +1067,24 @@ bool configureSource(GstElement* source, const DvbSatelliteParams& params, std::
     gst_util_set_object_arg(G_OBJECT(source), "code-rate-hp", params.fec.c_str());
     gst_util_set_object_arg(G_OBJECT(source), "pilot", "auto");
     gst_util_set_object_arg(G_OBJECT(source), "rolloff", "auto");
-    if (params.streamId >= 0 && g_object_class_find_property(G_OBJECT_GET_CLASS(source), "stream-id")) {
-        g_object_set(source, "stream-id", params.streamId, nullptr);
+    if (params.diseqcSource >= 0) {
+        gint configuredDiseqcSource = -1;
+        g_object_get(source, "diseqc-source", &configuredDiseqcSource, nullptr);
+        if (configuredDiseqcSource != params.diseqcSource) {
+            error = "dvbsrc diseqc-source mismatch: requested " +
+                std::to_string(params.diseqcSource) + " but element reports " +
+                std::to_string(configuredDiseqcSource);
+            return false;
+        }
+    }
+    if (params.streamId >= 0) {
+        gint configuredStreamId = -1;
+        g_object_get(source, "stream-id", &configuredStreamId, nullptr);
+        if (configuredStreamId != params.streamId) {
+            error = "dvbsrc stream-id mismatch: requested " + std::to_string(params.streamId) +
+                " but element reports " + std::to_string(configuredStreamId);
+            return false;
+        }
     }
     return true;
 }
@@ -956,6 +1116,14 @@ Json::Value adapters() {
                 item["adapter"] = adapter;
                 item["frontend"] = frontend;
                 item["device"] = frontendEntry.path().string();
+                const FrontendMetadata metadata = readFrontendMetadata(adapter, frontend);
+                item["frontend_name"] = metadata.name;
+                item["model"] = metadata.model;
+                item["driver_module"] = metadata.driverModule;
+                item["driver_mode"] = metadata.driverMode;
+                item["driver_mode_name"] = driverModeName(metadata.driverMode);
+                item["tbs6909_family"] =
+                    lower(metadata.model).find("tbs6909") != std::string::npos;
                 list.append(item);
             }
         }
@@ -963,7 +1131,10 @@ Json::Value adapters() {
     root["adapters"] = list;
     root["available"] = !list.empty();
     root["native_dvb_available"] = nativeDvbAvailable;
-    root["dvbsrc_available"] = nativeDvbAvailable;
+    const DvbsrcCapabilities dvbsrc = inspectDvbsrcCapabilities();
+    root["dvbsrc_available"] = dvbsrc.available;
+    root["dvbsrc_stream_id_supported"] = dvbsrc.streamId;
+    root["dvbsrc_diseqc_source_supported"] = dvbsrc.diseqcSource;
     return root;
 }
 
@@ -1020,6 +1191,13 @@ Json::Value signalFromUri(const std::string& uri) {
     result = statsToJson(stats);
     result["adapter"] = params.adapter;
     result["frontend"] = params.frontend;
+    result["stream_id"] = params.streamId;
+    result["diseqc_source"] = params.diseqcSource;
+    const FrontendMetadata metadata = readFrontendMetadata(params.adapter, params.frontend);
+    result["frontend_name"] = metadata.name;
+    result["frontend_model"] = metadata.model;
+    result["driver_mode"] = metadata.driverMode;
+    result["driver_mode_name"] = driverModeName(metadata.driverMode);
     return result;
 }
 

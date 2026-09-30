@@ -187,8 +187,11 @@ password: admin
 - выбор `/dev/dvb/adapterN/frontendN`;
 - DVB-S и DVB-S2;
 - частоту, symbol rate, поляризацию, FEC и модуляцию;
-- DiSEqC и параметры LNB LOF;
-- DVB-S2 stream ID;
+- DiSEqC A/B/C/D и параметры LNB LOF;
+- DVB-S2 ISI / Stream ID с проверкой свойства `dvbsrc stream-id`;
+- имя и модель frontend через Linux DVB API, включая TBS6909 и TBS6909-X v2;
+- отображение режима драйвера TBS Mode 0 (multiswitch), Mode 1 (direct/DiSEqC)
+  и Mode 2 (Unicable);
 - просмотр LOCK, signal и quality;
 - сканирование PAT/PMT/SDT и выбор найденных сервисов;
 - автоматическое сохранение SID, PMT, PCR и elementary PID.

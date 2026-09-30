@@ -2055,6 +2055,16 @@ std::string HttpServer::currentState() {
         }
         const bool configuredDvb = DvbSatellite::isDvbUri(cfg.inputUri);
         item["dvb_input"] = configuredDvb;
+        if (configuredDvb) {
+            DvbSatelliteParams configuredDvbParams;
+            std::string configuredDvbError;
+            if (DvbSatellite::parseUri(cfg.inputUri, configuredDvbParams, configuredDvbError)) {
+                item["dvb_adapter"] = configuredDvbParams.adapter;
+                item["dvb_frontend"] = configuredDvbParams.frontend;
+                item["dvb_stream_id"] = configuredDvbParams.streamId;
+                item["dvb_diseqc_source"] = configuredDvbParams.diseqcSource;
+            }
+        }
         item["dvb_signal_available"] = false;
         item["dvb_locked"] = false;
         item["dvb_signal"] = 0;
@@ -2073,6 +2083,10 @@ std::string HttpServer::currentState() {
                 item["dvb_locked"] = dvbStats.get("locked", false).asBool();
                 item["dvb_signal"] = dvbStats.get("signal", 0).asInt();
                 item["dvb_quality"] = dvbStats.get("quality", 0).asInt();
+                item["dvb_frontend_name"] = dvbStats.get("frontend_name", "");
+                item["dvb_frontend_model"] = dvbStats.get("frontend_model", "");
+                item["dvb_driver_mode"] = dvbStats.get("driver_mode", -1).asInt();
+                item["dvb_driver_mode_name"] = dvbStats.get("driver_mode_name", "unknown");
                 if (dvbStats.isMember("signal_db")) item["dvb_signal_db"] = dvbStats["signal_db"];
                 if (dvbStats.isMember("cnr_db")) item["dvb_cnr_db"] = dvbStats["cnr_db"];
             }
@@ -2117,6 +2131,8 @@ std::string HttpServer::dvbAdapters() {
         item["symbol_rate"] = params.symbolRateK;
         item["polarity"] = params.polarity;
         item["delivery_system"] = params.deliverySystem;
+        item["stream_id"] = params.streamId;
+        item["diseqc_source"] = params.diseqcSource;
         if (!item.isMember("streams")) item["streams"] = Json::Value(Json::arrayValue);
         Json::Value stream;
         stream["id"] = id;
@@ -2139,6 +2155,8 @@ std::string HttpServer::dvbAdapters() {
                 adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
                 adapter["polarity"] = found->second.get("polarity", "");
                 adapter["delivery_system"] = found->second.get("delivery_system", "");
+                adapter["stream_id"] = found->second.get("stream_id", -1);
+                adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
                 adapter["streams"] = found->second["streams"];
             }
         }
@@ -3829,6 +3847,11 @@ const uiRuToEn = new Map([
   ['Сканирование', 'Scanning'],
   ['Удерживать LOCK', 'Keep LOCK'],
   ['Поиск DVB frontend...', 'Searching for DVB frontend...'],
+  ['Проверка свойств GStreamer dvbsrc...', 'Checking GStreamer dvbsrc properties...'],
+  ['Отключён', 'Disabled'],
+  ['Авто', 'Auto'],
+  ['мультисвитч', 'multiswitch'],
+  ['прямой / DiSEqC', 'direct / DiSEqC'],
   ['Сканировать каналы', 'Scan channels'],
   ['Найдено:', 'Found:'],
   ['Нажмите «Сканировать каналы».', 'Click “Scan channels”.'],
@@ -4195,6 +4218,7 @@ let satelliteTuneGeneration = 0;
 let satelliteServices = [];
 let satelliteLastScan = null;
 let dvbAdapters = [];
+let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSourceSupported:false};
 let camClientsLoaded = false;
 let caManagerState = {clients:[]};
 let streamActionBusy = new Set();
@@ -4501,6 +4525,23 @@ function updateDvbMeter(tile, kind, value, available, locked) {
   fill.style.background = available ? dvbMeterColor(numeric, locked) : 'rgba(255,255,255,.12)';
   label.textContent = `${kind === 'signal' ? 'S' : 'Q'} ${available ? `${shown}%` : '—'}`;
 }
+function diseqcSourceLabel(value) {
+  const source = Number(value);
+  if (!Number.isFinite(source) || source < 0) return language === 'en' ? 'Disabled' : 'Отключён';
+  if (source >= 0 && source < 4) return `${String.fromCharCode(65 + source)} (${source + 1})`;
+  return String(source + 1);
+}
+function dvbTuneDetails(stream) {
+  const isi = Number(stream?.dvb_stream_id ?? -1);
+  return `ISI: ${isi >= 0 ? isi : (language === 'en' ? 'Auto' : 'Авто')} · DiSEqC: ${diseqcSourceLabel(stream?.dvb_diseqc_source)}`;
+}
+function dvbFrontendDetails(stream) {
+  const adapter = Number(stream?.dvb_adapter ?? 0);
+  const frontend = Number(stream?.dvb_frontend ?? 0);
+  const model = String(stream?.dvb_frontend_model || stream?.dvb_frontend_name || '').trim();
+  const mode = Number(stream?.dvb_driver_mode ?? -1);
+  return `/dev/dvb/adapter${adapter}/frontend${frontend}${model ? ` · ${model}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}`;
+}
 function caDecodeInfo(stream) {
   if (!stream?.conditional_access_client) return {cls:'offline', text:'FTA', detail:'Не требуется'};
   const mode = String(stream.ca_decode_state || (stream.active ? 'waiting' : 'offline'));
@@ -4536,6 +4577,10 @@ function updateStreamTile(tile, stream) {
     const locked = !!stream.dvb_locked;
     updateDvbMeter(tile, 'signal', stream.dvb_signal, available, locked);
     updateDvbMeter(tile, 'quality', stream.dvb_quality, available, locked);
+    const tuneDetails = tile.querySelector('[data-role="dvb-tune-details"]');
+    if (tuneDetails) tuneDetails.textContent = dvbTuneDetails(stream);
+    const frontendDetails = tile.querySelector('[data-role="dvb-frontend-details"]');
+    if (frontendDetails) frontendDetails.textContent = dvbFrontendDetails(stream);
   }
 
   const activeInput = tile.querySelector('[data-role="active-input"]');
@@ -4629,6 +4674,8 @@ function render(force=false) {
         <div class="info-row"><strong>${t('primary')}</strong><span>${stream.input_uri || '—'}</span></div>
         <div class="info-row"><strong>${t('backup')}</strong><span>${stream.backup_input_uri || '—'}${stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''}</span></div>
         <div class="info-row"><strong>${t('sid')}</strong><span>${stream.service_id || '—'}</span></div>
+        ${stream.dvb_input ? `<div class="info-row"><strong>Frontend</strong><span data-role="dvb-frontend-details">${escapeHtmlValue(dvbFrontendDetails(stream))}</span></div>
+        <div class="info-row"><strong>ISI / DiSEqC</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
         ${stream.conditional_access_client ? `<div class="info-row"><strong>CA</strong><span data-role="ca-status">${caStreamStatusText(stream)}</span></div>
         <div class="info-row decode-row"><strong>Декодирование</strong><span data-role="decode-status" class="decode-pill ${caDecodeInfo(stream).cls}" title="Контроль по A/V PID, scrambling_control и валидному PES">${caDecodeInfo(stream).text}</span></div>` : `<div class="info-row placeholder"><strong>CA</strong><span>—</span></div>
         <div class="info-row placeholder decode-row"><strong>Декодирование</strong><span>—</span></div>`}
@@ -5554,11 +5601,71 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
     const consumers = Number(item.consumers || 0);
     const freq = Number(item.frequency_khz || 0);
     const tune = consumers > 0 ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}` : ' · свободен';
-    return `<option value="${f}">Frontend ${f}${tune} · ${satEscape(device)}</option>`;
+    const model = String(item.model || item.frontend_name || '').trim();
+    const mode = Number(item.driver_mode ?? -1);
+    return `<option value="${f}">Frontend ${f}${model ? ` · ${satEscape(model)}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
   }).join('');
   const selected = frontends.some(item => Number(item.frontend) === previous)
     ? previous : Number(frontends[0].frontend || 0);
   frontendSelect.value = String(selected);
+  applyTbsDriverModeUi();
+}
+
+function selectedDvbFrontend() {
+  const adapter = Number(document.getElementById('satAdapter')?.value || 0);
+  const frontend = Number(document.getElementById('satFrontend')?.value || 0);
+  return dvbAdapters.find(item => Number(item.adapter) === adapter && Number(item.frontend) === frontend) || null;
+}
+function updateSatelliteDeviceInfo(prefix=null) {
+  const info = document.getElementById('satDeviceInfo');
+  if (!info) return;
+  const item = selectedDvbFrontend();
+  const adapter = Number(document.getElementById('satAdapter')?.value || 0);
+  const frontend = Number(document.getElementById('satFrontend')?.value || 0);
+  const device = String(item?.device || `/dev/dvb/adapter${adapter}/frontend${frontend}`);
+  const model = String(item?.model || item?.frontend_name || '').trim();
+  const mode = Number(item?.driver_mode ?? -1);
+  const modeNames = language === 'en'
+    ? ['multiswitch', 'direct / DiSEqC', 'Unicable']
+    : ['мультисвитч', 'прямой / DiSEqC', 'Unicable'];
+  const modeText = mode >= 0 && mode <= 2 ? ` · Mode ${mode}: ${modeNames[mode]}` : '';
+  const shownPrefix = prefix || (language === 'en' ? 'Selected' : 'Выбран');
+  info.textContent = `${shownPrefix} ${device}${model ? ` · ${model}` : ''}${modeText}`;
+}
+function updateSatelliteCapabilityInfo() {
+  const info = document.getElementById('satGstInfo');
+  if (!info) return;
+  if (!dvbCapabilities.dvbsrcAvailable) {
+    info.textContent = language === 'en'
+      ? 'GStreamer dvbsrc is not installed; native Linux DVB remains available.'
+      : 'GStreamer dvbsrc не установлен; нативный Linux DVB остаётся доступен.';
+    return;
+  }
+  const yes = language === 'en' ? 'yes' : 'да';
+  const no = language === 'en' ? 'no' : 'нет';
+  info.textContent = `GStreamer dvbsrc · stream-id: ${dvbCapabilities.streamIdSupported ? yes : no} · diseqc-source: ${dvbCapabilities.diseqcSourceSupported ? yes : no}`;
+}
+function applyTbsDriverModeUi() {
+  const item = selectedDvbFrontend();
+  const mode = Number(item?.driver_mode ?? -1);
+  const diseqc = document.getElementById('satDiseqc');
+  const hint = document.getElementById('satDriverModeHint');
+  if (diseqc) {
+    diseqc.disabled = mode === 2;
+    if (mode === 2) diseqc.value = '-1';
+  }
+  if (!hint) return;
+  const ru = [
+    'Mode 0: multiswitch / quattro или quad LNB; выбор A–D доступен для спутникового входа.',
+    'Mode 1: прямое подключение LNB; DiSEqC A–D передаётся выбранному frontend.',
+    'Mode 2: Unicable; обычный DiSEqC A–D отключён. User Band/SCR должен быть настроен драйвером или внешним оборудованием.'
+  ];
+  const en = [
+    'Mode 0: multiswitch / quattro or quad LNB; A–D remains available for satellite selection.',
+    'Mode 1: direct LNB connection; DiSEqC A–D is sent to the selected frontend.',
+    'Mode 2: Unicable; committed DiSEqC A–D is disabled. User Band/SCR must be configured by the driver or external equipment.'
+  ];
+  hint.textContent = mode >= 0 && mode <= 2 ? (language === 'en' ? en[mode] : ru[mode]) : '';
 }
 
 function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend=null) {
@@ -5644,10 +5751,7 @@ function satelliteAdapterChanged() {
   satelliteSignalPending = false;
   refreshSatelliteFrontendOptions();
   resetSatelliteServicesForTuneChange();
-  const adapter = Number(document.getElementById('satAdapter')?.value || 0);
-  const frontend = Number(document.getElementById('satFrontend')?.value || 0);
-  const info = document.getElementById('satDeviceInfo');
-  if (info) info.textContent = `Выбран /dev/dvb/adapter${adapter}/frontend${frontend}`;
+  updateSatelliteDeviceInfo();
   updateSatelliteSignal();
 }
 function satelliteFrontendChanged() {
@@ -5656,10 +5760,8 @@ function satelliteFrontendChanged() {
   satelliteSignalController = null;
   satelliteSignalPending = false;
   resetSatelliteServicesForTuneChange();
-  const adapter = Number(document.getElementById('satAdapter')?.value || 0);
-  const frontend = Number(document.getElementById('satFrontend')?.value || 0);
-  const info = document.getElementById('satDeviceInfo');
-  if (info) info.textContent = `Выбран /dev/dvb/adapter${adapter}/frontend${frontend}`;
+  applyTbsDriverModeUi();
+  updateSatelliteDeviceInfo();
   updateSatelliteSignal();
 }
 async function updateSatelliteSignal() {
@@ -5681,9 +5783,11 @@ async function updateSatelliteSignal() {
       const actualAdapter = Number(data.adapter ?? payload.adapter);
       const actualFrontend = Number(data.frontend ?? payload.frontend);
       const device = data.device || `/dev/dvb/adapter${actualAdapter}/frontend${actualFrontend}`;
+      const model = String(data.frontend_model || data.frontend_name || '').trim();
+      const mode = Number(data.driver_mode ?? -1);
       info.textContent = data.error && !data.locked
         ? `${device}: ${data.error}`
-        : `${device}${data.locked ? ' · LOCK' : ''}`;
+        : `${device}${model ? ` · ${model}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''} · ISI ${payload.stream_id >= 0 ? payload.stream_id : 'Auto'} · DiSEqC ${diseqcSourceLabel(payload.diseqc_source)}${data.locked ? ' · LOCK' : ''}`;
     }
   } catch (error) {
     if (error?.name === 'AbortError') return;
@@ -5710,6 +5814,12 @@ async function loadSatelliteAdapters() {
     const adapterBeforeLoad = Number(document.getElementById('satAdapter')?.value || 0);
     const frontendBeforeLoad = Number(document.getElementById('satFrontend')?.value || 0);
     dvbAdapters = Array.isArray(data.adapters) ? data.adapters : [];
+    dvbCapabilities = {
+      dvbsrcAvailable:!!data.dvbsrc_available,
+      streamIdSupported:!!data.dvbsrc_stream_id_supported,
+      diseqcSourceSupported:!!data.dvbsrc_diseqc_source_supported
+    };
+    updateSatelliteCapabilityInfo();
     if (!(data.native_dvb_available ?? data.dvbsrc_available)) {
       refreshSatelliteAdapterOptions(adapterBeforeLoad, frontendBeforeLoad);
       if (info) info.textContent = 'Нативный DVB-S/S2 frontend доступен только в Linux.';
@@ -5728,7 +5838,7 @@ async function loadSatelliteAdapters() {
       ? frontendBeforeLoad
       : Number((dvbAdapters.find(item => Number(item.adapter) === preferredAdapter) || dvbAdapters[0]).frontend || 0);
     refreshSatelliteAdapterOptions(preferredAdapter, preferredFrontend);
-    if (info) info.textContent = `Выбран /dev/dvb/adapter${preferredAdapter}/frontend${preferredFrontend} · доступно: ${dvbAdapters.map(item=>item.device).join(', ')}`;
+    updateSatelliteDeviceInfo();
     updateSatelliteSignal();
   } catch (error) {
     dvbAdapters = [];
@@ -5788,7 +5898,7 @@ async function startSatelliteScan() {
     }
     updateSatelliteMeters(data);
     satelliteServices = Array.isArray(data.services) ? data.services : [];
-    satelliteLastScan = {adapter:actualAdapter, frontend:actualFrontend, device:data.device || `/dev/dvb/adapter${actualAdapter}/frontend${actualFrontend}`};
+    satelliteLastScan = {adapter:actualAdapter, frontend:actualFrontend, device:data.device || `/dev/dvb/adapter${actualAdapter}/frontend${actualFrontend}`, streamId:Number(data.stream_id ?? payload.stream_id), diseqcSource:Number(data.diseqc_source ?? payload.diseqc_source)};
     renderSatelliteServices();
     if (status) {
       const caCount = satelliteServices.filter(service=>service.scrambled === true).length;
@@ -5797,7 +5907,7 @@ async function startSatelliteScan() {
       const scanDevice = satelliteLastScan?.device || `/dev/dvb/adapter${payload.adapter}/frontend${payload.frontend}`;
       status.textContent = data.error && !satelliteServices.length
         ? `${scanDevice}: ${data.error}`
-        : `${scanDevice} · Найдено: ${satelliteServices.length} · FTA: ${ftaCount} · Код.: ${caCount}${pendingCount ? ` · PMT: ${pendingCount} не готово` : ''}${data.error ? ` (${data.error})` : ''}`;
+        : `${scanDevice} · ISI: ${payload.stream_id >= 0 ? payload.stream_id : 'Авто'} · DiSEqC: ${diseqcSourceLabel(payload.diseqc_source)} · Найдено: ${satelliteServices.length} · FTA: ${ftaCount} · Код.: ${caCount}${pendingCount ? ` · PMT: ${pendingCount} не готово` : ''}${data.error ? ` (${data.error})` : ''}`;
     }
   } catch (error) {
     satelliteServices = [];
@@ -5870,7 +5980,7 @@ function openAddChannelModal() {
       <div class="sat-field"><label>Стандарт</label><select id="satDeliverySystem" onchange="updateSatelliteSignal()"><option value="dvb-s2">DVB-S2</option><option value="dvb-s">DVB-S</option></select></div>
       <div class="sat-field"><label>Модуляция</label><select id="satModulation" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option value="qpsk">QPSK</option><option value="8psk">8PSK</option><option value="16apsk">16APSK</option><option value="32apsk">32APSK</option></select></div>
       <div class="sat-field"><label>FEC</label><select id="satFec" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option>1/2</option><option>2/3</option><option>3/4</option><option>4/5</option><option>5/6</option><option>7/8</option><option>8/9</option><option>9/10</option><option>3/5</option></select></div>
-      <div class="sat-field"><label>DiSEqC source</label><input id="satDiseqc" type="number" min="-1" max="7" value="-1" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field"><label>DiSEqC source</label><select id="satDiseqc" onchange="updateSatelliteSignal()"><option value="-1">Отключён</option><option value="0">A (1)</option><option value="1">B (2)</option><option value="2">C (3)</option><option value="3">D (4)</option></select></div>
       <div class="sat-field"><label>LNB LOF1, MHz</label><input id="satLof1" type="number" value="9750" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB LOF2, MHz</label><input id="satLof2" type="number" value="10600" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB SLOF, MHz</label><input id="satSlof" type="number" value="11700" onchange="updateSatelliteSignal()" /></div>
@@ -5878,6 +5988,8 @@ function openAddChannelModal() {
       <div class="sat-field wide"><label>Сканирование</label><div class="checkbox-inline"><input id="satHoldLock" type="checkbox" checked /><span>Удерживать LOCK</span></div></div>
     </div>
     <div id="satDeviceInfo" class="sat-scan-status" style="margin-top:8px">Поиск DVB frontend...</div>
+    <div id="satDriverModeHint" class="sat-scan-status" style="margin-top:4px"></div>
+    <div id="satGstInfo" class="sat-scan-status" style="margin-top:4px">Проверка свойств GStreamer dvbsrc...</div>
     <div class="cam-panel">
       <div class="cam-head"><strong>CAM clients / Newcamd</strong><button id="satCamRefresh" class="button-secondary" type="button" onclick="refreshCamClients()">Refresh</button></div>
       <div id="satCamClients" class="cam-list"><div class="cam-empty">Loading CAM clients...</div></div>
