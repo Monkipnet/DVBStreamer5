@@ -2,17 +2,21 @@
 
 #include "ConfigManager.h"
 
-#include <atomic>
-#include <mutex>
 #include <string>
 #include <vector>
 
 #include <sys/types.h>
 
+// Legacy compatibility shim.
+//
+// Stage 1 retires the standalone gst-launch transcoder process. StreamManager
+// still references this type while the remaining in-process GStreamer media
+// path is migrated to the native media core in later stages. isAvailable()
+// intentionally returns false so new streams use TranscoderModule::createBin().
 class GstTranscoderProcess {
 public:
     GstTranscoderProcess() = default;
-    ~GstTranscoderProcess();
+    ~GstTranscoderProcess() = default;
 
     GstTranscoderProcess(const GstTranscoderProcess&) = delete;
     GstTranscoderProcess& operator=(const GstTranscoderProcess&) = delete;
@@ -24,26 +28,4 @@ public:
     bool isRunning();
     std::string description() const;
     std::vector<pid_t> childPids() const;
-
-private:
-    struct ChildProcess {
-        pid_t pid = -1;
-        std::string description;
-    };
-
-    std::vector<ChildProcess> children;
-    mutable std::mutex childrenMutex;
-    std::atomic<bool> stopping{false};
-
-    static std::vector<std::string> buildSharedCommand(
-        const StreamConfig& baseConfig,
-        const std::vector<StreamConfig>& outputConfigs,
-        std::string& description,
-        std::string& error);
-
-    static bool spawnProcess(
-        const std::vector<std::string>& args,
-        const std::string& description,
-        ChildProcess& child,
-        std::string& error);
 };

@@ -30,7 +30,11 @@ class TranscoderModule {
 public:
     static TranscoderCapabilities inspectCapabilities();
 
-    // Returns the first Intel H.264 encoder that survives a real out-of-process
+    // Internal worker used by the isolated Intel encoder probe. This is invoked
+    // only through /proc/self/exe --transcoder-encoder-probe <factory>.
+    static int runEncoderProbeWorker(const std::string& factory);
+
+    // Returns the first Intel H.264 encoder that survives a real self-exec probe.
     // encode probe. Factory presence alone is not enough: on older Intel GPUs
     // qsvh264enc can be registered but abort inside Media SDK/VAAPI at runtime.
     static std::string workingIntelVideoEncoderFactory();

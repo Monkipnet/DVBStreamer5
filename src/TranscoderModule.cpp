@@ -24,21 +24,7 @@ namespace {
 
 
 
-bool executableInPath(const std::string& name, std::string* path = nullptr) {
-    const char* envPath = std::getenv("PATH");
-    std::string paths = envPath ? envPath : "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-    std::stringstream ss(paths);
-    std::string dir;
-    while (std::getline(ss, dir, ':')) {
-        if (dir.empty()) continue;
-        std::filesystem::path candidate = std::filesystem::path(dir) / name;
-        if (::access(candidate.c_str(), X_OK) == 0) {
-            if (path) *path = candidate.string();
-            return true;
-        }
-    }
-    return false;
-}
+
 
 bool factoryAvailable(const char* name) {
     GstElementFactory* factory = gst_element_factory_find(name);
@@ -84,9 +70,6 @@ EncoderProbeResult probeVideoEncoderFactory(const std::string& factory) {
     EncoderProbeResult result;
     if (!factoryAvailable(factory.c_str())) return result;
 
-    std::string gstLaunch;
-    if (!executableInPath("gst-launch-1.0", &gstLaunch)) return result;
-
     const pid_t pid = ::fork();
     if (pid < 0) {
         std::cerr << "Intel encoder probe 203.08: factory=" << factory
@@ -110,12 +93,11 @@ EncoderProbeResult probeVideoEncoderFactory(const std::string& factory) {
             if (nullFd > STDERR_FILENO) ::close(nullFd);
         }
 
-        ::execl(gstLaunch.c_str(), gstLaunch.c_str(),
-                "-q",
-                "videotestsrc", "num-buffers=24", "!",
-                "video/x-raw,format=NV12,width=320,height=240,framerate=25/1", "!",
-                factory.c_str(), "bitrate=1000", "!",
-                "fakesink", "sync=false",
+        // Keep the potentially unsafe Intel driver probe isolated from the main
+        // process, but execute our own binary instead of the external
+        // gst-launch-1.0 utility.
+        ::execl("/proc/self/exe", "TVStreamer5",
+                "--transcoder-encoder-probe", factory.c_str(),
                 static_cast<char*>(nullptr));
         ::_exit(127);
     }
@@ -900,6 +882,73 @@ void onDemuxPadAdded(GstElement*, GstPad* pad, gpointer userData) {
 
 } // namespace
 
+int TranscoderModule::runEncoderProbeWorker(const std::string& factory) {
+    GError* initError = nullptr;
+    if (!gst_init_check(nullptr, nullptr, &initError)) {
+        if (initError) g_error_free(initError);
+        return 2;
+    }
+    if (!factoryAvailable(factory.c_str())) return 3;
+
+    GstElement* pipeline = gst_pipeline_new("tvstreamer5_encoder_probe");
+    GstElement* source = gst_element_factory_make("videotestsrc", "probe_source");
+    GstElement* filter = gst_element_factory_make("capsfilter", "probe_caps");
+    GstElement* encoder = gst_element_factory_make(factory.c_str(), "probe_encoder");
+    GstElement* sink = gst_element_factory_make("fakesink", "probe_sink");
+    if (!pipeline || !source || !filter || !encoder || !sink) {
+        if (source && !GST_OBJECT_PARENT(source)) gst_object_unref(source);
+        if (filter && !GST_OBJECT_PARENT(filter)) gst_object_unref(filter);
+        if (encoder && !GST_OBJECT_PARENT(encoder)) gst_object_unref(encoder);
+        if (sink && !GST_OBJECT_PARENT(sink)) gst_object_unref(sink);
+        if (pipeline) gst_object_unref(pipeline);
+        return 4;
+    }
+
+    g_object_set(source, "num-buffers", 24, nullptr);
+    GstCaps* caps = gst_caps_new_simple(
+        "video/x-raw",
+        "format", G_TYPE_STRING, "NV12",
+        "width", G_TYPE_INT, 320,
+        "height", G_TYPE_INT, 240,
+        "framerate", GST_TYPE_FRACTION, 25, 1,
+        nullptr);
+    g_object_set(filter, "caps", caps, nullptr);
+    gst_caps_unref(caps);
+    if (g_object_class_find_property(G_OBJECT_GET_CLASS(encoder), "bitrate")) {
+        g_object_set(encoder, "bitrate", 1000u, nullptr);
+    }
+    g_object_set(sink, "sync", FALSE, "async", FALSE, nullptr);
+
+    gst_bin_add_many(GST_BIN(pipeline), source, filter, encoder, sink, nullptr);
+    if (!gst_element_link_many(source, filter, encoder, sink, nullptr)) {
+        gst_element_set_state(pipeline, GST_STATE_NULL);
+        gst_object_unref(pipeline);
+        return 5;
+    }
+
+    GstBus* bus = gst_element_get_bus(pipeline);
+    const GstStateChangeReturn stateResult = gst_element_set_state(pipeline, GST_STATE_PLAYING);
+    if (stateResult == GST_STATE_CHANGE_FAILURE) {
+        if (bus) gst_object_unref(bus);
+        gst_element_set_state(pipeline, GST_STATE_NULL);
+        gst_object_unref(pipeline);
+        return 6;
+    }
+
+    GstMessage* message = bus
+        ? gst_bus_timed_pop_filtered(
+              bus,
+              5 * GST_SECOND,
+              static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS))
+        : nullptr;
+    const bool ok = message && GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS;
+    if (message) gst_message_unref(message);
+    if (bus) gst_object_unref(bus);
+    gst_element_set_state(pipeline, GST_STATE_NULL);
+    gst_object_unref(pipeline);
+    return ok ? 0 : 7;
+}
+
 std::string TranscoderModule::workingIntelVideoEncoderFactory() {
     static std::once_flag probeOnce;
     static std::string selected;
@@ -960,10 +1009,6 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     TranscoderCapabilities result;
     result.mp2EncoderAvailable = tvs_gst_mp2_encoder_register() &&
         factoryAvailable("mpegaudioparse") && mpegTsMuxSupportsMp2();
-    std::string gstLaunchPath;
-    if (!executableInPath("gst-launch-1.0", &gstLaunchPath)) {
-        result.missingElements.emplace_back("gst-launch-1.0");
-    }
     const char* required[] = {
         "uridecodebin", "decodebin", "queue",
         "videoconvert", "deinterlace", "videoscale", "videorate", "capsfilter",
@@ -1035,12 +1080,12 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     }
     result.available = result.missingElements.empty();
     result.message = result.available
-        ? "GStreamer transcoding is available: H.264=" +
+        ? "In-process transcoding is available: H.264=" +
               (result.videoEncoder.empty() ? std::string("unavailable") : result.videoEncoder) +
               ", HEVC=" +
               (result.hevcVideoEncoder.empty() ? std::string("unavailable") : result.hevcVideoEncoder) +
-              ", gst-launch=" + gstLaunchPath
-        : "Transcoding is unavailable because required GStreamer elements are missing";
+              ", external gst-launch=disabled"
+        : "Transcoding is unavailable because required in-process media elements are missing";
     return result;
 }
 

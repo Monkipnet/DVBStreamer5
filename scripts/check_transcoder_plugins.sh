@@ -5,12 +5,10 @@ set -euo pipefail
 # Core transcoder elements are mandatory. Input/output protocol elements are
 # reported separately because a deployment may intentionally use only a subset.
 
-for tool in gst-launch-1.0 gst-inspect-1.0; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "GStreamer transcoding is unavailable: missing $tool" >&2
-    exit 1
-  fi
-done
+if ! command -v gst-inspect-1.0 >/dev/null 2>&1; then
+  echo "In-process transcoding is unavailable: missing gst-inspect-1.0" >&2
+  exit 1
+fi
 
 required=(
   uridecodebin
@@ -133,8 +131,8 @@ print_group() {
   done
 }
 
-echo "TVStreamer5 GStreamer core is available."
-echo "  gst-launch: $(command -v gst-launch-1.0)"
+echo "TVStreamer5 in-process GStreamer core is available."
+echo "  external gst-launch: disabled"
 echo "  Auto video encoder: ${nvenc_encoder:-${x264_encoder:-not available}}"
 echo "  NVIDIA NVENC: ${nvenc_encoder:-not available}"
 echo "  CPU x264: ${x264_encoder:-not available}"

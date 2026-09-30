@@ -11,8 +11,12 @@
 #include "StreamManager.h"
 #include "HttpServer.h"
 #include "AppVersion.h"
+#include "TranscoderModule.h"
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3 && std::string(argv[1]) == "--transcoder-encoder-probe") {
+        return TranscoderModule::runEncoderProbeWorker(argv[2]);
+    }
 #if defined(__GLIBC__)
     // 202.46: this process owns hundreds of GStreamer/SRT worker threads.
     // glibc otherwise creates many independent malloc arenas and keeps freed
