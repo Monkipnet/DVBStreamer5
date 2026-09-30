@@ -1,4 +1,8 @@
 #include "media/NativeHlsSegmenter.h"
+#include "media/NativeSampleAes.h"
+
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +39,40 @@ bool atomicReplace(const std::filesystem::path& temp,
     return false;
 }
 
+std::array<std::uint8_t,16> sequenceIv(std::uint64_t seq) {
+    std::array<std::uint8_t,16> iv{};
+    for(int i=15;i>=8;--i){iv[static_cast<std::size_t>(i)]=static_cast<std::uint8_t>(seq&0xffU);seq>>=8;}
+    return iv;
+}
+
+bool encryptAes128File(const std::filesystem::path& path,
+                       const std::array<std::uint8_t,16>& key,
+                       const std::array<std::uint8_t,16>& iv,
+                       std::string& error) {
+    std::ifstream in(path,std::ios::binary);
+    if(!in){error="failed to reopen HLS segment for AES-128";return false;}
+    std::vector<std::uint8_t> plain((std::istreambuf_iterator<char>(in)),{});
+    EVP_CIPHER_CTX* ctx=EVP_CIPHER_CTX_new(); if(!ctx){error="AES context allocation failed";return false;}
+    std::vector<std::uint8_t> enc(plain.size()+16); int n=0,t=0;
+    const bool ok=EVP_EncryptInit_ex(ctx,EVP_aes_128_cbc(),nullptr,key.data(),iv.data())==1 &&
+        EVP_EncryptUpdate(ctx,enc.data(),&n,plain.data(),static_cast<int>(plain.size()))==1 &&
+        EVP_EncryptFinal_ex(ctx,enc.data()+n,&t)==1;
+    EVP_CIPHER_CTX_free(ctx); if(!ok){error="HLS AES-128 encrypt failed";return false;} enc.resize(static_cast<std::size_t>(n+t));
+    std::ofstream out(path,std::ios::binary|std::ios::trunc); out.write(reinterpret_cast<const char*>(enc.data()),static_cast<std::streamsize>(enc.size()));
+    if(!out){error="failed to write encrypted HLS segment";return false;} return true;
+}
+
+bool sampleAesFile(const std::filesystem::path& path,
+                   const std::array<std::uint8_t,16>& key,
+                   const std::array<std::uint8_t,16>& iv,
+                   std::string& error) {
+    std::ifstream in(path,std::ios::binary); if(!in){error="failed to reopen HLS segment for SAMPLE-AES";return false;}
+    std::vector<std::uint8_t> raw((std::istreambuf_iterator<char>(in)),{}), enc;
+    if(!dvbstreamer5::media::hls::transformSampleAesMpegTs(raw.data(),raw.size(),key,iv,true,enc,error)) return false;
+    std::ofstream out(path,std::ios::binary|std::ios::trunc); out.write(reinterpret_cast<const char*>(enc.data()),static_cast<std::streamsize>(enc.size()));
+    if(!out){error="failed to write SAMPLE-AES HLS segment";return false;} return true;
+}
+
 } // namespace
 
 namespace dvbstreamer5::media::hls {
@@ -45,11 +83,22 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     stop();
     std::lock_guard<std::mutex> lock(mutex_);
     config_ = config;
+    if (config_.encryption != "aes-128" && config_.encryption != "sample-aes") config_.encryption = "none";
+    if (config_.encryption != "none" && !config_.hasKey) {
+        if (RAND_bytes(config_.key.data(), static_cast<int>(config_.key.size())) != 1) { error = "cannot generate HLS encryption key"; return false; }
+        config_.hasKey = true;
+    }
     config_.targetDurationSeconds = std::clamp(config_.targetDurationSeconds, 1.0, 10.0);
     config_.liveWindowSegments = std::clamp<std::size_t>(config_.liveWindowSegments, 3, 30);
     std::error_code ec;
     std::filesystem::create_directories(config_.directory, ec);
     if (ec) { error = "cannot create HLS directory: " + ec.message(); return false; }
+    if (config_.encryption != "none") {
+        const std::string keyName = std::filesystem::path(config_.keyUri.empty()?"key.bin":config_.keyUri).filename().string();
+        std::ofstream keyOut(config_.directory / keyName, std::ios::binary | std::ios::trunc);
+        keyOut.write(reinterpret_cast<const char*>(config_.key.data()), static_cast<std::streamsize>(config_.key.size()));
+        if (!keyOut) { error = "cannot write HLS encryption key"; return false; }
+    }
 
     for (const auto& entry : std::filesystem::directory_iterator(config_.directory, ec)) {
         if (ec) break;
@@ -120,6 +169,14 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     segment_.flush();
     segment_.close();
     if (!segment_) { fail("failed to finalize HLS segment"); return false; }
+    if (config_.encryption != "none") {
+        const auto iv = sequenceIv(nextSequence_);
+        std::string cryptError;
+        const bool ok = config_.encryption == "sample-aes"
+            ? sampleAesFile(segmentPath_, config_.key, iv, cryptError)
+            : encryptAes128File(segmentPath_, config_.key, iv, cryptError);
+        if (!ok) { fail(cryptError); return false; }
+    }
     SegmentInfo info;
     info.sequence = nextSequence_++;
     info.fileName = segmentPath_.filename().string();
@@ -147,6 +204,10 @@ bool NativeHlsSegmenter::writePlaylist(bool endList) {
     out << "#EXTM3U\n#EXT-X-VERSION:3\n";
     out << "#EXT-X-TARGETDURATION:" << static_cast<unsigned>(std::ceil(maxDuration)) << "\n";
     out << "#EXT-X-MEDIA-SEQUENCE:" << mediaSequence << "\n";
+    if (config_.encryption != "none") {
+        out << "#EXT-X-KEY:METHOD=" << (config_.encryption == "sample-aes" ? "SAMPLE-AES" : "AES-128")
+            << ",URI=\"" << (config_.keyUri.empty()?"key.bin":config_.keyUri) << "\"\n";
+    }
     for (const auto& item : liveSegments_) {
         out << "#EXT-X-PROGRAM-DATE-TIME:" << programDateTime(item.wallTime) << "\n";
         out << "#EXTINF:" << std::fixed << std::setprecision(3) << item.duration << ",\n";

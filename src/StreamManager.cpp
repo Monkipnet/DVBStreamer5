@@ -3,9 +3,11 @@
 #include "CardManager.h"
 #include "CaBackend.h"
 #include "DvbSatellite.h"
+#include "TranscoderModule.h"
 #include "mpts/MptsOutputManager.h"
 #include "protocols/SrtVpsProfile.h"
 #include "utils.h"
+#include "media/NativeSampleAes.h"
 
 #include <algorithm>
 #include <array>
@@ -75,23 +77,19 @@ bool StreamManager::isNativeInputSupported(const StreamConfig& cfg, std::string&
     }
     if (startsWith(input, "udp://") || startsWith(input, "rtp://") ||
         startsWith(input, "http://") || startsWith(input, "https://") ||
-        startsWith(input, "file://") || startsWith(input, "srt://") || DvbSatellite::isDvbUri(cfg.inputUri) ||
+        startsWith(input, "file://") || startsWith(input, "srt://") ||
+        startsWith(input, "rtsp://") || startsWith(input, "rtmp://") || startsWith(input, "rtmps://") || DvbSatellite::isDvbUri(cfg.inputUri) ||
         input.find("://") == std::string::npos) {
         return true;
     }
-    if (startsWith(input, "rtsp://")) reason = "RTSP input is not yet implemented in the native engine";
-    else if (startsWith(input, "rtmp://") || startsWith(input, "rtmps://")) reason = "RTMP input is not yet implemented in the native engine";
-    else reason = "unsupported native input protocol";
+    reason = "unsupported native input protocol";
     return false;
 }
 
 bool StreamManager::isNativeOutputSupported(const std::string& type, std::string& reason) {
-    if (type == "udp-cbr" || type == "udp-vbr" || type == "rtp" || type == "http" || type == "hls" || type == "srt") {
-        return true;
-    }
-    if (type == "rtsp") reason = "RTSP output is not yet implemented in the native media engine";
-    else if (type == "rtmp" || type == "youtube") reason = "RTMP/YouTube output is not yet implemented in the native media engine";
-    else reason = "unsupported native output protocol";
+    if (type == "udp-cbr" || type == "udp-vbr" || type == "rtp" || type == "http" || type == "hls" || type == "srt" ||
+        type == "rtsp" || type == "rtmp" || type == "youtube") return true;
+    reason = "unsupported native output protocol";
     return false;
 }
 
@@ -99,10 +97,6 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (error) error->clear();
     if (streamConfig.id.empty()) {
         if (error) *error = "stream id is empty";
-        return false;
-    }
-    if (streamConfig.transcodeEnabled) {
-        if (error) *error = "transcoding is disabled until native video/audio codecs are integrated";
         return false;
     }
     std::string reason;
@@ -117,6 +111,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         int latency = 120; std::string passphrase; std::string streamId; int pbkeylen = 16;
     };
     std::vector<SrtOutputSpec> srtOutputSpecs;
+    struct RtspOutputSpec { std::string host; int port=8554; };
+    std::vector<RtspOutputSpec> rtspOutputSpecs;
+    struct RtmpOutputSpec { std::string uri; };
+    std::vector<RtmpOutputSpec> rtmpOutputSpecs;
     bool hasHttpOutput = false;
     bool hasHlsOutput = false;
     auto appendOutput = [&](const std::string& type, const std::string& host, int port,
@@ -134,6 +132,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             srtOutputSpecs.push_back({host, port, mode.empty() ? "listener" : mode, iface,
                                       srtLatency, srtPassphrase, srtStreamId, srtPbKeyLen});
             return true;
+        }
+        if (type == "rtsp") { rtspOutputSpecs.push_back({host, port > 0 ? port : 8554}); return true; }
+        if (type == "rtmp" || type == "youtube") {
+            std::string uri = host;
+            const std::string lo = toLower(uri);
+            if (type == "youtube" && lo.rfind("rtmp",0) != 0) uri = "rtmp://a.rtmp.youtube.com/live2/" + host;
+            else if (type == "rtmp" && lo.rfind("rtmp",0) != 0) uri = "rtmp://" + host + ":" + std::to_string(port > 0 ? port : 1935) + "/live/" + streamConfig.id;
+            rtmpOutputSpecs.push_back({uri}); return true;
         }
         nativeOutputs.push_back({type, host, port, cleanInterface(iface)});
         return true;
@@ -168,13 +174,42 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     state->activeInputUri = streamConfig.inputUri;
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
+    if (streamConfig.transcodeEnabled) {
+        state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
+        dvbstreamer5::media::transcode::NativeTranscoderConfig tc;
+        tc.videoCodec = toLower(streamConfig.transcodeVideoCodec);
+        tc.audioCodec = toLower(streamConfig.transcodeAudioCodec);
+        if (!TranscoderModule::resolutionSize(streamConfig.transcodeResolution, tc.width, tc.height)) {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = "invalid native transcode resolution: " + streamConfig.transcodeResolution;
+            return false;
+        }
+        tc.videoBitrate = streamConfig.transcodeVideoBitrate;
+        tc.audioBitrate = streamConfig.transcodeAudioBitrate;
+        tc.serviceId = static_cast<std::uint16_t>(streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff ? streamConfig.serviceId : 1);
+        tc.videoPid = static_cast<std::uint16_t>(streamConfig.videoPid > 0 && streamConfig.videoPid <= 0x1ffe ? streamConfig.videoPid : 0x0100);
+        tc.audioPid = static_cast<std::uint16_t>(streamConfig.audioPid > 0 && streamConfig.audioPid <= 0x1ffe ? streamConfig.audioPid : 0x0101);
+        tc.muxBitrate = streamConfig.cbr ? streamConfig.targetBitrate : 0;
+        tc.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+        tc.serviceProvider = streamConfig.serviceProvider;
+        std::string transcodeError;
+        if (!state->nativeTranscoder->initialize(tc, transcodeError)) {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = transcodeError.empty() ? "native transcoder initialization failed" : transcodeError;
+            return false;
+        }
+    }
     const std::string normalizedInput = normalizeInputUri(streamConfig.inputUri);
     const std::string inputMode = toLower(streamConfig.inputMode);
     const bool hlsInput = inputMode == "hls" || toLower(normalizedInput).find(".m3u8") != std::string::npos ||
         toLower(normalizedInput).rfind("hls://", 0) == 0;
     const bool srtInput = toLower(normalizedInput).rfind("srt://", 0) == 0;
+    const bool rtspInput = toLower(normalizedInput).rfind("rtsp://", 0) == 0;
+    const bool rtmpInput = toLower(normalizedInput).rfind("rtmp://", 0) == 0 || toLower(normalizedInput).rfind("rtmps://", 0) == 0;
     if (hlsInput) state->nativeHlsInput = std::make_unique<dvbstreamer5::media::hls::NativeHlsInput>();
     if (srtInput) state->nativeSrtInput = std::make_unique<dvbstreamer5::media::srt::NativeSrtInput>();
+    if (rtspInput) state->nativeRtspInput = std::make_unique<dvbstreamer5::media::rtsp::NativeRtspInput>();
+    if (rtmpInput) state->nativeRtmpInput = std::make_unique<dvbstreamer5::media::rtmp::NativeRtmpInput>();
     for (const auto& spec : srtOutputSpecs) {
         auto output = std::make_unique<dvbstreamer5::media::srt::NativeSrtOutput>();
         dvbstreamer5::media::srt::EndpointConfig srtConfig;
@@ -213,13 +248,32 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
         state->nativeSrtOutputs.push_back(std::move(output));
     }
-    if (hasHlsOutput) state->nativeHlsSegmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
+    for (const auto& spec : rtspOutputSpecs) {
+        auto output = std::make_unique<dvbstreamer5::media::rtsp::NativeRtspOutput>();
+        dvbstreamer5::media::rtsp::OutputConfig cfg; cfg.bindAddress=cleanInterface(spec.host); if(cfg.bindAddress.empty())cfg.bindAddress="0.0.0.0"; cfg.port=spec.port; cfg.streamName=streamConfig.id;
+        std::string e; const std::string currentStreamId=streamConfig.id;
+        if(!output->start(cfg,[this,currentStreamId](const std::string&ip){return isClientAllowedForStream(currentStreamId,ip);},
+            [this,currentStreamId](const std::string&ip){if(!ip.empty())addStreamSession(currentStreamId,ip,"rtsp");},
+            [this,currentStreamId](const std::string&ip){if(!ip.empty())removeStreamSession(currentStreamId,ip,"rtsp");},e)) {
+            CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTSP output failed":e; return false;
+        }
+        state->nativeRtspOutputs.push_back(std::move(output));
+    }
+    for (const auto& spec : rtmpOutputSpecs) {
+        auto output=std::make_unique<dvbstreamer5::media::rtmp::NativeRtmpOutput>(); dvbstreamer5::media::rtmp::EndpointConfig cfg; cfg.uri=spec.uri; cfg.bindAddress=cleanInterface(streamConfig.interfaceAddress);
+        std::string e; if(!output->start(cfg,[statePtr=state.get()](const std::string&st){if(statePtr)statePtr->statusMessage="RTMP "+st;},e)) { CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTMP output failed":e; return false; }
+        state->nativeRtmpOutputs.push_back(std::move(output));
+    }
+    if (hasHlsOutput) {
+        if(toLower(streamConfig.hlsContainer)=="cmaf") state->nativeCmafSegmenter=std::make_unique<dvbstreamer5::media::cmaf::NativeCmafSegmenter>();
+        else state->nativeHlsSegmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
+    }
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
-    relay.inputUri = hlsInput ? "external://hls" : (srtInput ? "external://srt" : normalizedInput);
-    relay.externallyFedInput = hlsInput || srtInput;
+    relay.inputUri = hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput)));
+    relay.externallyFedInput = hlsInput || srtInput || rtspInput || rtmpInput;
     relay.outputs = nativeOutputs;
-    relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput || !srtOutputSpecs.empty()) && nativeOutputs.empty();
+    relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput || !srtOutputSpecs.empty() || !rtspOutputSpecs.empty() || !rtmpOutputSpecs.empty()) && nativeOutputs.empty();
     relay.inputInterfaceAddress = cleanInterface(streamConfig.inputInterfaceAddress);
     relay.inputInterfaceAddressConfigured = streamConfig.inputInterfaceAddressConfigured;
     relay.interfaceAddress = cleanInterface(streamConfig.interfaceAddress);
@@ -287,16 +341,28 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return CaBackendManager::instance().processTransport(streamId, data, size);
         };
     }
+    if (state->nativeTranscoder) {
+        auto* transcoder = state->nativeTranscoder.get();
+        relay.transformTransport = [transcoder](const std::uint8_t* data, std::size_t size,
+                                                std::vector<std::uint8_t>& output, std::string& transformError) {
+            return transcoder->process(data, size, output, transformError);
+        };
+    }
 
     auto previewHub = state->nativePreviewHub;
     auto* hlsSegmenter = state->nativeHlsSegmenter.get();
+    auto* cmafSegmenter = state->nativeCmafSegmenter.get();
     auto* mpts = mptsOutputManager.get();
-    std::vector<dvbstreamer5::media::srt::NativeSrtOutput*> srtOutputs;
-    for (auto& output : state->nativeSrtOutputs) srtOutputs.push_back(output.get());
+    std::vector<dvbstreamer5::media::srt::NativeSrtOutput*> srtOutputs; for (auto& output : state->nativeSrtOutputs) srtOutputs.push_back(output.get());
+    std::vector<dvbstreamer5::media::rtsp::NativeRtspOutput*> rtspOutputs; for (auto& output : state->nativeRtspOutputs) rtspOutputs.push_back(output.get());
+    std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
-    relay.observeTransport = [previewHub, hlsSegmenter, mpts, srtOutputs, streamId](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [previewHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {
         if (hlsSegmenter) hlsSegmenter->push(data, size);
+        if (cmafSegmenter) cmafSegmenter->push(data, size);
         for (auto* output : srtOutputs) if (output) output->push(data, size);
+        for (auto* output : rtspOutputs) if (output) output->push(data, size);
+        for (auto* output : rtmpOutputs) if (output) output->push(data, size);
         previewHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
     };
@@ -310,11 +376,39 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         hlsConfig.liveWindowSegments = 6;
         hlsConfig.archiveEnabled = streamConfig.hlsArchiveEnabled;
         hlsConfig.archiveHours = streamConfig.hlsArchiveHours;
+        hlsConfig.encryption = toLower(streamConfig.hlsEncryption);
+        hlsConfig.keyUri = streamConfig.hlsEncryptionKeyUri;
+        hlsConfig.hasKey = dvbstreamer5::media::hls::parseHexKey16(streamConfig.hlsEncryptionKeyHex, hlsConfig.key);
         std::string hlsError;
         if (!state->nativeHlsSegmenter->start(hlsConfig, hlsError)) {
             for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = hlsError.empty() ? "native HLS output failed" : hlsError;
+            return false;
+        }
+    }
+    if (state->nativeCmafSegmenter) {
+        const std::string enc = toLower(streamConfig.hlsEncryption);
+        if (enc != "none" && enc != "sample-aes") {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = "CMAF/fMP4 output supports none or SAMPLE-AES (cbcs); AES-128 whole-segment mode is MPEG-TS HLS only";
+            return false;
+        }
+        dvbstreamer5::media::cmaf::SegmenterConfig cfg;
+        cfg.directory = streamConfig.hlsArchiveEnabled
+            ? std::filesystem::path(streamConfig.hlsArchivePath) / streamConfig.id
+            : std::filesystem::path("/tmp/dvbstreamer5-hls") / streamConfig.id;
+        cfg.targetDurationSeconds = 2.0;
+        cfg.liveWindowSegments = 6;
+        cfg.archiveEnabled = streamConfig.hlsArchiveEnabled;
+        cfg.archiveHours = streamConfig.hlsArchiveHours;
+        cfg.encryption = enc;
+        cfg.keyUri = streamConfig.hlsEncryptionKeyUri;
+        cfg.hasKey = dvbstreamer5::media::hls::parseHexKey16(streamConfig.hlsEncryptionKeyHex, cfg.key);
+        std::string e;
+        if (!state->nativeCmafSegmenter->start(cfg, e)) {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = e.empty() ? "native CMAF output failed" : e;
             return false;
         }
     }
@@ -326,6 +420,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (!state->nativeRelay->start(relay, relayError)) {
             for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
             if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+            if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = relayError.empty() ? "native relay failed" : relayError;
             return false;
@@ -383,9 +478,19 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
     }
 
+    if (state->nativeRtspInput) {
+        auto* relayPtr=state->nativeRelay.get(); auto* statePtr=state.get(); dvbstreamer5::media::rtsp::InputConfig cfg; cfg.uri=normalizedInput; cfg.mode=(inputMode.find("udp")!=std::string::npos?"udp":(inputMode.find("tcp")!=std::string::npos?"tcp":"auto")); cfg.bindAddress=cleanInterface(streamConfig.inputInterfaceAddress); std::string e;
+        if(!state->nativeRtspInput->start(cfg,[relayPtr](const std::uint8_t*d,std::size_t n){return relayPtr->pushInput(d,n);},[statePtr](const std::string&st){if(statePtr)statePtr->statusMessage="RTSP "+st;},e)){stopStream(streamConfig.id); state->nativeRelay->stop(); CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTSP input failed":e; return false;}
+    }
+    if (state->nativeRtmpInput) {
+        auto* relayPtr=state->nativeRelay.get(); auto* statePtr=state.get(); dvbstreamer5::media::rtmp::EndpointConfig cfg; cfg.uri=normalizedInput; cfg.bindAddress=cleanInterface(streamConfig.inputInterfaceAddress); std::string e;
+        if(!state->nativeRtmpInput->start(cfg,[relayPtr](const std::uint8_t*d,std::size_t n){return relayPtr->pushInput(d,n);},[statePtr](const std::string&st){if(statePtr)statePtr->statusMessage="RTMP "+st;},e)){state->nativeRelay->stop(); CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTMP input failed":e; return false;}
+    }
+
     state->active.store(true);
     state->running.store(true);
-    state->statusMessage = hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : "running (native media engine)");
+    state->statusMessage = hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : (rtspInput ? "running (native RTSP input)" : (rtmpInput ? "running (native RTMP input)" : "running (native media engine)")));
+    if (streamConfig.transcodeEnabled) state->statusMessage += " + native transcoder";
     StreamState* rawState = state.get();
     {
         std::lock_guard<std::mutex> lock(managerMutex);
@@ -412,6 +517,8 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const uint64_t in = relay->inputBytes();
         uint64_t out = relay->outputBytes();
         for (const auto& output : state->nativeSrtOutputs) if (output) out += output->sentBytes();
+        for (const auto& output : state->nativeRtspOutputs) if (output) out += output->sentBytes();
+        for (const auto& output : state->nativeRtmpOutputs) if (output) out += output->sentBytes();
         const uint64_t cc = relay->continuityErrors();
         state->inputBytes.store(in);
         state->outputBytes.store(out);
@@ -458,9 +565,14 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->nativePreviewHub) state->nativePreviewHub->close();
     if (state->nativeHlsInput) state->nativeHlsInput->stop();
     if (state->nativeSrtInput) state->nativeSrtInput->stop();
+    if (state->nativeRtspInput) state->nativeRtspInput->stop();
+    if (state->nativeRtmpInput) state->nativeRtmpInput->stop();
     if (state->nativeRelay) state->nativeRelay->stop();
     for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
+    for (auto& output : state->nativeRtspOutputs) if (output) output->stop();
+    for (auto& output : state->nativeRtmpOutputs) if (output) output->stop();
     if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+    if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
     if (state->monitorThread.joinable()) state->monitorThread.join();
     state->running.store(false);
     state->active.store(false);

@@ -1,32 +1,53 @@
 # DVBStreamer5 native media engine
 
-DVBStreamer5 no longer links to or loads GStreamer.
+DVBStreamer5 does not use GStreamer, FFmpeg, libavcodec, libavformat, libavfilter,
+libswscale or libswresample.
 
-Active native media paths:
+## Native transport paths
 
-- Linux DVB-S/S2 input
-- UDP and RTP MPEG-TS input/output
-- HTTP/HTTPS single-request MPEG-TS input
-- HLS MPEG-TS input: master/media playlist parsing, variant selection, Header/Query credentials, AES-128 EXT-X-KEY
-- HLS MPEG-TS output: PCR/random-access segmentation, atomic live playlist updates, optional DVR archive retention
-- SRT caller/listener input and output with native reconnect, live/message API, TSBPD, streamid and passphrase/PBKEYLEN
-- local MPEG-TS file input for paced CBR output
-- MPEG-TS service/PID remap, PAT/PMT/SDT generation and native mux
-- CBR pacing and RTP packetization
-- native HTTP MPEG-TS preview fan-out
-- MPTS aggregation and CA transport hook
+- Linux DVB-S/S2 input.
+- UDP and RTP MPEG-TS input/output.
+- HTTP/HTTPS MPEG-TS input and HTTP MPEG-TS preview/output.
+- HLS MPEG-TS input/output with AES-128 and SAMPLE-AES.
+- HLS fMP4/CMAF input/output with `EXT-X-MAP` (`init.mp4`) and `.m4s` fragments.
+- CMAF SAMPLE-AES/cbcs encryption/decryption using OpenSSL.
+- SRT caller/listener input/output using vendored SRT 1.5.7 built statically with OpenSSL EVP.
+- RTSP input: native RTSP client, RTP over TCP interleaved or UDP; MPEG-TS,
+  H.264, H.265 and AAC RTP payloads are converted to the common MPEG-TS pipeline.
+- RTSP output: embedded RTSP server with DESCRIBE/SETUP/PLAY/TEARDOWN and
+  RTP/MP2T over TCP interleaved or UDP.
+- RTMP/RTMPS input: native handshake/chunk/AMF0/FLV client with H.264/AAC -> MPEG-TS.
+- RTMP/RTMPS output (including YouTube-style RTMP publish): native
+  handshake/chunk/AMF0 client with MPEG-TS H.264/AAC -> FLV messages.
+- MPEG-TS service/PID remap, PAT/PMT/SDT generation, PES/PTS/DTS/PCR and native mux.
+- CBR pacing, preview fan-out, MPTS and CA/OSCam transport hook.
 
-Still disabled until native implementations are added:
+## Native transcoder
 
-- video/audio transcoding
-- RTSP
-- RTMP / YouTube
-- generated test-pattern media
+Stage 9 restores the in-process transcoder without a media framework.
 
-HLS supports MPEG-TS media segments. fMP4/CMAF playlists using EXT-X-MAP and SAMPLE-AES are rejected with a clear error instead of falling back to an external media framework.
+Production codec backends are project-local static libraries:
 
-## Stage 8: source-built SRT 1.5.7 + OpenSSL EVP
+- H.264 decode/encode: OpenH264 2.6.0.
+- H.265/HEVC decode: libde265 1.1.3.
+- H.265/HEVC encode: Kvazaar 2.3.2.
+- AAC-LC decode/encode: FDK-AAC 2.0.3.
+- MPEG-1 Layer II decode: PL_MPEG snapshot pinned in `NATIVE_CODEC_SOURCE_LOCK.txt`.
+- MPEG-1 Layer II encode: the existing vendored TwoLAME core.
 
-SRT is no longer supplied by an installed runtime package or embedded shared object. Haivision SRT 1.5.7 is built directly from the vendored `third_party/srt` source tree as `srt_static` with `USE_ENCLIB=openssl-evp`. DVBStreamer5 links that static transport into the final executable and uses the SRT C API directly.
+Raw video processing is owned by DVBStreamer5: I420 bilinear scaling and blend
+field deinterlacing. PCM16 sample-rate/channel conversion is also native C++.
 
-There is no SRT `dlopen`, `memfd` payload, GnuTLS/Nettle compatibility layer, external `libsrt*.so`, or `libsrt*-dev` build dependency. OpenSSL is the only SRT crypto backend and is the same OpenSSL already used by DVBStreamer5.
+Current codec limits are deliberate: 8-bit 4:2:0 video is the supported raw
+video format; FDK-AAC output is AAC-LC and Stage 9 audio output is mono/stereo;
+PL_MPEG is an MP2 decoder, not an MP3 decoder. Frame-rate conversion is not a
+separate filter yet: the encoder FPS setting controls encoder timing/config,
+while decoded frames are processed one-for-one.
+
+## Build model
+
+`install_deps.sh` vendors locked SRT and codec source snapshots, then builds the
+codec libraries into `third_party/native-codecs-prefix`. Normal CMake builds use
+only those static codec inputs. There is no system-SRT or runtime-codec fallback in the production tree.
+Normal builds require the locked vendored SRT 1.5.7 source and the statically
+built codec prefix produced by the project scripts.

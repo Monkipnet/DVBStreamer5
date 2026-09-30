@@ -17,7 +17,11 @@
 #include "media/NativeUdpRelay.h"
 #include "media/NativeHlsInput.h"
 #include "media/NativeHlsSegmenter.h"
+#include "media/NativeCmaf.h"
+#include "media/NativeRtspTransport.h"
+#include "media/NativeRtmpTransport.h"
 #include "media/NativeSrtTransport.h"
+#include "media/NativeTranscoderPipeline.h"
 #include "TelegramNotifier.h"
 
 class MptsOutputManager;
@@ -50,8 +54,14 @@ struct StreamState {
     std::atomic<uint64_t> outputTsClearPesStartsDelta{0};
 
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
+    std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
+    std::unique_ptr<dvbstreamer5::media::cmaf::NativeCmafSegmenter> nativeCmafSegmenter;
+    std::unique_ptr<dvbstreamer5::media::rtsp::NativeRtspInput> nativeRtspInput;
+    std::vector<std::unique_ptr<dvbstreamer5::media::rtsp::NativeRtspOutput>> nativeRtspOutputs;
+    std::unique_ptr<dvbstreamer5::media::rtmp::NativeRtmpInput> nativeRtmpInput;
+    std::vector<std::unique_ptr<dvbstreamer5::media::rtmp::NativeRtmpOutput>> nativeRtmpOutputs;
     std::unique_ptr<dvbstreamer5::media::srt::NativeSrtInput> nativeSrtInput;
     std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>> nativeSrtOutputs;
     std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;

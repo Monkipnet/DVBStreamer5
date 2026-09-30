@@ -102,6 +102,11 @@ struct StreamConfig {
     bool hlsArchiveEnabled = false;
     uint32_t hlsArchiveHours = 24;
     std::string hlsArchivePath = "/var/lib/dvbstreamer5/archive";
+    // Native HLS container/security: mpegts | cmaf and none | aes-128 | sample-aes.
+    std::string hlsContainer = "mpegts";
+    std::string hlsEncryption = "none";
+    std::string hlsEncryptionKeyUri = "key.bin";
+    std::string hlsEncryptionKeyHex;
     std::string transcodeAudioCodec = "aac";
     uint64_t transcodeAudioBitrate = 192000;
     uint32_t audioPid = 0;

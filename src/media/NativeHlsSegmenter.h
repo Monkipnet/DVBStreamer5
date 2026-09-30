@@ -2,6 +2,7 @@
 
 #include "media/TransportStream.h"
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,10 @@ struct NativeHlsSegmenterConfig {
     std::size_t liveWindowSegments = 6;
     bool archiveEnabled = false;
     std::uint32_t archiveHours = 24;
+    std::string encryption = "none"; // none | aes-128 | sample-aes
+    std::string keyUri = "key.bin";
+    std::array<std::uint8_t, 16> key{};
+    bool hasKey = false;
 };
 
 class NativeHlsSegmenter {

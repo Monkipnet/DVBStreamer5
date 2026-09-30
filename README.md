@@ -1,56 +1,63 @@
 # DVBStreamer5
 
-DVBStreamer5 is a Linux x86_64 DVB/IPTV transport application with an in-project native MPEG-TS engine and web interface.
+DVBStreamer5 is a Linux DVB/IPTV transport and transcoding application with an
+in-project native media engine and web interface.
 
-## Native media status — Stage 8
+## Native media status - Stage 9
 
-No GStreamer development headers, runtime libraries, plugins, `gst-launch`, or `gst-inspect` are used.
+No GStreamer or FFmpeg/libav media framework is used.
 
-Available native paths:
+Available paths include DVB-S/S2, UDP/RTP, HTTP/HTTPS, HLS MPEG-TS, HLS
+fMP4/CMAF, SRT, RTSP and RTMP/RTMPS. HLS supports AES-128 and SAMPLE-AES;
+CMAF supports `EXT-X-MAP`, `init.mp4`, `.m4s` and SAMPLE-AES/cbcs.
 
-- DVB-S/S2 input
-- UDP/RTP MPEG-TS input and output
-- HTTP/HTTPS MPEG-TS input and HTTP TS output/preview
-- HLS MPEG-TS input and output
-- HLS master/variant selection, Header/Query credentials and AES-128 input
-- HLS live segmentation and DVR archive retention
-- SRT caller/listener input and output with encrypted passphrase/PBKEYLEN support
-- file-to-CBR TS path
-- service/PID remap, PAT/PMT/SDT, PCR/PTS/DTS TS processing
-- CBR pacing, MPTS and CA/OSCam transport integration
+Video/audio transcoding is again in-process and native to the DVBStreamer5
+pipeline. Codec algorithms are supplied by individually pinned project-local
+libraries (OpenH264, libde265, Kvazaar, FDK-AAC and PL_MPEG), not by a media
+framework. TwoLAME remains the in-tree MP2 encoder.
 
-Still disabled pending native implementation: transcoding, RTSP, RTMP/YouTube and generated test pattern.
-
-See `NATIVE_MEDIA_ENGINE.md` and `STAGE8_NOTES.md`.
+See `NATIVE_MEDIA_ENGINE.md` and `STAGE9_NOTES.md` for supported formats and
+current codec limits.
 
 ## Build
 
+On a fresh Ubuntu checkout run once:
+
 ```bash
 ./install_deps.sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel --target DVBStreamer5
 ```
 
-Native test build:
+This vendors SRT 1.5.7 and the locked codec source snapshots and builds the
+static codec prefix. No `libsrt-dev`, FFmpeg/libav or GStreamer package is
+required.
+
+Because CMake `try_compile/configure_file` can fail on WSL DrvFS/NTFS, keep the
+build directory in the Linux filesystem when the source tree is on `/mnt/c` or
+`/mnt/d`:
 
 ```bash
-cmake -S . -B build-test -DCMAKE_BUILD_TYPE=Release \
+cmake -S /mnt/d/PROJECTS/DVBStreamer5 -B "$HOME/DVBStreamer5-build" \
+  -DCMAKE_BUILD_TYPE=Release \
   -DDVBSTREAMER5_BUILD_MEDIA_CORE_TESTS=ON \
   -DDVBSTREAMER5_BUILD_MP2_ENCODER_TESTS=ON
-cmake --build build-test --parallel 2 --target media_core_tests dvbstreamer5_native_hls_tests dvbstreamer5_native_srt_tests mp2_encoder_tests
-ctest --test-dir build-test --output-on-failure
+cmake --build "$HOME/DVBStreamer5-build" --parallel 2 --target \
+  DVBStreamer5 media_core_tests dvbstreamer5_native_hls_tests \
+  dvbstreamer5_native_srt_tests dvbstreamer5_native_protocol_tests \
+  dvbstreamer5_native_transcoder_tests mp2_encoder_tests
+ctest --test-dir "$HOME/DVBStreamer5-build" --output-on-failure
 ```
 
 Runtime dependency audit:
 
 ```bash
-./scripts/audit_runtime_deps.sh build/DVBStreamer5
+./scripts/audit_runtime_deps.sh "$HOME/DVBStreamer5-build/DVBStreamer5"
 ```
 
-## Source-built SRT 1.5.7 + OpenSSL EVP (Stage 8)
+## Locked native codec sources
 
-SRT no longer depends on a distro `libsrt` package at build time or runtime. The locked Haivision SRT 1.5.7 source tree is built as the upstream `srt_static` CMake target with encryption enabled and `USE_ENCLIB=openssl-evp`. `NativeSrtTransport` calls the linked SRT API directly.
+`scripts/vendor_native_codecs.sh` uses the commits recorded in
+`third_party/NATIVE_CODEC_SOURCE_LOCK.txt`. `scripts/build_native_codecs.sh`
+builds static codec libraries into `third_party/native-codecs-prefix`.
 
-Run `./install_deps.sh` once on a fresh checkout. It installs ordinary compiler/OpenSSL dependencies and, if `third_party/srt` has not yet been committed, runs `scripts/vendor_srt_source.sh` to download the pinned 1.5.7 orig source archive, verify SHA-256, and populate `third_party/srt`. Commit that source tree with the repository to make later builds network-independent.
-
-The final executable has no external GStreamer, `libsrt`, GnuTLS or Nettle dependency. Caller/listener, TSBPD, live/message API, latency/buffers/FC, encrypted passphrase/PBKEYLEN, streamid, reconnect and subscriber filtering remain available.
+There is no runtime-codec or system-SRT fallback in Stage 9. The normal build
+requires the locked vendored sources and project-local static codec prefix.

@@ -14,3 +14,4 @@ backup-files/
 .vscode/
 *.log
 /DVBStreamer5
+third_party/native-codecs-prefix/

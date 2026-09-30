@@ -1,4 +1,5 @@
 #include "TranscoderModule.h"
+#include "media/NativeCodecRuntime.h"
 
 #include <algorithm>
 #include <cctype>
@@ -6,18 +7,33 @@
 
 TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     TranscoderCapabilities result;
-    result.available = false;
+    const auto native = dvbstreamer5::media::codec::inspectRuntimeCapabilities();
+    result.x264Available = native.h264Encoder;
+    result.x265Available = native.hevcEncoder;
+    result.videoEncoder = native.h264Encoder ? "OpenH264" : std::string{};
+    result.hevcVideoEncoder = native.hevcEncoder ? "native HEVC encoder" : std::string{};
+    result.aacEncoder = native.aacEncoder ? "native AAC encoder" : std::string{};
+    result.audioEncoder = result.aacEncoder;
     result.mp2EncoderAvailable = true;
-    result.missingElements = {
-        "native-video-decoder",
-        "native-video-scaler",
-        "native-video-encoder",
-        "native-audio-decoder",
-        "native-aac-encoder"
-    };
-    result.message =
-        "The legacy external media framework has been removed completely. Native MPEG-TS/UDP/RTP/DVB/HTTP transport is active; "
-        "video/audio transcoding remains disabled until native codecs are integrated.";
+    result.deinterlaceAvailable = true;
+
+    if (!native.h264Decoder) result.missingElements.push_back("h264-decoder");
+    if (!native.h264Encoder) result.missingElements.push_back("h264-encoder");
+    if (!native.hevcDecoder) result.missingElements.push_back("hevc-decoder");
+    if (!native.hevcEncoder) result.missingElements.push_back("hevc-encoder");
+    if (!native.aacDecoder) result.missingElements.push_back("aac-decoder");
+    if (!native.aacEncoder) result.missingElements.push_back("aac-encoder");
+    if (!native.mpegAudioDecoder) result.missingElements.push_back("mpeg-audio-decoder");
+
+    // Copy-mode and MP2 output remain usable even when not every optional codec
+    // backend is present. Full native transcode capability means H.264/HEVC
+    // decode+encode plus AAC decode+encode are all available.
+    result.available = native.h264Decoder && native.h264Encoder &&
+                       native.hevcDecoder && native.hevcEncoder &&
+                       native.aacDecoder && native.aacEncoder;
+    result.message = result.available
+        ? "native video/audio transcoder available; no GStreamer/FFmpeg media framework"
+        : "native transcoder core active; one or more codec backends are unavailable";
     return result;
 }
 

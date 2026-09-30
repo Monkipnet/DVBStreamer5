@@ -16,9 +16,8 @@ find_package(Threads REQUIRED)
 
 enable_testing()
 
-# Stage 8: build SRT 1.5.7 directly from vendored upstream source with OpenSSL EVP.
-# No system libsrt development/runtime package, binary SRT payload, memfd loader,
-# GnuTLS or Nettle compatibility layer is used anymore.
+# Stage 8/9: production builds use the vendored SRT 1.5.7 source tree
+# and statically link it with the OpenSSL EVP crypto backend.
 set(DVBSTREAMER5_SRT_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/srt" CACHE PATH
     "Vendored Haivision SRT 1.5.7 source directory")
 if(NOT EXISTS "${DVBSTREAMER5_SRT_SOURCE_DIR}/CMakeLists.txt")
@@ -27,12 +26,10 @@ if(NOT EXISTS "${DVBSTREAMER5_SRT_SOURCE_DIR}/CMakeLists.txt")
         "Run ./scripts/vendor_srt_source.sh (or ./install_deps.sh) before configuring.")
 endif()
 file(STRINGS "${DVBSTREAMER5_SRT_SOURCE_DIR}/CMakeLists.txt" _dvbstreamer5_srt_version_line
-     REGEX "set[ \\t]*\\([ \\t]*SRT_VERSION[ \\t]+1\\.5\\.7[ \\t]*\\)" LIMIT_COUNT 1)
+     REGEX "SRT_VERSION[ \t]+1[.]5[.]7" LIMIT_COUNT 1)
 if(NOT _dvbstreamer5_srt_version_line)
     message(FATAL_ERROR "third_party/srt is not the locked SRT 1.5.7 source tree")
 endif()
-
-# SRT supports namespaced parent options specifically for add_subdirectory use.
 set(LIBSRT_ENABLE_IMPORT_VARIABLES 1)
 set(LIBSRT_ENABLE_SHARED OFF)
 set(LIBSRT_ENABLE_STATIC ON)
@@ -92,10 +89,46 @@ endif()
 add_subdirectory(third_party/twolame)
 add_subdirectory(third_party/libdvbcsa)
 
+# Stage 9: codec backends are project-local static libraries built from
+# locked vendored source snapshots. There is intentionally no runtime codec
+# dlopen fallback.
+set(DVBSTREAMER5_CODEC_PREFIX "${CMAKE_SOURCE_DIR}/third_party/native-codecs-prefix" CACHE PATH
+    "Static native codec prefix produced by scripts/build_native_codecs.sh")
+set(_codec_headers
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/wels/codec_api.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/libde265/de265.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/kvazaar.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/fdk-aac/aacdecoder_lib.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/fdk-aac/aacenc_lib.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/pl_mpeg/pl_mpeg.h")
+foreach(_h IN LISTS _codec_headers)
+    if(NOT EXISTS "${_h}")
+        message(FATAL_ERROR "Native codec header missing: ${_h}. Run ./scripts/vendor_native_codecs.sh && ./scripts/build_native_codecs.sh")
+    endif()
+endforeach()
+function(dvbstreamer5_import_static_codec target filename)
+    set(_path "${DVBSTREAMER5_CODEC_PREFIX}/lib/${filename}")
+    if(NOT EXISTS "${_path}")
+        message(FATAL_ERROR "Native codec static library missing: ${_path}. Run ./scripts/build_native_codecs.sh")
+    endif()
+    add_library(${target} STATIC IMPORTED GLOBAL)
+    set_target_properties(${target} PROPERTIES IMPORTED_LOCATION "${_path}")
+endfunction()
+dvbstreamer5_import_static_codec(dvbstreamer5_openh264 libopenh264.a)
+dvbstreamer5_import_static_codec(dvbstreamer5_de265 libde265.a)
+dvbstreamer5_import_static_codec(dvbstreamer5_kvazaar libkvazaar.a)
+dvbstreamer5_import_static_codec(dvbstreamer5_fdkaac libfdk-aac.a)
+set(DVBSTREAMER5_CODEC_SOURCE src/media/NativeCodecVendored.cpp)
+set(DVBSTREAMER5_CODEC_LIBRARIES
+    dvbstreamer5_openh264 dvbstreamer5_de265 dvbstreamer5_kvazaar dvbstreamer5_fdkaac)
+
 add_library(dvbstreamer5_media_core
     src/media/CbrTsPacer.cpp
     src/media/MpegTsRemapper.cpp
     src/media/NativeMpegTsMux.cpp
+    ${DVBSTREAMER5_CODEC_SOURCE}
+    src/media/NativeVideoProcessing.cpp
+    src/media/NativeTranscoderPipeline.cpp
     src/media/Mp2Encoder.cpp
     src/media/TransportStream.cpp
     src/media/RtpMpegTs.cpp
@@ -104,11 +137,17 @@ add_library(dvbstreamer5_media_core
     src/media/NativePreviewHub.cpp
     src/media/NativeHlsInput.cpp
     src/media/NativeHlsSegmenter.cpp
+    src/media/NativeSampleAes.cpp
+    src/media/NativeTsDemux.cpp
+    src/media/NativeCmaf.cpp
+    src/media/NativeRtspTransport.cpp
+    src/media/NativeRtmpTransport.cpp
     src/media/NativeSrtTransport.cpp
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core
     PUBLIC ${CMAKE_SOURCE_DIR}/src
+    PRIVATE ${DVBSTREAMER5_CODEC_PREFIX}/include
 )
 target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
@@ -116,7 +155,12 @@ target_link_libraries(dvbstreamer5_media_core PUBLIC
     srt_static
     OpenSSL::Crypto
 )
-target_link_libraries(dvbstreamer5_media_core PRIVATE dvbstreamer5_twolame)
+target_link_libraries(dvbstreamer5_media_core PRIVATE
+    dvbstreamer5_twolame
+    ${DVBSTREAMER5_CODEC_LIBRARIES}
+    ${CMAKE_DL_LIBS}
+    m
+)
 if(WIN32)
     target_link_libraries(dvbstreamer5_media_core PUBLIC ws2_32)
 endif()
@@ -176,6 +220,8 @@ if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
     add_subdirectory(tests/native_hls)
     add_subdirectory(tests/native_srt)
+    add_subdirectory(tests/native_protocols)
+    add_subdirectory(tests/native_transcoder)
 endif()
 
 option(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)

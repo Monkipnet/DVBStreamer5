@@ -813,6 +813,25 @@ void NativeUdpRelay::run() {
             if (!running_.load(std::memory_order_acquire)) break;
         }
 
+        if (!packets.empty() && config_.transformTransport) {
+            observedTransport.resize(packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
+            for (std::size_t index = 0; index < packets.size(); ++index) {
+                std::memcpy(observedTransport.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
+                            packets[index].data(), dvbstreamer5::media::mpegts::kPacketSize);
+            }
+            std::vector<std::uint8_t> transformed;
+            if (!config_.transformTransport(observedTransport.data(), observedTransport.size(), transformed, error)) {
+                std::lock_guard<std::mutex> lock(errorMutex_);
+                lastError_ = error.empty() ? "native transport transform failed" : error;
+                running_.store(false, std::memory_order_release);
+                break;
+            }
+            packets.clear();
+            if (!transformed.empty()) {
+                framer.push(transformed.data(), transformed.size(), packets);
+            }
+        }
+
         if (!packets.empty()) {
             for (const auto& packet : packets) {
                 const auto continuityStatus =

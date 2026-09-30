@@ -104,7 +104,6 @@ int main() {
         std::cerr << "external SRT/GnuTLS/Nettle runtime was mapped: " << mapped << "\n";
         return 7;
     }
-
     std::cout << "PASS: encrypted native SRT 1.5.7 source-build loopback " << detail << "\n";
     return 0;
 }

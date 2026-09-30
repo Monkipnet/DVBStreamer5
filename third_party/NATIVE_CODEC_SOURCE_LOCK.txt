@@ -1,0 +1,31 @@
+DVBStreamer5 Stage 9 native codec source lock
+
+OpenH264
+  upstream: https://github.com/cisco/openh264
+  version: 2.6.0
+  commit: 652bdb7719f30b52b08e506645a7322ff1b2cc6f
+  license: BSD-2-Clause
+
+libde265
+  upstream: https://github.com/strukturag/libde265
+  version: 1.1.3
+  commit: ba62bf4cfb3242f3bf0a45617ff09e35236e4d82
+  license: LGPL-3.0-or-later
+
+Kvazaar
+  upstream: https://github.com/ultravideo/kvazaar
+  version: 2.3.2
+  commit: 6040962bed5cc68c5ad01234c38c08b8b2822068
+  license: BSD-3-Clause
+
+FDK-AAC
+  upstream: https://github.com/mstorsjo/fdk-aac
+  version: 2.0.3
+  commit: 716f4394641d53f0d79c9ddac3fa93b03a49f278
+  license: FDK AAC License (see upstream NOTICE/LICENSE)
+
+PL_MPEG
+  upstream: https://github.com/phoboslab/pl_mpeg
+  snapshot commit: c871f2be022ece7ef4f64230b4fb8e1fb9eb6023
+  use: MPEG-1 Layer II (MP2) decoder only
+  license: MIT

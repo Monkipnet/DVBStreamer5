@@ -437,6 +437,12 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     if (config.hlsArchivePath.empty() || config.hlsArchivePath.front() != '/') {
         config.hlsArchivePath = "/var/lib/dvbstreamer5/archive";
     }
+    config.hlsContainer = toLower(root.get("hls_container", "mpegts").asString());
+    if (config.hlsContainer != "mpegts" && config.hlsContainer != "cmaf") config.hlsContainer = "mpegts";
+    config.hlsEncryption = toLower(root.get("hls_encryption", "none").asString());
+    if (config.hlsEncryption != "none" && config.hlsEncryption != "aes-128" && config.hlsEncryption != "sample-aes") config.hlsEncryption = "none";
+    config.hlsEncryptionKeyUri = root.get("hls_encryption_key_uri", "key.bin").asString();
+    config.hlsEncryptionKeyHex = root.get("hls_encryption_key_hex", "").asString();
     config.transcodeAudioCodec = root.get("transcode_audio_codec", "aac").asString();
     if (config.transcodeAudioCodec != "aac" && config.transcodeAudioCodec != "mp3" &&
         config.transcodeAudioCodec != "mp2" &&
@@ -529,6 +535,10 @@ Json::Value StreamConfig::toJson() const {
     root["hls_archive_enabled"] = hlsArchiveEnabled;
     root["hls_archive_hours"] = hlsArchiveHours;
     root["hls_archive_path"] = hlsArchivePath;
+    root["hls_container"] = hlsContainer;
+    root["hls_encryption"] = hlsEncryption;
+    root["hls_encryption_key_uri"] = hlsEncryptionKeyUri;
+    root["hls_encryption_key_hex"] = hlsEncryptionKeyHex;
     root["transcode_audio_codec"] = transcodeAudioCodec;
     root["transcode_audio_bitrate"] = Json::UInt64(transcodeAudioBitrate);
     root["audio_pid"] = audioPid;

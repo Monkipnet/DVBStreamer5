@@ -34,6 +34,10 @@ struct NativeUdpRelayConfig {
     bool remapEnabled = false;
     mpegts::RemapConfig remapConfig;
     std::function<bool(std::uint8_t*, std::size_t)> processTransport;
+    // Optional one-to-many transport transform. Used by the native transcoder:
+    // input is a contiguous MPEG-TS block after remap/CA, output is a new
+    // contiguous MPEG-TS block. Empty output is valid while codecs buffer.
+    std::function<bool(const std::uint8_t*, std::size_t, std::vector<std::uint8_t>&, std::string&)> transformTransport;
     std::function<void(const std::uint8_t*, std::size_t)> observeTransport;
     std::string inputInterfaceAddress;
     std::string inputInterfaceDeviceName;

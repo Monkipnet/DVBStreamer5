@@ -1,6 +1,8 @@
 #include "media/NativeHlsInput.h"
 
 #include "NativeHttpClient.h"
+#include "media/NativeCmaf.h"
+#include "media/NativeSampleAes.h"
 
 #include <openssl/evp.h>
 
@@ -121,12 +123,14 @@ struct Segment {
     bool discontinuity = false;
     std::string keyUri;
     std::string iv;
+    std::string keyMethod;
 };
 
 struct Playlist {
     bool master = false;
     bool endList = false;
     bool hasMap = false;
+    std::string mapUri;
     std::uint64_t mediaSequence = 0;
     double targetDuration = 2.0;
     std::vector<Variant> variants;
@@ -167,6 +171,7 @@ Playlist parsePlaylist(const std::string& text, const std::string& baseUrl) {
     std::uint64_t nextSequence = 0;
     std::string keyUri;
     std::string keyIv;
+    std::string keyMethod;
     while (std::getline(input, line)) {
         line = trim(std::move(line));
         if (line.empty()) continue;
@@ -186,14 +191,17 @@ Playlist parsePlaylist(const std::string& text, const std::string& baseUrl) {
             pendingDiscontinuity = true;
         } else if (line.rfind("#EXT-X-MAP:", 0) == 0) {
             out.hasMap = true;
+            out.mapUri = resolveUrl(baseUrl, attribute(line, "URI"));
         } else if (line.rfind("#EXT-X-KEY:", 0) == 0) {
             const std::string method = lower(attribute(line, "METHOD"));
             if (method.empty() || method == "none") {
-                keyUri.clear(); keyIv.clear();
-            } else if (method == "aes-128") {
+                keyUri.clear(); keyIv.clear(); keyMethod.clear();
+            } else if (method == "aes-128" || method == "sample-aes") {
+                keyMethod = method;
                 keyUri = resolveUrl(baseUrl, attribute(line, "URI"));
                 keyIv = attribute(line, "IV");
             } else {
+                keyMethod = method;
                 keyUri = "unsupported:" + method;
                 keyIv.clear();
             }
@@ -205,7 +213,7 @@ Playlist parsePlaylist(const std::string& text, const std::string& baseUrl) {
                 pendingBandwidth = 0;
             } else if (pendingDuration >= 0.0) {
                 out.segments.push_back({nextSequence++, pendingDuration > 0.0 ? pendingDuration : out.targetDuration,
-                                        resolveUrl(baseUrl, line), pendingDiscontinuity, keyUri, keyIv});
+                                        resolveUrl(baseUrl, line), pendingDiscontinuity, keyUri, keyIv, keyMethod});
                 pendingDuration = -1.0;
                 pendingDiscontinuity = false;
             }
@@ -266,7 +274,7 @@ bool parseIv(const Segment& segment, std::array<unsigned char, 16>& iv) {
     return true;
 }
 
-bool decryptAes128(const Segment& segment,
+bool decryptSegment(const Segment& segment,
                    const StreamConfig& cfg,
                    std::atomic<bool>& stopping,
                    std::vector<std::uint8_t>& data,
@@ -285,6 +293,20 @@ bool decryptAes128(const Segment& segment,
     if (key.size() < 16) { error = "HLS AES-128 key is shorter than 16 bytes"; return false; }
     std::array<unsigned char, 16> iv{};
     if (!parseIv(segment, iv)) { error = "HLS AES-128 IV is invalid"; return false; }
+
+    if (segment.keyMethod == "sample-aes") {
+        std::array<std::uint8_t, 16> k{};
+        std::copy_n(key.begin(), 16, k.begin());
+        std::array<std::uint8_t, 16> siv{};
+        std::copy(iv.begin(), iv.end(), siv.begin());
+        std::vector<std::uint8_t> plain;
+        if (!dvbstreamer5::media::hls::transformSampleAesMpegTs(data.data(), data.size(), k, siv, false, plain, error)) {
+            error = "HLS SAMPLE-AES decrypt failed: " + error;
+            return false;
+        }
+        data.swap(plain);
+        return true;
+    }
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (!ctx) { error = "EVP_CIPHER_CTX_new failed"; return false; }
@@ -371,7 +393,6 @@ void NativeHlsInput::run() {
             if (!fetch(active, config_, stopping_, kMaxPlaylistBytes, kPlaylistTimeoutMs, bytes, effective, error)) return false;
             playlist = parsePlaylist(std::string(bytes.begin(), bytes.end()), effective);
         }
-        if (playlist.hasMap) { error = "native HLS stage 4 supports MPEG-TS segments, not fMP4 EXT-X-MAP"; return false; }
         if (playlist.segments.empty()) { error = "HLS media playlist contains no segments"; return false; }
         return true;
     };
@@ -395,6 +416,28 @@ void NativeHlsInput::run() {
     double rateSeconds = 0.0;
     const auto playbackStart = Clock::now();
     auto lastReload = Clock::now();
+    dvbstreamer5::media::cmaf::Fmp4ToMpegTs fmp4;
+    std::string initializedMap;
+
+    auto ensureMap = [&](const Playlist& pl) -> bool {
+        if (!pl.hasMap) return true;
+        if (pl.mapUri.empty()) { error = "HLS EXT-X-MAP is missing URI"; return false; }
+        if (initializedMap == pl.mapUri) return true;
+        std::vector<std::uint8_t> init;
+        std::string effective;
+        if (!fetch(pl.mapUri, config_, stopping_, kMaxSegmentBytes, kSegmentTimeoutMs, init, effective, error)) {
+            error = "HLS EXT-X-MAP fetch failed: " + error; return false;
+        }
+        if (!fmp4.initialize(init,
+              [this](const std::uint8_t* d, std::size_t n) { return dataCallback_ && dataCallback_(d,n); }, error)) {
+            error = "HLS fMP4 init parse failed: " + error; return false;
+        }
+        inputBytes_.fetch_add(init.size());
+        initializedMap = pl.mapUri;
+        return true;
+    };
+
+    if (!ensureMap(playlist)) { fail(error); running_.store(false); return; }
 
     while (!stopping_.load()) {
         const double elapsed = std::chrono::duration<double>(Clock::now() - playbackStart).count();
@@ -411,12 +454,36 @@ void NativeHlsInput::run() {
                 if (loadPlaylist(refreshed)) { playlist = std::move(refreshed); lastReload = Clock::now(); }
                 continue;
             }
-            if (!decryptAes128(segment, config_, stopping_, bytes, error)) {
+            if (playlist.hasMap && segment.keyMethod == "sample-aes") {
+                std::vector<std::uint8_t> keyBytes;
+                std::string keyEffective;
+                if (!fetch(segment.keyUri, config_, stopping_, 1024, 4000, keyBytes, keyEffective, error)) {
+                    if (!stopping_.load()) fail("HLS CMAF SAMPLE-AES key fetch failed: " + error);
+                    break;
+                }
+                if (keyBytes.size() < 16) {
+                    if (!stopping_.load()) fail("HLS CMAF SAMPLE-AES key is shorter than 16 bytes");
+                    break;
+                }
+                std::array<std::uint8_t,16> key{};
+                std::copy_n(keyBytes.begin(), 16, key.begin());
+                if (!dvbstreamer5::media::cmaf::decryptSampleAesFragment(bytes, key, error)) {
+                    if (!stopping_.load()) fail("native HLS fMP4 SAMPLE-AES/cbcs decrypt failed: " + error);
+                    break;
+                }
+            } else if (!decryptSegment(segment, config_, stopping_, bytes, error)) {
                 if (!stopping_.load()) fail("native HLS segment decrypt failed: " + error);
                 break;
             }
-            if (bytes.empty() || !dataCallback_(bytes.data(), bytes.size())) {
-                if (!stopping_.load()) fail("native HLS relay rejected segment data");
+            bool accepted = false;
+            if (!playlist.hasMap) {
+                accepted = !bytes.empty() && dataCallback_(bytes.data(), bytes.size());
+            } else {
+                if (!ensureMap(playlist)) { if (!stopping_.load()) fail(error); break; }
+                accepted = !bytes.empty() && fmp4.pushFragment(bytes, error);
+            }
+            if (!accepted) {
+                if (!stopping_.load()) fail(error.empty() ? "native HLS relay rejected segment data" : error);
                 break;
             }
             inputBytes_.fetch_add(bytes.size());

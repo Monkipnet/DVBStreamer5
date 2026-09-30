@@ -1,0 +1,4 @@
+add_executable(dvbstreamer5_native_transcoder_tests test_native_transcoder.cpp)
+target_include_directories(dvbstreamer5_native_transcoder_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(dvbstreamer5_native_transcoder_tests PRIVATE dvbstreamer5_media_core Threads::Threads dl)
+add_test(NAME native_transcoder COMMAND dvbstreamer5_native_transcoder_tests)

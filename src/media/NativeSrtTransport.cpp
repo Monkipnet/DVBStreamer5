@@ -74,7 +74,8 @@ struct SrtApi {
         constexpr std::uint32_t min=0x010507;
         const std::uint32_t actual=version();
         if(actual<min){
-            std::ostringstream o; o<<"built-in SRT runtime 0x"<<std::hex<<actual<<" is older than required 1.5.7";
+            std::ostringstream o;
+            o<<"built-in SRT runtime 0x"<<std::hex<<actual<<" is older than required 1.5.7";
             loadError=o.str(); cleanup(); return false;
         }
         initialized=true;
