@@ -9,8 +9,8 @@ if readelf -d "$binary" 2>/dev/null | grep -Eqi 'libgst|libsrt|libgnutls|libnett
   echo "Unexpected external media/crypto runtime dependency detected (GStreamer/SRT/GnuTLS/Nettle)" >&2
   exit 1
 fi
-if ! grep -aFq 'OpenSSL crypto shims' "$binary"; then
-  echo "Embedded SRT Stage 7 OpenSSL shim marker not found in binary" >&2
+if ! grep -aFq 'built-in:SRT 1.5.7/OpenSSL-EVP (vendored source)' "$binary"; then
+  echo "Bundled SRT 1.5.7/OpenSSL-EVP Stage 8 marker not found in binary" >&2
   exit 1
 fi
 if readelf -d "$binary" 2>/dev/null | grep -Eq 'libboost|libcurl|libjsoncpp|libdvbcsa'; then

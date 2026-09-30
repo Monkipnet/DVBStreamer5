@@ -9,3 +9,5 @@
 - runtime audit rejects DT_NEEDED entries for both GStreamer and SRT
 
 This stage intentionally embeds the distro-compatible SRT 1.5 payload selected on the build host instead of hardcoding a binary built against a newer glibc. This preserves Ubuntu 22.04/24.04 compatibility when the application is built on the target baseline.
+
+> Superseded by Stage 8: `scripts/vendor_srt_runtime.sh` and the embedded shared-object payload are removed. SRT 1.5.7 is built from source.

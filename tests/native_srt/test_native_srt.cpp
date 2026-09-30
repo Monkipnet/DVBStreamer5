@@ -9,11 +9,12 @@
 #include <vector>
 
 namespace {
-bool externalLegacyCryptoMapped(std::string& detail) {
+bool forbiddenExternalSrtOrCryptoMapped(std::string& detail) {
     std::ifstream maps("/proc/self/maps");
     std::string line;
     while (std::getline(maps, line)) {
-        if (line.find("libgnutls.so") != std::string::npos ||
+        if (line.find("libsrt") != std::string::npos ||
+            line.find("libgnutls.so") != std::string::npos ||
             line.find("libnettle.so") != std::string::npos) {
             detail = line;
             return true;
@@ -30,9 +31,9 @@ int main() {
         std::cerr << "SRT runtime unavailable: " << detail << "\n";
         return 1;
     }
-    if (detail.find("embedded:libsrt-1.5") == std::string::npos ||
-        detail.find("OpenSSL crypto shims") == std::string::npos) {
-        std::cerr << "SRT runtime is not using the embedded OpenSSL crypto path: " << detail << "\n";
+    if (detail.find("built-in:SRT 1.5.7/OpenSSL-EVP") == std::string::npos ||
+        runtimeVersion() < 0x010507) {
+        std::cerr << "SRT runtime is not the bundled SRT 1.5.7/OpenSSL-EVP build: " << detail << "\n";
         return 6;
     }
 
@@ -43,7 +44,7 @@ int main() {
     listener.mode = "listener";
     listener.latencyMs = 60;
     listener.ioTimeoutMs = 300;
-    listener.passphrase = "DVBStreamer5-Stage7";
+    listener.passphrase = "DVBStreamer5-Stage8";
     listener.pbkeylen = 16;
 
     NativeSrtOutput output;
@@ -99,11 +100,11 @@ int main() {
     }
 
     std::string mapped;
-    if (externalLegacyCryptoMapped(mapped)) {
-        std::cerr << "external GnuTLS/Nettle runtime was mapped: " << mapped << "\n";
+    if (forbiddenExternalSrtOrCryptoMapped(mapped)) {
+        std::cerr << "external SRT/GnuTLS/Nettle runtime was mapped: " << mapped << "\n";
         return 7;
     }
 
-    std::cout << "PASS: encrypted native SRT loopback via OpenSSL shims " << detail << "\n";
+    std::cout << "PASS: encrypted native SRT 1.5.7 source-build loopback " << detail << "\n";
     return 0;
 }

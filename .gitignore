@@ -13,6 +13,4 @@ dvbstreamer5-ui.key
 backup-files/
 .vscode/
 *.log
-# Optional local SRT payload snapshot used only at build time.
-third_party/srt-embedded/libsrt-runtime.so
-third_party/srt-embedded/RUNTIME_INFO.txt
+/DVBStreamer5

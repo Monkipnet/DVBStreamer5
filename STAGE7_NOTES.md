@@ -7,3 +7,5 @@
 - Binary installer no longer installs GnuTLS or Nettle.
 - Native SRT test now uses encrypted caller/listener traffic and fails if system `libgnutls.so` or `libnettle.so` appears in `/proc/self/maps`.
 - Main ELF remains free of `DT_NEEDED` entries for GStreamer, SRT, GnuTLS and Nettle.
+
+> Superseded by Stage 8: the shared-object payload and OpenSSL ABI shims are removed; SRT 1.5.7 is now built directly from source with OpenSSL EVP.

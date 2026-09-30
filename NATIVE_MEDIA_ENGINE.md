@@ -2,13 +2,14 @@
 
 DVBStreamer5 no longer links to or loads GStreamer.
 
-Stage 4 active native media paths:
+Active native media paths:
 
 - Linux DVB-S/S2 input
 - UDP and RTP MPEG-TS input/output
 - HTTP/HTTPS single-request MPEG-TS input
 - HLS MPEG-TS input: master/media playlist parsing, variant selection, Header/Query credentials, AES-128 EXT-X-KEY
 - HLS MPEG-TS output: PCR/random-access segmentation, atomic live playlist updates, optional DVR archive retention
+- SRT caller/listener input and output with native reconnect, live/message API, TSBPD, streamid and passphrase/PBKEYLEN
 - local MPEG-TS file input for paced CBR output
 - MPEG-TS service/PID remap, PAT/PMT/SDT generation and native mux
 - CBR pacing and RTP packetization
@@ -22,10 +23,10 @@ Still disabled until native implementations are added:
 - RTMP / YouTube
 - generated test-pattern media
 
-HLS Stage 4 intentionally supports MPEG-TS media segments. fMP4/CMAF playlists using EXT-X-MAP and SAMPLE-AES are rejected with a clear error instead of falling back to an external media framework.
+HLS supports MPEG-TS media segments. fMP4/CMAF playlists using EXT-X-MAP and SAMPLE-AES are rejected with a clear error instead of falling back to an external media framework.
 
-Stage 5 adds native SRT input/output using the SRT runtime ABI with no development headers or link-time dependency.
+## Stage 8: source-built SRT 1.5.7 + OpenSSL EVP
 
-## Stage 7: embedded SRT with OpenSSL crypto compatibility
+SRT is no longer supplied by an installed runtime package or embedded shared object. Haivision SRT 1.5.7 is built directly from the vendored `third_party/srt` source tree as `srt_static` with `USE_ENCLIB=openssl-evp`. DVBStreamer5 links that static transport into the final executable and uses the SRT C API directly.
 
-The final DVBStreamer5 ELF contains the SRT 1.5 payload plus two minimal OpenSSL-backed compatibility modules for the GnuTLS/Nettle ABI expected by a GnuTLS-flavoured SRT build. NativeSrtTransport loads all three objects from Linux memfd. The deployed host therefore requires no external libsrt, libgnutls or libnettle runtime. The compatibility surface is deliberately limited to the seven crypto symbols used by SRT 1.5.x: RNG, AES key setup/block operations, CTR mode and PBKDF2-HMAC-SHA1.
+There is no SRT `dlopen`, `memfd` payload, GnuTLS/Nettle compatibility layer, external `libsrt*.so`, or `libsrt*-dev` build dependency. OpenSSL is the only SRT crypto backend and is the same OpenSSL already used by DVBStreamer5.

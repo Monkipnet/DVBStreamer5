@@ -1,0 +1,8 @@
+Upstream: Haivision SRT
+Version: 1.5.7
+Upstream tag: v1.5.7
+Upstream release commit: 899348d8318eb9a3c5a5b6ec43c4a1114288773a
+Source package: srt_1.5.7.orig.tar.gz
+SHA-256: 017cd1e437ef2073a4dd10ddf7b55e86bc3d6ebac0393d13bd22f6a57055d32b
+License: MPL-2.0 (see LICENSE in this directory)
+Crypto backend selected by DVBStreamer5 CMake: OpenSSL EVP
