@@ -10,8 +10,12 @@ int main() {
     using namespace dvbstreamer5::media::srt;
     std::string detail;
     if (!runtimeAvailable(&detail)) {
-        std::cerr << "SKIP: SRT runtime unavailable: " << detail << "\n";
-        return 77;
+        std::cerr << "SRT runtime unavailable: " << detail << "\n";
+        return 1;
+    }
+    if (detail.find("embedded:libsrt-1.5") == std::string::npos) {
+        std::cerr << "SRT runtime is not using the embedded payload: " << detail << "\n";
+        return 6;
     }
     EndpointConfig listener;
     listener.host = "0.0.0.0";

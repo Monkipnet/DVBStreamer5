@@ -25,3 +25,7 @@ Still disabled until native implementations are added:
 HLS Stage 4 intentionally supports MPEG-TS media segments. fMP4/CMAF playlists using EXT-X-MAP and SAMPLE-AES are rejected with a clear error instead of falling back to an external media framework.
 
 Stage 5 adds native SRT input/output using the SRT runtime ABI with no development headers or link-time dependency.
+
+## Stage 6: embedded SRT runtime
+
+The final DVBStreamer5 ELF contains the SRT 1.5 runtime payload as a linked binary resource. NativeSrtTransport loads it from Linux memfd; no external libsrt file or package is required on the deployed host. Source builds use an SRT 1.5 runtime only as a build-time payload. CMake embeds it directly; `scripts/vendor_srt_runtime.sh` is optional for offline/reproducible builds.

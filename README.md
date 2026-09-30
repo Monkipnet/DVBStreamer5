@@ -46,6 +46,8 @@ Runtime dependency audit:
 ./scripts/audit_runtime_deps.sh build/DVBStreamer5
 ```
 
-## Native SRT (Stage 5)
+## Embedded SRT (Stage 6)
 
-SRT input and output are implemented without GStreamer and without `libsrt-dev`. DVBStreamer5 uses a small runtime ABI loader for the standard SRT runtime (`libsrt 1.4+`), so CMake and compilation do not require SRT headers or link-time SRT libraries. Caller/listener modes, live/message API, TSBPD, latency, receive/peer latency, buffers, flight window, passphrase/PBKEYLEN, streamid, reconnect and subscriber filtering are supported. Ubuntu 22.04 and 24.04 runtime package names are detected by `install_deps.sh`.
+SRT input/output no longer depends on a separately installed `libsrt*.so` at runtime. During the source build, an SRT 1.5 shared object is converted by `objcopy` into a read-only ELF object and linked into `DVBStreamer5`. `NativeSrtTransport` exposes it through an anonymous Linux `memfd` and loads `/proc/self/fd/<n>`, so the deployed program has no `DT_NEEDED` entry for `libsrt` and no SRT `.so` file beside the executable.
+
+`install_deps.sh` uses the distro SRT 1.5 package only as a build-time source for the embedded payload; it does not copy the library into the Git working tree. The binary installer does not install SRT. Use `-DDVBSTREAMER5_SRT_RUNTIME=/path/to/libsrt-*.so.1.5` to embed a specific SRT 1.5 build. Caller/listener, TSBPD, live/message API, latency/buffers/FC, passphrase/PBKEYLEN, streamid, reconnect and subscriber filtering remain unchanged.

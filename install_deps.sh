@@ -12,19 +12,28 @@ if [[ ${EUID} -ne 0 ]]; then
   SUDO=(sudo)
 fi
 APT_GET=("${SUDO[@]}" apt-get)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "${APT_GET[@]}" update
 SRT_RUNTIME=""
-for pkg in libsrt1.5-gnutls libsrt1.4-gnutls libsrt1.5-openssl libsrt1.4-openssl; do
-  if apt-cache show "$pkg" >/dev/null 2>&1; then SRT_RUNTIME="$pkg"; break; fi
-done
-[[ -n "$SRT_RUNTIME" ]] || { echo "No compatible SRT runtime package found in APT." >&2; exit 1; }
+if [[ ! -f "$ROOT_DIR/third_party/srt-embedded/libsrt-runtime.so" ]]; then
+  for pkg in libsrt1.5-gnutls libsrt1.5-openssl; do
+    if apt-cache show "$pkg" >/dev/null 2>&1; then SRT_RUNTIME="$pkg"; break; fi
+  done
+  if [[ -z "$SRT_RUNTIME" ]]; then
+    echo "SRT 1.5 build-time payload not found." >&2
+    echo "Install/provide an SRT 1.5 runtime and pass -DDVBSTREAMER5_SRT_RUNTIME=/path/to/libsrt-*.so.1.5," >&2
+    echo "or place a target-compatible payload at third_party/srt-embedded/libsrt-runtime.so." >&2
+    exit 1
+  fi
+fi
 
-"${APT_GET[@]}" install -y --no-install-recommends \
-  build-essential cmake nodejs pkg-config \
-  libpcsclite-dev pcscd pcsc-tools libccid \
-  libssl-dev ca-certificates "$SRT_RUNTIME"
+DEPS=(build-essential cmake nodejs pkg-config
+      libpcsclite-dev pcscd pcsc-tools libccid
+      libssl-dev ca-certificates binutils)
+[[ -n "$SRT_RUNTIME" ]] && DEPS+=("$SRT_RUNTIME")
+"${APT_GET[@]}" install -y --no-install-recommends "${DEPS[@]}"
 "${APT_GET[@]}" clean
 
-echo "Dependencies installed."
+echo "Dependencies installed. CMake will embed the installed SRT 1.5 runtime directly into DVBStreamer5."
 echo "Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel --target DVBStreamer5"

@@ -16,6 +16,71 @@ find_package(Threads REQUIRED)
 
 enable_testing()
 
+# Stage 6: embed the SRT 1.5 runtime directly into every consumer of
+# dvbstreamer5_media_core.  The build host only needs a compatible SRT 1.5
+# shared object as input; the final DVBStreamer5 ELF has no DT_NEEDED entry for
+# libsrt and NativeSrtTransport loads these embedded bytes through memfd.
+if(NOT UNIX OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    message(FATAL_ERROR "Embedded SRT runtime currently supports Linux x86_64 only")
+endif()
+find_program(DVBSTREAMER5_OBJCOPY NAMES objcopy llvm-objcopy)
+if(NOT DVBSTREAMER5_OBJCOPY)
+    message(FATAL_ERROR "objcopy/llvm-objcopy is required to embed the SRT runtime")
+endif()
+
+set(DVBSTREAMER5_SRT_RUNTIME "" CACHE FILEPATH
+    "Path to libsrt 1.5 shared object used as the build-time embedded SRT payload")
+if(NOT DVBSTREAMER5_SRT_RUNTIME)
+    set(_dvbstreamer5_srt_candidates
+        "${CMAKE_SOURCE_DIR}/third_party/srt-embedded/libsrt-runtime.so"
+        "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-gnutls.so.1.5"
+        "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-gnutls.so.1.5"
+        "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-openssl.so.1.5"
+        "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-openssl.so.1.5"
+        "/usr/lib/x86_64-linux-gnu/libsrt-gnutls.so.1.5"
+        "/lib/x86_64-linux-gnu/libsrt-gnutls.so.1.5"
+        "/usr/lib/x86_64-linux-gnu/libsrt-openssl.so.1.5"
+        "/lib/x86_64-linux-gnu/libsrt-openssl.so.1.5"
+    )
+    foreach(_candidate IN LISTS _dvbstreamer5_srt_candidates)
+        if(EXISTS "${_candidate}")
+            set(DVBSTREAMER5_SRT_RUNTIME "${_candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT DVBSTREAMER5_SRT_RUNTIME OR NOT EXISTS "${DVBSTREAMER5_SRT_RUNTIME}")
+    message(FATAL_ERROR
+        "SRT 1.5 runtime not found for embedding. Run ./install_deps.sh or set "
+        "-DDVBSTREAMER5_SRT_RUNTIME=/path/to/libsrt-*.so.1.5")
+endif()
+get_filename_component(DVBSTREAMER5_SRT_RUNTIME_REAL "${DVBSTREAMER5_SRT_RUNTIME}" REALPATH)
+message(STATUS "Embedding SRT runtime: ${DVBSTREAMER5_SRT_RUNTIME_REAL}")
+
+set(DVBSTREAMER5_SRT_EMBED_DIR "${CMAKE_BINARY_DIR}/generated/srt")
+set(DVBSTREAMER5_SRT_EMBED_BIN "${DVBSTREAMER5_SRT_EMBED_DIR}/dvbstreamer5_srt_runtime.bin")
+set(DVBSTREAMER5_SRT_EMBED_OBJ "${DVBSTREAMER5_SRT_EMBED_DIR}/dvbstreamer5_srt_runtime.o")
+file(MAKE_DIRECTORY "${DVBSTREAMER5_SRT_EMBED_DIR}")
+add_custom_command(
+    OUTPUT "${DVBSTREAMER5_SRT_EMBED_OBJ}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${DVBSTREAMER5_SRT_EMBED_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${DVBSTREAMER5_SRT_RUNTIME_REAL}" "${DVBSTREAMER5_SRT_EMBED_BIN}"
+    COMMAND "${DVBSTREAMER5_OBJCOPY}"
+            --input-target=binary
+            --output-target=elf64-x86-64
+            --binary-architecture=i386:x86-64
+            --rename-section .data=.rodata,alloc,load,readonly,data,contents
+            dvbstreamer5_srt_runtime.bin
+            dvbstreamer5_srt_runtime.o
+    WORKING_DIRECTORY "${DVBSTREAMER5_SRT_EMBED_DIR}"
+    DEPENDS "${DVBSTREAMER5_SRT_RUNTIME_REAL}"
+    VERBATIM
+)
+set_source_files_properties("${DVBSTREAMER5_SRT_EMBED_OBJ}" PROPERTIES
+    GENERATED TRUE
+    EXTERNAL_OBJECT TRUE
+)
+
 add_library(dvbstreamer5_boost_headers INTERFACE)
 target_include_directories(dvbstreamer5_boost_headers INTERFACE
     ${CMAKE_SOURCE_DIR}/third_party/boost
@@ -64,6 +129,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeHlsInput.cpp
     src/media/NativeHlsSegmenter.cpp
     src/media/NativeSrtTransport.cpp
+    ${DVBSTREAMER5_SRT_EMBED_OBJ}
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core

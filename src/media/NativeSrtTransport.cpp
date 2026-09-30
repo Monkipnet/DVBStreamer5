@@ -3,16 +3,16 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstdlib>
+#include <cerrno>
 #include <cstring>
 #include <dlfcn.h>
 #include <iomanip>
-#include <limits.h>
 #include <memory>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sstream>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <thread>
 #include <unistd.h>
 
@@ -32,6 +32,13 @@ enum SrtSockOpt : int {
 constexpr int SRTT_LIVE = 0;
 constexpr int SRTS_CONNECTED = 5;
 
+extern "C" {
+extern const unsigned char _binary_dvbstreamer5_srt_runtime_bin_start[];
+extern const unsigned char _binary_dvbstreamer5_srt_runtime_bin_end[];
+}
+
+constexpr unsigned int kMemfdCloexec = 0x0001U;
+
 struct SrtApi {
     using FnStartup=int(*)(); using FnCleanup=int(*)(); using FnCreate=SrtSocket(*)();
     using FnClose=int(*)(SrtSocket); using FnSet=int(*)(SrtSocket,int,int,const void*,int);
@@ -40,29 +47,49 @@ struct SrtApi {
     using FnSend=int(*)(SrtSocket,const char*,int,int,int); using FnRecv=int(*)(SrtSocket,char*,int);
     using FnError=const char*(*)(); using FnVersion=std::uint32_t(*)(); using FnState=int(*)(SrtSocket);
     using FnLog=void(*)(int);
-    void* handle=nullptr; FnStartup startup=nullptr; FnCleanup cleanup=nullptr; FnCreate create=nullptr;
+    void* handle=nullptr; int embeddedFd=-1; FnStartup startup=nullptr; FnCleanup cleanup=nullptr; FnCreate create=nullptr;
     FnClose close=nullptr; FnSet set=nullptr; FnBind bind=nullptr; FnListen listen=nullptr;
     FnAccept accept=nullptr; FnConnect connect=nullptr; FnSend send=nullptr; FnRecv recv=nullptr;
     FnError error=nullptr; FnVersion version=nullptr; FnState state=nullptr; FnLog log=nullptr;
     bool initialized=false; std::string libraryName; std::string loadError;
-    ~SrtApi(){ if(initialized&&cleanup) cleanup(); if(handle) ::dlclose(handle); }
-    template<class T> bool sym(T& out,const char* name){ out=reinterpret_cast<T>(::dlsym(handle,name)); if(out) return true; loadError=std::string("missing SRT symbol ")+name; return false; }
+    ~SrtApi(){ if(initialized&&cleanup) cleanup(); if(handle) ::dlclose(handle); if(embeddedFd>=0) ::close(embeddedFd); }
+    template<class T> bool sym(T& out,const char* name){ out=reinterpret_cast<T>(::dlsym(handle,name)); if(out) return true; loadError=std::string("missing embedded SRT symbol ")+name; return false; }
     bool load(){
         if(handle) return initialized;
-        std::vector<std::string> candidates;
-        if(const char* e=std::getenv("DVBSTREAMER5_SRT_LIBRARY")) if(*e) candidates.emplace_back(e);
-        std::array<char,PATH_MAX> exe{}; ssize_t n=::readlink("/proc/self/exe",exe.data(),exe.size()-1);
-        if(n>0){ exe[static_cast<std::size_t>(n)]='\0'; std::string base(exe.data()); auto slash=base.rfind('/'); if(slash!=std::string::npos){ base.resize(slash); for(auto dir:{"/lib/","/lib64/"}){ candidates.emplace_back(base+dir+"libsrt.so.1.5"); candidates.emplace_back(base+dir+"libsrt.so.1.4"); candidates.emplace_back(base+dir+"libsrt.so"); } } }
-        for(auto p:{"/opt/DVBStreamer5/lib/libsrt.so.1.5","/opt/DVBStreamer5/lib/libsrt.so.1.4","/opt/DVBStreamer5/lib/libsrt.so","/opt/DVBStreamer5/lib64/libsrt.so.1.5","/opt/DVBStreamer5/lib64/libsrt.so.1.4","/opt/DVBStreamer5/lib64/libsrt.so","libsrt.so.1.5","libsrt.so.1.4","libsrt.so","libsrt-gnutls.so.1.5","libsrt-gnutls.so.1.4","libsrt-gnutls.so"}) candidates.emplace_back(p);
-        for(const auto& c:candidates){ handle=::dlopen(c.c_str(),RTLD_NOW|RTLD_LOCAL); if(handle){libraryName=c;break;} }
-        if(!handle){ loadError="SRT runtime library was not found"; return false; }
-        if(!sym(startup,"srt_startup")||!sym(cleanup,"srt_cleanup")||!sym(create,"srt_create_socket")||!sym(close,"srt_close")||!sym(set,"srt_setsockopt")||!sym(bind,"srt_bind")||!sym(listen,"srt_listen")||!sym(accept,"srt_accept")||!sym(connect,"srt_connect")||!sym(send,"srt_sendmsg")||!sym(recv,"srt_recvmsg")||!sym(error,"srt_getlasterror_str")||!sym(version,"srt_getversion")||!sym(state,"srt_getsockstate")){ ::dlclose(handle); handle=nullptr; return false; }
+        const auto* begin=_binary_dvbstreamer5_srt_runtime_bin_start;
+        const auto* end=_binary_dvbstreamer5_srt_runtime_bin_end;
+        const std::size_t bytes=static_cast<std::size_t>(end-begin);
+        if(bytes<4096){ loadError="embedded SRT runtime payload is empty or invalid"; return false; }
+#if defined(SYS_memfd_create)
+        embeddedFd=static_cast<int>(::syscall(SYS_memfd_create,"dvbstreamer5-srt-runtime",kMemfdCloexec));
+#else
+        embeddedFd=-1;
+        errno=ENOSYS;
+#endif
+        if(embeddedFd<0){ loadError=std::string("memfd_create for embedded SRT failed: ")+std::strerror(errno); return false; }
+        std::size_t offset=0;
+        while(offset<bytes){
+            const ssize_t written=::write(embeddedFd,begin+offset,bytes-offset);
+            if(written<0){
+                if(errno==EINTR) continue;
+                loadError=std::string("writing embedded SRT runtime failed: ")+std::strerror(errno);
+                ::close(embeddedFd); embeddedFd=-1; return false;
+            }
+            if(written==0){ loadError="writing embedded SRT runtime returned zero bytes"; ::close(embeddedFd); embeddedFd=-1; return false; }
+            offset+=static_cast<std::size_t>(written);
+        }
+        const std::string path="/proc/self/fd/"+std::to_string(embeddedFd);
+        handle=::dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL);
+        if(!handle){ const char* e=::dlerror(); loadError=std::string("loading embedded SRT runtime failed: ")+(e?e:"unknown dlopen error"); ::close(embeddedFd); embeddedFd=-1; return false; }
+        libraryName="embedded:libsrt-1.5 (memfd, "+std::to_string(bytes)+" bytes)";
+        if(!sym(startup,"srt_startup")||!sym(cleanup,"srt_cleanup")||!sym(create,"srt_create_socket")||!sym(close,"srt_close")||!sym(set,"srt_setsockopt")||!sym(bind,"srt_bind")||!sym(listen,"srt_listen")||!sym(accept,"srt_accept")||!sym(connect,"srt_connect")||!sym(send,"srt_sendmsg")||!sym(recv,"srt_recvmsg")||!sym(error,"srt_getlasterror_str")||!sym(version,"srt_getversion")||!sym(state,"srt_getsockstate")){
+            ::dlclose(handle); handle=nullptr; ::close(embeddedFd); embeddedFd=-1; return false;
+        }
         log=reinterpret_cast<FnLog>(::dlsym(handle,"srt_setloglevel"));
-        if(startup()!=0){ loadError="srt_startup failed"; ::dlclose(handle); handle=nullptr; return false; }
+        if(startup()!=0){ loadError="embedded srt_startup failed"; ::dlclose(handle); handle=nullptr; ::close(embeddedFd); embeddedFd=-1; return false; }
         if(log) log(2);
-        constexpr std::uint32_t min=0x010400;
-        bool allowOld=false; if(const char* e=std::getenv("DVBSTREAMER5_SRT_ALLOW_OLD")) allowOld=std::string(e)=="1";
-        if(version()<min&&!allowOld){ std::ostringstream o; o<<"SRT runtime 0x"<<std::hex<<version()<<" is older than required 1.4.0"; loadError=o.str(); cleanup(); ::dlclose(handle); handle=nullptr; return false; }
+        constexpr std::uint32_t min=0x010500;
+        if(version()<min){ std::ostringstream o; o<<"embedded SRT runtime 0x"<<std::hex<<version()<<" is older than required 1.5.0"; loadError=o.str(); cleanup(); ::dlclose(handle); handle=nullptr; ::close(embeddedFd); embeddedFd=-1; return false; }
         initialized=true; return true;
     }
     std::string lastError()const{ const char* e=error?error():nullptr; return e&&*e?e:"unknown SRT error"; }

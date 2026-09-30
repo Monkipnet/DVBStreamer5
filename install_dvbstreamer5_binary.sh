@@ -198,16 +198,23 @@ fi
 command -v systemctl >/dev/null 2>&1 || fail 'systemctl is not available.'
 
 DEPS=(ca-certificates libpcsclite1 pcscd pcsc-tools libccid)
-SRT_RUNTIME=''
-for pkg in libsrt1.5-gnutls libsrt1.4-gnutls libsrt1.5-openssl libsrt1.4-openssl; do
-    if apt-cache show "$pkg" >/dev/null 2>&1; then SRT_RUNTIME="$pkg"; break; fi
-done
-[[ -n "$SRT_RUNTIME" ]] && DEPS+=("$SRT_RUNTIME")
 if command -v apt-cache >/dev/null 2>&1; then
     if apt-cache show libssl3t64 >/dev/null 2>&1; then
         DEPS+=(libssl3t64)
     elif apt-cache show libssl3 >/dev/null 2>&1; then
         DEPS+=(libssl3)
+    fi
+    # The SRT ELF itself is embedded in DVBStreamer5. A gnutls-flavoured SRT
+    # payload still resolves its crypto runtime dependencies when loaded from memfd.
+    if apt-cache show libgnutls30t64 >/dev/null 2>&1; then
+        DEPS+=(libgnutls30t64)
+    elif apt-cache show libgnutls30 >/dev/null 2>&1; then
+        DEPS+=(libgnutls30)
+    fi
+    if apt-cache show libnettle8t64 >/dev/null 2>&1; then
+        DEPS+=(libnettle8t64)
+    elif apt-cache show libnettle8 >/dev/null 2>&1; then
+        DEPS+=(libnettle8)
     fi
 fi
 if [[ "$INSTALL_DEPS" == yes ]]; then
