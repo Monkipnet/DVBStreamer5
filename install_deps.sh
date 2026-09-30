@@ -20,7 +20,6 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 APT_GET=("${SUDO[@]}" apt-get)
-BOOST_DEV_PACKAGE="libboost-dev"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Installing TVStreamer5 dependencies..."
@@ -39,7 +38,6 @@ echo "Installing TVStreamer5 dependencies..."
     libgstreamer-plugins-base1.0-dev \
     libgstreamer-plugins-bad1.0-dev \
     libssl-dev \
-    "${BOOST_DEV_PACKAGE}" \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \

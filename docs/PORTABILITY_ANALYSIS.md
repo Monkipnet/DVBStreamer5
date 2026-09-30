@@ -45,7 +45,7 @@ playlist. Исправление CryptoWorks из upstream не копирова
 | Зависимость | Использование | Текущее решение | Рекомендуемая стратегия |
 |---|---|---|---|
 | libc, pthread, dl | базовый Linux runtime, потоки, optional plugins | системная | glibc baseline для bundle или отдельная musl-сборка |
-| Boost headers | Asio/Beast, string helpers, circular buffer | header-only; binary Boost dependency удалена | оставить header-only, затем постепенно заменить небольшие helpers STL-кодом |
+| Boost 1.92.0 headers | Asio/Beast, string helpers, circular buffer | минимальный BCP-набор встроен в `third_party/boost`; бинарные Boost-библиотеки не используются | готово; системный `libboost-dev` не нужен, затем можно постепенно заменить небольшие helpers STL-кодом |
 | libcrypt | только MD5-crypt для Newcamd login | удалена; алгоритм реализован через уже используемый OpenSSL EVP | готово |
 | OpenSSL libcrypto | AES-256-GCM config, DES/Newcamd, HLS key crypto | динамическая | статически линковать либо класть совместимую `libcrypto` в bundle; не копировать отдельные crypto-функции вручную |
 | JsonCpp 1.9.8 | config/API/state JSON | встроенный amalgamated static target | готово; системная `libjsoncpp` не нужна, лицензия сохранена в `third_party/jsoncpp/LICENSE` |
@@ -94,7 +94,7 @@ bundle, а не один статический ELF.
 ## Лицензии
 
 В корне проекта находится GPL-3.0 text; OSCam-mini также GPL, TwoLAME —
-LGPL-2.1, cpp-httplib и JsonCpp — MIT, browser libraries — Apache-2.0. Перед публичной бинарной поставкой
+LGPL-2.1, Boost — BSL-1.0, cpp-httplib и JsonCpp — MIT, browser libraries — Apache-2.0. Перед публичной бинарной поставкой
 нужно дополнить единый `THIRD_PARTY_NOTICES` точными версиями и способами
 линковки. Статическое включение LGPL-компонентов требует соблюдения условий о
 релинковке/исходниках. Этот раздел фиксирует инженерные риски и не является

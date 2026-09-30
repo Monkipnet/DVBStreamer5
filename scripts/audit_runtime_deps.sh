@@ -48,8 +48,8 @@ if [[ -n "$missing" ]]; then
 fi
 
 if command -v readelf >/dev/null 2>&1 &&
-    readelf -d "$binary" 2>/dev/null | grep -Eq 'libcurl|libjsoncpp|libdvbcsa'; then
-  echo "Unexpected external dependency: libcurl, libjsoncpp or libdvbcsa" >&2
+    readelf -d "$binary" 2>/dev/null | grep -Eq 'libboost|libcurl|libjsoncpp|libdvbcsa'; then
+  echo "Unexpected external dependency: libboost, libcurl, libjsoncpp or libdvbcsa" >&2
   exit 1
 fi
 

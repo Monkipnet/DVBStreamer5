@@ -94,7 +94,7 @@ echo "Host: ${PRETTY_NAME:-Linux} / $ARCH_ACTUAL"
 echo "Install dir: $INSTALL_DIR"
 
 # Only host-coupled facilities are installed from the target distribution:
-# pcscd and the CCID USB driver. Application, OpenSSL, Boost,
+# pcscd and the CCID USB driver. Application, OpenSSL,
 # dvbcsa, GStreamer core/plugins/codecs and libpcsclite userspace client are in
 # the payload. GPU/DVB kernel drivers are intentionally host-provided.
 install_pcsc_packages() {

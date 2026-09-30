@@ -225,7 +225,7 @@ http://SERVER_IP:9000/oscam-mini
 - CMake 3.10 или новее;
 - компилятор с поддержкой C++17;
 - GStreamer 1.0 и наборы Base/Good/Bad/Ugly/Libav;
-- Boost headers и OpenSSL; cpp-httplib, JsonCpp, libdvbcsa и TwoLAME встроены в исходное дерево;
+- OpenSSL; Boost 1.92.0 headers, cpp-httplib, JsonCpp, libdvbcsa и TwoLAME встроены в исходное дерево;
 - Linux DVB и Phoenix/SmartMouse устройства - только для соответствующих функций.
 
 ## Сборка
@@ -499,7 +499,7 @@ GST_DEBUG=2 ./build/TVStreamer5
 
 ## Лицензии сторонних компонентов
 
-Исходники OSCam-mini и встроенные библиотеки находятся в `third_party/` вместе с файлами лицензий и сведениями об upstream revision. Системные GStreamer, OpenSSL и Boost сохраняют лицензии соответствующих пакетов дистрибутива.
+Исходники OSCam-mini и встроенные библиотеки находятся в `third_party/` вместе с файлами лицензий и сведениями об upstream revision. Системные GStreamer и OpenSSL сохраняют лицензии соответствующих пакетов дистрибутива.
 
 ## Контакты
 

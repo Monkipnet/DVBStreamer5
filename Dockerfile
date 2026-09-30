@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     pkg-config \
     libpcsclite-dev \
-    libboost-dev \
     libssl-dev \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \

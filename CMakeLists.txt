@@ -17,6 +17,14 @@ find_package(Threads REQUIRED)
 
 pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
 
+add_library(tvstreamer5_boost_headers INTERFACE)
+target_include_directories(tvstreamer5_boost_headers INTERFACE
+    ${CMAKE_SOURCE_DIR}/third_party/boost
+)
+target_compile_definitions(tvstreamer5_boost_headers INTERFACE
+    BOOST_ERROR_CODE_HEADER_ONLY
+)
+
 add_library(tvstreamer5_jsoncpp STATIC
     third_party/jsoncpp/jsoncpp.cpp
 )
@@ -139,6 +147,7 @@ add_executable(TVStreamer5
 )
 
 target_link_libraries(TVStreamer5
+    tvstreamer5_boost_headers
     tvstreamer5_media_core
     tvstreamer5_jsoncpp
     ${GSTREAMER_LIBRARIES}
@@ -149,8 +158,6 @@ target_link_libraries(TVStreamer5
     glib-2.0
     gio-2.0
 )
-target_compile_definitions(TVStreamer5 PRIVATE BOOST_ERROR_CODE_HEADER_ONLY)
-
 if(DEFINED DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     set(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "${DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS}" CACHE BOOL
         "Build standalone native MPEG-TS/RTP tests")
@@ -176,6 +183,7 @@ option(TVSTREAMER5_BUILD_VENDOR_TESTS "Build tests for vendored third-party libr
 if(TVSTREAMER5_BUILD_VENDOR_TESTS)
     add_subdirectory(tests/vendor)
     add_subdirectory(tests/http_client)
+    add_subdirectory(tests/boost_headers)
 endif()
 
 if(DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
