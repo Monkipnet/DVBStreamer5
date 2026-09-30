@@ -14,6 +14,7 @@ dvbstreamer5_generate_embedded_web_assets(
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
+enable_testing()
 
 add_library(dvbstreamer5_boost_headers INTERFACE)
 target_include_directories(dvbstreamer5_boost_headers INTERFACE
@@ -60,6 +61,8 @@ add_library(dvbstreamer5_media_core
     src/media/UdpSocket.cpp
     src/media/LinuxDvbInput.cpp
     src/media/NativePreviewHub.cpp
+    src/media/NativeHlsInput.cpp
+    src/media/NativeHlsSegmenter.cpp
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core
@@ -127,6 +130,7 @@ target_link_libraries(DVBStreamer5
 option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
 if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
+    add_subdirectory(tests/native_hls)
 endif()
 
 option(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
@@ -154,8 +158,6 @@ if(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
         OUTPUT_NAME "dvbstreamer5-ca-passthrough-example"
     )
 endif()
-
-enable_testing()
 
 install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)
 

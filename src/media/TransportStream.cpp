@@ -37,6 +37,7 @@ bool inspectPacket(const std::uint8_t* data, std::size_t size, PacketInfo& info)
         if (adaptationLength > 0) {
             const std::uint8_t flags = data[5];
             parsed.discontinuity = (flags & 0x80U) != 0;
+            parsed.randomAccess = (flags & 0x40U) != 0;
             parsed.hasPcr = (flags & 0x10U) != 0;
             if (parsed.hasPcr) {
                 if (adaptationLength < 7) {

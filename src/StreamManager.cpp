@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -75,10 +76,6 @@ bool StreamManager::isNativeInputSupported(const StreamConfig& cfg, std::string&
         startsWith(input, "http://") || startsWith(input, "https://") ||
         startsWith(input, "file://") || DvbSatellite::isDvbUri(cfg.inputUri) ||
         input.find("://") == std::string::npos) {
-        if (mode == "hls" || input.find(".m3u8") != std::string::npos) {
-            reason = "HLS input is being migrated to the native engine and is disabled in stage 3";
-            return false;
-        }
         return true;
     }
     if (startsWith(input, "srt://")) reason = "SRT input is not yet implemented in the native engine";
@@ -89,10 +86,10 @@ bool StreamManager::isNativeInputSupported(const StreamConfig& cfg, std::string&
 }
 
 bool StreamManager::isNativeOutputSupported(const std::string& type, std::string& reason) {
-    if (type == "udp-cbr" || type == "udp-vbr" || type == "rtp" || type == "http") {
+    if (type == "udp-cbr" || type == "udp-vbr" || type == "rtp" || type == "http" || type == "hls") {
         return true;
     }
-    if (type == "hls") reason = "HLS output segmenting is not yet implemented in the native media engine";
+    if (type == "hls") reason = "native HLS output is unavailable";
     else if (type == "srt") reason = "SRT output is not yet implemented in the native media engine";
     else if (type == "rtsp") reason = "RTSP output is not yet implemented in the native media engine";
     else if (type == "rtmp" || type == "youtube") reason = "RTMP/YouTube output is not yet implemented in the native media engine";
@@ -107,7 +104,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         return false;
     }
     if (streamConfig.transcodeEnabled) {
-        if (error) *error = "transcoding is disabled in native stage 3 until native video/audio codecs are integrated";
+        if (error) *error = "transcoding is disabled until native video/audio codecs are integrated";
         return false;
     }
     std::string reason;
@@ -118,6 +115,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
     std::vector<dvbstreamer5::media::network::NativeUdpRelayOutputConfig> nativeOutputs;
     bool hasHttpOutput = false;
+    bool hasHlsOutput = false;
     auto appendOutput = [&](const std::string& type, const std::string& host, int port,
                             const std::string& iface) -> bool {
         std::string outputReason;
@@ -127,6 +125,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
         if (type == "http") {
             hasHttpOutput = true;
+            return true;
+        }
+        if (type == "hls") {
+            hasHlsOutput = true;
             return true;
         }
         nativeOutputs.push_back({type, host, port, cleanInterface(iface)});
@@ -163,11 +165,18 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     state->activeInputUri = streamConfig.inputUri;
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
+    const std::string normalizedInput = normalizeInputUri(streamConfig.inputUri);
+    const std::string inputMode = toLower(streamConfig.inputMode);
+    const bool hlsInput = inputMode == "hls" || toLower(normalizedInput).find(".m3u8") != std::string::npos ||
+        toLower(normalizedInput).rfind("hls://", 0) == 0;
+    if (hlsInput) state->nativeHlsInput = std::make_unique<dvbstreamer5::media::hls::NativeHlsInput>();
+    if (hasHlsOutput) state->nativeHlsSegmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
-    relay.inputUri = normalizeInputUri(streamConfig.inputUri);
+    relay.inputUri = hlsInput ? "external://hls" : normalizedInput;
+    relay.externallyFedInput = hlsInput;
     relay.outputs = nativeOutputs;
-    relay.allowNoNetworkOutput = hasHttpOutput && nativeOutputs.empty();
+    relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput) && nativeOutputs.empty();
     relay.inputInterfaceAddress = cleanInterface(streamConfig.inputInterfaceAddress);
     relay.inputInterfaceAddressConfigured = streamConfig.inputInterfaceAddressConfigured;
     relay.interfaceAddress = cleanInterface(streamConfig.interfaceAddress);
@@ -237,27 +246,63 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     auto previewHub = state->nativePreviewHub;
+    auto* hlsSegmenter = state->nativeHlsSegmenter.get();
     auto* mpts = mptsOutputManager.get();
     const std::string streamId = streamConfig.id;
-    relay.observeTransport = [previewHub, mpts, streamId](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [previewHub, hlsSegmenter, mpts, streamId](const uint8_t* data, std::size_t size) {
+        if (hlsSegmenter) hlsSegmenter->push(data, size);
         previewHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
     };
+
+    if (state->nativeHlsSegmenter) {
+        dvbstreamer5::media::hls::NativeHlsSegmenterConfig hlsConfig;
+        hlsConfig.directory = streamConfig.hlsArchiveEnabled
+            ? std::filesystem::path(streamConfig.hlsArchivePath) / streamConfig.id
+            : std::filesystem::path("/tmp/dvbstreamer5-hls") / streamConfig.id;
+        hlsConfig.targetDurationSeconds = 2.0;
+        hlsConfig.liveWindowSegments = 6;
+        hlsConfig.archiveEnabled = streamConfig.hlsArchiveEnabled;
+        hlsConfig.archiveHours = streamConfig.hlsArchiveHours;
+        std::string hlsError;
+        if (!state->nativeHlsSegmenter->start(hlsConfig, hlsError)) {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = hlsError.empty() ? "native HLS output failed" : hlsError;
+            return false;
+        }
+    }
 
     std::string relayError;
     {
         auto guard = relay.dvbInputSource ? DvbSatellite::acquireFrontendTuneGuard(dvbParams)
                                          : std::unique_lock<std::mutex>();
         if (!state->nativeRelay->start(relay, relayError)) {
+            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = relayError.empty() ? "native relay failed" : relayError;
             return false;
         }
     }
 
+    if (state->nativeHlsInput) {
+        auto* relayPtr = state->nativeRelay.get();
+        std::string hlsError;
+        if (!state->nativeHlsInput->start(
+                streamConfig,
+                [relayPtr](const std::uint8_t* data, std::size_t size) { return relayPtr->pushInput(data, size); },
+                [relayPtr](const std::string& finishError) { relayPtr->finishInput(finishError); },
+                hlsError)) {
+            state->nativeRelay->stop();
+            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = hlsError.empty() ? "native HLS input failed" : hlsError;
+            return false;
+        }
+    }
+
     state->active.store(true);
     state->running.store(true);
-    state->statusMessage = "running (native media engine)";
+    state->statusMessage = hlsInput ? "running (native HLS input)" : "running (native media engine)";
     StreamState* rawState = state.get();
     {
         std::lock_guard<std::mutex> lock(managerMutex);
@@ -295,6 +340,7 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         lastOut = out;
         lastCc = cc;
         if (!relay->isRunning()) {
+            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
             state->running.store(false);
             state->active.store(false);
             const std::string relayError = relay->lastError();
@@ -326,7 +372,9 @@ bool StreamManager::stopStream(const std::string& id) {
     }
     state->monitorStop.store(true);
     if (state->nativePreviewHub) state->nativePreviewHub->close();
+    if (state->nativeHlsInput) state->nativeHlsInput->stop();
     if (state->nativeRelay) state->nativeRelay->stop();
+    if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
     if (state->monitorThread.joinable()) state->monitorThread.join();
     state->running.store(false);
     state->active.store(false);

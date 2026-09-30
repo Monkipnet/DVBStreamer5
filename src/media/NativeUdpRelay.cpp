@@ -134,15 +134,19 @@ bool parseOutputEndpoint(
 bool flushPackets(
     const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,
     bool rtpOutput,
-    dvbstreamer5::media::rtp::MpegTsPacketizer& packetizer,
+    dvbstreamer5::media::rtp::MpegTsPacketizer* packetizer,
     UdpSocket& output,
     std::atomic<std::uint64_t>& outputBytes,
     std::string& error) {
     if (packets.empty()) return true;
 
     if (rtpOutput) {
+        if (!packetizer) {
+            error = "RTP output packetizer is not initialized";
+            return false;
+        }
         std::vector<std::vector<std::uint8_t>> datagrams;
-        if (!packetizer.packetize(packets, currentRtpTimestamp(), datagrams)) {
+        if (!packetizer->packetize(packets, currentRtpTimestamp(), datagrams)) {
             error = "failed to packetize MPEG-TS RTP output";
             return false;
         }
@@ -849,7 +853,7 @@ void NativeUdpRelay::run() {
                         break;
                     }
                 } else if (!flushPackets(
-                        packets, output.rtp, *output.packetizer, *output.socket,
+                        packets, output.rtp, output.packetizer.get(), *output.socket,
                         outputBytes_, error)) {
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_ = error.empty() ? "UDP output send failed" : error;

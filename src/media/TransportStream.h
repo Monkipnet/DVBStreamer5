@@ -23,6 +23,7 @@ struct PacketInfo {
     bool hasAdaptationField = false;
     bool hasPayload = false;
     bool discontinuity = false;
+    bool randomAccess = false;
     bool hasPcr = false;
     std::uint64_t pcrBase90k = 0;
 };

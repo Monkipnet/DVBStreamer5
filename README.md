@@ -1,38 +1,28 @@
 # DVBStreamer5
 
-DVBStreamer5 is a C++17 television transport server with a native media engine.
-The project has no dependency on an external multimedia framework or plugin
-registry.
+DVBStreamer5 is a Linux x86_64 DVB/IPTV transport application with an in-project native MPEG-TS engine and web interface.
 
-## Stage 3 native engine
+## Native media status — Stage 4
 
-Implemented natively:
+No GStreamer development headers, runtime libraries, plugins, `gst-launch`, or `gst-inspect` are used.
 
-- Linux DVB-S/S2 frontend control, scanning, signal/quality and service PID selection
-- UDP MPEG-TS input/output
-- RTP MPEG-TS input/output
-- HTTP/HTTPS single-request MPEG-TS input
-- local MPEG-TS file input for UDP CBR output
-- MPEG-TS framing and continuity tracking
-- PAT/PMT/SDT/PES generation and remapping
-- PCR/PTS/DTS handling and CBR null-packet pacing
-- browser MPEG-TS preview fan-out
-- MPTS aggregation
-- CA/OSCam transport processing
-- embedded web UI and JSON API
+Available native paths:
 
-Temporarily disabled while native implementations are added:
+- DVB-S/S2 input
+- UDP/RTP MPEG-TS input and output
+- HTTP/HTTPS MPEG-TS input and HTTP TS output/preview
+- HLS MPEG-TS input and output
+- HLS master/variant selection, Header/Query credentials and AES-128 input
+- HLS live segmentation and DVR archive retention
+- file-to-CBR TS path
+- service/PID remap, PAT/PMT/SDT, PCR/PTS/DTS TS processing
+- CBR pacing, MPTS and CA/OSCam transport integration
 
-- video/audio transcoding
-- HLS input/output
-- SRT input/output
-- RTSP input/output
-- RTMP/YouTube input/output
-- generated test pattern
+Still disabled pending native implementation: transcoding, SRT, RTSP, RTMP/YouTube and generated test pattern.
+
+See `NATIVE_MEDIA_ENGINE.md` and `STAGE4_NOTES.md`.
 
 ## Build
-
-Ubuntu/Debian:
 
 ```bash
 ./install_deps.sh
@@ -40,35 +30,18 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel --target DVBStreamer5
 ```
 
-Binary:
-
-```text
-build/DVBStreamer5
-```
-
-Run:
+Native test build:
 
 ```bash
-./build/DVBStreamer5
-```
-
-Web UI defaults to port 9000.
-
-## Native tests
-
-```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release \
+cmake -S . -B build-test -DCMAKE_BUILD_TYPE=Release \
   -DDVBSTREAMER5_BUILD_MEDIA_CORE_TESTS=ON \
   -DDVBSTREAMER5_BUILD_MP2_ENCODER_TESTS=ON
-cmake --build build-tests --parallel --target dvbstreamer5_media_core_tests dvbstreamer5_mp2_encoder_tests
-ctest --test-dir build-tests --output-on-failure
+cmake --build build-test --parallel --target media_core_tests dvbstreamer5_native_hls_tests mp2_encoder_tests
+ctest --test-dir build-test --output-on-failure
 ```
 
-## Runtime dependency audit
+Runtime dependency audit:
 
 ```bash
 ./scripts/audit_runtime_deps.sh build/DVBStreamer5
 ```
-
-The audit fails if an obsolete multimedia-framework runtime library appears in
-`DT_NEEDED`.

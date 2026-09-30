@@ -1,11 +1,26 @@
-# Native media engine
+# DVBStreamer5 native media engine
 
-DVBStreamer5 Stage 3 uses only the in-project transport engine for active media
-paths. Build and runtime no longer require an external multimedia framework,
-plugin scanner, plugin registry or media framework development headers.
+DVBStreamer5 no longer links to or loads GStreamer.
 
-Supported now: Linux DVB, UDP/RTP MPEG-TS, HTTP(S) MPEG-TS input, local TS file
-input, TS remap/mux, CBR pacing, HTTP preview, MPTS and CA transport processing.
+Stage 4 active native media paths:
 
-Later native stages will add video/audio codec processing and the remaining HLS,
-SRT, RTSP and RTMP transports.
+- Linux DVB-S/S2 input
+- UDP and RTP MPEG-TS input/output
+- HTTP/HTTPS single-request MPEG-TS input
+- HLS MPEG-TS input: master/media playlist parsing, variant selection, Header/Query credentials, AES-128 EXT-X-KEY
+- HLS MPEG-TS output: PCR/random-access segmentation, atomic live playlist updates, optional DVR archive retention
+- local MPEG-TS file input for paced CBR output
+- MPEG-TS service/PID remap, PAT/PMT/SDT generation and native mux
+- CBR pacing and RTP packetization
+- native HTTP MPEG-TS preview fan-out
+- MPTS aggregation and CA transport hook
+
+Still disabled until native implementations are added:
+
+- video/audio transcoding
+- SRT
+- RTSP
+- RTMP / YouTube
+- generated test-pattern media
+
+HLS Stage 4 intentionally supports MPEG-TS media segments. fMP4/CMAF playlists using EXT-X-MAP and SAMPLE-AES are rejected with a clear error instead of falling back to an external media framework.

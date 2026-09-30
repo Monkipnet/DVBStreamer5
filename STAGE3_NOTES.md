@@ -1,3 +1,7 @@
+# Historical note — superseded by Stage 4
+
+Stage 4 restores native HLS input/output; the HLS limitations described below apply only to Stage 3.
+
 # Stage 3 — native-only build/runtime
 
 This release removes the legacy multimedia framework from both build-time and
