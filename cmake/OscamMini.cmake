@@ -1,13 +1,6 @@
-if(DEFINED DVBSTREAMER5_BUILD_OSCAM_MINI AND NOT DEFINED TVSTREAMER5_BUILD_OSCAM_MINI)
-  set(TVSTREAMER5_BUILD_OSCAM_MINI "${DVBSTREAMER5_BUILD_OSCAM_MINI}" CACHE BOOL
-      "Build vendored OSCam-mini")
-elseif(DEFINED TVSTREAMMERSAT5_BUILD_OSCAM_MINI AND NOT DEFINED TVSTREAMER5_BUILD_OSCAM_MINI)
-  set(TVSTREAMER5_BUILD_OSCAM_MINI "${TVSTREAMMERSAT5_BUILD_OSCAM_MINI}" CACHE BOOL
-      "Build vendored OSCam-mini")
-endif()
-option(TVSTREAMER5_BUILD_OSCAM_MINI "Build vendored OSCam-mini" ON)
+option(DVBSTREAMER5_BUILD_OSCAM_MINI "Build vendored OSCam-mini" ON)
 
-if(TVSTREAMER5_BUILD_OSCAM_MINI)
+if(DVBSTREAMER5_BUILD_OSCAM_MINI)
   set(OSCAM_MINI_SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/oscam-mini")
   set(OSCAM_MINI_OUTPUT_DIR "${CMAKE_BINARY_DIR}/oscam-mini")
   set(OSCAM_MINI_BINARY "${OSCAM_MINI_OUTPUT_DIR}/oscam-mini")
@@ -38,15 +31,15 @@ if(TVSTREAMER5_BUILD_OSCAM_MINI)
   add_custom_target(oscam-mini ALL DEPENDS "${OSCAM_MINI_BINARY}")
 
   install(PROGRAMS "${OSCAM_MINI_BINARY}"
-          DESTINATION /opt/TVStreamer5/oscam-mini)
+          DESTINATION /opt/DVBStreamer5/oscam-mini)
   install(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/install_oscam_mini.sh"
-          DESTINATION /opt/TVStreamer5/oscam-mini)
+          DESTINATION /opt/DVBStreamer5/oscam-mini)
   install(FILES "${CMAKE_SOURCE_DIR}/packaging/oscam-mini/oscam-mini.service"
-          DESTINATION /opt/TVStreamer5/oscam-mini)
+          DESTINATION /opt/DVBStreamer5/oscam-mini)
   # Install the unit itself as part of cmake --install. The helper below only
   # reloads systemd, disables legacy OSCam and enables/starts this service.
   install(FILES "${CMAKE_SOURCE_DIR}/packaging/oscam-mini/oscam-mini.service"
           DESTINATION /etc/systemd/system)
   install(DIRECTORY "${CMAKE_SOURCE_DIR}/packaging/oscam-mini/default-config/"
-          DESTINATION /opt/TVStreamer5/oscam-mini/default-config)
+          DESTINATION /opt/DVBStreamer5/oscam-mini/default-config)
 endif()

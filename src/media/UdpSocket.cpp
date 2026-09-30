@@ -21,7 +21,7 @@
 #endif
 #endif
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 namespace {
 
 #ifdef _WIN32
@@ -414,4 +414,4 @@ void UdpSocket::close() noexcept {
     receiver_ = false;
 }
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

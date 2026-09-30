@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::protocols {
+namespace dvbstreamer5::protocols {
 
 enum class OutputKind {
     UdpCbr,
@@ -54,4 +54,4 @@ std::string transcodedFifoRelayPath(const StreamConfig& cfg);
 bool prepareFifoRelay(const StreamConfig& cfg, std::string& error);
 void removeFifoRelay(const StreamConfig& cfg);
 
-} // namespace tvs::protocols
+} // namespace dvbstreamer5::protocols

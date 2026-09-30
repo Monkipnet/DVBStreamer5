@@ -25,7 +25,7 @@ std::array<uint8_t, 188> packet(uint16_t pid, uint64_t pts, bool pes = true) {
 }
 
 int main() {
-    using tvs::udp_media_delivery::inspectSuccessfulDatagram;
+    using dvbstreamer5::udp_media_delivery::inspectSuccessfulDatagram;
     bool known = false;
     uint64_t previous = 0;
     const auto video1 = packet(258, 90000);
@@ -54,9 +54,9 @@ int main() {
     scrambled[3] |= 0x80;
     stats = inspectSuccessfulDatagram(scrambled.data(), 188, 258, 257, known, previous);
     assert(stats.videoPesStarts == 0 && stats.videoPtsAdvances == 0);
-    using tvs::udp_media_delivery::Fault;
-    using tvs::udp_media_delivery::FaultEvidence;
-    using tvs::udp_media_delivery::classifyFault;
+    using dvbstreamer5::udp_media_delivery::Fault;
+    using dvbstreamer5::udp_media_delivery::FaultEvidence;
+    using dvbstreamer5::udp_media_delivery::classifyFault;
     FaultEvidence watch {};
     watch.eligible = watch.inputMediaRecent = true;
     watch.startupAgeMs = 25000;

@@ -8,7 +8,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace tvs::http {
+namespace dvbstreamer5::http {
 namespace {
 
 struct ParsedUrl {
@@ -276,4 +276,4 @@ bool get(const std::string& url,
     return false;
 }
 
-} // namespace tvs::http
+} // namespace dvbstreamer5::http

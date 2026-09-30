@@ -1,7 +1,7 @@
 #include "protocols/outputs/GstUdpOutputProtocol.h"
 #include "protocols/outputs/GstOutputProtocolUtils.h"
 #include "protocols/GstProtocolTypes.h"
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 bool appendUdpSink(std::vector<std::string>& args, const StreamConfig& cfg, GstOutputSpec& spec) {
     appendMpegTsMux(args, cfg);
     appendTsSmoother(args, "transcode_udp_ts_smoother", 300000);

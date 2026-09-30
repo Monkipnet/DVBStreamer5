@@ -8,7 +8,6 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
-#include <initializer_list>
 #include <array>
 #include <vector>
 #include <set>
@@ -43,31 +42,12 @@ constexpr size_t kUiPasswordKeyBytes = 32;
 constexpr size_t kUiPasswordNonceBytes = 12;
 constexpr size_t kUiPasswordTagBytes = 16;
 
-std::filesystem::path preferredOrExisting(
-    const std::filesystem::path& preferred,
-    std::initializer_list<std::filesystem::path> legacyPaths) {
-    if (std::filesystem::exists(preferred)) return preferred;
-    for (const auto& path : legacyPaths) {
-        if (std::filesystem::exists(path)) return path;
-    }
-    return preferred;
-}
-
 std::filesystem::path uiPasswordKeyPath(const std::filesystem::path& configPath) {
-    const auto currentPath = configPath.parent_path() / "tvstreamer5-ui.key";
-    return preferredOrExisting(currentPath, {
-        configPath.parent_path() / "dvbstreamer5-ui.key",
-        configPath.parent_path() / "tvstreammersat5-ui.key"
-    });
+    return configPath.parent_path() / "dvbstreamer5-ui.key";
 }
 
 std::filesystem::path subscriberConfigPath() {
-    const auto directory = std::filesystem::current_path();
-    const auto currentPath = directory / "tvstreamer5-subscribers.json";
-    return preferredOrExisting(currentPath, {
-        directory / "dvbstreamer5-subscribers.json",
-        directory / "tvstreammersat5-subscribers.json"
-    });
+    return std::filesystem::current_path() / "dvbstreamer5-subscribers.json";
 }
 
 std::string hexEncode(const unsigned char* data, size_t size) {
@@ -406,7 +386,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.hlsAccessKeyName = root.get("hls_access_key_name",
         config.hlsAccessKeyMode == "query" ? "token" : "Authorization").asString();
     config.hlsAccessKeyValue = root.get("hls_access_key_value", "").asString();
-    config.hlsUserAgent = root.get("hls_user_agent", "Mozilla/5.0 TVStreamer5").asString();
+    config.hlsUserAgent = root.get("hls_user_agent", "Mozilla/5.0 DVBStreamer5").asString();
     config.hlsSlowPcrAssist = root.get("hls_slow_pcr_assist", false).asBool();
     config.hlsPcrPhasePacing = root.get("hls_pcr_phase_pacing", false).asBool();
     // The two manual HLS timing modes are mutually exclusive. Pre-buffered PCR
@@ -434,9 +414,9 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.transcodeMultibitrateEnabled = root.get("transcode_multibitrate_enabled", false).asBool();
     config.hlsArchiveEnabled = root.get("hls_archive_enabled", false).asBool();
     config.hlsArchiveHours = std::clamp(root.get("hls_archive_hours", 24).asUInt(), 1u, 168u);
-    config.hlsArchivePath = root.get("hls_archive_path", "/var/lib/tvstreamer5/archive").asString();
+    config.hlsArchivePath = root.get("hls_archive_path", "/var/lib/dvbstreamer5/archive").asString();
     if (config.hlsArchivePath.empty() || config.hlsArchivePath.front() != '/') {
-        config.hlsArchivePath = "/var/lib/tvstreamer5/archive";
+        config.hlsArchivePath = "/var/lib/dvbstreamer5/archive";
     }
     config.transcodeAudioCodec = root.get("transcode_audio_codec", "aac").asString();
     if (config.transcodeAudioCodec != "aac" && config.transcodeAudioCodec != "mp3" &&
@@ -584,7 +564,7 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     AppConfig config;
     config.login = root.get("login", "admin").asString();
     config.password = root.get("password", "admin").asString();
-    config.serverName = root.get("server_name", "TVStreamer5").asString();
+    config.serverName = root.get("server_name", "DVBStreamer5").asString();
     config.httpPort = root.get("http_port", 9000).asInt();
     config.language = root.get("language", "en").asString();
     if (config.language != "ru" && config.language != "en") {
@@ -616,11 +596,7 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
 }
 
 ConfigManager::ConfigManager() {
-    const auto directory = std::filesystem::current_path();
-    configPath = preferredOrExisting(directory / "tvstreamer5-config.json", {
-        directory / "dvbstreamer5-config.json",
-        directory / "tvstreammersat5-config.json"
-    });
+    configPath = std::filesystem::current_path() / "dvbstreamer5-config.json";
 }
 
 Json::Value SubscriberConfig::toJson() const {

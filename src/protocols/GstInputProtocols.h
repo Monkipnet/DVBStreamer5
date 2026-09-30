@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-namespace tvs::protocols {
+namespace dvbstreamer5::protocols {
 
 std::string inputUriForGstreamer(const StreamConfig& cfg);
 void appendDecodeInput(std::vector<std::string>& args, const StreamConfig& cfg);
 std::vector<std::string> requiredInputElements();
 
-} // namespace tvs::protocols
+} // namespace dvbstreamer5::protocols

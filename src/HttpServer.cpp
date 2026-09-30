@@ -42,7 +42,7 @@
 
 namespace {
 
-constexpr const char* kProgramVersion = tvs::app::kProgramVersion;
+constexpr const char* kProgramVersion = dvbstreamer5::app::kProgramVersion;
 
 // 202.50: quality history must not follow the web UI polling rate.  /api/state
 // is normally requested every ~2 seconds and recording one string-heavy sample
@@ -206,7 +206,7 @@ const StreamConfig* findStreamConfigById(const std::vector<StreamConfig>& stream
 
 std::filesystem::path hlsStorageDirectory(const StreamConfig& cfg) {
     if (cfg.hlsArchiveEnabled) return std::filesystem::path(cfg.hlsArchivePath) / cfg.id;
-    return std::filesystem::path("/tmp/tvstreamer5-hls") / cfg.id;
+    return std::filesystem::path("/tmp/dvbstreamer5-hls") / cfg.id;
 }
 
 struct HlsArchiveSegment {
@@ -742,7 +742,7 @@ void HttpServer::handleSession(tcp::socket socket) {
         http::read(socket, buffer, parser);
         http::request<http::string_body> req = parser.release();
         http::response<http::string_body> res{http::status::ok, req.version()};
-        res.set(http::field::server, "TVStreamer5");
+        res.set(http::field::server, "DVBStreamer5");
         res.set(http::field::content_type, "text/html; charset=UTF-8");
         res.set(http::field::cache_control, "no-store");
         res.set(http::field::pragma, "no-cache");
@@ -887,7 +887,7 @@ void HttpServer::handleSession(tcp::socket socket) {
                        target == "/preview/hls.min.js" ||
                        target == "/licenses/mpegts.js.txt" ||
                        target == "/licenses/hls.js.txt") {
-                const std::string_view asset = tvs::web::embeddedWebAsset(target);
+                const std::string_view asset = dvbstreamer5::web::embeddedWebAsset(target);
                 if (asset.empty()) {
                     res.result(http::status::not_found);
                     res.set(http::field::content_type, "text/plain; charset=UTF-8");
@@ -974,10 +974,10 @@ void HttpServer::handleSession(tcp::socket socket) {
             } else if (target == "/api/state") {
                 res.set(http::field::content_type, "application/json");
                 // 202.68: server-side A/B probe for the /api/state allocation path.
-                // With TVS_STATE_API_DIAG_BYPASS=1 the remote browser may remain
+                // With DVBSTREAMER5_STATE_API_DIAG_BYPASS=1 the remote browser may remain
                 // open and keep polling, but currentState() and its large JSON tree
                 // are not built. Streaming/media paths are untouched.
-                const char* stateBypassEnv = std::getenv("TVS_STATE_API_DIAG_BYPASS");
+                const char* stateBypassEnv = std::getenv("DVBSTREAMER5_STATE_API_DIAG_BYPASS");
                 const bool stateBypass =
                     stateBypassEnv && *stateBypassEnv && std::strcmp(stateBypassEnv, "0") != 0;
                 std::string stateBody;
@@ -1196,7 +1196,7 @@ bool HttpServer::isStreamClientAllowed(const tcp::socket& socket, const std::str
 
 void HttpServer::writeUnauthorized(http::response<http::string_body>& res) const {
     res.result(http::status::unauthorized);
-    res.set(http::field::www_authenticate, "Basic realm=\"TVStreamer5\"");
+    res.set(http::field::www_authenticate, "Basic realm=\"DVBStreamer5\"");
     res.set(http::field::content_type, "text/plain; charset=UTF-8");
     res.body() = "Unauthorized";
 }
@@ -1503,7 +1503,7 @@ std::string HttpServer::listInterfaces() {
       const uint64_t stateResponseBytes = httpStateResponseBytes.load(std::memory_order_relaxed);
       const uint64_t stateLastResponseBytes = httpStateLastResponseBytes.load(std::memory_order_relaxed);
       const uint64_t metricsRequests = httpMetricsRequestCount.load(std::memory_order_relaxed);
-      const char* stateBypassEnv = std::getenv("TVS_STATE_API_DIAG_BYPASS");
+      const char* stateBypassEnv = std::getenv("DVBSTREAMER5_STATE_API_DIAG_BYPASS");
       const bool stateBypassEnabled =
           stateBypassEnv && *stateBypassEnv && std::strcmp(stateBypassEnv, "0") != 0;
       uint64_t stateWorkerCount = 0;
@@ -1514,7 +1514,7 @@ std::string HttpServer::listInterfaces() {
 
       // Optional one-minute trim probe. Disabled by default because malloc_trim()
       // is process-wide and can briefly contend with media allocator activity.
-      // Enable only for diagnosis with TVS_MEMORY_TRIM_DIAG=1.
+      // Enable only for diagnosis with DVBSTREAMER5_MEMORY_TRIM_DIAG=1.
       bool trimEnabled = false;
       int trimResult = -1;
       uint64_t postTrimRssKb = processRssKb;
@@ -1523,7 +1523,7 @@ std::string HttpServer::listInterfaces() {
       uint64_t postTrimMallocInUseBytes = mallocInUseBytes;
       uint64_t postTrimMallocFreeBytes = mallocFreeBytes;
 #if defined(__GLIBC__)
-      const char* trimEnv = std::getenv("TVS_MEMORY_TRIM_DIAG");
+      const char* trimEnv = std::getenv("DVBSTREAMER5_MEMORY_TRIM_DIAG");
       trimEnabled = trimEnv && *trimEnv && std::strcmp(trimEnv, "0") != 0;
       if (trimEnabled) {
         trimResult = malloc_trim(0);
@@ -2402,7 +2402,7 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
 
     const std::string header =
         "HTTP/1.1 200 OK\r\n"
-        "Server: TVStreamer5\r\n"
+        "Server: DVBStreamer5\r\n"
         "Content-Type: video/MP2T\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: close\r\n"
@@ -2576,7 +2576,7 @@ std::string HttpServer::qualityHistory(const std::string& target) {
         const uint64_t inputKbps = liveState.get("bitrate_in_kbps", Json::UInt64(0)).asUInt64();
         const uint64_t outputKbps = liveState.get("bitrate_out_kbps", Json::UInt64(0)).asUInt64();
         const uint64_t targetKbps = (liveConfig->transcodeEnabled
-            ? tvs::protocols::muxBitrate(*liveConfig)
+            ? dvbstreamer5::protocols::muxBitrate(*liveConfig)
             : liveConfig->targetBitrate) / 1000;
         const uint64_t inputTotal = liveState.get("input_cc_errors_total", Json::UInt64(0)).asUInt64();
         const uint64_t outputTotal = liveState.get("output_cc_errors_total", Json::UInt64(0)).asUInt64();
@@ -2676,7 +2676,7 @@ void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value&
     sample.active = state.get("active", false).asBool();
     sample.inputKbps = state.get("bitrate_in_kbps", Json::UInt64(0)).asUInt64();
     sample.outputKbps = state.get("bitrate_out_kbps", Json::UInt64(0)).asUInt64();
-    sample.targetKbps = (cfg.transcodeEnabled ? tvs::protocols::muxBitrate(cfg) : cfg.targetBitrate) / 1000;
+    sample.targetKbps = (cfg.transcodeEnabled ? dvbstreamer5::protocols::muxBitrate(cfg) : cfg.targetBitrate) / 1000;
     const uint64_t fallbackInputCc = state.get("input_cc_errors", state.get("cc_errors", Json::UInt64(0))).asUInt64();
     const uint64_t fallbackOutputCc = state.get("output_cc_errors", Json::UInt64(0)).asUInt64();
     sample.inputCcErrorsTotal = state.get("input_cc_errors_total", Json::UInt64(fallbackInputCc)).asUInt64();
@@ -3221,10 +3221,10 @@ void HttpServer::handleRestartProgram() {
             // executing it. Queue the restart job and let PID 1 perform a full
             // stop/start with a new process, new allocator and new GStreamer state.
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            std::cerr << "PROGRAM RESTART 202.60: action=systemd-full-restart service=tvstreamer5.service"
+            std::cerr << "PROGRAM RESTART 202.60: action=systemd-full-restart service=dvbstreamer5.service"
                       << std::endl;
             const int rc = std::system(
-                "/usr/bin/systemctl --no-block restart tvstreamer5.service >/dev/null 2>&1");
+                "/usr/bin/systemctl --no-block restart dvbstreamer5.service >/dev/null 2>&1");
             if (rc != 0) {
                 std::cerr << "PROGRAM RESTART 202.60: systemctl failed rc=" << rc << std::endl;
             }
@@ -3391,7 +3391,7 @@ std::string HttpServer::renderIndexPage() {
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TVStreamer5</title>
+<title>DVBStreamer5</title>
 <style>
 html{font-size:14px}
 body{font-family:Arial,Helvetica,sans-serif;background:#0f1218;color:#EEE;margin:0;padding:0;min-height:100vh}
@@ -3656,7 +3656,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <div class="header-left">
 <div class="header-title-block">
 <div class="title">Control Panel</div>
-<div class="server-name" id="headerServerName">TVStreamer5</div>
+<div class="server-name" id="headerServerName">DVBStreamer5</div>
 </div>
 <div class="header-monitor">
 <div class="header-monitor-group">
@@ -3702,7 +3702,7 @@ const translations = {
     subtitle:'Broadcast monitoring and stream control', total:'Total:', active:'Active:', network:'Network', system:'System', user:'User', addStream:'+ Add stream', addChannel:'+ Add channel',
     interfacesNotFound:'No interfaces found', output:'Output', activeInput:'Active input', primary:'Primary', backup:'Backup', sid:'SID', bitrateIn:'Bitrate In', bitrateOut:'Bitrate Out', status:'Status',
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
-    restartProgram:'Full program restart', restartConfirm:'Fully restart TVStreamer5 service now?', restarting:'Restarting service...',
+    restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
     networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', close:'Close',
     about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset'
   },
@@ -3710,7 +3710,7 @@ const translations = {
     subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
     interfacesNotFound:'Интерфейсы не найдены', output:'Вывод', activeInput:'Активный вход', primary:'Основной', backup:'Резерв', sid:'SID', bitrateIn:'Bitrate In', bitrateOut:'Bitrate Out', status:'Статус',
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
-    restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить TVStreamer5 через systemd?', restarting:'Перезапуск программы...',
+    restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
     networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', close:'Закрыть',
     about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить'
   }
@@ -3746,8 +3746,8 @@ Object.assign(translations.ru, {
 function normalizeLanguage(value) {
   return value === 'ru' ? 'ru' : 'en';
 }
-let language = normalizeLanguage(localStorage.getItem('tvstreamer5-language') || 'en');
-// TVStreamer5: runtime localization for UI fragments that are generated dynamically.
+let language = normalizeLanguage(localStorage.getItem('dvbstreamer5-language') || 'en');
+// DVBStreamer5: runtime localization for UI fragments that are generated dynamically.
 // English mode keeps the numeric program version and appends " EN"
 // to the displayed version in the About dialog.
 const uiRuToEn = new Map([
@@ -4163,7 +4163,7 @@ function applyLanguage() {
 }
 function toggleLanguage() {
   language = language === 'en' ? 'ru' : 'en';
-  localStorage.setItem('tvstreamer5-language', language);
+  localStorage.setItem('dvbstreamer5-language', language);
   applyLanguage();
   render(true);
   saveLanguagePreference();
@@ -4320,16 +4320,16 @@ function fetchState() {
       if (data.streams.length > 0) {
         lastKnownStreams = data.streams;
       } else if (lastKnownStreams.length > 0 && !allowEmptyStreamStateOnce) {
-        console.warn('TVStreamer5 ignored an unexpected empty stream list');
+        console.warn('DVBStreamer5 ignored an unexpected empty stream list');
         data.streams = lastKnownStreams;
         data.stream_count = lastKnownStreams.length;
         data.active_count = 0;
       }
       allowEmptyStreamStateOnce = false;
-      const storedLanguage = localStorage.getItem('tvstreamer5-language');
+      const storedLanguage = localStorage.getItem('dvbstreamer5-language');
       const serverLanguage = normalizeLanguage(data.language);
       language = normalizeLanguage(storedLanguage || language);
-      localStorage.setItem('tvstreamer5-language', language);
+      localStorage.setItem('dvbstreamer5-language', language);
       data.language = language;
       const cachedInterfaces = Array.isArray(state.interfaces) ? state.interfaces : [];
       const cachedInputInterfaces = Array.isArray(state.input_interfaces) ? state.input_interfaces : [];
@@ -4343,13 +4343,13 @@ function fetchState() {
         render(false);
         refreshSubscriberSessions();
       } catch (error) {
-        console.error('TVStreamer5 render failed:', error);
+        console.error('DVBStreamer5 render failed:', error);
       }
       if (serverLanguage !== language) saveLanguagePreference(data);
       return data;
     })
     .catch(error => {
-      console.warn('TVStreamer5 state refresh failed:', error);
+      console.warn('DVBStreamer5 state refresh failed:', error);
       return null;
     })
     .finally(() => { stateFetchPromise = null; });
@@ -4383,7 +4383,7 @@ function fetchSystemMetrics() {
       return metrics;
     })
     .catch(error => {
-      console.warn('TVStreamer5 metrics refresh failed:', error);
+      console.warn('DVBStreamer5 metrics refresh failed:', error);
       return null;
     })
     .finally(() => { metricsFetchPromise = null; });
@@ -4409,7 +4409,7 @@ function downloadVlcPlaylist() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'tvstreamer5-playlist.m3u';
+  link.download = 'dvbstreamer5-playlist.m3u';
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -4618,7 +4618,7 @@ function updateLiveTiles() {
   const headerServerName = document.getElementById('headerServerName');
   const totalCount = document.getElementById('totalCount');
   const activeCount = document.getElementById('activeCount');
-  if (headerServerName) headerServerName.textContent = state.server_name || 'TVStreamer5';
+  if (headerServerName) headerServerName.textContent = state.server_name || 'DVBStreamer5';
   if (totalCount) totalCount.textContent = state.stream_count ?? (state.streams || []).length;
   if (activeCount) activeCount.textContent = state.active_count ?? (state.streams || []).filter(stream => stream.active).length;
   const tiles = document.getElementById('tiles');
@@ -5329,7 +5329,7 @@ function exportSubscribers() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'tvstreamer5-subscribers.txt';
+  link.download = 'dvbstreamer5-subscribers.txt';
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -5344,7 +5344,7 @@ function openAboutModal() {
   openModal(`
     <h2>${t('about')}</h2>
     <div class="about-list">
-      <div class="about-row"><strong>${t('product')}</strong><span>TVStreamer5</span></div>
+      <div class="about-row"><strong>${t('product')}</strong><span>DVBStreamer5</span></div>
       <div class="about-row"><strong>${t('version')}</strong><span>${state.program_version||'1.0.0'}${language === 'en' ? ' EN' : ''}</span></div>
       <div class="about-row"><strong>${t('name')}</strong><span>Лукомский Виталий</span></div>
       <div class="about-row"><strong>${t('country')}</strong><span>Беларусь, г. Борисов</span></div>
@@ -6024,7 +6024,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 TVStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/tvstreamer5/archive', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', additional_outputs:[]
   });
 }
@@ -6265,7 +6265,7 @@ function openStreamForm(stream) {
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
         <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234 или https://host/live.m3u8" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateHlsSynchronizationVisibility()"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
-        <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 TVStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
+        <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
         <div class="form-row full" id="streamHlsSynchronizationRow" style="display:${stream.input_mode==='hls'?'':'none'}"><label>HLS синхронизация</label><div class="checkbox-inline"><input id="streamHlsSlowPcrAssist" type="checkbox" ${stream.hls_slow_pcr_assist ? 'checked' : ''} onchange="if(this.checked){const x=document.getElementById('streamHlsPcrPhasePacing');if(x)x.checked=false;}" /><span>Provider PCR clock (ручной режим)</span></div><small>Для каналов вроде TV3: после стабилизации provider PCR становится фиксированным media clock. Транспортный PCR остаётся синтетическим 20 ms.</small><div class="checkbox-inline" style="margin-top:8px"><input id="streamHlsPcrPhasePacing" type="checkbox" ${stream.hls_pcr_phase_pacing ? 'checked' : ''} onchange="if(this.checked){const x=document.getElementById('streamHlsSlowPcrAssist');if(x)x.checked=false;}" /><span>Provider PCR deadline shaper (ручной режим)</span></div><small>203.41: для HLS с сильными VBR burst между provider PCR. Шейпер держит ограниченный lookahead 750 ms, заранее видит будущие PCR deadlines и распределяет burst по предыдущим свободным CBR-слотам, не превышая полезный потолок выхода. В output-path нет ожидания PCR, нет feedback PLL и catch-up. Внешний UDP остаётся CBR с synthetic PCR 20 ms и NULL stuffing. Не включать вместе с Provider PCR clock.</small></div>
         <div class="form-row full" id="streamCamRow" style="display:${String(stream.input_uri||'').startsWith('dvb://')?'': 'none'}"><label>CAM client (scrambled DVB)</label><select id="streamConditionalAccessClient">${camOptions}</select><small>Select a CAM/Newcamd client for encrypted DVB services. FTA streams do not use this setting.</small></div>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
@@ -6279,7 +6279,7 @@ function openStreamForm(stream) {
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
         <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.round((stream.target_bitrate||2000000)/1000)}" placeholder="2000" /></div>
         <div class="form-row full"><label>Транскодирование</label><div class="checkbox-inline"><input id="streamTranscodeEnabled" type="checkbox" ${(stream.transcode_enabled && transcoderAvailable) ? 'checked' : ''} ${transcoderAvailable ? '' : 'disabled'} onchange="updateTranscodeControls()" /><span>Обрабатывать видео/аудио: транскодирование или независимый проброс оригинальных потоков</span></div><small style="color:${transcoderAvailable ? '#7ee2a8' : '#ff9f9f'}">${transcoderStatus}</small></div>
-        <div class="form-row full"><label>HLS архив (DVR)</label><div class="row-inline compact-row"><label class="checkbox-inline"><input id="streamHlsArchiveEnabled" type="checkbox" ${stream.hls_archive_enabled?'checked':''} /><span>Записывать архив</span></label><input id="streamHlsArchiveHours" type="number" min="1" max="168" value="${stream.hls_archive_hours||24}" style="max-width:110px" /><span>часов</span><input id="streamHlsArchivePath" value="${stream.hls_archive_path||'/var/lib/tvstreamer5/archive'}" placeholder="/var/lib/tvstreamer5/archive" /></div><small>Архив сохраняет HLS TS-сегменты на диск. Совместимые URL: /КАНАЛ/archive-UTC-ДЛИТЕЛЬНОСТЬ.m3u8, /КАНАЛ/rewind-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_rel-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_abs-UTC.m3u8.</small></div>
+        <div class="form-row full"><label>HLS архив (DVR)</label><div class="row-inline compact-row"><label class="checkbox-inline"><input id="streamHlsArchiveEnabled" type="checkbox" ${stream.hls_archive_enabled?'checked':''} /><span>Записывать архив</span></label><input id="streamHlsArchiveHours" type="number" min="1" max="168" value="${stream.hls_archive_hours||24}" style="max-width:110px" /><span>часов</span><input id="streamHlsArchivePath" value="${stream.hls_archive_path||'/var/lib/dvbstreamer5/archive'}" placeholder="/var/lib/dvbstreamer5/archive" /></div><small>Архив сохраняет HLS TS-сегменты на диск. Совместимые URL: /КАНАЛ/archive-UTC-ДЛИТЕЛЬНОСТЬ.m3u8, /КАНАЛ/rewind-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_rel-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_abs-UTC.m3u8.</small></div>
         <div class="form-row full" id="streamTranscodeControls" style="display:${(stream.transcode_enabled && transcoderAvailable)?'block':'none'}"><label>Параметры транскодирования</label><div class="row-inline compact-row"><select id="streamTranscodeVideoCodec" onchange="updateTranscodeVideoControls()"><option value="h264" ${(stream.transcode_video_codec||'h264')==='h264'?'selected':''}>Видео: H.264 транскодирование</option><option value="hevc" ${stream.transcode_video_codec==='hevc'?'selected':''} ${transcoderInfo.hevc_video_encoder?'':'disabled'}>Видео: H.265 / HEVC транскодирование${transcoderInfo.hevc_video_encoder?'':' (недоступно)'}</option><option value="copy" ${stream.transcode_video_codec==='copy'?'selected':''}>Видео: проброс оригинального потока</option></select><select id="streamTranscodeVideoEncoder" onchange="updateTranscodeVideoControls()"><option value="auto" ${(!stream.transcode_video_encoder||stream.transcode_video_encoder==='auto')?'selected':''}>Кодировщик: Auto (NVENC → Intel → CPU)</option><option value="nvenc" ${stream.transcode_video_encoder==='nvenc'?'selected':''} ${transcoderInfo.nvenc_available?'':'disabled'}>Кодировщик: NVIDIA NVENC${transcoderInfo.nvenc_available?'':' (недоступен)'}</option><option value="intel" ${stream.transcode_video_encoder==='intel'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Кодировщик: Intel Quick Sync / VA${transcoderInfo.intel_available ? ` (${transcoderInfo.intel_encoder})` : ' (недоступен)'}</option><option value="x264" ${stream.transcode_video_encoder==='x264'?'selected':''} ${transcoderInfo.x264_available?'':'disabled'}>Кодировщик: CPU x264/x265${transcoderInfo.x264_available?'':' (недоступен)'}</option></select><select id="streamTranscodeResolution" onchange="applyRecommendedTranscodeBitrate()"><option value="3840x2160" ${stream.transcode_resolution==='3840x2160'?'selected':''}>3840×2160 (4K UHD)</option><option value="3200x1800" ${stream.transcode_resolution==='3200x1800'?'selected':''}>3200×1800 (3K)</option><option value="2560x1440" ${stream.transcode_resolution==='2560x1440'?'selected':''}>2560×1440 (2K QHD)</option><option value="1920x1080" ${(!stream.transcode_resolution||stream.transcode_resolution==='1920x1080')?'selected':''}>1920×1080 (Full HD)</option><option value="1280x720" ${stream.transcode_resolution==='1280x720'?'selected':''}>1280×720 (HD)</option><option value="1024x576" ${stream.transcode_resolution==='1024x576'?'selected':''}>1024×576 (SD 16:9, квадратный пиксель)</option><option value="720x576_16_9" ${stream.transcode_resolution==='720x576_16_9'?'selected':''}>720×576 (SD 16:9, анаморфный)</option><option value="720x576" ${stream.transcode_resolution==='720x576'?'selected':''}>720×576 (PAL SD, прежний режим)</option></select><input id="streamTranscodeBitrate" type="number" min="500" max="100000" step="100" value="${Math.round((stream.transcode_video_bitrate||6000000)/1000)}" placeholder="6000" /><span>кбит/с CBR</span></div><div class="row-inline compact-row" style="margin-top:8px"><select id="streamTranscodeAudioCodec" onchange="updateTranscodeAudioControls()"><option value="copy" ${stream.transcode_audio_codec==='copy'?'selected':''}>Аудио: проброс оригинальной дорожки</option><option value="aac" ${(stream.transcode_audio_codec||'aac')==='aac'?'selected':''} ${transcoderInfo.aac_encoder?'':'disabled'}>Аудио: AAC-LC${transcoderInfo.aac_encoder?'':' (недоступен)'}</option><option value="mp3" ${stream.transcode_audio_codec==='mp3'?'selected':''} ${transcoderInfo.mp3_encoder?'':'disabled'}>Аудио: MP3${transcoderInfo.mp3_encoder?'':' (недоступен)'}</option><option value="mp2" ${stream.transcode_audio_codec==='mp2'?'selected':''} ${transcoderInfo.mp2_encoder_available?'':'disabled'}>Аудио: MP2 (MPEG-1 Layer II)${transcoderInfo.mp2_encoder_available?'':' (недоступен)'}</option></select><select id="streamTranscodeAudioBitrate" ${stream.transcode_audio_codec==='copy'?'disabled':''}><option value="96000" ${(stream.transcode_audio_bitrate||192000)===96000?'selected':''}>96 кбит/с</option><option value="128000" ${(stream.transcode_audio_bitrate||192000)===128000?'selected':''}>128 кбит/с</option><option value="160000" ${(stream.transcode_audio_bitrate||192000)===160000?'selected':''}>160 кбит/с</option><option value="192000" ${(stream.transcode_audio_bitrate||192000)===192000?'selected':''}>192 кбит/с</option><option value="256000" ${(stream.transcode_audio_bitrate||192000)===256000?'selected':''}>256 кбит/с</option><option value="320000" ${(stream.transcode_audio_bitrate||192000)===320000?'selected':''}>320 кбит/с</option></select><span>аудио</span></div><div class="row-inline compact-row" style="margin-top:8px"><label class="checkbox-inline"><input id="streamTranscodeMultibitrate" type="checkbox" ${stream.transcode_multibitrate_enabled?'checked':''} /><span>Мультибитрейт HLS (ABR)</span></label></div><small>MP2 uses the in-tree TwoLAME encoder. H.264/HEVC поддерживают NVENC, Intel Quick Sync/VA и CPU x264/x265. HLS ABR создаёт master.m3u8 и до трёх дополнительных профилей. Интерлейс 576i/1080i деинтерлейсится YADIF по всем полям с сохранением 50 Гц движения; SPS/PPS повторяются на каждом IDR.</small></div>
         <div class="form-row full"><label>Автозапуск</label><div class="checkbox-inline"><input id="streamAutoStart" type="checkbox" ${stream.auto_start ? 'checked' : ''} /><span>Запускать после перезапуска программы</span></div></div>
         <div class="form-row full" id="streamCbrRow"><label>Включить CBR</label><div class="checkbox-inline"><input id="streamCbr" type="checkbox" ${stream.cbr ? 'checked' : ''} onchange="syncUdpCbrModeFromCheckbox()" /><span>CBR</span></div><small>CBR поддерживается для UDP, HTTP, HLS и SRT.</small></div>
@@ -6555,7 +6555,7 @@ function saveStream(id) {
     transcode_multibitrate_enabled: document.getElementById('streamTranscodeMultibitrate')?.checked === true,
     hls_archive_enabled: document.getElementById('streamHlsArchiveEnabled')?.checked === true,
     hls_archive_hours: Math.max(1, Math.min(168, Number(document.getElementById('streamHlsArchiveHours')?.value || 24))),
-    hls_archive_path: document.getElementById('streamHlsArchivePath')?.value.trim() || '/var/lib/tvstreamer5/archive',
+    hls_archive_path: document.getElementById('streamHlsArchivePath')?.value.trim() || '/var/lib/dvbstreamer5/archive',
     transcode_video_bitrate: Number(document.getElementById('streamTranscodeBitrate').value) * 1000,
     transcode_audio_codec: document.getElementById('streamTranscodeAudioCodec').value,
     transcode_audio_bitrate: Number(document.getElementById('streamTranscodeAudioBitrate').value),
@@ -6659,7 +6659,7 @@ const qualityRefreshOptions = [
   {label:'30 сек', ms:30000}
 ];
 function storedQualityRefreshMs() {
-  const stored = localStorage.getItem('tvstreamer5-quality-refresh-ms');
+  const stored = localStorage.getItem('dvbstreamer5-quality-refresh-ms');
   const value = stored === null ? 2000 : Number(stored);
   return qualityRefreshOptions.some(option => option.ms === value) ? value : 2000;
 }
@@ -6681,7 +6681,7 @@ function restartQualityAutoRefresh() {
 }
 function setQualityAutoRefresh(ms) {
   qualityChart.refreshMs = qualityRefreshOptions.some(option => option.ms === ms) ? ms : 0;
-  localStorage.setItem('tvstreamer5-quality-refresh-ms', String(qualityChart.refreshMs));
+  localStorage.setItem('dvbstreamer5-quality-refresh-ms', String(qualityChart.refreshMs));
   restartQualityAutoRefresh();
 }
 function qualityColor(level) {
@@ -6711,7 +6711,7 @@ function qualityOutputKbps(sample, output) {
   return Number(sample?.output_kbps || 0);
 }
 function storedQualityOutputIndex(id, count) {
-  const value = Number(localStorage.getItem(`tvstreamer5-quality-output-${id}`));
+  const value = Number(localStorage.getItem(`dvbstreamer5-quality-output-${id}`));
   return Number.isInteger(value) && value >= 0 && value < count ? value : 0;
 }
 function setQualityOutputIndex(index) {
@@ -6719,7 +6719,7 @@ function setQualityOutputIndex(index) {
   const selected = Math.max(0, Math.min(count - 1, Number.isFinite(index) ? Math.trunc(index) : 0));
   qualityChart.selectedOutputIndex = selected;
   if (qualityChart.streamId) {
-    localStorage.setItem(`tvstreamer5-quality-output-${qualityChart.streamId}`, String(selected));
+    localStorage.setItem(`dvbstreamer5-quality-output-${qualityChart.streamId}`, String(selected));
   }
   const select = document.getElementById('qualityOutputSelect');
   if (select && Number(select.value) !== selected) select.value = String(selected);
@@ -6799,7 +6799,7 @@ function loadQualityHistory(id, periodSeconds) {
       renderQualityTabs(periodSeconds);
       drawQualityChart(data);
     })
-    .catch(error => console.warn('TVStreamer5 quality history refresh failed:', error));
+    .catch(error => console.warn('DVBStreamer5 quality history refresh failed:', error));
 }
 function renderQualityTabs(periodSeconds) {
   document.querySelectorAll('.period-tabs button').forEach((button, index) => {
@@ -6942,7 +6942,7 @@ function drawQualityChart(data) {
   ctx.fillStyle = '#cfd8ea';
   ctx.font = '700 13px Arial';
   ctx.textAlign = 'center';
-  let titleText = `${state.server_name || 'TVStreamer5'}: ${streamName} — ${qualityOutputLabel(output, selectedIndex)}`;
+  let titleText = `${state.server_name || 'DVBStreamer5'}: ${streamName} — ${qualityOutputLabel(output, selectedIndex)}`;
   while (ctx.measureText(titleText).width > plotW && titleText.length > 24) {
     titleText = titleText.slice(0, -4) + '...';
   }
@@ -7115,7 +7115,7 @@ window.addEventListener('beforeunload', () => {
 });
 
 /* Browser preview is installed on existing tile markup, no new buttons or stream restarts. */
-/* TVStreamer5 browser preview: choose an existing HTTP MPEG-TS output,
+/* DVBStreamer5 browser preview: choose an existing HTTP MPEG-TS output,
  * or the private on-demand HTTP session backed by the same channel pipeline.
  * Production SRT/HLS/UDP output configurations are not modified by the UI.
  */

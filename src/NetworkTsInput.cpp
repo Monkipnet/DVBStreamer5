@@ -15,7 +15,7 @@
 
 namespace {
 
-// 202.57: restore the proven TVStreamer5 SRT/HTTP input timing.  The
+// 202.57: restore the proven DVBStreamer5 SRT/HTTP input timing.  The
 // later 8-second SAT5 queue changed the dynamics of the original reservoir
 // controller and did not remove the freezes.
 // 202.72: enlarge only the bounded network ingest reservoirs. Keep them below
@@ -24,7 +24,7 @@ namespace {
 constexpr guint64 kNetworkInputQueue = 6 * GST_SECOND;
 constexpr guint64 kHlsInputQueue = 10 * GST_SECOND;
 constexpr gint kNetworkSourceTimeoutSeconds = 15;
-// TVStreamer5/main uses 500 ms SRT latency for this path.
+// DVBStreamer5/main uses 500 ms SRT latency for this path.
 constexpr gint kSrtLatencyMs = 500;
 constexpr gint kSrtPollTimeoutMs = 1000;
 constexpr guint kNetworkQueueHardMaxBytes = 64U * 1024U * 1024U;
@@ -158,7 +158,7 @@ void configureHttpCredentials(GstElement* element, const StreamConfig& cfg) {
 void onHlsChildLocationChanged(GObject* object, GParamSpec*, gpointer userData) {
     auto* cfg = static_cast<StreamConfig*>(userData);
     if (!cfg || cfg->hlsAccessKeyMode != "query" || cfg->hlsAccessKeyValue.empty()) return;
-    if (g_object_get_data(object, "tvs-network-hls-query-update")) return;
+    if (g_object_get_data(object, "dvbstreamer5-network-hls-query-update")) return;
 
     gchar* current = nullptr;
     g_object_get(object, "location", &current, nullptr);
@@ -169,9 +169,9 @@ void onHlsChildLocationChanged(GObject* object, GParamSpec*, gpointer userData) 
 
     const std::string updated = appendAccessQuery(current, *cfg);
     if (updated != current) {
-        g_object_set_data(object, "tvs-network-hls-query-update", GINT_TO_POINTER(1));
+        g_object_set_data(object, "dvbstreamer5-network-hls-query-update", GINT_TO_POINTER(1));
         g_object_set(object, "location", updated.c_str(), nullptr);
-        g_object_set_data(object, "tvs-network-hls-query-update", nullptr);
+        g_object_set_data(object, "dvbstreamer5-network-hls-query-update", nullptr);
     }
     g_free(current);
 }
@@ -196,11 +196,11 @@ void configureHlsChildSource(GstElement* element, StreamConfig& cfg) {
     setDoublePropertyIfPresent(element, "retry-backoff-factor", 0.25);
     setDoublePropertyIfPresent(element, "retry-backoff-max", 2.0);
     if (cfg.hlsAccessKeyMode == "query" && hasProperty(element, "location")) {
-        if (!g_object_get_data(G_OBJECT(element), "tvs-network-hls-location-watch")) {
+        if (!g_object_get_data(G_OBJECT(element), "dvbstreamer5-network-hls-location-watch")) {
             g_signal_connect(element, "notify::location",
                 G_CALLBACK(onHlsChildLocationChanged), &cfg);
             g_object_set_data(
-                G_OBJECT(element), "tvs-network-hls-location-watch", GINT_TO_POINTER(1));
+                G_OBJECT(element), "dvbstreamer5-network-hls-location-watch", GINT_TO_POINTER(1));
         }
         onHlsChildLocationChanged(G_OBJECT(element), nullptr, &cfg);
     }
@@ -221,7 +221,7 @@ GstElement* buildSrt(
     const char* preferredFactory = mode == "listener" ? "srtsrc" : "srtclientsrc";
     const char* factory = preferredFactory;
 
-    // TVStreamer5 uses srtclientsrc for caller mode.  Keep a compatibility
+    // DVBStreamer5 uses srtclientsrc for caller mode.  Keep a compatibility
     // fallback for older GStreamer installations which expose only srtsrc.
     if (!hasElementFactory(factory)) {
         if (mode == "caller" && hasElementFactory("srtsrc")) {
@@ -242,13 +242,13 @@ GstElement* buildSrt(
         return nullptr;
     }
 
-    const std::string uri = tvs::protocols::inputs::srtInputUri(cfg);
+    const std::string uri = dvbstreamer5::protocols::inputs::srtInputUri(cfg);
     g_object_set(src, "uri", uri.c_str(), nullptr);
     setBooleanPropertyIfPresent(src, "do-timestamp", TRUE);
     const bool hasAutoReconnect = hasProperty(src, "auto-reconnect");
     setBooleanPropertyIfPresent(src, "auto-reconnect", TRUE);
-    const gint effectiveLatencyMs = tvs::protocols::srt_vps::latencyMs(cfg, kSrtLatencyMs);
-    const gint effectivePollTimeoutMs = tvs::protocols::srt_vps::pollTimeoutMs(cfg, kSrtPollTimeoutMs);
+    const gint effectiveLatencyMs = dvbstreamer5::protocols::srt_vps::latencyMs(cfg, kSrtLatencyMs);
+    const gint effectivePollTimeoutMs = dvbstreamer5::protocols::srt_vps::pollTimeoutMs(cfg, kSrtPollTimeoutMs);
     setIntPropertyIfPresent(src, "latency", effectiveLatencyMs);
     // 202.63: older GStreamer SRT sources default poll-timeout to -1. A source
     // stuck in an infinite libsrt poll can then block gst_element_set_state(NULL)
@@ -284,14 +284,14 @@ GstElement* buildSrt(
     if (cfg.srtVpsVdsOptimization) {
         std::cerr << "SRT VPS/VDS PROFILE 203.67: stream=" << cfg.id
                   << " direction=input enabled=on"
-                  << " latency_ms=" << tvs::protocols::srt_vps::kLatencyMs
-                  << " rcvlatency_ms=" << tvs::protocols::srt_vps::kLatencyMs
-                  << " peerlatency_ms=" << tvs::protocols::srt_vps::kLatencyMs
-                  << " poll_timeout_ms=" << tvs::protocols::srt_vps::kPollTimeoutMs
-                  << " srt_rcvbuf=" << tvs::protocols::srt_vps::kSrtReceiveBufferBytes
-                  << " srt_sndbuf=" << tvs::protocols::srt_vps::kSrtSendBufferBytes
-                  << " fc_packets=" << tvs::protocols::srt_vps::kFlightWindowPackets
-                  << " payload_size=" << tvs::protocols::srt_vps::kPayloadSizeBytes
+                  << " latency_ms=" << dvbstreamer5::protocols::srt_vps::kLatencyMs
+                  << " rcvlatency_ms=" << dvbstreamer5::protocols::srt_vps::kLatencyMs
+                  << " peerlatency_ms=" << dvbstreamer5::protocols::srt_vps::kLatencyMs
+                  << " poll_timeout_ms=" << dvbstreamer5::protocols::srt_vps::kPollTimeoutMs
+                  << " srt_rcvbuf=" << dvbstreamer5::protocols::srt_vps::kSrtReceiveBufferBytes
+                  << " srt_sndbuf=" << dvbstreamer5::protocols::srt_vps::kSrtSendBufferBytes
+                  << " fc_packets=" << dvbstreamer5::protocols::srt_vps::kFlightWindowPackets
+                  << " payload_size=" << dvbstreamer5::protocols::srt_vps::kPayloadSizeBytes
                   << " note=kernel-udp-buffer-remains-host-controlled"
                   << std::endl;
     }
@@ -317,7 +317,7 @@ GstElement* buildHttp(
     }
 
     const std::string location = appendAccessQuery(
-        tvs::protocols::inputs::httpInputUri(cfg), cfg);
+        dvbstreamer5::protocols::inputs::httpInputUri(cfg), cfg);
     g_object_set(src,
         "location", location.c_str(),
         "is-live", TRUE,
@@ -325,7 +325,7 @@ GstElement* buildHttp(
         nullptr);
     configureHttpCredentials(src, cfg);
     setBooleanPropertyIfPresent(src, "compress", FALSE);
-    // 202.57: TVStreamer5/main leaves souphttpsrc retry policy at its normal
+    // 202.57: DVBStreamer5/main leaves souphttpsrc retry policy at its normal
     // GStreamer setting.  Do not run a second infinite retry/backoff loop inside
     // the source while StreamManager already owns reconnect/recovery policy.
 
@@ -355,7 +355,7 @@ GstElement* buildHls(
     GstElement* pipeline,
     GstElement*& terminalElement,
     GCallback hlsPadAddedCallback,
-    tvs::network_input::ConfigureTsMuxFn configureTsMux,
+    dvbstreamer5::network_input::ConfigureTsMuxFn configureTsMux,
     std::string& error) {
     (void)hlsPadAddedCallback;
     (void)configureTsMux;
@@ -411,15 +411,15 @@ GstElement* buildHls(
         return nullptr;
     }
 
-    auto* scheduler = new tvs::hls_scheduler::Scheduler(pipeline, src, queue, cfg);
+    auto* scheduler = new dvbstreamer5::hls_scheduler::Scheduler(pipeline, src, queue, cfg);
     if (!scheduler->start(error)) {
         delete scheduler;
         return nullptr;
     }
     g_object_set_data_full(
-        G_OBJECT(pipeline), tvs::hls_scheduler::kPipelineDataKey, scheduler,
+        G_OBJECT(pipeline), dvbstreamer5::hls_scheduler::kPipelineDataKey, scheduler,
         [](gpointer data) {
-            delete static_cast<tvs::hls_scheduler::Scheduler*>(data);
+            delete static_cast<dvbstreamer5::hls_scheduler::Scheduler*>(data);
         });
 
     terminalElement = queue;
@@ -436,13 +436,13 @@ GstElement* buildHls(
 }
 } // namespace
 
-namespace tvs::network_input {
+namespace dvbstreamer5::network_input {
 
 bool handles(const StreamConfig& cfg) {
-    const auto kind = tvs::stream_protocols::inputKind(cfg);
-    return kind == tvs::stream_protocols::InputProtocolKind::Srt ||
-           kind == tvs::stream_protocols::InputProtocolKind::Http ||
-           kind == tvs::stream_protocols::InputProtocolKind::Hls;
+    const auto kind = dvbstreamer5::stream_protocols::inputKind(cfg);
+    return kind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
+           kind == dvbstreamer5::stream_protocols::InputProtocolKind::Http ||
+           kind == dvbstreamer5::stream_protocols::InputProtocolKind::Hls;
 }
 
 GstElement* build(
@@ -459,13 +459,13 @@ GstElement* build(
     }
 
     const StreamConfig& cfg = state->runtimeConfig;
-    const auto kind = tvs::stream_protocols::inputKind(cfg);
+    const auto kind = dvbstreamer5::stream_protocols::inputKind(cfg);
     switch (kind) {
-        case tvs::stream_protocols::InputProtocolKind::Srt:
+        case dvbstreamer5::stream_protocols::InputProtocolKind::Srt:
             return buildSrt(cfg, pipeline, terminalElement, error);
-        case tvs::stream_protocols::InputProtocolKind::Http:
+        case dvbstreamer5::stream_protocols::InputProtocolKind::Http:
             return buildHttp(cfg, pipeline, terminalElement, error);
-        case tvs::stream_protocols::InputProtocolKind::Hls:
+        case dvbstreamer5::stream_protocols::InputProtocolKind::Hls:
             return buildHls(
                 state, pipeline, terminalElement,
                 hlsPadAddedCallback, configureTsMux, error);
@@ -475,4 +475,4 @@ GstElement* build(
     }
 }
 
-} // namespace tvs::network_input
+} // namespace dvbstreamer5::network_input

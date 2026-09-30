@@ -147,15 +147,15 @@ void TelegramNotifier::sendMessageBlocking(const std::string& text) {
 
     std::ostringstream url;
     url << "https://api.telegram.org/bot"
-        << tvs::http::encodeQueryComponent(config.telegramToken)
+        << dvbstreamer5::http::encodeQueryComponent(config.telegramToken)
         << "/sendMessage?chat_id="
-        << tvs::http::encodeQueryComponent(config.telegramChatId)
+        << dvbstreamer5::http::encodeQueryComponent(config.telegramChatId)
         << "&parse_mode=HTML"
         << "&disable_web_page_preview=true"
-        << "&text=" << tvs::http::encodeQueryComponent(text);
+        << "&text=" << dvbstreamer5::http::encodeQueryComponent(text);
 
     const std::string requestUrl = url.str();
-    tvs::http::RequestOptions options;
+    dvbstreamer5::http::RequestOptions options;
     options.connectTimeoutMs = 2000;
     options.readTimeoutMs = 4000;
     options.writeTimeoutMs = 2000;
@@ -163,9 +163,9 @@ void TelegramNotifier::sendMessageBlocking(const std::string& text) {
     options.maxRedirects = 4;
     options.maxBodyBytes = 1024U * 1024U;
     options.verifyTlsPeer = true;
-    tvs::http::Response response;
+    dvbstreamer5::http::Response response;
     std::string error;
-    if (!tvs::http::get(requestUrl, options, response, error)) {
+    if (!dvbstreamer5::http::get(requestUrl, options, response, error)) {
         std::cerr << "Telegram send error: " << error << std::endl;
         rollbackRepeatReservation();
     }

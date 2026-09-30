@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 
 class UdpSocket {
 public:
@@ -57,4 +57,4 @@ private:
     bool receiver_ = false;
 };
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

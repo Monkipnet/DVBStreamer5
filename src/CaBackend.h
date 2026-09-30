@@ -52,7 +52,7 @@ public:
     Json::Value streamState(const std::string& streamId) const;
     Json::Value snapshot() const;
 
-    static constexpr const char* kDefaultPluginDirectory = "/opt/tvstreamer5/ca-plugins";
+    static constexpr const char* kDefaultPluginDirectory = "/opt/DVBStreamer5/ca-plugins";
 
 private:
     CaBackendManager();
@@ -67,7 +67,7 @@ private:
         bool usable = false;
         std::string loadError;
         void* library = nullptr;
-        const tvs_ca_backend_api_v1* api = nullptr;
+        const dvbstreamer5_ca_backend_api_v1* api = nullptr;
         void* instance = nullptr;
         std::map<std::string, unsigned> readerRefs;
     };
@@ -99,7 +99,7 @@ private:
 
     void unloadPluginsLocked();
     void loadPluginsLocked();
-    bool registerBuiltinBackendLocked(const tvs_ca_backend_api_v1* api,
+    bool registerBuiltinBackendLocked(const dvbstreamer5_ca_backend_api_v1* api,
                                       const std::string& path);
     bool loadPluginFileLocked(const std::string& path);
     LoadedBackend* findBackendLocked(const std::string& id);
@@ -114,5 +114,5 @@ private:
     std::map<std::string, LoadedBackend> backends_;
     std::map<std::string, ServiceSession> sessions_;
     std::vector<CamClientConfig> clientPolicies_;
-    tvs_ca_host_api_v1 hostApi_{};
+    dvbstreamer5_ca_host_api_v1 hostApi_{};
 };

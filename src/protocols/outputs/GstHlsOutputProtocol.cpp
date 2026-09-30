@@ -8,7 +8,7 @@
 #include <chrono>
 #include <unistd.h>
 
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 
 namespace {
 
@@ -49,7 +49,7 @@ std::string hlsPublicPathName(const StreamConfig& cfg) {
 std::string prepareHlsDirectory(const StreamConfig& cfg) {
     std::filesystem::path dir = cfg.hlsArchiveEnabled
         ? (std::filesystem::path(cfg.hlsArchivePath) / cfg.id)
-        : (std::filesystem::path("/tmp/tvstreamer5-hls") / cfg.id);
+        : (std::filesystem::path("/tmp/dvbstreamer5-hls") / cfg.id);
     if (!cfg.hlsVariantName.empty()) {
         dir /= "abr";
         dir /= cfg.hlsVariantName;
@@ -152,4 +152,4 @@ bool appendHlsSink(std::vector<std::string>& args, const StreamConfig& cfg, GstO
     return true;
 }
 
-} // namespace tvs::protocols::outputs
+} // namespace dvbstreamer5::protocols::outputs

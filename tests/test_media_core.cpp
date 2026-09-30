@@ -36,9 +36,9 @@
 #include <unistd.h>
 #endif
 
-using tvs::media::mpegts::ContinuityStatus;
-using tvs::media::mpegts::Packet;
-using tvs::media::mpegts::PacketInfo;
+using dvbstreamer5::media::mpegts::ContinuityStatus;
+using dvbstreamer5::media::mpegts::Packet;
+using dvbstreamer5::media::mpegts::PacketInfo;
 
 namespace {
 
@@ -133,14 +133,14 @@ std::uint16_t pidOf(const Packet& packet) {
 }
 
 void testMpegTsRemapper() {
-    tvs::media::mpegts::Remapper remapper;
-    tvs::media::mpegts::RemapConfig config;
+    dvbstreamer5::media::mpegts::Remapper remapper;
+    dvbstreamer5::media::mpegts::RemapConfig config;
     config.inputServiceId = 10;
     config.outputServiceId = 42;
     config.outputVideoPid = 0x200;
     config.outputAudioPid = 0x201;
     config.serviceName = "Remapped";
-    config.serviceProvider = "TVStreamer5";
+    config.serviceProvider = "DVBStreamer5";
     std::string error;
     assert(remapper.initialize(config, error));
 
@@ -357,7 +357,7 @@ void write32(std::uint8_t* data, std::uint32_t value) {
 void testPacketInspectionAndPidRewrite() {
     Packet ts = packet(0x0123, 5);
     PacketInfo info;
-    assert(tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
     assert(info.pid == 0x0123 && info.continuityCounter == 5 && info.hasPayload);
     assert(info.payloadOffset == 4);
 
@@ -371,33 +371,33 @@ void testPacketInspectionAndPidRewrite() {
     ts[10] = 0x05;
     ts[11] = 0x06;
     ts[12] = 0x07;
-    assert(tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
     assert(info.hasAdaptationField && info.hasPcr && info.discontinuity);
     assert(info.payloadOffset == 12);
     assert(info.pcrBase90k == 33818120);
-    assert(tvs::media::mpegts::rewritePid(ts.data(), ts.size(), 0x1ffe));
-    assert(tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(dvbstreamer5::media::mpegts::rewritePid(ts.data(), ts.size(), 0x1ffe));
+    assert(dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
     assert(info.pid == 0x1ffe && info.hasPcr);
 
     const Packet before = ts;
-    assert(!tvs::media::mpegts::rewritePid(ts.data(), ts.size(), 0x2000));
+    assert(!dvbstreamer5::media::mpegts::rewritePid(ts.data(), ts.size(), 0x2000));
     assert(ts == before);
     ts[0] = 0;
-    assert(!tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(!dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
     ts = packet(1, 0);
     ts[3] &= 0x0f;
-    assert(!tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(!dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
     ts = packet(1, 0);
     ts[3] = 0x30;
     ts[4] = 184;
-    assert(!tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(!dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
     ts[4] = 1;
     ts[5] = 0x10;
-    assert(!tvs::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
+    assert(!dvbstreamer5::media::mpegts::inspectPacket(ts.data(), ts.size(), info));
 }
 
 void testFraming() {
-    using tvs::media::mpegts::PacketFramer;
+    using dvbstreamer5::media::mpegts::PacketFramer;
     Packet first = packet(10, 0);
     Packet second = packet(11, 1);
     Packet third = packet(12, 2);
@@ -420,7 +420,7 @@ void testFraming() {
 }
 
 void testContinuityTracking() {
-    using tvs::media::mpegts::ContinuityTracker;
+    using dvbstreamer5::media::mpegts::ContinuityTracker;
     ContinuityTracker tracker;
     assert(tracker.observe(packet(100, 14).data(), 188) == ContinuityStatus::InOrder);
     assert(tracker.observe(packet(100, 15).data(), 188) == ContinuityStatus::InOrder);
@@ -443,9 +443,9 @@ void testContinuityTracking() {
 }
 
 void testRtpParsingAndPayload() {
-    using tvs::media::rtp::PacketView;
-    using tvs::media::rtp::decodeMpegTsPayload;
-    using tvs::media::rtp::parsePacket;
+    using dvbstreamer5::media::rtp::PacketView;
+    using dvbstreamer5::media::rtp::decodeMpegTsPayload;
+    using dvbstreamer5::media::rtp::parsePacket;
 
     const Packet first = packet(0x100, 0);
     const Packet second = packet(0x101, 1);
@@ -497,10 +497,10 @@ void testRtpParsingAndPayload() {
 }
 
 void testRtpPacketizerRoundTrip() {
-    using tvs::media::rtp::MpegTsPacketizer;
-    using tvs::media::rtp::PacketView;
-    using tvs::media::rtp::decodeMpegTsPayload;
-    using tvs::media::rtp::parsePacket;
+    using dvbstreamer5::media::rtp::MpegTsPacketizer;
+    using dvbstreamer5::media::rtp::PacketView;
+    using dvbstreamer5::media::rtp::decodeMpegTsPayload;
+    using dvbstreamer5::media::rtp::parsePacket;
 
     std::vector<Packet> input;
     for (std::uint16_t i = 0; i < 15; ++i) {
@@ -547,7 +547,7 @@ void testRtpPacketizerRoundTrip() {
 }
 
 void testUdpLoopback() {
-    using tvs::media::network::UdpSocket;
+    using dvbstreamer5::media::network::UdpSocket;
     UdpSocket receiver;
     UdpSocket sender;
     std::string error;
@@ -556,7 +556,7 @@ void testUdpLoopback() {
     assert(sender.openSender("127.0.0.1", receiver.localPort(), "127.0.0.1", error));
 
     const Packet expected = packet(0x0100, 4);
-    tvs::media::rtp::MpegTsPacketizer packetizer(0x55667788);
+    dvbstreamer5::media::rtp::MpegTsPacketizer packetizer(0x55667788);
     std::vector<std::vector<std::uint8_t>> datagrams;
     assert(packetizer.packetize({expected}, 90000, datagrams));
     assert(sender.send(datagrams.front().data(), datagrams.front().size(), error));
@@ -565,11 +565,11 @@ void testUdpLoopback() {
     std::size_t received = 0;
     assert(receiver.receive(buffer.data(), buffer.size(), received, 2000, error));
     assert(received == datagrams.front().size());
-    tvs::media::rtp::PacketView rtp;
-    assert(tvs::media::rtp::parsePacket(buffer.data(), received, rtp));
+    dvbstreamer5::media::rtp::PacketView rtp;
+    assert(dvbstreamer5::media::rtp::parsePacket(buffer.data(), received, rtp));
     assert(rtp.timestamp == 90000 && rtp.sourceId == 0x55667788);
     std::vector<Packet> decoded;
-    assert(tvs::media::rtp::decodeMpegTsPayload(rtp, decoded));
+    assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(rtp, decoded));
     assert(decoded.size() == 1 && decoded.front() == expected);
 
     received = 99;
@@ -579,7 +579,7 @@ void testUdpLoopback() {
 }
 
 void testLinuxDvbPidListParsing() {
-    using tvs::media::network::LinuxDvbInput;
+    using dvbstreamer5::media::network::LinuxDvbInput;
     std::vector<std::uint16_t> pids;
     std::string error;
     assert(LinuxDvbInput::parsePidList("0:17:256:256:8191", pids, error));
@@ -596,7 +596,7 @@ void testLinuxDvbPidListParsing() {
 }
 
 std::uint16_t reserveLocalUdpPort() {
-    tvs::media::network::UdpSocket socket;
+    dvbstreamer5::media::network::UdpSocket socket;
     std::string error;
     assert(socket.openReceiver("127.0.0.1", 0, "", "", 0, error));
     const std::uint16_t port = socket.localPort();
@@ -605,7 +605,7 @@ std::uint16_t reserveLocalUdpPort() {
 }
 
 void testNativeUdpTsRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const std::uint16_t inputPort = reserveLocalUdpPort();
 
     UdpSocket outputReceiver;
@@ -628,13 +628,13 @@ void testNativeUdpTsRelay() {
     std::atomic<unsigned> caCalls{0};
     std::atomic<unsigned> observerCalls{0};
     config.processTransport = [&caCalls](std::uint8_t* data, std::size_t size) {
-        assert(size == tvs::media::mpegts::kPacketSize);
+        assert(size == dvbstreamer5::media::mpegts::kPacketSize);
         data[3] |= 0x80;
         caCalls.fetch_add(1, std::memory_order_relaxed);
         return true;
     };
     config.observeTransport = [&observerCalls](const std::uint8_t* data, std::size_t size) {
-        assert(size == tvs::media::mpegts::kPacketSize);
+        assert(size == dvbstreamer5::media::mpegts::kPacketSize);
         assert((data[3] & 0x80U) != 0);
         observerCalls.fetch_add(1, std::memory_order_relaxed);
     };
@@ -667,7 +667,7 @@ void testNativeUdpTsRelay() {
 }
 
 void testNativeRtpTsRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const std::uint16_t inputPort = reserveLocalUdpPort();
 
     UdpSocket outputReceiver;
@@ -685,7 +685,7 @@ void testNativeRtpTsRelay() {
     assert(relay.start(config, error));
 
     const Packet expected = packet(0x0237, 9);
-    tvs::media::rtp::MpegTsPacketizer packetizer(0x76543210, 14);
+    dvbstreamer5::media::rtp::MpegTsPacketizer packetizer(0x76543210, 14);
     std::vector<std::vector<std::uint8_t>> sourceDatagrams;
     assert(packetizer.packetize({expected}, 90000, sourceDatagrams));
     assert(inputSender.send(
@@ -694,11 +694,11 @@ void testNativeRtpTsRelay() {
     std::array<std::uint8_t, 2048> received {};
     std::size_t size = 0;
     assert(outputReceiver.receive(received.data(), received.size(), size, 2000, error));
-    tvs::media::rtp::PacketView view;
-    assert(tvs::media::rtp::parsePacket(received.data(), size, view));
+    dvbstreamer5::media::rtp::PacketView view;
+    assert(dvbstreamer5::media::rtp::parsePacket(received.data(), size, view));
     assert(view.payloadType == 33 && view.payloadSize == expected.size());
     std::vector<Packet> decoded;
-    assert(tvs::media::rtp::decodeMpegTsPayload(view, decoded));
+    assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(view, decoded));
     assert(decoded.size() == 1 && decoded.front() == expected);
     const auto counterDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (relay.outputBytes() < expected.size() &&
@@ -711,7 +711,7 @@ void testNativeRtpTsRelay() {
 }
 
 void testNativeExternallyFedTsRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
 
     UdpSocket outputReceiver;
     std::string error;
@@ -740,7 +740,7 @@ void testNativeExternallyFedTsRelay() {
 }
 
 void testCbrTsPacer() {
-    using namespace tvs::media::mpegts;
+    using namespace dvbstreamer5::media::mpegts;
     const Packet mediaPacket = packet(0x0142, 3);
     CbrTsPacer paddingPacer(2000000);
     assert(paddingPacer.enqueue(mediaPacket));
@@ -801,7 +801,7 @@ void testCbrTsPacer() {
 }
 
 void testNativeUdpCbrRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const std::uint16_t inputPort = reserveLocalUdpPort();
 
     UdpSocket outputReceiver;
@@ -827,11 +827,11 @@ void testNativeUdpCbrRelay() {
     assert(outputReceiver.receive(received.data(), received.size(), size, 2000, error));
     assert(size == 7 * 188);
     PacketInfo info;
-    assert(tvs::media::mpegts::inspectPacket(received.data(), 188, info));
+    assert(dvbstreamer5::media::mpegts::inspectPacket(received.data(), 188, info));
     assert(info.pid == 0x0175);
     for (std::size_t i = 1; i < 7; ++i) {
-        assert(tvs::media::mpegts::inspectPacket(received.data() + i * 188, 188, info));
-        assert(info.pid == tvs::media::mpegts::kNullPid);
+        assert(dvbstreamer5::media::mpegts::inspectPacket(received.data() + i * 188, 188, info));
+        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
         assert(info.continuityCounter == i - 1);
     }
 
@@ -841,8 +841,8 @@ void testNativeUdpCbrRelay() {
     assert(size == 7 * 188);
     assert(secondSentAt - firstSentAt >= std::chrono::milliseconds(15));
     for (std::size_t i = 0; i < 7; ++i) {
-        assert(tvs::media::mpegts::inspectPacket(received.data() + i * 188, 188, info));
-        assert(info.pid == tvs::media::mpegts::kNullPid);
+        assert(dvbstreamer5::media::mpegts::inspectPacket(received.data() + i * 188, 188, info));
+        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
         assert(info.continuityCounter == (i + 6) % 16);
     }
 
@@ -856,7 +856,7 @@ void testNativeUdpCbrRelay() {
 }
 
 void testNativeUdpFanoutRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const std::uint16_t inputPort = reserveLocalUdpPort();
 
     UdpSocket udpReceiver;
@@ -880,7 +880,7 @@ void testNativeUdpFanoutRelay() {
     config.targetBitrate = 512000;
     assert(relay.start(config, error));
 
-    tvs::media::mpegts::Packet inputPacket {};
+    dvbstreamer5::media::mpegts::Packet inputPacket {};
     inputPacket.fill(0xff);
     inputPacket[0] = 0x47;
     inputPacket[1] = 0x01;
@@ -895,20 +895,20 @@ void testNativeUdpFanoutRelay() {
     assert(std::equal(inputPacket.begin(), inputPacket.end(), received.begin()));
 
     assert(rtpReceiver.receive(received.data(), received.size(), size, 2000, error));
-    tvs::media::rtp::PacketView view;
-    assert(tvs::media::rtp::parsePacket(received.data(), size, view));
-    std::vector<tvs::media::mpegts::Packet> decoded;
-    assert(tvs::media::rtp::decodeMpegTsPayload(view, decoded));
+    dvbstreamer5::media::rtp::PacketView view;
+    assert(dvbstreamer5::media::rtp::parsePacket(received.data(), size, view));
+    std::vector<dvbstreamer5::media::mpegts::Packet> decoded;
+    assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(view, decoded));
     assert(decoded.size() == 1 && decoded.front() == inputPacket);
 
     assert(cbrReceiver.receive(received.data(), received.size(), size, 2000, error));
     assert(size == 7 * 188);
     assert(std::equal(inputPacket.begin(), inputPacket.end(), received.begin()));
-    tvs::media::mpegts::PacketInfo packetInfo;
+    dvbstreamer5::media::mpegts::PacketInfo packetInfo;
     for (std::size_t index = 1; index < 7; ++index) {
-        assert(tvs::media::mpegts::inspectPacket(
+        assert(dvbstreamer5::media::mpegts::inspectPacket(
             received.data() + index * 188, 188, packetInfo));
-        assert(packetInfo.pid == tvs::media::mpegts::kNullPid);
+        assert(packetInfo.pid == dvbstreamer5::media::mpegts::kNullPid);
         assert(packetInfo.continuityCounter == index - 1);
     }
 
@@ -924,9 +924,9 @@ void testNativeUdpFanoutRelay() {
 }
 
 void testNativeFileCbrRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const auto filePath = std::filesystem::temp_directory_path() /
-        ("tvs-native-cbr-" + std::to_string(
+        ("dvbstreamer5-native-cbr-" + std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()) + ".ts");
     std::vector<Packet> sourcePackets;
     for (std::uint16_t index = 0; index < 8; ++index) {
@@ -976,9 +976,9 @@ void testNativeFileCbrRelay() {
     assert(secondSentAt - firstSentAt >= std::chrono::milliseconds(10));
     PacketInfo info;
     for (std::size_t index = 1; index < 7; ++index) {
-        assert(tvs::media::mpegts::inspectPacket(
+        assert(dvbstreamer5::media::mpegts::inspectPacket(
             received.data() + index * 188, 188, info));
-        assert(info.pid == tvs::media::mpegts::kNullPid);
+        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
         assert(info.continuityCounter == index - 1);
     }
 
@@ -1019,7 +1019,7 @@ void testNativeFileCbrRelay() {
 }
 
 void testNativeHttpCbrRelay() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     std::vector<std::uint8_t> body;
     std::vector<Packet> sourcePackets;
     for (std::uint16_t index = 0; index < 8; ++index) {
@@ -1042,7 +1042,7 @@ void testNativeHttpCbrRelay() {
     config.accessKeyMode = "header";
     config.accessKeyName = "X-Stream-Key";
     config.accessKeyValue = "test-secret";
-    config.userAgent = "TVStreamer5-test";
+    config.userAgent = "DVBStreamer5-test";
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
     };
@@ -1065,9 +1065,9 @@ void testNativeHttpCbrRelay() {
         sourcePackets[7].begin(), sourcePackets[7].end(), received.begin()));
     PacketInfo info;
     for (std::size_t index = 1; index < 7; ++index) {
-        assert(tvs::media::mpegts::inspectPacket(
+        assert(dvbstreamer5::media::mpegts::inspectPacket(
             received.data() + index * 188, 188, info));
-        assert(info.pid == tvs::media::mpegts::kNullPid);
+        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
     }
 
     const auto stopDeadline = std::chrono::steady_clock::now() +
@@ -1084,11 +1084,11 @@ void testNativeHttpCbrRelay() {
     assert(relay.outputBytes() == 2 * 7 * 188);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: test-secret") != std::string::npos);
-    assert(request.find("TVStreamer5-test") != std::string::npos);
+    assert(request.find("DVBStreamer5-test") != std::string::npos);
 }
 
 void testNativeHttpQueryAccessKey() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const Packet sourcePacket = packet(0x0310, 2);
     std::vector<std::uint8_t> body(
         sourcePacket.begin(), sourcePacket.end());
@@ -1134,7 +1134,7 @@ void testNativeHttpQueryAccessKey() {
 }
 
 void testNativeHttpVbrAndRtpFanout() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     const Packet sourcePacket = packet(0x0321, 8);
     std::vector<std::uint8_t> body(sourcePacket.begin(), sourcePacket.end());
     UdpSocket udpReceiver;
@@ -1161,10 +1161,10 @@ void testNativeHttpVbrAndRtpFanout() {
     assert(std::equal(sourcePacket.begin(), sourcePacket.end(), received.begin()));
 
     assert(rtpReceiver.receive(received.data(), received.size(), size, 1000, error));
-    tvs::media::rtp::PacketView view;
-    assert(tvs::media::rtp::parsePacket(received.data(), size, view));
+    dvbstreamer5::media::rtp::PacketView view;
+    assert(dvbstreamer5::media::rtp::parsePacket(received.data(), size, view));
     std::vector<Packet> decoded;
-    assert(tvs::media::rtp::decodeMpegTsPayload(view, decoded));
+    assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(view, decoded));
     assert(decoded.size() == 1 && decoded.front() == sourcePacket);
 
     const auto stopDeadline = std::chrono::steady_clock::now() +
@@ -1182,7 +1182,7 @@ void testNativeHttpVbrAndRtpFanout() {
 }
 
 void testNativeHttpFailureIsReported() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     UdpSocket receiver;
     std::string error;
     assert(receiver.openReceiver("127.0.0.1", 0, "", "", 0, error));
@@ -1210,7 +1210,7 @@ void testNativeHttpFailureIsReported() {
 }
 
 void testNativeHttpDoesNotRedirectAccessKeys() {
-    using namespace tvs::media::network;
+    using namespace dvbstreamer5::media::network;
     UdpSocket receiver;
     std::string error;
     assert(receiver.openReceiver("127.0.0.1", 0, "", "", 0, error));
@@ -1245,7 +1245,7 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
 
 void testNativePreviewHubFanout() {
 #if !defined(_WIN32)
-    using tvs::media::network::NativePreviewHub;
+    using dvbstreamer5::media::network::NativePreviewHub;
     NativePreviewHub hub;
     std::string error;
     const int first = hub.subscribe(error);

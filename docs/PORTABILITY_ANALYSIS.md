@@ -1,4 +1,4 @@
-# TVStreamer5: анализ переноса и переносимости Linux-сборки
+# DVBStreamer5: анализ переноса и переносимости Linux-сборки
 
 Дата анализа: 2026-09-28. Исходная база: `Monkipnet/Tvstreamer_sat`, commit
 `f9af8f699455c9f16076734785b224d73eea5b23`.
@@ -20,10 +20,9 @@ playlist. Исправление CryptoWorks из upstream не копирова
 файла: текущая реализация уже содержит более полную проверку ошибок BIGNUM и
 освобождение памяти через `card_done`.
 
-Продукт, бинарник, CMake targets, пути установки и новые конфигурационные файлы
-переименованы в `TVStreamer5` / `tvstreamer5`. Старые конфиги
-`dvbstreamer5-*` и `tvstreammersat5-*`, каталоги CA plugins и старый ABI symbol
-по-прежнему распознаются.
+Продукт, бинарник, CMake targets, пути установки, конфигурационные файлы,
+CA plugin ABI и переменные окружения используют только имя
+`DVBStreamer5` / `dvbstreamer5`. Fallback на прежние имена удалён.
 
 ## Что означает «один бинарник для любого Linux»
 
@@ -66,7 +65,7 @@ GStreamer — framework с registry, динамическими plugins, codec m
 
 ## Целевая схема поставки
 
-- `TVStreamer5`: основной executable; web assets, transport core, TwoLAME и
+- `DVBStreamer5`: основной executable; web assets, transport core, TwoLAME и
   builtin Newcamd находятся внутри него.
 - `runtime/`: приватные shared libraries и GStreamer plugins, запускаемые через
   wrapper с собственными `LD_LIBRARY_PATH`, `GST_PLUGIN_PATH` и
@@ -85,7 +84,7 @@ bundle, а не один статический ELF.
 1. Отделить типы транспортных буферов от `GstBuffer` и сделать GStreamer опциональным (libcurl уже удалена).
 2. Завершить нативные HTTP/HLS/SRT paths для passthrough и сделать GStreamer
    optional на уровне CMake.
-3. Разделить `TVStreamer5-core` и `TVStreamer5-transcode` profiles.
+3. Разделить `DVBStreamer5-core` и `DVBStreamer5-transcode` profiles.
 4. Собирать и тестировать bundle в контейнерах с минимальным glibc baseline на
    целевой архитектуре `x86_64`.
 5. Проверять каждый release через `scripts/audit_runtime_deps.sh`, smoke tests и

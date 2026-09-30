@@ -10,23 +10,23 @@
 #include <memory>
 #include <string>
 
-namespace tvs::hls_scheduler {
+namespace dvbstreamer5::hls_scheduler {
 
-inline constexpr const char* kPipelineDataKey = "tvs-duration-hls-scheduler";
+inline constexpr const char* kPipelineDataKey = "dvbstreamer5-duration-hls-scheduler";
 // 203.21: nonzero GINT_TO_POINTER(HTTP status) while the scheduler has
 // confirmed that the HLS control resource is persistently unavailable.
 inline constexpr const char* kPipelineSourceUnavailableKey =
-    "tvs-duration-hls-source-unavailable";
+    "dvbstreamer5-duration-hls-source-unavailable";
 // 203.22: wall-clock lower bound for media already admitted by the HLS
 // scheduler. StreamManager uses this only to suppress a false no-input watchdog
 // while already-buffered HLS media is still guaranteed to cover playback.
 inline constexpr const char* kPipelineBufferedUntilSecKey =
-    "tvs-duration-hls-buffered-until-sec";
+    "dvbstreamer5-duration-hls-buffered-until-sec";
 // 203.23: rolling transport-media bitrate derived from actual segment bytes
 // divided by EXTINF duration. StableUdpOutput uses this as the HLS media clock
 // instead of PCR byte-density, which can be badly biased on VBR services.
 inline constexpr const char* kPipelineMediaBitrateKey =
-    "tvs-duration-hls-media-bitrate-bps";
+    "dvbstreamer5-duration-hls-media-bitrate-bps";
 
 // Own HLS segment downloader used instead of hlsdemux prefetching.  Segments are
 // downloaded quickly, but only when the duration already admitted downstream
@@ -70,4 +70,4 @@ uint64_t guaranteedBufferedAheadMilliseconds(GstElement* pipeline);
 // admitted yet, so legacy fallback rate detection may be used temporarily.
 uint64_t durationBasedMediaBitrate(GstElement* pipeline);
 
-} // namespace tvs::hls_scheduler
+} // namespace dvbstreamer5::hls_scheduler

@@ -115,8 +115,8 @@ std::string appendQueryAccess(const std::string& uri, const StreamConfig& cfg) {
     if (toLower(cfg.hlsAccessKeyMode) != "query" || cfg.hlsAccessKeyName.empty() ||
         cfg.hlsAccessKeyValue.empty()) return uri;
 
-    const std::string escapedName = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyName);
-    const std::string escapedValue = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyValue);
+    const std::string escapedName = dvbstreamer5::http::encodeQueryComponent(cfg.hlsAccessKeyName);
+    const std::string escapedValue = dvbstreamer5::http::encodeQueryComponent(cfg.hlsAccessKeyValue);
     const auto fragmentPosition = uri.find('#');
     std::string result = uri.substr(0, fragmentPosition);
     const std::string fragment = fragmentPosition == std::string::npos
@@ -146,22 +146,22 @@ bool httpGet(const std::string& rawUrl,
     status = 0;
     effectiveUrl.clear();
     const std::string url = appendQueryAccess(rawUrl, cfg);
-    tvs::http::RequestOptions options;
+    dvbstreamer5::http::RequestOptions options;
     options.connectTimeoutMs = std::min<long>(kHttpConnectTimeoutMs, transferTimeoutMs);
     options.readTimeoutMs = transferTimeoutMs;
     options.writeTimeoutMs = options.connectTimeoutMs;
     options.totalTimeoutMs = transferTimeoutMs;
     options.maxRedirects = 8;
     options.forwardHeadersAcrossOrigins = true;
-    options.userAgent = cfg.hlsUserAgent.empty() ? "Mozilla/5.0 TVStreamer5" : cfg.hlsUserAgent;
+    options.userAgent = cfg.hlsUserAgent.empty() ? "Mozilla/5.0 DVBStreamer5" : cfg.hlsUserAgent;
     options.stopping = &stopping;
     if (toLower(cfg.hlsAccessKeyMode) == "header" && !cfg.hlsAccessKeyName.empty() &&
         !cfg.hlsAccessKeyValue.empty()) {
         options.headers.emplace_back(cfg.hlsAccessKeyName, cfg.hlsAccessKeyValue);
     }
 
-    tvs::http::Response response;
-    const bool ok = tvs::http::get(url, options, response, error);
+    dvbstreamer5::http::Response response;
+    const bool ok = dvbstreamer5::http::get(url, options, response, error);
     status = response.status;
     effectiveUrl = response.effectiveUrl;
     body = std::move(response.body);
@@ -308,7 +308,7 @@ std::optional<Variant> chooseVariant(const std::vector<Variant>& variants, uint6
 
 } // namespace
 
-namespace tvs::hls_scheduler {
+namespace dvbstreamer5::hls_scheduler {
 
 class Scheduler::Impl {
 public:
@@ -947,7 +947,7 @@ private:
     }
 
     void run() {
-        rootPlaylistUrl_ = tvs::protocols::inputs::hlsInputUri(config_);
+        rootPlaylistUrl_ = dvbstreamer5::protocols::inputs::hlsInputUri(config_);
         activePlaylistUrl_ = rootPlaylistUrl_;
         if (activePlaylistUrl_.empty()) return;
         std::cerr << "HLS scheduler 203.25: stream=" << streamLabel()
@@ -1189,4 +1189,4 @@ uint64_t durationBasedMediaBitrate(GstElement* pipeline) {
         g_object_get_data(G_OBJECT(pipeline), kPipelineMediaBitrateKey)));
 }
 
-} // namespace tvs::hls_scheduler
+} // namespace dvbstreamer5::hls_scheduler

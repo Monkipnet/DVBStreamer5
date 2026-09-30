@@ -26,9 +26,9 @@ int main(int argc, char** argv) {
     mallopt(M_ARENA_MAX, 16);
     mallopt(M_TRIM_THRESHOLD, 512 * 1024);
 #endif
-    std::cerr << tvs::app::kProductName
-              << " " << tvs::app::kProgramVersion
-              << " | support=" << tvs::app::kSupportEmail << std::endl;
+    std::cerr << dvbstreamer5::app::kProductName
+              << " " << dvbstreamer5::app::kProgramVersion
+              << " | support=" << dvbstreamer5::app::kSupportEmail << std::endl;
     std::cerr << "main() entered" << std::endl;
 
     // Initialize GStreamer before HttpServer is created. The web UI queries
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
             std::cerr << "Auto-start unknown exception contained: stream=" << stream.id << std::endl;
         }
     }
-    std::cout << "TVStreamer5 running on port " << configManager.config.httpPort << std::endl;
+    std::cout << "DVBStreamer5 running on port " << configManager.config.httpPort << std::endl;
     std::cerr << "Calling ioc.run()" << std::endl;
 
     // A handler exception must not take down all 20+ active services.  Asio's

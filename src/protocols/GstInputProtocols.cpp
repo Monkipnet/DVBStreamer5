@@ -11,7 +11,7 @@
 #include <filesystem>
 #include <gst/gst.h>
 
-namespace tvs::protocols {
+namespace dvbstreamer5::protocols {
 
 std::string inputUriForGstreamer(const StreamConfig& cfg) {
     if (inputs::isHlsInput(cfg)) return inputs::hlsInputUri(cfg);
@@ -47,7 +47,7 @@ std::string inputUriForGstreamer(const StreamConfig& cfg) {
 }
 
 void appendDecodeInput(std::vector<std::string>& args, const StreamConfig& cfg) {
-    // TVStreamer5 handles live IPTV/SRT/HTTP/HLS sources itself.  Do not enable
+    // DVBStreamer5 handles live IPTV/SRT/HTTP/HLS sources itself.  Do not enable
     // uridecodebin buffering here: on live UDP/SRT inputs it can repeatedly
     // rebuffer the whole external transcoder and cause visible stalls on every
     // output protocol (SRT, HTTP and HLS).
@@ -63,4 +63,4 @@ std::vector<std::string> requiredInputElements() {
     return {"uridecodebin"};
 }
 
-} // namespace tvs::protocols
+} // namespace dvbstreamer5::protocols

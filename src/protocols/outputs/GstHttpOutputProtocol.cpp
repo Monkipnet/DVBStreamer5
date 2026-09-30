@@ -1,7 +1,7 @@
 #include "protocols/outputs/GstHttpOutputProtocol.h"
 #include "protocols/outputs/GstOutputProtocolUtils.h"
 #include "protocols/GstProtocolTypes.h"
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 bool appendHttpSink(std::vector<std::string>& args, const StreamConfig& cfg, GstOutputSpec& spec) {
     appendMpegTsMux(args, cfg);
 

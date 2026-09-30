@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 
 void addQueue(std::vector<std::string>& args, const std::string& name, uint64_t maxTimeNs = 3000000000ULL, bool leakyDownstream = false);
 std::string safeHost(const std::string& host, const std::string& fallback);
@@ -25,4 +25,4 @@ void appendOutputQueue(std::vector<std::string>& args, const std::string& name, 
 void appendOutputQueueWithTime(std::vector<std::string>& args, const std::string& name, uint64_t maxTimeNs, bool leakyDownstream = false);
 void assignTsPads(const StreamConfig& cfg, GstOutputSpec& spec);
 
-} // namespace tvs::protocols::outputs
+} // namespace dvbstreamer5::protocols::outputs

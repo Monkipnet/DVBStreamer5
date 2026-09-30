@@ -20,13 +20,13 @@ int main() {
     values.push_back(1);
     values.push_back(2);
 
-    std::string value = " TVSTREAMER5 ";
+    std::string value = " DVBSTREAMER5 ";
     boost::algorithm::trim(value);
     boost::algorithm::to_lower(value);
 
     if (ioContext.stopped() || buffer.size() != 0 ||
         request.target() != "/health" || values.front() != 1 ||
-        value != "tvstreamer5" || BOOST_BEAST_VERSION == 0 ||
+        value != "dvbstreamer5" || BOOST_BEAST_VERSION == 0 ||
         BOOST_VERSION != 109200) {
         std::cerr << "vendored Boost header test failed\n";
         return 1;

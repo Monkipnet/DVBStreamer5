@@ -14,12 +14,12 @@ bool testJsonCpp() {
     Json::CharReaderBuilder builder;
     Json::Value root;
     std::string error;
-    std::istringstream input(R"({"product":"TVStreamer5","version":1})");
+    std::istringstream input(R"({"product":"DVBStreamer5","version":1})");
     if (!Json::parseFromStream(builder, input, &root, &error)) {
         std::cerr << "JsonCpp parse failed: " << error << '\n';
         return false;
     }
-    return root["product"].asString() == "TVStreamer5" && root["version"].asInt() == 1;
+    return root["product"].asString() == "DVBStreamer5" && root["version"].asInt() == 1;
 }
 
 bool testDvbCsa() {

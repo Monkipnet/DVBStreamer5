@@ -6,7 +6,7 @@ const header = fs.readFileSync('src/StreamManager.h', 'utf8');
 const http = fs.readFileSync('src/HttpServer.cpp', 'utf8');
 const version = fs.readFileSync('src/AppVersion.h', 'utf8');
 
-assert.match(version, /kProgramVersion\s*=\s*"1\.0\.0"/, 'TVStreamer5 version must remain 1.0.0');
+assert.match(version, /kProgramVersion\s*=\s*"1\.0\.0"/, 'DVBStreamer5 version must remain 1.0.0');
 assert.ok(http.includes('value="rtsp-tcp"'), 'RTSP TCP input mode missing');
 assert.ok(http.includes('value="rtsp-udp"'), 'RTSP UDP input mode missing');
 assert.ok(http.includes('value="rtsp-auto"'), 'RTSP Auto input mode missing');
@@ -17,4 +17,4 @@ assert.ok(stream.includes('alawdec') && stream.includes('mulawdec'), 'G.711 deco
 assert.ok(stream.includes('audio_normalize=AAC-LC/48000/2'), 'G.711 AAC normalization missing');
 assert.ok(header.includes('rtspMpegTsLinked'), 'RTSP MP2T duplicate-branch guard missing');
 
-console.log('PASS: TVStreamer5 RTSP input TCP/UDP/Auto + H264/H265/AAC/MPA/G711/MP2T support');
+console.log('PASS: DVBStreamer5 RTSP input TCP/UDP/Auto + H264/H265/AAC/MPA/G711/MP2T support');

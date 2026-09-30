@@ -1,6 +1,6 @@
 #pragma once
 
-/* TVStreamer5 vendored libdvbcsa configuration: Linux x86_64 + SSE2. */
+/* DVBStreamer5 vendored libdvbcsa configuration: Linux x86_64 + SSE2. */
 #define STDC_HEADERS 1
 #define HAVE_STDLIB_H 1
 #define HAVE_STRING_H 1

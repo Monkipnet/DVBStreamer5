@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace tvs::media::mpegts {
+namespace dvbstreamer5::media::mpegts {
 
 bool inspectPacket(const std::uint8_t* data, std::size_t size, PacketInfo& info) noexcept {
     if (!data || size < kPacketSize || data[0] != kSyncByte) {
@@ -155,4 +155,4 @@ void ContinuityTracker::reset() noexcept {
     states_.fill({});
 }
 
-} // namespace tvs::media::mpegts
+} // namespace dvbstreamer5::media::mpegts

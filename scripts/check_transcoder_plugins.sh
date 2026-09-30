@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# TVStreamer5 GStreamer capability check.
+# DVBStreamer5 GStreamer capability check.
 # Core transcoder elements are mandatory. Input/output protocol elements are
 # reported separately because a deployment may intentionally use only a subset.
 
@@ -131,7 +131,7 @@ print_group() {
   done
 }
 
-echo "TVStreamer5 in-process GStreamer core is available."
+echo "DVBStreamer5 in-process GStreamer core is available."
 echo "  external gst-launch: disabled"
 echo "  Auto video encoder: ${nvenc_encoder:-${x264_encoder:-not available}}"
 echo "  NVIDIA NVENC: ${nvenc_encoder:-not available}"

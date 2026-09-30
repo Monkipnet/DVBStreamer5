@@ -807,7 +807,7 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         std::string attemptError;
         const auto attemptDeadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-        tvs::media::network::LinuxDvbTuneConfig tune;
+        dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
         tune.adapter = params.adapter;
         tune.frontend = params.frontend;
         tune.frequencyKHz = params.frequencyKHz;
@@ -824,7 +824,7 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         tune.pids = "8192";
         tune.lockTimeoutMs = timeoutMs;
 
-        tvs::media::network::LinuxDvbInput input;
+        dvbstreamer5::media::network::LinuxDvbInput input;
         tuned = input.open(tune, attemptError);
         if (tuned) {
             attemptStats = readFrontendStats(params);

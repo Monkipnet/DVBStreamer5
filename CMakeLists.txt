@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
-project(TVStreamer5 LANGUAGES C CXX)
+project(DVBStreamer5 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedWebAssets.cmake)
-tvstreamer5_generate_embedded_web_assets(
+dvbstreamer5_generate_embedded_web_assets(
     ${CMAKE_SOURCE_DIR}/web/vendor
     ${CMAKE_BINARY_DIR}/generated
     EMBEDDED_WEB_ASSET_SOURCE
@@ -17,42 +17,42 @@ find_package(Threads REQUIRED)
 
 pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
 
-add_library(tvstreamer5_boost_headers INTERFACE)
-target_include_directories(tvstreamer5_boost_headers INTERFACE
+add_library(dvbstreamer5_boost_headers INTERFACE)
+target_include_directories(dvbstreamer5_boost_headers INTERFACE
     ${CMAKE_SOURCE_DIR}/third_party/boost
 )
-target_compile_definitions(tvstreamer5_boost_headers INTERFACE
+target_compile_definitions(dvbstreamer5_boost_headers INTERFACE
     BOOST_ERROR_CODE_HEADER_ONLY
 )
 
-add_library(tvstreamer5_jsoncpp STATIC
+add_library(dvbstreamer5_jsoncpp STATIC
     third_party/jsoncpp/jsoncpp.cpp
 )
-target_include_directories(tvstreamer5_jsoncpp PUBLIC
+target_include_directories(dvbstreamer5_jsoncpp PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party
 )
 
-add_library(tvstreamer5_http_client STATIC
+add_library(dvbstreamer5_http_client STATIC
     src/NativeHttpClient.cpp
 )
-target_include_directories(tvstreamer5_http_client PUBLIC
+target_include_directories(dvbstreamer5_http_client PUBLIC
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/third_party
 )
-target_compile_definitions(tvstreamer5_http_client PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
-target_link_libraries(tvstreamer5_http_client PUBLIC
+target_compile_definitions(dvbstreamer5_http_client PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+target_link_libraries(dvbstreamer5_http_client PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     Threads::Threads
 )
 if(WIN32)
-    target_link_libraries(tvstreamer5_http_client PUBLIC ws2_32)
+    target_link_libraries(dvbstreamer5_http_client PUBLIC ws2_32)
 endif()
 
 add_subdirectory(third_party/twolame)
 add_subdirectory(third_party/libdvbcsa)
 
-add_library(tvstreamer5_media_core
+add_library(dvbstreamer5_media_core
     src/media/CbrTsPacer.cpp
     src/media/MpegTsRemapper.cpp
     src/media/Mp2Encoder.cpp
@@ -63,16 +63,16 @@ add_library(tvstreamer5_media_core
     src/media/NativePreviewHub.cpp
     src/media/NativeUdpRelay.cpp
 )
-target_include_directories(tvstreamer5_media_core
+target_include_directories(dvbstreamer5_media_core
     PUBLIC ${CMAKE_SOURCE_DIR}/src
 )
-target_link_libraries(tvstreamer5_media_core PUBLIC
+target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
-    tvstreamer5_http_client
+    dvbstreamer5_http_client
 )
-target_link_libraries(tvstreamer5_media_core PRIVATE tvstreamer5_twolame)
+target_link_libraries(dvbstreamer5_media_core PRIVATE dvbstreamer5_twolame)
 if(WIN32)
-    target_link_libraries(tvstreamer5_media_core PUBLIC ws2_32)
+    target_link_libraries(dvbstreamer5_media_core PUBLIC ws2_32)
 endif()
 
 include_directories(
@@ -84,7 +84,7 @@ link_directories(
     ${GSTREAMER_LIBRARY_DIRS}
 )
 
-add_executable(TVStreamer5
+add_executable(DVBStreamer5
     src/main.cpp
     src/utils.cpp
     src/ConfigManager.cpp
@@ -146,67 +146,49 @@ add_executable(TVStreamer5
     src/OscamMiniManager.cpp
 )
 
-target_link_libraries(TVStreamer5
-    tvstreamer5_boost_headers
-    tvstreamer5_media_core
-    tvstreamer5_jsoncpp
+target_link_libraries(DVBStreamer5
+    dvbstreamer5_boost_headers
+    dvbstreamer5_media_core
+    dvbstreamer5_jsoncpp
     ${GSTREAMER_LIBRARIES}
-    tvstreamer5_dvbcsa
+    dvbstreamer5_dvbcsa
     OpenSSL::Crypto
     pthread
     dl
     glib-2.0
     gio-2.0
 )
-if(DEFINED DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
-    set(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "${DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS}" CACHE BOOL
-        "Build standalone native MPEG-TS/RTP tests")
-elseif(DEFINED TVSTREAMMERSAT5_BUILD_MEDIA_CORE_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
-    set(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "${TVSTREAMMERSAT5_BUILD_MEDIA_CORE_TESTS}" CACHE BOOL
-        "Build standalone native MPEG-TS/RTP tests")
-endif()
-option(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
-if(TVSTREAMER5_BUILD_MEDIA_CORE_TESTS)
+option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
+if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
 endif()
 
-if(DEFINED DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS AND NOT DEFINED TVSTREAMER5_BUILD_MP2_ENCODER_TESTS)
-    set(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS "${DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS}" CACHE BOOL
-        "Build standalone PCM-to-MP2 encoder tests")
-endif()
-option(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
-if(TVSTREAMER5_BUILD_MP2_ENCODER_TESTS)
+option(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)
+if(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS)
     add_subdirectory(tests/mp2_encoder)
 endif()
 
-option(TVSTREAMER5_BUILD_VENDOR_TESTS "Build tests for vendored third-party libraries" OFF)
-if(TVSTREAMER5_BUILD_VENDOR_TESTS)
+option(DVBSTREAMER5_BUILD_VENDOR_TESTS "Build tests for vendored third-party libraries" OFF)
+if(DVBSTREAMER5_BUILD_VENDOR_TESTS)
     add_subdirectory(tests/vendor)
     add_subdirectory(tests/http_client)
     add_subdirectory(tests/boost_headers)
 endif()
 
-if(DEFINED DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
-    set(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "${DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE}" CACHE BOOL
-        "Build non-decoding CaBackend ABI example plugin")
-elseif(DEFINED TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE AND NOT DEFINED TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
-    set(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "${TVSTREAMMERSAT5_BUILD_CA_PLUGIN_EXAMPLE}" CACHE BOOL
-        "Build non-decoding CaBackend ABI example plugin")
-endif()
-option(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "Build non-decoding CaBackend ABI example plugin" OFF)
-if(TVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
-    add_library(tvstreamer5_ca_passthrough_example SHARED
+option(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE "Build non-decoding CaBackend ABI example plugin" OFF)
+if(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
+    add_library(dvbstreamer5_ca_passthrough_example SHARED
         examples/ca_backend_passthrough_plugin.cpp
     )
-    target_include_directories(tvstreamer5_ca_passthrough_example PRIVATE
+    target_include_directories(dvbstreamer5_ca_passthrough_example PRIVATE
         ${CMAKE_SOURCE_DIR}/src
     )
-    set_target_properties(tvstreamer5_ca_passthrough_example PROPERTIES
+    set_target_properties(dvbstreamer5_ca_passthrough_example PROPERTIES
         PREFIX ""
-        OUTPUT_NAME "tvstreamer5-ca-passthrough-example"
+        OUTPUT_NAME "dvbstreamer5-ca-passthrough-example"
     )
 endif()
 
-install(TARGETS TVStreamer5 RUNTIME DESTINATION bin)
+install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)
 
 include(${CMAKE_SOURCE_DIR}/cmake/OscamMini.cmake)

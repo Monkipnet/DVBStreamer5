@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <deque>
 
-namespace tvs::media::mpegts {
+namespace dvbstreamer5::media::mpegts {
 
 inline constexpr std::size_t kPacketsPerCbrDatagram = 7;
 using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
@@ -43,4 +43,4 @@ private:
     bool started_ = false;
 };
 
-} // namespace tvs::media::mpegts
+} // namespace dvbstreamer5::media::mpegts

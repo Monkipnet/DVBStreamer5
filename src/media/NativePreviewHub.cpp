@@ -12,7 +12,7 @@
 #include <unistd.h>
 #endif
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 
 NativePreviewHub::~NativePreviewHub() {
     close();
@@ -66,11 +66,11 @@ void NativePreviewHub::unsubscribe(int readFd) {
 
 void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
 #if !defined(_WIN32)
-    if (!data || size < tvs::media::mpegts::kPacketSize) return;
+    if (!data || size < dvbstreamer5::media::mpegts::kPacketSize) return;
     constexpr std::size_t kPreviewDatagramBytes =
-        7 * tvs::media::mpegts::kPacketSize;
+        7 * dvbstreamer5::media::mpegts::kPacketSize;
     const std::size_t alignedSize =
-        size - (size % tvs::media::mpegts::kPacketSize);
+        size - (size % dvbstreamer5::media::mpegts::kPacketSize);
 
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto subscriber = subscribers_.begin(); subscriber != subscribers_.end();) {
@@ -117,4 +117,4 @@ void NativePreviewHub::close() {
 #endif
 }
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

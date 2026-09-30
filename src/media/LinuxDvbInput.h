@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 
 struct LinuxDvbTuneConfig {
     int adapter = 0;
@@ -52,4 +52,4 @@ private:
     std::vector<int> demuxFds_;
 };
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

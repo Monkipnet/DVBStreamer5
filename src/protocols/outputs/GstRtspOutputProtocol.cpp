@@ -1,6 +1,6 @@
 #include "protocols/outputs/GstRtspOutputProtocol.h"
 #include "protocols/GstProtocolTypes.h"
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 bool appendRtspSink(std::vector<std::string>& args, const StreamConfig& cfg, GstOutputSpec& spec) {
     args.insert(args.end(), {
         "rtspclientsink",

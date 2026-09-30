@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 
 namespace {
 
@@ -170,4 +170,4 @@ void assignTsPads(const StreamConfig& cfg, GstOutputSpec& spec) {
     spec.audioPad = "mux.sink_" + std::to_string(effectiveAudioPid(cfg));
 }
 
-} // namespace tvs::protocols::outputs
+} // namespace dvbstreamer5::protocols::outputs

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace tvs::media::mpegts {
+namespace dvbstreamer5::media::mpegts {
 namespace {
 
 constexpr std::uint64_t kNanosecondsPerSecond = 1000000000ULL;
@@ -96,4 +96,4 @@ void CbrTsPacer::makeNullPacket(Packet& packet) noexcept {
         (nullContinuityCounter_ + 1U) & 0x0fU);
 }
 
-} // namespace tvs::media::mpegts
+} // namespace dvbstreamer5::media::mpegts

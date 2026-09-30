@@ -56,10 +56,10 @@ RUN set -eux; \
     elif gst-inspect-1.0 avenc_aac >/dev/null 2>&1; then :; \
     else echo "No supported AAC encoder was found in the runtime image" >&2; exit 1; fi
 
-COPY --from=build /src/build/TVStreamer5 /app/TVStreamer5
-RUN mkdir -p /opt/tvstreamer5/ca-plugins
+COPY --from=build /src/build/DVBStreamer5 /app/DVBStreamer5
+RUN mkdir -p /opt/DVBStreamer5/ca-plugins
 
 WORKDIR /data
 EXPOSE 9000/tcp
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["/app/TVStreamer5"]
+ENTRYPOINT ["/app/DVBStreamer5"]

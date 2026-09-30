@@ -17,7 +17,7 @@
 #include <thread>
 #include <vector>
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 
 struct NativeUdpRelayOutputConfig {
     std::string outputType;
@@ -101,4 +101,4 @@ private:
     std::thread worker_;
 };
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

@@ -12,7 +12,7 @@
 #include "protocols/stream/inputs/StreamUdpInputProtocol.h"
 #include "DvbSatellite.h"
 
-namespace tvs::stream_protocols {
+namespace dvbstreamer5::stream_protocols {
 
 InputProtocolKind inputKind(const StreamConfig& cfg) {
     const std::string normalizedInput = normalizeInputUri(cfg.inputUri);
@@ -94,4 +94,4 @@ bool isDvbInput(InputProtocolKind kind) {
     return kind == InputProtocolKind::Dvb;
 }
 
-} // namespace tvs::stream_protocols
+} // namespace dvbstreamer5::stream_protocols

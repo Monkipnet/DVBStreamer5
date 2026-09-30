@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# TVStreamer5 1.0.0 — safe binary + web installer / updater for Ubuntu/Debian.
+# DVBStreamer5 1.0.0 — safe binary + web installer / updater for Ubuntu/Debian.
 set -Eeuo pipefail
 umask 022
 
-APP=TVStreamer5
-UNIT=tvstreamer5.service
-DEFAULT_INSTALL_DIR=/opt/TVStreamer5
-LEGACY_APP=TVStreammerSAT5
-LEGACY_UNIT=tvstreammersat5.service
-LEGACY_INSTALL_DIR=/opt/TVStreammerSAT5
+APP=DVBStreamer5
+UNIT=dvbstreamer5.service
+DEFAULT_INSTALL_DIR=/opt/DVBStreamer5
 SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-INSTALL_DIR="${TVS_INSTALL_DIR:-}"
+INSTALL_DIR="${DVBSTREAMER5_INSTALL_DIR:-}"
 INSTALL_DIR_EXPLICIT=0
 [[ -n "$INSTALL_DIR" ]] && INSTALL_DIR_EXPLICIT=1
 BUILD_DIR=''
@@ -23,14 +20,14 @@ WITH_OSCAM=0
 
 usage() {
     cat <<'EOF'
-TVStreamer5 installer / updater (binary + web + optional CA plugin).
-Usage: sudo bash install_tvstreamer5_binary.sh [options]
+DVBStreamer5 installer / updater (binary + web + optional CA plugin).
+Usage: sudo bash install_dvbstreamer5_binary.sh [options]
 
   --source DIR       Project root containing web/ and a compiled binary
   --build-dir DIR    Exact CMake build directory (recommended for updates)
   --web-dir DIR      Exact directory containing preview/ and vendor/
   --install-dir DIR  Installation directory; existing systemd WorkingDirectory
-                     is detected when possible (fallback /opt/TVStreamer5)
+                     is detected when possible (fallback /opt/DVBStreamer5)
   --mode install|update    Skip the interactive mode selection
   --restart         Start/restart the main service AFTER updating (interrupts streams)
   --no-restart      Deploy files WITHOUT restarting the service
@@ -81,23 +78,15 @@ ask_yes() {
 }
 
 [[ "$MODE" == '' || "$MODE" == install || "$MODE" == update ]] || fail 'Use --mode install or --mode update.'
-[[ "$(uname -s)" == Linux ]] || fail 'TVStreamer5 installation is supported only on Linux.'
-[[ "$(uname -m)" == x86_64 ]] || fail "Unsupported architecture: $(uname -m); TVStreamer5 targets x86_64 only."
+[[ "$(uname -s)" == Linux ]] || fail 'DVBStreamer5 installation is supported only on Linux.'
+[[ "$(uname -m)" == x86_64 ]] || fail "Unsupported architecture: $(uname -m); DVBStreamer5 targets x86_64 only."
 [[ -d "$SOURCE_DIR" ]] || fail "Source directory does not exist: $SOURCE_DIR"
 SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd -P)"
 
-# Detect legacy locations too, so upgrades continue using their existing data.
 if (( ! INSTALL_DIR_EXPLICIT )) && command -v systemctl >/dev/null 2>&1; then
     detected="$(systemctl show "$UNIT" -p WorkingDirectory --value 2>/dev/null || true)"
     if [[ -n "$detected" && -f "$detected/$APP" ]]; then
         INSTALL_DIR="$detected"
-    else
-        detected="$(systemctl show "$LEGACY_UNIT" -p WorkingDirectory --value 2>/dev/null || true)"
-        if [[ -n "$detected" && ( -f "$detected/$LEGACY_APP" || -f "$detected/$APP" ) ]]; then
-            INSTALL_DIR="$detected"
-        elif [[ -f "$LEGACY_INSTALL_DIR/$LEGACY_APP" ]]; then
-            INSTALL_DIR="$LEGACY_INSTALL_DIR"
-        fi
     fi
 fi
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
@@ -108,7 +97,7 @@ if [[ -e "$INSTALL_DIR" ]]; then
 fi
 
 existing=no
-[[ -f "$INSTALL_DIR/$APP" || -f "$INSTALL_DIR/$LEGACY_APP" ]] && existing=yes
+[[ -f "$INSTALL_DIR/$APP" ]] && existing=yes
 if [[ -z "$MODE" ]]; then
     [[ -t 0 ]] || fail 'Specify --mode install or --mode update when running non-interactively.'
     printf '\nChoose operation:\n  1) New installation\n  2) Update existing installation\n  0) Cancel\n'
@@ -116,7 +105,7 @@ if [[ -z "$MODE" ]]; then
     case "$selection" in 1) MODE=install ;; 2) MODE=update ;; *) fail 'Cancelled.' ;; esac
 fi
 if [[ "$MODE" == update && "$existing" != yes ]]; then
-    fail "No existing executable found at $INSTALL_DIR/$APP or $INSTALL_DIR/$LEGACY_APP; choose the correct --install-dir."
+    fail "No existing executable found at $INSTALL_DIR/$APP; choose the correct --install-dir."
 fi
 if [[ "$MODE" == install && "$existing" == yes ]]; then
     fail "Existing installation found at $INSTALL_DIR; choose update to preserve it."
@@ -127,13 +116,13 @@ if [[ -n "$BUILD_DIR" ]]; then
     [[ "$BUILD_DIR" == /* ]] || BUILD_DIR="$SOURCE_DIR/$BUILD_DIR"
     [[ -d "$BUILD_DIR" ]] || fail "Build directory does not exist: $BUILD_DIR"
     BINARY="$BUILD_DIR/$APP"
-    PLUGIN="$BUILD_DIR/tvstreamer5-ca-newcamd.so"
+    PLUGIN="$BUILD_DIR/dvbstreamer5-ca-newcamd.so"
 elif [[ -f "$SOURCE_DIR/$APP" ]]; then
     BINARY="$SOURCE_DIR/$APP"
-    PLUGIN="$SOURCE_DIR/tvstreamer5-ca-newcamd.so"
+    PLUGIN="$SOURCE_DIR/dvbstreamer5-ca-newcamd.so"
 elif [[ -f "$SOURCE_DIR/build/$APP" ]]; then
     BINARY="$SOURCE_DIR/build/$APP"
-    PLUGIN="$SOURCE_DIR/build/tvstreamer5-ca-newcamd.so"
+    PLUGIN="$SOURCE_DIR/build/dvbstreamer5-ca-newcamd.so"
 else
     fail "No executable in $SOURCE_DIR or its build/ directory. Specify --build-dir build-preview-20368-fixed."
 fi
@@ -173,9 +162,9 @@ fi
 if [[ -z "$RESTART" ]]; then
     if [[ "$MODE" == update ]]; then
         echo 'Restarting the running service interrupts ALL currently streaming channels.'
-        if ask_yes 'Restart TVStreamer5 after deployment?'; then RESTART=yes; else RESTART=no; fi
+        if ask_yes 'Restart DVBStreamer5 after deployment?'; then RESTART=yes; else RESTART=no; fi
     else
-        if ask_yes 'Start TVStreamer5 after installation?'; then RESTART=yes; else RESTART=no; fi
+        if ask_yes 'Start DVBStreamer5 after installation?'; then RESTART=yes; else RESTART=no; fi
     fi
 fi
 if [[ -z "$INSTALL_DEPS" ]]; then
@@ -188,21 +177,8 @@ fi
 
 active=no
 if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$UNIT" 2>/dev/null; then active=yes; fi
-legacy_active=no
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$LEGACY_UNIT" 2>/dev/null; then
-    legacy_active=yes
-    active=yes
-fi
-legacy_unit_present=no
-legacy_enabled=no
-if command -v systemctl >/dev/null 2>&1; then
-    if [[ -f "/etc/systemd/system/$LEGACY_UNIT" ]] ||
-       systemctl list-unit-files "$LEGACY_UNIT" --no-legend 2>/dev/null | grep -q -F "$LEGACY_UNIT"; then
-        legacy_unit_present=yes
-    fi
-    if systemctl is-enabled --quiet "$LEGACY_UNIT" 2>/dev/null; then legacy_enabled=yes; fi
-fi
-printf '\nOperation       : %s\nSource          : %s\nExecutable      : %s\nweb source      : %s\nMPEG-TS player  : %s\nDestination     : %s\nRunning service : %s\nRestart service : %s\napt dependencies: %s\n' \
+printf '
+Operation       : %s\nSource          : %s\nExecutable      : %s\nweb source      : %s\nMPEG-TS player  : %s\nDestination     : %s\nRunning service : %s\nRestart service : %s\napt dependencies: %s\n' \
     "$MODE" "$SOURCE_DIR" "$BINARY" "$WEB_DIR" "$MPEGTS_SOURCE" "$INSTALL_DIR" "$active" "$RESTART" "$INSTALL_DEPS"
 [[ -z "$PLUGIN" ]] || printf 'CA plugin       : %s\n' "$PLUGIN"
 
@@ -276,14 +252,10 @@ rollback() {
             cp -a -- "$BACKUP/$APP" "$STAGE/$APP.restore" && mv -f -- "$STAGE/$APP.restore" "$INSTALL_DIR/$APP" || true
         else rm -f -- "$INSTALL_DIR/$APP"; fi
     fi
-    if [[ -f "$BACKUP/$LEGACY_APP.previous" ]]; then
-        rm -f -- "$INSTALL_DIR/$LEGACY_APP"
-        mv -- "$BACKUP/$LEGACY_APP.previous" "$INSTALL_DIR/$LEGACY_APP" || true
-    fi
     if (( PLUGIN_CHANGED )); then
-        if [[ -f "$BACKUP/tvstreamer5-ca-newcamd.so" ]]; then
-            cp -a -- "$BACKUP/tvstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so" || true
-        else rm -f -- "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so"; fi
+        if [[ -f "$BACKUP/dvbstreamer5-ca-newcamd.so" ]]; then
+            cp -a -- "$BACKUP/dvbstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so" || true
+        else rm -f -- "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"; fi
     fi
     if (( OSCAM_CHANGED )); then
         if [[ -f "$BACKUP/oscam-mini" ]]; then
@@ -291,13 +263,7 @@ rollback() {
         else rm -f -- "$INSTALL_DIR/oscam-mini/oscam-mini"; fi
     fi
     if [[ "$WAS_ACTIVE" == yes && "$RESTART" == yes ]]; then
-        if [[ "$legacy_active" == yes || "$legacy_enabled" == yes ]]; then
-            systemctl disable "$UNIT" || true
-            if [[ "$legacy_enabled" == yes ]]; then systemctl enable "$LEGACY_UNIT" || true; fi
-            systemctl restart "$LEGACY_UNIT" || echo "WARNING: legacy service did not restart; inspect journalctl -u $LEGACY_UNIT" >&2
-        else
-            systemctl restart "$UNIT" || echo "WARNING: original service did not restart; inspect journalctl -u $UNIT" >&2
-        fi
+        systemctl restart "$UNIT" || echo "WARNING: service did not restart; inspect journalctl -u $UNIT" >&2
     fi
     cleanup
     exit "$rc"
@@ -314,7 +280,7 @@ cp -a -- "$WEB_DIR/." "$STAGE/web/"
 [[ -s "$STAGE/web/vendor/mpegts.min.js" && -s "$STAGE/web/preview/preview-player.js" ]] || \
     fail 'Staged web content is incomplete.'
 if [[ -n "$PLUGIN" ]]; then
-    install -m 0644 "$PLUGIN" "$STAGE/tvstreamer5-ca-newcamd.so"
+    install -m 0644 "$PLUGIN" "$STAGE/dvbstreamer5-ca-newcamd.so"
 fi
 if [[ -n "$OSCAM_BINARY" ]]; then
     install -m 0755 "$OSCAM_BINARY" "$STAGE/oscam-mini"
@@ -322,16 +288,11 @@ fi
 
 # Do not touch production until every asset has been staged and verified.
 if [[ -f "$INSTALL_DIR/$APP" ]]; then cp -a -- "$INSTALL_DIR/$APP" "$BACKUP/$APP"; fi
-LEGACY_COMPAT=no
-if [[ -e "$INSTALL_DIR/$LEGACY_APP" || -L "$INSTALL_DIR/$LEGACY_APP" ]]; then
-    LEGACY_COMPAT=yes
-    cp -a -- "$INSTALL_DIR/$LEGACY_APP" "$BACKUP/$LEGACY_APP"
-fi
 if [[ -d "$INSTALL_DIR/web" ]]; then
     cp -a -- "$INSTALL_DIR/web" "$BACKUP/web"   # persistent rollback copy
 fi
-if [[ -n "$PLUGIN" && -f "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so" ]]; then
-    cp -a -- "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so" "$BACKUP/tvstreamer5-ca-newcamd.so"
+if [[ -n "$PLUGIN" && -f "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so" ]]; then
+    cp -a -- "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so" "$BACKUP/dvbstreamer5-ca-newcamd.so"
 fi
 if [[ -n "$OSCAM_BINARY" && -f "$INSTALL_DIR/oscam-mini/oscam-mini" ]]; then
     cp -a -- "$INSTALL_DIR/oscam-mini/oscam-mini" "$BACKUP/oscam-mini"
@@ -340,19 +301,6 @@ fi
 log 'Deploying executable, complete web/ tree and optional binaries'
 BIN_CHANGED=1
 mv -f -- "$STAGE/$APP" "$INSTALL_DIR/$APP"
-if [[ "$LEGACY_COMPAT" == yes ]]; then
-    if [[ -L "$INSTALL_DIR/$LEGACY_APP" ]]; then
-        legacy_target="$(readlink -- "$INSTALL_DIR/$LEGACY_APP")"
-        if [[ "$legacy_target" != "$APP" ]]; then
-            mv -- "$INSTALL_DIR/$LEGACY_APP" "$BACKUP/$LEGACY_APP.previous"
-        fi
-    elif [[ -e "$INSTALL_DIR/$LEGACY_APP" ]]; then
-        mv -- "$INSTALL_DIR/$LEGACY_APP" "$BACKUP/$LEGACY_APP.previous"
-    fi
-    if [[ ! -L "$INSTALL_DIR/$LEGACY_APP" ]]; then
-        ln -s "$APP" "$INSTALL_DIR/$LEGACY_APP"
-    fi
-fi
 WEB_CHANGED=1
 if [[ -d "$INSTALL_DIR/web" ]]; then
     mv -- "$INSTALL_DIR/web" "$BACKUP/web.previous"  # fast, same filesystem
@@ -361,7 +309,7 @@ mv -- "$STAGE/web" "$INSTALL_DIR/web"
 if [[ -n "$PLUGIN" ]]; then
     install -d -m 0755 "$INSTALL_DIR/ca-plugins"
     PLUGIN_CHANGED=1
-    mv -f -- "$STAGE/tvstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/tvstreamer5-ca-newcamd.so"
+    mv -f -- "$STAGE/dvbstreamer5-ca-newcamd.so" "$INSTALL_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
 fi
 if [[ -n "$OSCAM_BINARY" ]]; then
     install -d -m 0755 "$INSTALL_DIR/oscam-mini/config"
@@ -375,7 +323,7 @@ if [[ "$MODE" == install ]] || ! systemctl list-unit-files "$UNIT" --no-legend 2
         install -d -m 0755 /etc/systemd/system
         cat > "/etc/systemd/system/$UNIT" <<EOFUNIT
 [Unit]
-Description=TVStreamer5 streaming service
+Description=DVBStreamer5 streaming service
 Wants=network-online.target
 After=network-online.target
 
@@ -399,20 +347,14 @@ EOFUNIT
 fi
 
 if [[ "$RESTART" == yes ]]; then
-    log 'Restarting TVStreamer5 (this interrupts the channels)'
+    log 'Restarting DVBStreamer5 (this interrupts the channels)'
     systemctl daemon-reload
     systemctl enable "$UNIT" >/dev/null
-    if [[ "$legacy_unit_present" == yes ]]; then
-        systemctl disable --now "$LEGACY_UNIT"
-    fi
     systemctl restart "$UNIT"
     sleep 2
     systemctl is-active --quiet "$UNIT" || fail 'Service did not become active.'
 else
     echo 'Service left untouched. Restart manually in a maintenance window.'
-    if [[ "$legacy_unit_present" == yes ]]; then
-        echo "Legacy service $LEGACY_UNIT remains configured. Disable it before starting $UNIT."
-    fi
 fi
 DEPLOY_SUCCESS=1
 trap - ERR INT TERM
@@ -422,9 +364,6 @@ printf 'web assets: %s/web (including preview/, vendor/, mpegts.min.js)\n' "$INS
 printf 'Rollback backup: %s\n' "$BACKUP"
 printf 'Service status: systemctl status %s --no-pager\n' "$UNIT"
 if [[ "$RESTART" == no ]]; then
-    if [[ "$legacy_unit_present" == yes ]]; then
-        printf 'Later, when safe: sudo systemctl disable --now %s && sudo systemctl enable --now %s\n' "$LEGACY_UNIT" "$UNIT"
-    else
-        printf 'Later, when safe: sudo systemctl restart %s\n' "$UNIT"
-    fi
+    printf 'Later, when safe: sudo systemctl restart %s
+' "$UNIT"
 fi

@@ -10,14 +10,14 @@
 #include <vector>
 
 int main() {
-    if (tvs::http::encodeQueryComponent("a b&я") != "a%20b%26%D1%8F") {
+    if (dvbstreamer5::http::encodeQueryComponent("a b&я") != "a%20b%26%D1%8F") {
         std::cerr << "query encoding test failed\n";
         return 1;
     }
 
     httplib::Server server;
     server.Get("/payload", [](const httplib::Request&, httplib::Response& response) {
-        response.set_content("TVStreamer5", "application/octet-stream");
+        response.set_content("DVBStreamer5", "application/octet-stream");
     });
     server.Get("/redirect", [](const httplib::Request&, httplib::Response& response) {
         response.set_redirect("/payload", 302);
@@ -40,22 +40,22 @@ int main() {
     std::thread serverThread([&] { server.listen_after_bind(); });
 
     const std::string origin = "http://127.0.0.1:" + std::to_string(port);
-    tvs::http::RequestOptions options;
+    dvbstreamer5::http::RequestOptions options;
     options.headers.emplace_back("X-TVStreamer-Test", "native-client");
     options.maxBodyBytes = 1024;
-    tvs::http::Response response;
+    dvbstreamer5::http::Response response;
     std::string error;
 
-    bool ok = tvs::http::get(origin + "/redirect", options, response, error);
+    bool ok = dvbstreamer5::http::get(origin + "/redirect", options, response, error);
     if (!ok || response.status != 200 || response.effectiveUrl != origin + "/payload" ||
-        std::string(response.body.begin(), response.body.end()) != "TVStreamer5") {
+        std::string(response.body.begin(), response.body.end()) != "DVBStreamer5") {
         std::cerr << "redirected buffered GET failed: " << error << '\n';
         server.stop();
         serverThread.join();
         return 3;
     }
 
-    ok = tvs::http::get(origin + "/nested/redirect", options, response, error);
+    ok = dvbstreamer5::http::get(origin + "/nested/redirect", options, response, error);
     if (!ok || response.effectiveUrl != origin + "/payload?token=a%20b") {
         std::cerr << "relative redirect resolution failed: " << error << '\n';
         server.stop();
@@ -64,7 +64,7 @@ int main() {
     }
 
     std::vector<std::uint8_t> streamed;
-    ok = tvs::http::get(origin + "/header", options, response, error,
+    ok = dvbstreamer5::http::get(origin + "/header", options, response, error,
         [&](const std::uint8_t* data, std::size_t size) {
             streamed.insert(streamed.end(), data, data + size);
             return true;
@@ -76,7 +76,7 @@ int main() {
         return 5;
     }
 
-    if (tvs::http::get(origin + "/large", options, response, error) ||
+    if (dvbstreamer5::http::get(origin + "/large", options, response, error) ||
         error.find("body limit") == std::string::npos || response.body.size() != 1024) {
         std::cerr << "response body limit test failed\n";
         server.stop();
@@ -86,7 +86,7 @@ int main() {
 
     std::atomic<bool> stopping{true};
     options.stopping = &stopping;
-    if (tvs::http::get(origin + "/payload", options, response, error) ||
+    if (dvbstreamer5::http::get(origin + "/payload", options, response, error) ||
         error != "request cancelled") {
         std::cerr << "pre-cancelled request test failed\n";
         server.stop();

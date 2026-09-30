@@ -10,7 +10,7 @@
 #include "protocols/outputs/GstSrtOutputProtocol.h"
 #include "protocols/outputs/GstUdpOutputProtocol.h"
 
-namespace tvs::protocols {
+namespace dvbstreamer5::protocols {
 
 std::vector<std::string> requiredOutputElements() {
     return {"mpegtsmux", "tsparse", "identity", "udpsink", "rtpmp2tpay", "filesink", "srtsink", "tcpserversink", "hlssink", "flvmux", "rtmpsink", "rtspclientsink"};
@@ -75,4 +75,4 @@ bool appendOutputMuxAndSink(
     }
 }
 
-} // namespace tvs::protocols
+} // namespace dvbstreamer5::protocols

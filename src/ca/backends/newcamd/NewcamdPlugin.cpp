@@ -28,8 +28,8 @@ constexpr uint16_t kNullPid = 0x1FFF;
 
 bool caDiagnosticsEnabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("TVS_CA_DIAGNOSTICS");
-        if (!value || !*value) value = std::getenv("TVS_DVB_DIAGNOSTICS");
+        const char* value = std::getenv("DVBSTREAMER5_CA_DIAGNOSTICS");
+        if (!value || !*value) value = std::getenv("DVBSTREAMER5_DVB_DIAGNOSTICS");
         return value && *value && std::strcmp(value, "0") != 0;
     }();
     return enabled;
@@ -299,7 +299,7 @@ void write_error(char* error, size_t error_size, const std::string& message) {
     error[count] = '\0';
 }
 
-void write_status(tvs_ca_ts_result_v1* result, const std::string& status) {
+void write_status(dvbstreamer5_ca_ts_result_v1* result, const std::string& status) {
     if (!result || status.empty()) return;
     const size_t count = std::min(sizeof(result->status) - 1, status.size());
     std::memcpy(result->status, status.data(), count);
@@ -918,7 +918,7 @@ void configure_service_callback(NewcamdInstance* inst,
 
 extern "C" {
 
-static void* newcamd_create(const struct tvs_ca_host_api_v1* host) {
+static void* newcamd_create(const struct dvbstreamer5_ca_host_api_v1* host) {
     (void)host;
     return new NewcamdInstance();
 }
@@ -927,11 +927,11 @@ static void newcamd_destroy(void* instance) {
     delete static_cast<NewcamdInstance*>(instance);
 }
 
-static int newcamd_open_reader(void* instance, const struct tvs_ca_reader_info_v1* reader, char* error, size_t error_size) {
+static int newcamd_open_reader(void* instance, const struct dvbstreamer5_ca_reader_info_v1* reader, char* error, size_t error_size) {
     auto* inst = static_cast<NewcamdInstance*>(instance);
     if (!inst || !reader || !reader->reader_key || !*reader->reader_key) {
         write_error(error, error_size, "invalid Newcamd CAM client instance");
-        return TVS_CA_RESULT_ERROR;
+        return DVBSTREAMER5_CA_RESULT_ERROR;
     }
 
     const std::string clientKey = reader->reader_key;
@@ -939,7 +939,7 @@ static int newcamd_open_reader(void* instance, const struct tvs_ca_reader_info_v
     Json::Value config = parse_config(reader->backend_config_json, parseError);
     if (!parseError.empty()) {
         write_error(error, error_size, "invalid Newcamd backend_config JSON: " + parseError);
-        return TVS_CA_RESULT_ERROR;
+        return DVBSTREAMER5_CA_RESULT_ERROR;
     }
 
     ReaderConfig readerConfig;
@@ -953,7 +953,7 @@ static int newcamd_open_reader(void* instance, const struct tvs_ca_reader_info_v
 
     // v196: keep the reader probe alive as a dedicated AU/EMM Newcamd
     // connection.  Astra forwards addressed Irdeto EMMs over its CAM session;
-    // the old TVStreamer5 probe disconnected immediately and therefore the
+    // the old DVBStreamer5 probe disconnected immediately and therefore the
     // card never received entitlement updates while our service sessions ran.
     auto auSession = std::make_shared<NewcamdAuSession>();
     auSession->client = std::make_unique<NewcamdClient>(
@@ -964,7 +964,7 @@ static int newcamd_open_reader(void* instance, const struct tvs_ca_reader_info_v
         write_error(error, error_size,
                     detail.empty() ? "Newcamd connect/login failed"
                                    : "Newcamd connect/login failed: " + detail);
-        return TVS_CA_RESULT_ERROR;
+        return DVBSTREAMER5_CA_RESULT_ERROR;
     }
 
     const uint16_t cardCaid = auSession->client->card_caid();
@@ -1042,7 +1042,7 @@ static int newcamd_open_reader(void* instance, const struct tvs_ca_reader_info_v
                   << " server reported AU disabled; ECM decoding remains available but EMM will not be sent"
                   << std::endl;
     }
-    return TVS_CA_RESULT_OK;
+    return DVBSTREAMER5_CA_RESULT_OK;
 }
 
 static void newcamd_close_reader(void* instance, const char* reader_key) {
@@ -1078,12 +1078,12 @@ static void newcamd_close_reader(void* instance, const char* reader_key) {
 }
 
 static int newcamd_start_service(void* instance, const char* reader_key,
-                                 const struct tvs_ca_service_info_v1* service,
+                                 const struct dvbstreamer5_ca_service_info_v1* service,
                                  char* error, size_t error_size) {
     auto* inst = static_cast<NewcamdInstance*>(instance);
     if (!inst || !reader_key || !service || !service->stream_id) {
         write_error(error, error_size, "invalid Newcamd service binding");
-        return TVS_CA_RESULT_ERROR;
+        return DVBSTREAMER5_CA_RESULT_ERROR;
     }
 
     const std::string clientKey = reader_key;
@@ -1095,16 +1095,16 @@ static int newcamd_start_service(void* instance, const char* reader_key,
         auto readerIt = inst->readersByClient.find(clientKey);
         if (readerIt == inst->readersByClient.end()) {
             write_error(error, error_size, "Newcamd CAM reader is not configured");
-            return TVS_CA_RESULT_ERROR;
+            return DVBSTREAMER5_CA_RESULT_ERROR;
         }
         config = readerIt->second;
-        if (inst->sessionsByStream.count(streamId)) return TVS_CA_RESULT_OK;
+        if (inst->sessionsByStream.count(streamId)) return DVBSTREAMER5_CA_RESULT_OK;
         for (const auto& entry : inst->servicesByStream) {
             if (entry.second && entry.second->clientKey == clientKey) ++activeForReader;
         }
         if (activeForReader >= kMaxSessionsPerReader) {
             write_error(error, error_size, "Newcamd per-reader service session limit reached (10)");
-            return TVS_CA_RESULT_ERROR;
+            return DVBSTREAMER5_CA_RESULT_ERROR;
         }
     }
 
@@ -1125,7 +1125,7 @@ static int newcamd_start_service(void* instance, const char* reader_key,
         write_error(error, error_size,
                     detail.empty() ? "Newcamd service session connect/login failed"
                                    : "Newcamd service session connect/login failed: " + detail);
-        return TVS_CA_RESULT_ERROR;
+        return DVBSTREAMER5_CA_RESULT_ERROR;
     }
     session->client->start_receiver();
     session->connected = true;
@@ -1143,7 +1143,7 @@ static int newcamd_start_service(void* instance, const char* reader_key,
             session->connected = false;
             session.reset();
             write_error(error, error_size, "Newcamd per-reader service session limit reached (10)");
-            return TVS_CA_RESULT_ERROR;
+            return DVBSTREAMER5_CA_RESULT_ERROR;
         }
         inst->servicesByStream[streamId] = binding;
         inst->sessionsByStream[streamId] = session;
@@ -1161,7 +1161,7 @@ static int newcamd_start_service(void* instance, const char* reader_key,
               << " ecm_duplicate_suppression=on"
               << " ca_diagnostics=" << (caDiagnosticsEnabled() ? "on" : "off")
               << std::endl;
-    return TVS_CA_RESULT_OK;
+    return DVBSTREAMER5_CA_RESULT_OK;
 }
 
 static void newcamd_stop_service(void* instance, const char* stream_id) {
@@ -1216,8 +1216,8 @@ static void decrypt_csa_batch_chunk(ControlWordSlot& slot,
     count = 0;
 }
 
-static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* data, size_t size, struct tvs_ca_ts_result_v1* result) {
-    if (!instance || !stream_id || !data || !result) return TVS_CA_RESULT_PASSTHROUGH;
+static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* data, size_t size, struct dvbstreamer5_ca_ts_result_v1* result) {
+    if (!instance || !stream_id || !data || !result) return DVBSTREAMER5_CA_RESULT_PASSTHROUGH;
     auto* inst = static_cast<NewcamdInstance*>(instance);
     std::shared_ptr<ServiceBinding> bindingPtr;
     std::shared_ptr<NewcamdSession> session;
@@ -1228,15 +1228,15 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
         // submit ECMs concurrently without blocking CW delivery to other streams.
         std::lock_guard<std::mutex> instanceLock(inst->mutex);
         auto serviceIt = inst->servicesByStream.find(stream_id);
-        if (serviceIt == inst->servicesByStream.end() || !serviceIt->second) return TVS_CA_RESULT_PASSTHROUGH;
+        if (serviceIt == inst->servicesByStream.end() || !serviceIt->second) return DVBSTREAMER5_CA_RESULT_PASSTHROUGH;
         bindingPtr = serviceIt->second;
         auto sessionIt = inst->sessionsByStream.find(stream_id);
-        if (sessionIt == inst->sessionsByStream.end() || !sessionIt->second) return TVS_CA_RESULT_PASSTHROUGH;
+        if (sessionIt == inst->sessionsByStream.end() || !sessionIt->second) return DVBSTREAMER5_CA_RESULT_PASSTHROUGH;
         session = sessionIt->second;
         auto auIt = inst->auSessionsByClient.find(bindingPtr->clientKey);
         if (auIt != inst->auSessionsByClient.end()) auSession = auIt->second;
     }
-    if (!session->connected.load() || !session->client) return TVS_CA_RESULT_PASSTHROUGH;
+    if (!session->connected.load() || !session->client) return DVBSTREAMER5_CA_RESULT_PASSTHROUGH;
     std::lock_guard<std::mutex> serviceLock(bindingPtr->mutex);
     ServiceBinding& binding = *bindingPtr;
 
@@ -1495,19 +1495,19 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
 
     if (changed) {
         write_status(result, "BACKEND_ACTIVE");
-        return TVS_CA_RESULT_OK;
+        return DVBSTREAMER5_CA_RESULT_OK;
     }
     if (waitingForKey) {
         const std::string detail = session->lastError.empty() ? "WAITING_FOR_CW" : "WAITING_FOR_CW: " + session->lastError;
         write_status(result, detail);
-        return TVS_CA_RESULT_RETRY;
+        return DVBSTREAMER5_CA_RESULT_RETRY;
     }
     if (sawEcm) {
         write_status(result, "ECM_SEEN_NO_CW");
-        return TVS_CA_RESULT_RETRY;
+        return DVBSTREAMER5_CA_RESULT_RETRY;
     }
     write_status(result, "NO_SCRAMBLED_PAYLOAD");
-    return TVS_CA_RESULT_PASSTHROUGH;
+    return DVBSTREAMER5_CA_RESULT_PASSTHROUGH;
 }
 
 static const char* newcamd_status_json(void* instance) {
@@ -1595,12 +1595,12 @@ static const char* newcamd_status_json(void* instance) {
     return status.c_str();
 }
 
-static const tvs_ca_backend_api_v1 api = {
-    TVS_CA_BACKEND_ABI_V1,
+static const dvbstreamer5_ca_backend_api_v1 api = {
+    DVBSTREAMER5_CA_BACKEND_ABI_V1,
     "newcamd",
     "Newcamd OSCAM Client",
     "Monk",
-    TVS_CA_CAP_TS_INPLACE | TVS_CA_CAP_MULTI_SERVICE,
+    DVBSTREAMER5_CA_CAP_TS_INPLACE | DVBSTREAMER5_CA_CAP_MULTI_SERVICE,
     newcamd_create,
     newcamd_destroy,
     newcamd_open_reader,
@@ -1611,7 +1611,7 @@ static const tvs_ca_backend_api_v1 api = {
     newcamd_status_json
 };
 
-const tvs_ca_backend_api_v1* tvstreamer5_ca_backend_get_api_v1(void) {
+const dvbstreamer5_ca_backend_api_v1* dvbstreamer5_ca_backend_get_api_v1(void) {
     return &api;
 }
 

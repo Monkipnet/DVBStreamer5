@@ -1,4 +1,4 @@
-# TVStreamer5 CaBackend plugin API (ABI v1)
+# DVBStreamer5 CaBackend plugin API (ABI v1)
 
 Release v135 adds an in-process Conditional-Access backend boundary without a
 network card-sharing server.  The host application never defines a raw
@@ -16,23 +16,21 @@ plus MPEG-TS packet groups.
 
 Plugins are loaded from:
 
-`/opt/tvstreamer5/ca-plugins`
+`/opt/DVBStreamer5/ca-plugins`
 
 The directory may be overridden for development with:
 
-`TVSTREAMER5_CA_PLUGIN_DIR=/path/to/plugins`. The previous
-`TVSTREAMMERSAT5_CA_PLUGIN_DIR` variable remains accepted for existing deployments.
-
+`DVBSTREAMER5_CA_PLUGIN_DIR=/path/to/plugins`. 
 Every `.so` must export:
 
-`tvstreamer5_ca_backend_get_api_v1`
+`dvbstreamer5_ca_backend_get_api_v1`
 
-and return `tvs_ca_backend_api_v1` with ABI version
-`TVS_CA_BACKEND_ABI_V1`.
+and return `dvbstreamer5_ca_backend_api_v1` with ABI version
+`DVBSTREAMER5_CA_BACKEND_ABI_V1`.
 
 ## Lifecycle
 
-For a stream explicitly bound to a Phoenix reader, TVStreamer5 performs:
+For a stream explicitly bound to a Phoenix reader, DVBStreamer5 performs:
 
 1. `open_reader()` once per backend + physical reader.
 2. `start_service()` once per channel/SID.
@@ -46,18 +44,18 @@ the backend support it.
 ## Transport contract
 
 `process_ts()` receives writable MPEG-TS bytes.  Plugins advertising
-`TVS_CA_CAP_TS_INPLACE` may modify packet bytes in place but must preserve the
+`DVBSTREAMER5_CA_CAP_TS_INPLACE` may modify packet bytes in place but must preserve the
 buffer length and 188-byte packet framing.  The host contains no raw CW getter,
 setter, callback or network export interface.
 
-Returning `TVS_CA_RESULT_PASSTHROUGH` leaves the transport unchanged. Returning
-`TVS_CA_RESULT_RETRY` also keeps the transport flowing while the backend
+Returning `DVBSTREAMER5_CA_RESULT_PASSTHROUGH` leaves the transport unchanged. Returning
+`DVBSTREAMER5_CA_RESULT_RETRY` also keeps the transport flowing while the backend
 recovers. A hard backend error does not truncate the TS; the dashboard remains
 able to report that media packets are still scrambled.
 
 ## Reader configuration
 
-Each `ca_readers` item in `tvstreamer5-config.json` can select a backend:
+Each `ca_readers` item in `dvbstreamer5-config.json` can select a backend:
 
 ```json
 {
@@ -73,7 +71,7 @@ Each `ca_readers` item in `tvstreamer5-config.json` can select a backend:
 ```
 
 `backend_config` is an opaque JSON string passed only to that backend in
-`tvs_ca_reader_info_v1`. The built-in `passthrough` backend is the safe default
+`dvbstreamer5_ca_reader_info_v1`. The built-in `passthrough` backend is the safe default
 and intentionally does not decode anything.
 
 ## Building the example plugin
@@ -81,12 +79,12 @@ and intentionally does not decode anything.
 Enable the optional CMake target:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTVSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE=ON
 cmake --build build --parallel "$(nproc)"
 ```
 
 The example validates ABI loading and lifecycle but intentionally returns
-`TVS_CA_RESULT_PASSTHROUGH` for every TS buffer.
+`DVBSTREAMER5_CA_RESULT_PASSTHROUGH` for every TS buffer.
 
 ## Quick ABI check
 

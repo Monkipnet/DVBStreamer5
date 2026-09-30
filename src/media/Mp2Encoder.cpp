@@ -7,7 +7,7 @@
 
 #include <twolame.h>
 
-namespace tvs::media {
+namespace dvbstreamer5::media {
 namespace {
 
 constexpr std::size_t kSamplesPerFrame = TWOLAME_SAMPLES_PER_FRAME;
@@ -159,4 +159,4 @@ bool Mp2Encoder::finish(std::vector<std::uint8_t>& output, std::string& error) {
     return appendResult(result, encoded, output, error);
 }
 
-} // namespace tvs::media
+} // namespace dvbstreamer5::media

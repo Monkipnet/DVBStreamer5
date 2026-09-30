@@ -33,7 +33,7 @@ public:
         lastBufferSize_ = size;
         if ((size % kPacketSize) != 0) ++unalignedBuffers_;
 
-        // Fast path for the normal TVStreamer5 case (whole 188-byte TS
+        // Fast path for the normal DVBStreamer5 case (whole 188-byte TS
         // packets). This keeps diagnostic overhead negligible in PRE_SEND and
         // avoids allocating a vector for every UDP datagram.
         if (remainder_.empty() && (size % kPacketSize) == 0 && data[0] == 0x47) {

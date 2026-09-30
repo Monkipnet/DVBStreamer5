@@ -1,6 +1,6 @@
 #include "protocols/inputs/GstHlsInputProtocol.h"
 #include "utils.h"
-namespace tvs::protocols::inputs {
+namespace dvbstreamer5::protocols::inputs {
 bool isHlsInput(const StreamConfig& cfg) {
     const std::string lower = toLower(cfg.inputUri);
     return lower.rfind("hls://", 0) == 0 || lower.find(".m3u8") != std::string::npos || toLower(cfg.inputMode) == "hls";

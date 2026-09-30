@@ -34,7 +34,7 @@ bool encode(const std::vector<std::int16_t>& pcm,
             bool chunked,
             std::vector<std::uint8_t>& output,
             std::string& error) {
-    tvs::media::Mp2Encoder encoder;
+    dvbstreamer5::media::Mp2Encoder encoder;
     if (!encoder.initialize({kSampleRate, kChannels, kBitrate}, error)) return false;
 
     const std::size_t totalSamples = pcm.size() / kChannels;
@@ -123,7 +123,7 @@ int main() {
     }
     if (!checkMpeg1Layer2Frames(oneCall, 31)) return 1;
 
-    tvs::media::Mp2Encoder unsupported;
+    dvbstreamer5::media::Mp2Encoder unsupported;
     if (unsupported.initialize({48000, 6, 192000}, error)) {
         fail("unsupported channel layout was accepted");
         return 1;

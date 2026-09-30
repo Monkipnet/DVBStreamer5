@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::media {
+namespace dvbstreamer5::media {
 
 struct Mp2EncoderConfig {
     std::uint32_t sampleRate = 48000;
@@ -41,4 +41,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace tvs::media
+} // namespace dvbstreamer5::media

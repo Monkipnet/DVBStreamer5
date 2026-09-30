@@ -9,8 +9,8 @@ class OscamMiniManager {
 public:
     static OscamMiniManager& instance();
 
-    static constexpr const char* kConfigDir = "/opt/TVStreamer5/oscam-mini/config";
-    static constexpr const char* kBinary = "/opt/TVStreamer5/oscam-mini/oscam-mini";
+    static constexpr const char* kConfigDir = "/opt/DVBStreamer5/oscam-mini/config";
+    static constexpr const char* kBinary = "/opt/DVBStreamer5/oscam-mini/oscam-mini";
     static constexpr const char* kService = "oscam-mini.service";
 
     std::string statusJson();

@@ -1,4 +1,4 @@
-function(tvstreamer5_generate_embedded_web_assets asset_dir output_dir output_var)
+function(dvbstreamer5_generate_embedded_web_assets asset_dir output_dir output_var)
     set(asset_names
         mpegts.min.js
         hls.min.js
@@ -7,7 +7,7 @@ function(tvstreamer5_generate_embedded_web_assets asset_dir output_dir output_va
     )
     file(MAKE_DIRECTORY "${output_dir}")
     set(generated_source
-        "#include \"EmbeddedWebAssets.h\"\n\nnamespace tvs::web {\nnamespace {\n"
+        "#include \"EmbeddedWebAssets.h\"\n\nnamespace dvbstreamer5::web {\nnamespace {\n"
     )
 
     foreach(asset_name IN LISTS asset_names)

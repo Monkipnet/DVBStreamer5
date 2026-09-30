@@ -5,7 +5,7 @@ const http = fs.readFileSync('src/HttpServer.cpp', 'utf8');
 const version = fs.readFileSync('src/AppVersion.h', 'utf8');
 
 assert.match(version, /kProgramVersion\s*=\s*"1\.0\.0"/,
-  'TVStreamer5 version must stay 1.0.0');
+  'DVBStreamer5 version must stay 1.0.0');
 assert.match(http, /state\.program_version\|\|'1\.0\.0'.*language === 'en' \? ' EN' : ''/s,
   'English UI must append EN only to displayed version');
 
@@ -36,4 +36,4 @@ assert.ok(scriptStart > 0 && scriptEnd > scriptStart, 'inline script not found')
 const script = http.slice(scriptStart, scriptEnd);
 new Function(script); // syntax-only compile; does not execute DOM code.
 
-console.log('PASS: TVStreamer5 English UI runtime localization and display-only EN suffix');
+console.log('PASS: DVBStreamer5 English UI runtime localization and display-only EN suffix');

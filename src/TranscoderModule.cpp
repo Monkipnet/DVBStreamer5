@@ -80,7 +80,7 @@ EncoderProbeResult probeVideoEncoderFactory(const std::string& factory) {
     if (pid == 0) {
         // A broken qsvh264enc on older Intel generations can abort in libmfx.
         // Probe it in an isolated child and suppress core dumps so the main
-        // TVStreamer5 process is never affected by the driver assertion.
+        // DVBStreamer5 process is never affected by the driver assertion.
         struct rlimit coreLimit {};
         coreLimit.rlim_cur = 0;
         coreLimit.rlim_max = 0;
@@ -96,7 +96,7 @@ EncoderProbeResult probeVideoEncoderFactory(const std::string& factory) {
         // Keep the potentially unsafe Intel driver probe isolated from the main
         // process, but execute our own binary instead of the external
         // gst-launch-1.0 utility.
-        ::execl("/proc/self/exe", "TVStreamer5",
+        ::execl("/proc/self/exe", "DVBStreamer5",
                 "--transcoder-encoder-probe", factory.c_str(),
                 static_cast<char*>(nullptr));
         ::_exit(127);
@@ -377,7 +377,7 @@ AudioEncoderSelection makeAudioEncoder(const std::string& codec) {
     const char* const* factories = nullptr;
     static const char* aacFactories[] = {"fdkaacenc", "voaacenc", "avenc_aac", nullptr};
     static const char* mp3Factories[] = {"lamemp3enc", "avenc_mp3", nullptr};
-    static const char* mp2Factories[] = {"tvstreamer5mp2enc", nullptr};
+    static const char* mp2Factories[] = {"dvbstreamer5mp2enc", nullptr};
     factories = codec == "mp3" ? mp3Factories :
         (codec == "mp2" ? mp2Factories : aacFactories);
     for (const char* const* name = factories; *name; ++name) {
@@ -409,7 +409,7 @@ void configureAudioBitrate(GstElement* encoder, const std::string& factory, uint
         return;
     }
 
-    if (factory == "tvstreamer5mp2enc") {
+    if (factory == "dvbstreamer5mp2enc") {
         g_object_set(encoder, "bitrate", static_cast<guint>(bitrate), nullptr);
         return;
     }
@@ -473,8 +473,8 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
     const std::string media = gst_structure_get_name(structure);
 
     if (media.rfind("video/x-raw", 0) == 0 && !context->videoLinked) {
-        tvs::transcode::VideoGeometry geometry;
-        if (!tvs::transcode::videoGeometry(context->config.transcodeResolution, geometry)) {
+        dvbstreamer5::transcode::VideoGeometry geometry;
+        if (!dvbstreamer5::transcode::videoGeometry(context->config.transcodeResolution, geometry)) {
             std::cerr << "Transcoder: unsupported output video geometry" << std::endl;
             gst_caps_unref(caps);
             drainPad(context->bin, pad);
@@ -890,7 +890,7 @@ int TranscoderModule::runEncoderProbeWorker(const std::string& factory) {
     }
     if (!factoryAvailable(factory.c_str())) return 3;
 
-    GstElement* pipeline = gst_pipeline_new("tvstreamer5_encoder_probe");
+    GstElement* pipeline = gst_pipeline_new("dvbstreamer5_encoder_probe");
     GstElement* source = gst_element_factory_make("videotestsrc", "probe_source");
     GstElement* filter = gst_element_factory_make("capsfilter", "probe_caps");
     GstElement* encoder = gst_element_factory_make(factory.c_str(), "probe_encoder");
@@ -1007,7 +1007,7 @@ std::string TranscoderModule::workingIntelHevcEncoderFactory() {
 
 TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     TranscoderCapabilities result;
-    result.mp2EncoderAvailable = tvs_gst_mp2_encoder_register() &&
+    result.mp2EncoderAvailable = dvbstreamer5_gst_mp2_encoder_register() &&
         factoryAvailable("mpegaudioparse") && mpegTsMuxSupportsMp2();
     const char* required[] = {
         "uridecodebin", "decodebin", "queue",
@@ -1073,7 +1073,7 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     }
     result.audioEncoder = !result.aacEncoder.empty() ? result.aacEncoder :
         (!result.mp3Encoder.empty() ? result.mp3Encoder :
-         (result.mp2EncoderAvailable ? "tvstreamer5mp2enc" : std::string()));
+         (result.mp2EncoderAvailable ? "dvbstreamer5mp2enc" : std::string()));
     if (GstElementFactory* factory = gst_element_factory_find("deinterlace")) {
         result.deinterlaceAvailable = true;
         gst_object_unref(factory);
@@ -1090,8 +1090,8 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
 }
 
 bool TranscoderModule::resolutionSize(const std::string& value, int& width, int& height) {
-    tvs::transcode::VideoGeometry geometry;
-    if (!tvs::transcode::videoGeometry(value, geometry)) return false;
+    dvbstreamer5::transcode::VideoGeometry geometry;
+    if (!dvbstreamer5::transcode::videoGeometry(value, geometry)) return false;
     width = geometry.width;
     height = geometry.height;
     return true;
@@ -1217,7 +1217,7 @@ GstElement* TranscoderModule::createBin(const StreamConfig& config, std::string&
     context->bin = bin;
     context->mux = mux;
     context->config = config;
-    g_object_set_data_full(G_OBJECT(bin), "tvstreamer5-transcode-context", context,
+    g_object_set_data_full(G_OBJECT(bin), "dvbstreamer5-transcode-context", context,
         [](gpointer p) { delete static_cast<TranscodeContext*>(p); });
     g_signal_connect(parsebin, "pad-added", G_CALLBACK(onDemuxPadAdded), context);
     return bin;

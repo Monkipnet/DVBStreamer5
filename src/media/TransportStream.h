@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace tvs::media::mpegts {
+namespace dvbstreamer5::media::mpegts {
 
 inline constexpr std::size_t kPacketSize = 188;
 inline constexpr std::uint8_t kSyncByte = 0x47;
@@ -64,4 +64,4 @@ private:
     std::array<State, 8192> states_ {};
 };
 
-} // namespace tvs::media::mpegts
+} // namespace dvbstreamer5::media::mpegts

@@ -2,6 +2,6 @@
 
 #include <string>
 
-namespace tvs::stream_protocols::outputs {
+namespace dvbstreamer5::stream_protocols::outputs {
 bool isUdpOutput(const std::string& type);
 }

@@ -1,7 +1,7 @@
 #include "protocols/outputs/GstRtmpOutputProtocol.h"
 #include "protocols/outputs/GstOutputProtocolUtils.h"
 #include "protocols/GstProtocolTypes.h"
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 bool appendRtmpSink(std::vector<std::string>& args, const StreamConfig& cfg, GstOutputSpec& spec) {
     args.insert(args.end(), {"flvmux", "name=mux", "streamable=true", "latency=0", "!"});
     appendOutputQueue(args, "transcode_rtmp_output_queue", false);

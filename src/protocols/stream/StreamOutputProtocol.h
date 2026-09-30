@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::stream_protocols {
+namespace dvbstreamer5::stream_protocols {
 
 enum class OutputProtocolKind {
     Udp,
@@ -28,4 +28,4 @@ bool isUdpLikeOutput(OutputProtocolKind kind);
 bool isTsOutput(OutputProtocolKind kind);
 bool isFlvOutput(OutputProtocolKind kind);
 
-} // namespace tvs::stream_protocols
+} // namespace dvbstreamer5::stream_protocols

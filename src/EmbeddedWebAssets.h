@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-namespace tvs::web {
+namespace dvbstreamer5::web {
 
 std::string_view embeddedWebAsset(std::string_view path);
 

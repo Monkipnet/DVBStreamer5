@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::stream_protocols {
+namespace dvbstreamer5::stream_protocols {
 
 enum class InputProtocolKind {
     TestPattern,
@@ -31,4 +31,4 @@ bool isHttpLikeInput(InputProtocolKind kind);
 bool isFileInput(InputProtocolKind kind);
 bool isDvbInput(InputProtocolKind kind);
 
-} // namespace tvs::stream_protocols
+} // namespace dvbstreamer5::stream_protocols

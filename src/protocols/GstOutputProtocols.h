@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::protocols {
+namespace dvbstreamer5::protocols {
 
 struct GstOutputSpec {
     OutputKind kind = OutputKind::Unknown;
@@ -24,4 +24,4 @@ bool appendOutputMuxAndSink(
     GstOutputSpec& spec,
     std::string& error);
 
-} // namespace tvs::protocols
+} // namespace dvbstreamer5::protocols

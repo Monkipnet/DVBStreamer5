@@ -26,12 +26,12 @@ void writeError(char* buffer, size_t size, const std::string& text) {
     buffer[count] = '\0';
 }
 
-bool validPluginApi(const tvs_ca_backend_api_v1* api, std::string& error) {
+bool validPluginApi(const dvbstreamer5_ca_backend_api_v1* api, std::string& error) {
     if (!api) {
         error = "entry point returned null API";
         return false;
     }
-    if (api->abi_version != TVS_CA_BACKEND_ABI_V1) {
+    if (api->abi_version != DVBSTREAMER5_CA_BACKEND_ABI_V1) {
         error = "unsupported CA backend ABI version";
         return false;
     }
@@ -55,21 +55,21 @@ CaBackendManager& CaBackendManager::instance() {
 }
 
 CaBackendManager::CaBackendManager() {
-    hostApi_.abi_version = TVS_CA_BACKEND_ABI_V1;
+    hostApi_.abi_version = DVBSTREAMER5_CA_BACKEND_ABI_V1;
     hostApi_.log = &CaBackendManager::hostLog;
     hostApi_.monotonic_ms = &CaBackendManager::hostMonotonicMs;
 
     LoadedBackend passthrough;
     passthrough.id = "passthrough";
     passthrough.displayName = "Passthrough (без декодирования)";
-    passthrough.vendor = "TVStreamer5";
+    passthrough.vendor = "DVBStreamer5";
     passthrough.path = "builtin";
     passthrough.builtin = true;
     passthrough.usable = true;
     backends_.emplace(passthrough.id, std::move(passthrough));
 
     if (!registerBuiltinBackendLocked(
-            tvstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
+            dvbstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
         std::cerr << "Built-in Newcamd CA backend registration failed" << std::endl;
     }
 }
@@ -89,9 +89,9 @@ CaBackendManager::~CaBackendManager() {
 
 void CaBackendManager::hostLog(int level, const char* backendId, const char* message) {
     const char* levelText = "INFO";
-    if (level == TVS_CA_LOG_DEBUG) levelText = "DEBUG";
-    else if (level == TVS_CA_LOG_WARN) levelText = "WARN";
-    else if (level == TVS_CA_LOG_ERROR) levelText = "ERROR";
+    if (level == DVBSTREAMER5_CA_LOG_DEBUG) levelText = "DEBUG";
+    else if (level == DVBSTREAMER5_CA_LOG_WARN) levelText = "WARN";
+    else if (level == DVBSTREAMER5_CA_LOG_ERROR) levelText = "ERROR";
     std::cerr << "CA backend[" << safeString(backendId) << "] " << levelText
               << ": " << safeString(message) << std::endl;
 }
@@ -160,9 +160,7 @@ void CaBackendManager::unloadPluginsLocked() {
 
 void CaBackendManager::loadPluginsLocked() {
     std::vector<std::filesystem::path> directories;
-    const char* pluginDirectory = std::getenv("TVSTREAMER5_CA_PLUGIN_DIR");
-    if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
-    if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("TVSTREAMMERSAT5_CA_PLUGIN_DIR");
+    const char* pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
     if (pluginDirectory && *pluginDirectory) directories.emplace_back(pluginDirectory);
 
     std::error_code ec;
@@ -173,10 +171,6 @@ void CaBackendManager::loadPluginsLocked() {
         directories.push_back(executableDir);
     }
     directories.emplace_back(kDefaultPluginDirectory);
-    directories.emplace_back("/opt/DVBStreamer5/ca-plugins");
-    directories.emplace_back("/opt/dvbstreamer5/ca-plugins");
-    directories.emplace_back("/opt/TVStreammerSAT5/ca-plugins");
-    directories.emplace_back("/opt/tvstreammersat5/ca-plugins");
 
     std::vector<std::string> files;
     std::set<std::string> seenDirectories;
@@ -210,7 +204,7 @@ void CaBackendManager::loadPluginsLocked() {
 }
 
 bool CaBackendManager::registerBuiltinBackendLocked(
-    const tvs_ca_backend_api_v1* api, const std::string& path) {
+    const dvbstreamer5_ca_backend_api_v1* api, const std::string& path) {
     std::string error;
     if (!validPluginApi(api, error)) {
         std::cerr << "Built-in CA backend rejected: " << path
@@ -254,21 +248,15 @@ bool CaBackendManager::loadPluginFileLocked(const std::string& path) {
     }
 
     dlerror();
-    auto entry = reinterpret_cast<tvs_ca_backend_get_api_v1_fn>(dlsym(library, TVS_CA_BACKEND_ENTRY_V1));
+    auto entry = reinterpret_cast<dvbstreamer5_ca_backend_get_api_v1_fn>(dlsym(library, DVBSTREAMER5_CA_BACKEND_ENTRY_V1));
     const char* symbolError = dlerror();
-    if (symbolError || !entry) {
-        dlerror();
-        entry = reinterpret_cast<tvs_ca_backend_get_api_v1_fn>(
-            dlsym(library, TVS_CA_BACKEND_LEGACY_ENTRY_V1));
-        symbolError = dlerror();
-    }
     if (symbolError || !entry) {
         std::cerr << "CA backend plugin missing entry point: " << path << std::endl;
         dlclose(library);
         return false;
     }
 
-    const tvs_ca_backend_api_v1* api = entry();
+    const dvbstreamer5_ca_backend_api_v1* api = entry();
     std::string error;
     if (!validPluginApi(api, error)) {
         std::cerr << "CA backend plugin rejected: " << path << ": " << error << std::endl;
@@ -331,7 +319,7 @@ bool CaBackendManager::ensureReaderOpenLocked(LoadedBackend& backend,
         return true;
     }
 
-    tvs_ca_reader_info_v1 info{};
+    dvbstreamer5_ca_reader_info_v1 info{};
     info.reader_key = reader.key.c_str();
     info.device = reader.device.c_str();
     info.serial = reader.serial.c_str();
@@ -344,7 +332,7 @@ bool CaBackendManager::ensureReaderOpenLocked(LoadedBackend& backend,
 
     char errorBuffer[512]{};
     const int result = backend.api->open_reader(backend.instance, &info, errorBuffer, sizeof(errorBuffer));
-    if (result != TVS_CA_RESULT_OK && result != TVS_CA_RESULT_PASSTHROUGH) {
+    if (result != DVBSTREAMER5_CA_RESULT_OK && result != DVBSTREAMER5_CA_RESULT_PASSTHROUGH) {
         error = errorBuffer[0] ? errorBuffer : "CA backend failed to open reader";
         return false;
     }
@@ -396,12 +384,12 @@ bool CaBackendManager::startService(const StreamConfig& stream,
     session.streamName = stream.name;
     session.readerKey = reader.key;
     session.backendId = backend->id;
-    session.passthrough = backend->builtin || !(backend->capabilities & TVS_CA_CAP_TS_INPLACE);
+    session.passthrough = backend->builtin || !(backend->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE);
     session.status = session.passthrough ? "PASSTHROUGH_NO_DECODE" : "BACKEND_RESERVED";
 
     if (!backend->builtin) {
         const std::string pids = extractDvbPids(stream.inputUri);
-        tvs_ca_service_info_v1 info{};
+        dvbstreamer5_ca_service_info_v1 info{};
         info.stream_id = stream.id.c_str();
         info.stream_name = stream.name.c_str();
         info.service_id = stream.inputServiceId ? stream.inputServiceId : stream.serviceId;
@@ -413,13 +401,13 @@ bool CaBackendManager::startService(const StreamConfig& stream,
         char errorBuffer[512]{};
         const int result = backend->api->start_service(
             backend->instance, reader.key.c_str(), &info, errorBuffer, sizeof(errorBuffer));
-        if (result != TVS_CA_RESULT_OK && result != TVS_CA_RESULT_PASSTHROUGH) {
+        if (result != DVBSTREAMER5_CA_RESULT_OK && result != DVBSTREAMER5_CA_RESULT_PASSTHROUGH) {
             releaseReaderLocked(*backend, reader.key);
             if (error) *error = errorBuffer[0] ? errorBuffer : "CA backend failed to start service";
             return false;
         }
-        session.passthrough = result == TVS_CA_RESULT_PASSTHROUGH ||
-                              !(backend->capabilities & TVS_CA_CAP_TS_INPLACE);
+        session.passthrough = result == DVBSTREAMER5_CA_RESULT_PASSTHROUGH ||
+                              !(backend->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE);
         session.status = session.passthrough ? "PASSTHROUGH_NO_DECODE" : "BACKEND_RESERVED";
     }
 
@@ -441,7 +429,7 @@ void CaBackendManager::markServiceActive(const std::string& streamId) {
 
 void CaBackendManager::stopService(const std::string& streamId) {
     ServiceSession session;
-    const tvs_ca_backend_api_v1* api = nullptr;
+    const dvbstreamer5_ca_backend_api_v1* api = nullptr;
     void* instance = nullptr;
     bool builtin = true;
     bool closeReader = false;
@@ -543,7 +531,7 @@ bool CaBackendManager::processTransport(const std::string& streamId, uint8_t* da
         return true;
     }
 
-    tvs_ca_ts_result_v1 result{};
+    dvbstreamer5_ca_ts_result_v1 result{};
     const int rc = backend->api->process_ts(backend->instance, streamId.c_str(), data, size, &result);
     session.packetsSeen += result.packets_seen;
     session.packetsChanged += result.packets_changed;
@@ -551,16 +539,16 @@ bool CaBackendManager::processTransport(const std::string& streamId, uint8_t* da
     session.packetsScrambled += result.packets_scrambled;
     if (result.status[0]) session.status = result.status;
 
-    if (rc == TVS_CA_RESULT_OK) {
+    if (rc == DVBSTREAMER5_CA_RESULT_OK) {
         if (!result.status[0]) session.status = "BACKEND_ACTIVE";
         return true;
     }
-    if (rc == TVS_CA_RESULT_PASSTHROUGH) {
+    if (rc == DVBSTREAMER5_CA_RESULT_PASSTHROUGH) {
         session.passthrough = true;
         if (!result.status[0]) session.status = "PASSTHROUGH_NO_DECODE";
         return true;
     }
-    if (rc == TVS_CA_RESULT_RETRY) {
+    if (rc == DVBSTREAMER5_CA_RESULT_RETRY) {
         ++session.retries;
         if (!result.status[0]) session.status = "BACKEND_RETRY";
         return true; // preserve input TS while backend recovers
@@ -584,11 +572,11 @@ Json::Value CaBackendManager::backendToJsonLocked(const LoadedBackend& backend) 
     item["builtin"] = backend.builtin;
     item["usable"] = backend.usable;
     item["capabilities"] = Json::UInt(backend.capabilities);
-    item["ts_inplace"] = (backend.capabilities & TVS_CA_CAP_TS_INPLACE) != 0;
-    item["multi_service"] = (backend.capabilities & TVS_CA_CAP_MULTI_SERVICE) != 0;
-    item["emm_managed"] = (backend.capabilities & TVS_CA_CAP_EMM_MANAGED) != 0;
-    item["entitlement_status"] = (backend.capabilities & TVS_CA_CAP_ENTITLEMENT_STATUS) != 0;
-    item["reader_reconnect"] = (backend.capabilities & TVS_CA_CAP_READER_RECONNECT) != 0;
+    item["ts_inplace"] = (backend.capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE) != 0;
+    item["multi_service"] = (backend.capabilities & DVBSTREAMER5_CA_CAP_MULTI_SERVICE) != 0;
+    item["emm_managed"] = (backend.capabilities & DVBSTREAMER5_CA_CAP_EMM_MANAGED) != 0;
+    item["entitlement_status"] = (backend.capabilities & DVBSTREAMER5_CA_CAP_ENTITLEMENT_STATUS) != 0;
+    item["reader_reconnect"] = (backend.capabilities & DVBSTREAMER5_CA_CAP_READER_RECONNECT) != 0;
     item["load_error"] = backend.loadError;
     item["open_clients"] = Json::UInt(backend.readerRefs.size());
     // Do not call backend->status_json() from the HTTP snapshot path. Plugin
@@ -633,7 +621,7 @@ Json::Value CaBackendManager::streamState(const std::string& streamId) const {
     result["last_error"] = session.lastError;
     const LoadedBackend* backend = findBackendLocked(session.backendId);
     result["native_plugin"] = backend && !backend->builtin &&
-                              (backend->capabilities & TVS_CA_CAP_TS_INPLACE) != 0 &&
+                              (backend->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE) != 0 &&
                               !session.passthrough;
     if (backend) {
         result["display_name"] = backend->displayName;
@@ -645,13 +633,11 @@ Json::Value CaBackendManager::streamState(const std::string& streamId) const {
 Json::Value CaBackendManager::snapshot() const {
     Json::Value root;
     std::string directory = kDefaultPluginDirectory;
-    const char* pluginDirectory = std::getenv("TVSTREAMER5_CA_PLUGIN_DIR");
-    if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
-    if (!pluginDirectory || !*pluginDirectory) pluginDirectory = std::getenv("TVSTREAMMERSAT5_CA_PLUGIN_DIR");
+    const char* pluginDirectory = std::getenv("DVBSTREAMER5_CA_PLUGIN_DIR");
     if (pluginDirectory && *pluginDirectory) directory = pluginDirectory;
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
     if (!lock.owns_lock()) {
-        root["abi_version"] = Json::UInt(TVS_CA_BACKEND_ABI_V1);
+        root["abi_version"] = Json::UInt(DVBSTREAMER5_CA_BACKEND_ABI_V1);
         root["plugin_directory"] = directory;
         root["network_ca_server"] = false;
         root["external_key_export"] = false;
@@ -661,7 +647,7 @@ Json::Value CaBackendManager::snapshot() const {
         root["backends"] = Json::Value(Json::arrayValue);
         return root;
     }
-    root["abi_version"] = Json::UInt(TVS_CA_BACKEND_ABI_V1);
+    root["abi_version"] = Json::UInt(DVBSTREAMER5_CA_BACKEND_ABI_V1);
     root["plugin_directory"] = directory;
     root["network_ca_server"] = false;
     root["external_key_export"] = false;

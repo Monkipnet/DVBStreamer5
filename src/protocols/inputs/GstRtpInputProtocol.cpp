@@ -2,7 +2,7 @@
 
 #include "utils.h"
 
-namespace tvs::protocols::inputs {
+namespace dvbstreamer5::protocols::inputs {
 
 bool isRtpInput(const StreamConfig& cfg) {
     const std::string lower = toLower(cfg.inputUri);
@@ -13,4 +13,4 @@ std::string rtpInputUri(const StreamConfig& cfg) {
     return cfg.inputUri;
 }
 
-} // namespace tvs::protocols::inputs
+} // namespace dvbstreamer5::protocols::inputs

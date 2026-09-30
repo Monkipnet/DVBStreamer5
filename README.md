@@ -1,4 +1,4 @@
-# TVStreamer5
+# DVBStreamer5
 
 **Версия: 1.0.0**
 
@@ -60,9 +60,9 @@ ctest --test-dir build/media-core --output-on-failure
 обработки неполного хвоста RTP/MPEG-TS и его лицензионное уведомление описаны
 в [GSTREAMER_CODE_NOTICES.md](./GSTREAMER_CODE_NOTICES.md).
 
-TVStreamer5 - сервер маршрутизации, мониторинга и преобразования телевизионных потоков на базе C++17 и GStreamer. Программа принимает сетевые и спутниковые источники, формирует один или несколько выходов для каждого канала и управляется через встроенную русско-английскую веб-панель.
+DVBStreamer5 - сервер маршрутизации, мониторинга и преобразования телевизионных потоков на базе C++17 и GStreamer. Программа принимает сетевые и спутниковые источники, формирует один или несколько выходов для каждого канала и управляется через встроенную русско-английскую веб-панель.
 
-![Основная панель TVStreamer5](./docs/screenshots/dashboard.png)
+![Основная панель DVBStreamer5](./docs/screenshots/dashboard.png)
 
 ![Управление OSCam-mini](./docs/screenshots/oscam-mini.png)
 
@@ -164,7 +164,7 @@ login: admin
 password: admin
 ```
 
-Сразу измените пароль в настройках. Он хранится в `tvstreamer5-config.json` в зашифрованном виде AES-256-GCM, а локальный ключ создаётся рядом с конфигурацией в файле `tvstreamer5-ui.key` с правами `0600`.
+Сразу измените пароль в настройках. Он хранится в `dvbstreamer5-config.json` в зашифрованном виде AES-256-GCM, а локальный ключ создаётся рядом с конфигурацией в файле `dvbstreamer5-ui.key` с правами `0600`.
 
 Основная панель показывает карточки каналов, состояние источника, активный вход, битрейт, режим выхода, ошибки MPEG-TS, DVB-метрики и состояние декодирования. Настройки программы, абоненты, CA-клиенты и окно «О программе» доступны из верхней панели.
 
@@ -178,7 +178,7 @@ password: admin
 - заблокировать независимо от состояния общей IP-фильтрации;
 - позднее разблокировать в списке заблокированных адресов.
 
-Список блокировок хранится в `tvstreamer5-subscribers.json` в поле `blocked_ips`. UDP не устанавливает клиентскую сессию, поэтому приложение не может определить получателей UDP unicast/multicast; для их контроля нужен мониторинг IGMP и сетевого оборудования.
+Список блокировок хранится в `dvbstreamer5-subscribers.json` в поле `blocked_ips`. UDP не устанавливает клиентскую сессию, поэтому приложение не может определить получателей UDP unicast/multicast; для их контроля нужен мониторинг IGMP и сетевого оборудования.
 
 ## DVB-S/S2
 
@@ -205,7 +205,7 @@ password: admin
 Проект включает:
 
 - версионированный in-process `CaBackend` ABI;
-- плагин `tvstreamer5-ca-newcamd.so`;
+- плагин `dvbstreamer5-ca-newcamd.so`;
 - обнаружение Phoenix/SmartMouse USB reader;
 - привязку зашифрованного канала к конкретному CA-клиенту;
 - ограничения количества сервисов и состояние декодирования в карточке канала;
@@ -250,21 +250,21 @@ cmake --build build --parallel
 Основные артефакты:
 
 ```text
-build/TVStreamer5
+build/DVBStreamer5
 build/oscam-mini/oscam-mini
 ```
 
 Проверить архитектуру ELF и оставшиеся динамические зависимости можно командой
-`scripts/audit_runtime_deps.sh build/TVStreamer5`.
+`scripts/audit_runtime_deps.sh build/DVBStreamer5`.
 
 ## Запуск
 
 Программа читает конфигурацию из текущего рабочего каталога. При первом запуске она создаётся автоматически.
 
 ```bash
-mkdir -p ~/tvstreamer5-data
-cd ~/tvstreamer5-data
-/path/to/project/build/TVStreamer5
+mkdir -p ~/dvbstreamer5-data
+cd ~/dvbstreamer5-data
+/path/to/project/build/DVBStreamer5
 ```
 
 В журнале появится адрес HTTP-порта, по умолчанию `9000`. Для остановки используйте `Ctrl+C` или штатное управление сервисом.
@@ -280,22 +280,22 @@ sudo cmake --install build
 Установите бинарник и создайте отдельный рабочий каталог для конфигурации:
 
 ```bash
-sudo mkdir -p /opt/tvstreamer5
-sudo install -m 755 build/TVStreamer5 /opt/tvstreamer5/TVStreamer5
+sudo mkdir -p /opt/DVBStreamer5
+sudo install -m 755 build/DVBStreamer5 /opt/DVBStreamer5/DVBStreamer5
 ```
 
-Пример `/etc/systemd/system/tvstreamer5.service`:
+Пример `/etc/systemd/system/dvbstreamer5.service`:
 
 ```ini
 [Unit]
-Description=TVStreamer5
+Description=DVBStreamer5
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/tvstreamer5
-ExecStart=/opt/tvstreamer5/TVStreamer5
+WorkingDirectory=/opt/DVBStreamer5
+ExecStart=/opt/DVBStreamer5/DVBStreamer5
 Restart=always
 RestartSec=3
 
@@ -307,8 +307,8 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now tvstreamer5
-sudo systemctl status tvstreamer5 --no-pager --full
+sudo systemctl enable --now dvbstreamer5
+sudo systemctl status dvbstreamer5 --no-pager --full
 ```
 
 ## Конфигурационные файлы
@@ -316,17 +316,17 @@ sudo systemctl status tvstreamer5 --no-pager --full
 Все изменяемые данные находятся в рабочем каталоге процесса:
 
 ```text
-tvstreamer5-config.json       основные настройки и потоки
-tvstreamer5-ui.key            ключ шифрования пароля панели
-tvstreamer5-subscribers.json  абоненты и IP-фильтрация
+dvbstreamer5-config.json       основные настройки и потоки
+dvbstreamer5-ui.key            ключ шифрования пароля панели
+dvbstreamer5-subscribers.json  абоненты и IP-фильтрация
 backup-files/                     загруженные файлы замены
 ```
 
 Перед обновлением сохраняйте эти файлы. Не публикуйте конфигурацию: она может содержать сетевые адреса, Telegram token и параметры CA-клиентов.
 
 При запуске в каталоге старой установки программа продолжит использовать файлы
-`tvstreammersat5-config.json`, `tvstreammersat5-ui.key` и
-`tvstreammersat5-subscribers.json`, если соответствующие файлы с новым именем ещё
+`dvbstreamer5-config.json`, `dvbstreamer5-ui.key` и
+`dvbstreamer5-subscribers.json`, если соответствующие файлы с новым именем ещё
 не созданы. Установщики также распознают прежний каталог и службу; старые имена
 скриптов установки и удаления оставлены как совместимые обёртки.
 
@@ -337,11 +337,11 @@ backup-files/                     загруженные файлы замены
 прежний пятисекундный стартовый запас, задайте переменную окружения:
 
 ```bash
-TVS_UDP_STARTUP_BUFFER_MS=5000
+DVBSTREAMER5_UDP_STARTUP_BUFFER_MS=5000
 ```
 
 Допустимый диапазон: от `250` до `30000` мс. Переменную следует передать процессу
-программы или контейнеру через `docker run -e TVS_UDP_STARTUP_BUFFER_MS=5000 ...`.
+программы или контейнеру через `docker run -e DVBSTREAMER5_UDP_STARTUP_BUFFER_MS=5000 ...`.
 
 Для непрерывных DVB/IP MPEG-TS потоков CBR-выход сохраняет исходный PCR, чтобы
 PCR и PTS/DTS оставались в одной временной шкале. Синтетический непрерывный PCR
@@ -349,7 +349,7 @@ PCR и PTS/DTS оставались в одной временной шкале.
 PCR можно принудительно включить переменной:
 
 ```bash
-TVS_UDP_FORCE_SYNTHETIC_PCR=1
+DVBSTREAMER5_UDP_FORCE_SYNTHETIC_PCR=1
 ```
 
 ## Docker
@@ -360,33 +360,33 @@ multicast, RTP, SRT listener и привязка к сетевым интерф�
 ### Сборка образа
 
 ```bash
-docker build --pull -t tvstreamer5:202.28 .
+docker build --pull -t dvbstreamer5:202.28 .
 ```
 
 Для полной пересборки без использования слоёв кеша:
 
 ```bash
-docker build --pull --no-cache -t tvstreamer5:202.28 .
+docker build --pull --no-cache -t dvbstreamer5:202.28 .
 ```
 
 ### Фоновый запуск
 
 Укажите постоянный каталог данных на хосте. Если стандартного файла
-`tvstreamer5-config.json` ещё нет, программа создаст его при первом запуске.
+`dvbstreamer5-config.json` ещё нет, программа создаст его при первом запуске.
 
 ```bash
 cd ~/Tvstreamer_sat
-mkdir -p /opt/tvstreamer5
+mkdir -p /opt/DVBStreamer5
 
-CONTAINER_NAME=tvstreamer5 \
+CONTAINER_NAME=dvbstreamer5 \
 DETACH=1 \
 RECREATE=1 \
-IMAGE_NAME=tvstreamer5:202.28 \
-CONFIG_FILE=/opt/tvstreamer5/tvstreamer5-config.json \
+IMAGE_NAME=dvbstreamer5:202.28 \
+CONFIG_FILE=/opt/DVBStreamer5/dvbstreamer5-config.json \
 bash ./scripts/run_container.sh
 
-docker ps --filter name=tvstreamer5
-docker logs --tail 100 tvstreamer5
+docker ps --filter name=dvbstreamer5
+docker logs --tail 100 dvbstreamer5
 ```
 
 Скрипт проверяет наличие образа до удаления прежнего контейнера и выводит
@@ -402,8 +402,8 @@ networking, подключает каталог данных и автомати
 Интерактивный временный запуск остаётся доступен без `DETACH=1`:
 
 ```bash
-IMAGE_NAME=tvstreamer5:202.28 \
-CONFIG_FILE=/opt/tvstreamer5/tvstreamer5-config.json \
+IMAGE_NAME=dvbstreamer5:202.28 \
+CONFIG_FILE=/opt/DVBStreamer5/dvbstreamer5-config.json \
 ./scripts/run_container.sh
 ```
 
@@ -415,21 +415,21 @@ CONFIG_FILE=/opt/tvstreamer5/tvstreamer5-config.json \
 
 ```bash
 # Состояние контейнера
-docker ps -a --filter name=tvstreamer5
+docker ps -a --filter name=dvbstreamer5
 
 # Текущие и последние 200 строк журнала
-docker logs --tail 200 tvstreamer5
-docker logs --tail 200 -f tvstreamer5
+docker logs --tail 200 dvbstreamer5
+docker logs --tail 200 -f dvbstreamer5
 
 # Перезапуск
-docker restart tvstreamer5
+docker restart dvbstreamer5
 
 # Остановка и повторный запуск
-docker stop tvstreamer5
-docker start tvstreamer5
+docker stop dvbstreamer5
+docker start dvbstreamer5
 
 # Проверка параметров и состояния
-docker inspect tvstreamer5
+docker inspect dvbstreamer5
 ```
 
 ### Обновление и пересборка проекта
@@ -441,21 +441,21 @@ docker inspect tvstreamer5
 cd ~/Tvstreamer_sat
 
 git pull origin main
-docker build --pull -t tvstreamer5:202.28 .
+docker build --pull -t dvbstreamer5:202.28 .
 
-CONTAINER_NAME=tvstreamer5 \
+CONTAINER_NAME=dvbstreamer5 \
 DETACH=1 \
 RECREATE=1 \
-IMAGE_NAME=tvstreamer5:202.28 \
-CONFIG_FILE=/opt/tvstreamer5/tvstreamer5-config.json \
+IMAGE_NAME=dvbstreamer5:202.28 \
+CONFIG_FILE=/opt/DVBStreamer5/dvbstreamer5-config.json \
 bash ./scripts/run_container.sh
 
 # Контейнер должен иметь состояние Up
-docker ps --filter name=tvstreamer5 \
+docker ps --filter name=dvbstreamer5 \
   --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
 
 # Проверка запуска программы
-docker logs --tail 100 tvstreamer5
+docker logs --tail 100 dvbstreamer5
 curl --fail http://127.0.0.1:9000/health
 ```
 
@@ -470,9 +470,9 @@ curl --fail http://127.0.0.1:9000/health
 Проверка после пересборки:
 
 ```bash
-docker ps -a --filter name=tvstreamer5
-docker ps --filter name=tvstreamer5
-docker logs --tail 100 tvstreamer5
+docker ps -a --filter name=dvbstreamer5
+docker ps --filter name=dvbstreamer5
+docker logs --tail 100 dvbstreamer5
 curl --fail http://127.0.0.1:9000/health
 ```
 
@@ -495,7 +495,7 @@ gst-inspect-1.0 mpegtsmux
 Для подробного журнала GStreamer:
 
 ```bash
-GST_DEBUG=2 ./build/TVStreamer5
+GST_DEBUG=2 ./build/DVBStreamer5
 ```
 
 Если DVB frontend занят, проверьте другие процессы и убедитесь, что каналы на одном физическом frontend настроены на один транспондер. Если нет транскодирования, запустите `scripts/check_transcoder_plugins.sh` и проверьте наличие подходящих видео- и аудиоэнкодеров.

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace tvs::media::mpegts {
+namespace dvbstreamer5::media::mpegts {
 
 struct RemapConfig {
     std::uint16_t inputServiceId = 0;
@@ -46,4 +46,4 @@ private:
     bool remapReady_ = false;
 };
 
-} // namespace tvs::media::mpegts
+} // namespace dvbstreamer5::media::mpegts

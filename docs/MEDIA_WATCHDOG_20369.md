@@ -1,4 +1,4 @@
-# TVStreamer5 203.69 — SRT/HTTP source media watchdog
+# DVBStreamer5 203.69 — SRT/HTTP source media watchdog
 
 This is a source-only release candidate based on the 203.68 preview-open-fixed
 source archive. It has **not** been built or run with the production GStreamer
@@ -54,13 +54,13 @@ node tests/test_browser_preview.js
 node tests/test_preview_close_20368.js
 g++ -std=c++17 -O2 -Wall -Wextra -Werror tests/test_ts_media_progress_20369.cpp -o /tmp/test_ts_media_progress_20369
 /tmp/test_ts_media_progress_20369
-cmake -S . -B build-media-20369 -DCMAKE_BUILD_TYPE=Release -DTVSTREAMER5_BUILD_OSCAM_MINI=OFF
-cmake --build build-media-20369 --parallel 2 --target TVStreamer5
+cmake -S . -B build-media-20369 -DCMAKE_BUILD_TYPE=Release -DDVBSTREAMER5_BUILD_OSCAM_MINI=OFF
+cmake --build build-media-20369 --parallel 2 --target DVBStreamer5
 ```
 
 After a *test-server* canary, inspect:
 
 ```bash
-journalctl -u tvstreamer5.service --since '30 minutes ago' --no-pager | \
+journalctl -u dvbstreamer5.service --since '30 minutes ago' --no-pager | \
   grep -E 'MEDIA WATCH 203.69|MEDIA STALL RECOVERY|FINAL TS STALL RECOVERY'
 ```

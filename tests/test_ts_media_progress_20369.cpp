@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <iostream>
 
-using tvs::ts_media_progress::videoPesPts90k;
+using dvbstreamer5::ts_media_progress::videoPesPts90k;
 
 std::array<uint8_t, 188> packet(uint64_t pts) {
     std::array<uint8_t, 188> p {};

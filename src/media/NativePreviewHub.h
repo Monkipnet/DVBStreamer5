@@ -6,7 +6,7 @@
 #include <mutex>
 #include <string>
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 
 // Best-effort local MPEG-TS fan-out for browser previews. Each subscriber has
 // a bounded datagram socket queue, so a slow browser can never back-pressure
@@ -30,4 +30,4 @@ private:
     bool closed_ = false;
 };
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

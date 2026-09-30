@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace tvs::media::mpegts {
+namespace dvbstreamer5::media::mpegts {
 namespace {
 
 std::uint32_t sectionCrc32(const std::uint8_t* bytes, std::size_t size) noexcept {
@@ -491,4 +491,4 @@ bool Remapper::process(const Packet& input, std::vector<Packet>& output, std::st
     return true;
 }
 
-} // namespace tvs::media::mpegts
+} // namespace dvbstreamer5::media::mpegts

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace tvs::media::rtp {
+namespace dvbstreamer5::media::rtp {
 
 struct PacketView {
     std::uint8_t payloadType = 0;
@@ -41,4 +41,4 @@ private:
     std::size_t packetsPerDatagram_;
 };
 
-} // namespace tvs::media::rtp
+} // namespace dvbstreamer5::media::rtp

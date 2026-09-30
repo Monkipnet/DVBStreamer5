@@ -9,7 +9,7 @@
 #include "protocols/stream/outputs/StreamSrtOutputProtocol.h"
 #include "protocols/stream/outputs/StreamUdpOutputProtocol.h"
 
-namespace tvs::stream_protocols {
+namespace dvbstreamer5::stream_protocols {
 
 OutputProtocolKind outputKind(const StreamConfig& cfg) {
     std::string type = toLower(cfg.outputType);
@@ -86,4 +86,4 @@ bool isFlvOutput(OutputProtocolKind kind) {
     return kind == OutputProtocolKind::Rtmp || kind == OutputProtocolKind::Youtube;
 }
 
-} // namespace tvs::stream_protocols
+} // namespace dvbstreamer5::stream_protocols

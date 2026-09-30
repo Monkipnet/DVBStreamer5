@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace tvs::ts_media_progress {
+namespace dvbstreamer5::ts_media_progress {
 
 // Read a PES PTS carried wholly in the first TS packet. Partial PES headers,
 // encrypted payloads, malformed marker bits and adaptation-only packets are
@@ -34,4 +34,4 @@ inline bool videoPesPts90k(const uint8_t* packet, std::size_t size, uint64_t& pt
     return true;
 }
 
-} // namespace tvs::ts_media_progress
+} // namespace dvbstreamer5::ts_media_progress

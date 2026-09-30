@@ -5,7 +5,7 @@
 // SD widescreen can be stored using square pixels (1024x576) or as
 // anamorphic broadcast SD (720x576 with a 64:45 pixel aspect ratio).
 // Keep the legacy 720x576 preset unchanged for existing saved streams.
-namespace tvs::transcode {
+namespace dvbstreamer5::transcode {
 
 struct VideoGeometry {
     int width = 0;
@@ -26,4 +26,4 @@ inline bool videoGeometry(const std::string& preset, VideoGeometry& geometry) {
     return false;
 }
 
-} // namespace tvs::transcode
+} // namespace dvbstreamer5::transcode

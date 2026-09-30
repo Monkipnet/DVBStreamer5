@@ -15,17 +15,17 @@ typedef struct _TvsGstMp2Encoder {
     guint bitrate;
     guint sample_rate;
     guint channels;
-    tvs::media::Mp2Encoder* encoder;
+    dvbstreamer5::media::Mp2Encoder* encoder;
 } TvsGstMp2Encoder;
 
 typedef struct _TvsGstMp2EncoderClass {
     GstAudioEncoderClass parent_class;
 } TvsGstMp2EncoderClass;
 
-static void tvs_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass);
-static void tvs_gst_mp2_encoder_init(TvsGstMp2Encoder* self);
+static void dvbstreamer5_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass);
+static void dvbstreamer5_gst_mp2_encoder_init(TvsGstMp2Encoder* self);
 
-G_DEFINE_TYPE(TvsGstMp2Encoder, tvs_gst_mp2_encoder, GST_TYPE_AUDIO_ENCODER)
+G_DEFINE_TYPE(TvsGstMp2Encoder, dvbstreamer5_gst_mp2_encoder, GST_TYPE_AUDIO_ENCODER)
 
 namespace {
 
@@ -79,7 +79,7 @@ gboolean setFormat(GstAudioEncoder* encoder, GstAudioInfo* info) {
 
     const guint sampleRate = static_cast<guint>(GST_AUDIO_INFO_RATE(info));
     const guint channels = static_cast<guint>(GST_AUDIO_INFO_CHANNELS(info));
-    auto replacement = std::make_unique<tvs::media::Mp2Encoder>();
+    auto replacement = std::make_unique<dvbstreamer5::media::Mp2Encoder>();
     std::string error;
     if (!replacement->initialize({sampleRate, channels, self->bitrate}, error)) {
         GST_ELEMENT_ERROR(self, STREAM, FORMAT, ("Unsupported MP2 input profile"), ("%s", error.c_str()));
@@ -174,7 +174,7 @@ void flush(GstAudioEncoder* encoder) {
     if (!self->sample_rate || !self->channels) return;
 
     delete self->encoder;
-    self->encoder = new tvs::media::Mp2Encoder();
+    self->encoder = new dvbstreamer5::media::Mp2Encoder();
     std::string error;
     if (!self->encoder->initialize(
             {self->sample_rate, self->channels, self->bitrate}, error)) {
@@ -188,12 +188,12 @@ void finalize(GObject* object) {
     auto* self = reinterpret_cast<TvsGstMp2Encoder*>(object);
     delete self->encoder;
     self->encoder = nullptr;
-    G_OBJECT_CLASS(tvs_gst_mp2_encoder_parent_class)->finalize(object);
+    G_OBJECT_CLASS(dvbstreamer5_gst_mp2_encoder_parent_class)->finalize(object);
 }
 
 } // namespace
 
-static void tvs_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass) {
+static void dvbstreamer5_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass) {
     auto* objectClass = G_OBJECT_CLASS(klass);
     auto* elementClass = GST_ELEMENT_CLASS(klass);
     auto* audioEncoderClass = GST_AUDIO_ENCODER_CLASS(klass);
@@ -215,10 +215,10 @@ static void tvs_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass) {
 
     gst_element_class_set_static_metadata(
         elementClass,
-        "TVStreamer5 MP2 audio encoder",
+        "DVBStreamer5 MP2 audio encoder",
         "Codec/Encoder/Audio",
         "Encodes signed 16-bit PCM to MPEG-1 Layer II using vendored TwoLAME",
-        "TVStreamer5 contributors");
+        "DVBStreamer5 contributors");
     gst_element_class_add_static_pad_template(elementClass, &kSinkTemplate);
     gst_element_class_add_static_pad_template(elementClass, &kSrcTemplate);
 
@@ -227,7 +227,7 @@ static void tvs_gst_mp2_encoder_class_init(TvsGstMp2EncoderClass* klass) {
     audioEncoderClass->flush = flush;
 }
 
-static void tvs_gst_mp2_encoder_init(TvsGstMp2Encoder* self) {
+static void dvbstreamer5_gst_mp2_encoder_init(TvsGstMp2Encoder* self) {
     self->bitrate = 192000;
     self->sample_rate = 0;
     self->channels = 0;
@@ -236,12 +236,12 @@ static void tvs_gst_mp2_encoder_init(TvsGstMp2Encoder* self) {
     gst_audio_encoder_set_frame_samples_max(GST_AUDIO_ENCODER(self), kSamplesPerFrame);
 }
 
-gboolean tvs_gst_mp2_encoder_register(void) {
-    GstElementFactory* factory = gst_element_factory_find("tvstreamer5mp2enc");
+gboolean dvbstreamer5_gst_mp2_encoder_register(void) {
+    GstElementFactory* factory = gst_element_factory_find("dvbstreamer5mp2enc");
     if (factory) {
         gst_object_unref(factory);
         return TRUE;
     }
     return gst_element_register(
-        nullptr, "tvstreamer5mp2enc", GST_RANK_NONE, tvs_gst_mp2_encoder_get_type());
+        nullptr, "dvbstreamer5mp2enc", GST_RANK_NONE, dvbstreamer5_gst_mp2_encoder_get_type());
 }

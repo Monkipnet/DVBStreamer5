@@ -18,5 +18,5 @@ application entry points:
 - `boost/algorithm/string.hpp`
 - `boost/circular_buffer.hpp`
 
-TVStreamer5 defines `BOOST_ERROR_CODE_HEADER_ONLY`; no compiled Boost library
+DVBStreamer5 defines `BOOST_ERROR_CODE_HEADER_ONLY`; no compiled Boost library
 is linked or required at build or runtime.

@@ -1,7 +1,7 @@
-add_executable(tvstreamer5_http_client_tests
+add_executable(dvbstreamer5_http_client_tests
     test_native_http_client.cpp
 )
 
-target_link_libraries(tvstreamer5_http_client_tests PRIVATE
-    tvstreamer5_http_client
+target_link_libraries(dvbstreamer5_http_client_tests PRIVATE
+    dvbstreamer5_http_client
 )

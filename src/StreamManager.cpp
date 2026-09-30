@@ -60,10 +60,10 @@ void stopDurationHlsSchedulerForTeardown(
     GstElement* pipeline, const std::string& streamId) {
     if (!pipeline) return;
     gpointer raw = g_object_steal_data(
-        G_OBJECT(pipeline), tvs::hls_scheduler::kPipelineDataKey);
+        G_OBJECT(pipeline), dvbstreamer5::hls_scheduler::kPipelineDataKey);
     if (!raw) return;
 
-    auto* scheduler = static_cast<tvs::hls_scheduler::Scheduler*>(raw);
+    auto* scheduler = static_cast<dvbstreamer5::hls_scheduler::Scheduler*>(raw);
     const auto started = std::chrono::steady_clock::now();
     // 203.20: pipeline teardown does not need an EOS. Stop the downloader first
     // so a pending playlist GET cannot hold GstPipeline finalization and the
@@ -85,10 +85,10 @@ constexpr std::size_t kTelemetryScratchChunkBytes = 64 * 1024;
 constexpr guint kTsPacketsPerUdpBuffer = 7;
 constexpr guint kCaBatchPackets = 77;
 constexpr guint64 kUdpQueueLatency = 10 * GST_SECOND;
-// TVStreamer5/main timestamps UDP TS with tsparse and 300 ms smoothing before
+// DVBStreamer5/main timestamps UDP TS with tsparse and 300 ms smoothing before
 // the StableUdpOutput reservoir.  This is restored only for SRT/HTTP inputs.
 constexpr guint64 kTvStreamer5TsSmoothingLatency = 300 * GST_MSECOND;
-// 202.57: SRT/HTTP now follows TVStreamer5/main again. The normal UDP output
+// 202.57: SRT/HTTP now follows DVBStreamer5/main again. The normal UDP output
 // queue below remains 10 seconds and non-leaky; protocol-specific short/leaky
 // queueing is intentionally removed.
 constexpr guint64 kStableUdpAudioReservoir = 1500 * GST_MSECOND;
@@ -521,7 +521,7 @@ void scheduleAutomaticServiceRestart(
         std::thread([streamId, reason]() {
             std::this_thread::sleep_for(kAutomaticServiceRestartDelay);
             const int rc = std::system(
-                "/usr/bin/systemctl --no-block restart tvstreamer5.service >/dev/null 2>&1");
+                "/usr/bin/systemctl --no-block restart dvbstreamer5.service >/dev/null 2>&1");
             if (rc != 0) {
                 std::cerr << "PROGRAM RESTART 202.66: trigger=stuck-pipeline-teardown stream="
                           << streamId << " reason=" << reason
@@ -601,8 +601,8 @@ constexpr auto kSrtPrimaryRetryInterval = std::chrono::minutes(5);
 
 void armInitialNetworkStartupGrace(StreamState* state) {
     if (!state) return;
-    if (tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-        tvs::stream_protocols::InputProtocolKind::Srt) {
+    if (dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+        dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
         state->networkRecoveryGraceUntil =
             std::chrono::steady_clock::now() + kSrtStartupFailoverDelay;
     } else {
@@ -613,12 +613,12 @@ void armInitialNetworkStartupGrace(StreamState* state) {
 
 std::chrono::milliseconds sourceReconnectGraceForState(const StreamState* state) {
     if (!state) return std::chrono::milliseconds(0);
-    const auto kind = tvs::stream_protocols::inputKind(state->runtimeConfig);
-    if (kind == tvs::stream_protocols::InputProtocolKind::Srt) {
+    const auto kind = dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig);
+    if (kind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
             kSrtSourceReconnectGrace);
     }
-    if (kind == tvs::stream_protocols::InputProtocolKind::Http) {
+    if (kind == dvbstreamer5::stream_protocols::InputProtocolKind::Http) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
             kNetworkNoInputRebuildDelay);
     }
@@ -645,11 +645,11 @@ std::chrono::milliseconds inputProbeTimeoutForUri(
     const StreamConfig& baseConfig, const std::string& inputUri) {
     StreamConfig probeConfig = baseConfig;
     probeConfig.inputUri = inputUri;
-    const auto kind = tvs::stream_protocols::inputKind(probeConfig);
-    if (kind == tvs::stream_protocols::InputProtocolKind::Srt) {
+    const auto kind = dvbstreamer5::stream_protocols::inputKind(probeConfig);
+    if (kind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(kSrtPrimaryProbeTimeout);
     }
-    if (kind == tvs::stream_protocols::InputProtocolKind::Hls) {
+    if (kind == dvbstreamer5::stream_protocols::InputProtocolKind::Hls) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(kHlsPrimaryProbeTimeout);
     }
     return std::chrono::duration_cast<std::chrono::milliseconds>(kInputFailoverDelay);
@@ -659,8 +659,8 @@ std::chrono::milliseconds primaryRetryIntervalForUri(
     const StreamConfig& baseConfig, const std::string& inputUri) {
     StreamConfig probeConfig = baseConfig;
     probeConfig.inputUri = inputUri;
-    const auto kind = tvs::stream_protocols::inputKind(probeConfig);
-    if (kind == tvs::stream_protocols::InputProtocolKind::Srt) {
+    const auto kind = dvbstreamer5::stream_protocols::inputKind(probeConfig);
+    if (kind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
             kSrtPrimaryRetryInterval);
     }
@@ -721,7 +721,7 @@ void resetOverloadRecoveryWatch(StreamState* state, bool startCooldown);
 
 bool dvbDiagnosticsEnabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("TVS_DVB_DIAGNOSTICS");
+        const char* value = std::getenv("DVBSTREAMER5_DVB_DIAGNOSTICS");
         return value && *value && std::strcmp(value, "0") != 0;
     }();
     return enabled;
@@ -3120,8 +3120,8 @@ std::string appendHlsAccessQuery(const std::string& uri, const StreamConfig& cfg
     if (cfg.hlsAccessKeyMode != "query" || cfg.hlsAccessKeyName.empty() || cfg.hlsAccessKeyValue.empty()) {
         return uri;
     }
-    const std::string escapedName = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyName);
-    const std::string escapedValue = tvs::http::encodeQueryComponent(cfg.hlsAccessKeyValue);
+    const std::string escapedName = dvbstreamer5::http::encodeQueryComponent(cfg.hlsAccessKeyName);
+    const std::string escapedValue = dvbstreamer5::http::encodeQueryComponent(cfg.hlsAccessKeyValue);
     const auto fragmentPosition = uri.find('#');
     std::string result = uri.substr(0, fragmentPosition);
     const std::string fragment = fragmentPosition == std::string::npos
@@ -3146,7 +3146,7 @@ void configureHlsHttpSource(GstElement* element, const StreamConfig& cfg);
 void onHlsSourceLocationChanged(GObject* object, GParamSpec*, gpointer userData) {
     auto* cfg = static_cast<StreamConfig*>(userData);
     if (!cfg || cfg->hlsAccessKeyMode != "query" || cfg->hlsAccessKeyValue.empty()) return;
-    if (g_object_get_data(object, "tvs-hls-query-update")) return;
+    if (g_object_get_data(object, "dvbstreamer5-hls-query-update")) return;
     gchar* current = nullptr;
     g_object_get(object, "location", &current, nullptr);
     if (!current || !*current) {
@@ -3155,9 +3155,9 @@ void onHlsSourceLocationChanged(GObject* object, GParamSpec*, gpointer userData)
     }
     const std::string updated = appendHlsAccessQuery(current, *cfg);
     if (updated != current) {
-        g_object_set_data(object, "tvs-hls-query-update", GINT_TO_POINTER(1));
+        g_object_set_data(object, "dvbstreamer5-hls-query-update", GINT_TO_POINTER(1));
         g_object_set(object, "location", updated.c_str(), nullptr);
-        g_object_set_data(object, "tvs-hls-query-update", nullptr);
+        g_object_set_data(object, "dvbstreamer5-hls-query-update", nullptr);
     }
     g_free(current);
 }
@@ -3194,14 +3194,14 @@ void configureHlsHttpSource(GstElement* element, const StreamConfig& cfg) {
     }
 
     if (cfg.hlsAccessKeyMode == "query" && hasProperty(element, "location")) {
-        if (!g_object_get_data(G_OBJECT(element), "tvs-hls-location-watch")) {
+        if (!g_object_get_data(G_OBJECT(element), "dvbstreamer5-hls-location-watch")) {
             // RemapContext owns cfg for the complete pipeline lifetime. Internal
             // hlsdemux download sources set their location after being added to
             // the bin, so watch the property and append the per-stream token to
             // manifests, segments and EXT-X-KEY requests alike.
             g_signal_connect(element, "notify::location", G_CALLBACK(onHlsSourceLocationChanged),
                 const_cast<StreamConfig*>(&cfg));
-            g_object_set_data(G_OBJECT(element), "tvs-hls-location-watch", GINT_TO_POINTER(1));
+            g_object_set_data(G_OBJECT(element), "dvbstreamer5-hls-location-watch", GINT_TO_POINTER(1));
         }
         onHlsSourceLocationChanged(G_OBJECT(element), nullptr, const_cast<StreamConfig*>(&cfg));
     }
@@ -3272,7 +3272,7 @@ bool pushHttpMpegTsData(HttpMpegTsInputState* state, const std::uint8_t* data, s
 void postHttpMpegTsError(HttpMpegTsInputState* state, const std::string& message) {
     if (!state || !state->appsrc) return;
     GError* error = g_error_new_literal(
-        g_quark_from_static_string("tvs-http-mpegts"), 1, message.c_str());
+        g_quark_from_static_string("dvbstreamer5-http-mpegts"), 1, message.c_str());
     GstMessage* gstMessage = gst_message_new_error(
         GST_OBJECT(state->appsrc), error, message.c_str());
     g_error_free(error);
@@ -3281,7 +3281,7 @@ void postHttpMpegTsError(HttpMpegTsInputState* state, const std::string& message
 
 void runHttpMpegTsInput(const std::shared_ptr<HttpMpegTsInputState>& state) {
     if (!state || !state->appsrc) return;
-    tvs::http::RequestOptions options;
+    dvbstreamer5::http::RequestOptions options;
     options.connectTimeoutMs = kHttpConnectTimeoutMs;
     options.readTimeoutMs = kHttpLowSpeedTimeSeconds * 1000L;
     options.writeTimeoutMs = kHttpConnectTimeoutMs;
@@ -3290,7 +3290,7 @@ void runHttpMpegTsInput(const std::shared_ptr<HttpMpegTsInputState>& state) {
     options.maxBodyBytes = (std::numeric_limits<std::size_t>::max)();
     options.stopping = &state->stopping;
     options.userAgent = state->config.hlsUserAgent.empty()
-        ? "Mozilla/5.0 TVStreamer5"
+        ? "Mozilla/5.0 DVBStreamer5"
         : state->config.hlsUserAgent;
     if (state->config.hlsAccessKeyMode == "header" &&
         !state->config.hlsAccessKeyName.empty() &&
@@ -3303,9 +3303,9 @@ void runHttpMpegTsInput(const std::shared_ptr<HttpMpegTsInputState>& state) {
               << " access=" << (state->config.hlsAccessKeyMode.empty() ? "none" : state->config.hlsAccessKeyMode)
               << " source=native-http-appsrc" << std::endl;
 
-    tvs::http::Response response;
+    dvbstreamer5::http::Response response;
     std::string requestError;
-    const bool ok = tvs::http::get(
+    const bool ok = dvbstreamer5::http::get(
         state->location, options, response, requestError,
         [state](const std::uint8_t* data, std::size_t size) {
             return pushHttpMpegTsData(state.get(), data, size);
@@ -3352,7 +3352,7 @@ bool probeHttpHlsManifest(const StreamConfig& cfg, const std::string& rawUri) {
     if (lower.find(".m3u8") != std::string::npos || toLower(cfg.inputMode) == "hls") return true;
 
     const std::string uri = appendHlsAccessQuery(rawUri, cfg);
-    tvs::http::RequestOptions options;
+    dvbstreamer5::http::RequestOptions options;
     options.connectTimeoutMs = 2500;
     options.readTimeoutMs = 5000;
     options.writeTimeoutMs = 2500;
@@ -3361,14 +3361,14 @@ bool probeHttpHlsManifest(const StreamConfig& cfg, const std::string& rawUri) {
     options.forwardHeadersAcrossOrigins = true;
     options.maxBodyBytes = 128U * 1024U;
     options.userAgent = cfg.hlsUserAgent.empty()
-        ? "Mozilla/5.0 TVStreamer5"
+        ? "Mozilla/5.0 DVBStreamer5"
         : cfg.hlsUserAgent;
     if (cfg.hlsAccessKeyMode == "header" && !cfg.hlsAccessKeyName.empty() && !cfg.hlsAccessKeyValue.empty()) {
         options.headers.emplace_back(cfg.hlsAccessKeyName, cfg.hlsAccessKeyValue);
     }
-    tvs::http::Response response;
+    dvbstreamer5::http::Response response;
     std::string requestError;
-    (void)tvs::http::get(uri, options, response, requestError);
+    (void)dvbstreamer5::http::get(uri, options, response, requestError);
     const std::string body(response.body.begin(), response.body.end());
     const std::string ct = toLower(response.contentType);
 
@@ -3389,12 +3389,12 @@ void onStableUdpAudioReservoirRunning(GstElement* queue, gpointer userData) {
     // startup prebuffer only. Leaving min-threshold-time enabled permanently
     // makes queue re-block every time its level later falls below the threshold,
     // which matches the observed rare audio stalls after 30-40 seconds.
-    if (g_object_get_data(G_OBJECT(queue), "tvs-audio-reservoir-started")) {
+    if (g_object_get_data(G_OBJECT(queue), "dvbstreamer5-audio-reservoir-started")) {
         return;
     }
 
     g_object_set_data(
-        G_OBJECT(queue), "tvs-audio-reservoir-started", GINT_TO_POINTER(1));
+        G_OBJECT(queue), "dvbstreamer5-audio-reservoir-started", GINT_TO_POINTER(1));
     setUInt64PropertyIfPresent(queue, "min-threshold-time", 0);
 
     std::cerr << "Stable UDP audio reservoir startup complete: "
@@ -3404,11 +3404,11 @@ void onStableUdpAudioReservoirRunning(GstElement* queue, gpointer userData) {
 
 void onHlsInputPrebufferRunning(GstElement* queue, gpointer userData) {
     (void)userData;
-    if (!queue || g_object_get_data(G_OBJECT(queue), "tvs-hls-prebuffer-started")) {
+    if (!queue || g_object_get_data(G_OBJECT(queue), "dvbstreamer5-hls-prebuffer-started")) {
         return;
     }
 
-    g_object_set_data(G_OBJECT(queue), "tvs-hls-prebuffer-started", GINT_TO_POINTER(1));
+    g_object_set_data(G_OBJECT(queue), "dvbstreamer5-hls-prebuffer-started", GINT_TO_POINTER(1));
     setUInt64PropertyIfPresent(queue, "min-threshold-time", 0);
     std::cerr << "HLS input startup buffer ready: startup_buffer_ms=1000 "
               << "steady_state_min_threshold_ms=0" << std::endl;
@@ -3416,11 +3416,11 @@ void onHlsInputPrebufferRunning(GstElement* queue, gpointer userData) {
 
 void onSrtInputPrebufferRunning(GstElement* queue, gpointer userData) {
     (void)userData;
-    if (!queue || g_object_get_data(G_OBJECT(queue), "tvs-srt-prebuffer-started")) {
+    if (!queue || g_object_get_data(G_OBJECT(queue), "dvbstreamer5-srt-prebuffer-started")) {
         return;
     }
 
-    g_object_set_data(G_OBJECT(queue), "tvs-srt-prebuffer-started", GINT_TO_POINTER(1));
+    g_object_set_data(G_OBJECT(queue), "dvbstreamer5-srt-prebuffer-started", GINT_TO_POINTER(1));
     setUInt64PropertyIfPresent(queue, "min-threshold-time", 0);
     std::cerr << "SRT caller input buffer ready: startup_buffer_ms=2000 "
               << "steady_state_min_threshold_ms=0" << std::endl;
@@ -3450,7 +3450,7 @@ bool usesStableUdpShaper(const StreamConfig& cfg) {
 }
 
 bool allOutputsUseStableUdp(const StreamConfig& cfg) {
-    const auto outputs = tvs::protocols::outputConfigs(cfg);
+    const auto outputs = dvbstreamer5::protocols::outputConfigs(cfg);
     return !outputs.empty() && std::all_of(outputs.begin(), outputs.end(), [](const StreamConfig& output) {
         return usesStableUdpShaper(output);
     });
@@ -3477,7 +3477,7 @@ bool udpCbrOutputEnabled(const StreamConfig& cfg) {
 // the late freezes seen when StableUdpOutput independently re-spaced the
 // remuxed real packets while preserving the mux PCR.
 bool srtRemapUdpCbrPrePadded(const StreamConfig& cfg) {
-    // 202.57: TVStreamer5/main keeps mpegtsmux unpadded for Stable UDP and lets
+    // 202.57: DVBStreamer5/main keeps mpegtsmux unpadded for Stable UDP and lets
     // StableUdpOutput own NULL stuffing, periodic PCR and final packet pacing.
     // The SAT5 SRT-remap pre-padding experiment is intentionally disabled.
     (void)cfg;
@@ -3646,7 +3646,7 @@ uint64_t transcodeInputBitrateForStats(const StreamConfig& cfg) {
 }
 
 uint64_t transcodeMuxBitrateForStats(const StreamConfig& cfg) {
-    return tvs::protocols::muxBitrate(cfg);
+    return dvbstreamer5::protocols::muxBitrate(cfg);
 }
 
 uint16_t transcodeRelayPort(const StreamConfig& cfg) {
@@ -3659,7 +3659,7 @@ StreamConfig transcodeRelayOutputConfig(const StreamConfig& cfg) {
     StreamConfig relay = cfg;
     relay.outputType = "fifo";
     relay.outputMode.clear();
-    relay.outputHost = tvs::protocols::transcodedFifoRelayPath(cfg);
+    relay.outputHost = dvbstreamer5::protocols::transcodedFifoRelayPath(cfg);
     relay.outputPort = 0;
     relay.additionalOutputs.clear();
     // The FIFO is an unpaced hand-off between the external encoder and the
@@ -3672,7 +3672,7 @@ StreamConfig transcodeRelayOutputConfig(const StreamConfig& cfg) {
 
 StreamConfig transcodeRelayPipelineConfig(const StreamConfig& cfg) {
     StreamConfig relay = cfg;
-    relay.inputUri = "file://" + tvs::protocols::transcodedFifoRelayPath(cfg);
+    relay.inputUri = "file://" + dvbstreamer5::protocols::transcodedFifoRelayPath(cfg);
     relay.inputMode = "file";
     relay.inputInterfaceAddress.clear();
     relay.inputInterfaceAddressConfigured = true;
@@ -3765,7 +3765,7 @@ bool isMpegTsFile(const std::string& input) {
 std::string hlsDirectory(const StreamConfig& cfg) {
     return cfg.hlsArchiveEnabled
         ? (std::filesystem::path(cfg.hlsArchivePath) / cfg.id).string()
-        : (std::filesystem::path("/tmp/tvstreamer5-hls") / cfg.id).string();
+        : (std::filesystem::path("/tmp/dvbstreamer5-hls") / cfg.id).string();
 }
 
 std::string hlsPublicPathName(const StreamConfig& cfg) {
@@ -4190,7 +4190,7 @@ InputMediaCount countInputMedia(const guint8* data, std::size_t size, StreamStat
                 ++count.mediaPesStarts;
                 if (state->inputTelemetryVideoPids[pid]) {
                     uint64_t pts90k = 0;
-                    if (tvs::ts_media_progress::videoPesPts90k(packet, kTsPacketSize, pts90k)) {
+                    if (dvbstreamer5::ts_media_progress::videoPesPts90k(packet, kTsPacketSize, pts90k)) {
                         // Compare per elementary PID, not across multiple video
                         // tracks. PTS may wrap; only a *change* is required.
                         if (state->inputVideoPtsKnown[pid] &&
@@ -4608,7 +4608,7 @@ void configureSrtSink(GstElement* sink, const StreamConfig& cfg, bool accessFilt
         : cfg.outputHost;
     const std::string bindHost = cfg.interfaceAddress.empty() ? "0.0.0.0" : cfg.interfaceAddress;
     const int effectivePort = (cfg.outputPort > 0 && cfg.outputPort <= 65535) ? cfg.outputPort : 7001;
-    const std::string uri = tvs::protocols::srt_vps::applyToUri(
+    const std::string uri = dvbstreamer5::protocols::srt_vps::applyToUri(
         "srt://" + (caller ? targetHost : bindHost) + ":" +
             std::to_string(effectivePort) + "?mode=" + mode, cfg);
 
@@ -4631,11 +4631,11 @@ void configureSrtSink(GstElement* sink, const StreamConfig& cfg, bool accessFilt
     // listener branch stuck in an infinite control-path wait during teardown
     // or branch recovery. keep-listening remains enabled for listener mode.
     const int normalPollTimeoutMs = 1000;
-    const int effectivePollTimeoutMs = tvs::protocols::srt_vps::pollTimeoutMs(cfg, normalPollTimeoutMs);
+    const int effectivePollTimeoutMs = dvbstreamer5::protocols::srt_vps::pollTimeoutMs(cfg, normalPollTimeoutMs);
     setIntPropertyIfPresent(sink, "poll-timeout", effectivePollTimeoutMs);
     setBooleanPropertyIfPresent(sink, "qos", FALSE);
     const int normalSrtLatency = transcoded ? kSrtTranscodedOutputLatencyMs : kSrtOutputLatencyMs;
-    const int srtLatency = tvs::protocols::srt_vps::latencyMs(cfg, normalSrtLatency);
+    const int srtLatency = dvbstreamer5::protocols::srt_vps::latencyMs(cfg, normalSrtLatency);
     setIntPropertyIfPresent(sink, "latency", srtLatency);
     setInt64PropertyIfPresent(sink, "max-lateness", -1);
     setStringPropertyIfPresent(sink, "localaddress", cfg.interfaceAddress);
@@ -4663,13 +4663,13 @@ void configureSrtSink(GstElement* sink, const StreamConfig& cfg, bool accessFilt
         std::cerr << "SRT VPS/VDS PROFILE 203.67: stream=" << cfg.id
                   << " direction=output enabled=on mode=" << mode
                   << " latency_ms=" << srtLatency
-                  << " rcvlatency_ms=" << tvs::protocols::srt_vps::kLatencyMs
-                  << " peerlatency_ms=" << tvs::protocols::srt_vps::kLatencyMs
+                  << " rcvlatency_ms=" << dvbstreamer5::protocols::srt_vps::kLatencyMs
+                  << " peerlatency_ms=" << dvbstreamer5::protocols::srt_vps::kLatencyMs
                   << " poll_timeout_ms=" << effectivePollTimeoutMs
-                  << " srt_rcvbuf=" << tvs::protocols::srt_vps::kSrtReceiveBufferBytes
-                  << " srt_sndbuf=" << tvs::protocols::srt_vps::kSrtSendBufferBytes
-                  << " fc_packets=" << tvs::protocols::srt_vps::kFlightWindowPackets
-                  << " payload_size=" << tvs::protocols::srt_vps::kPayloadSizeBytes
+                  << " srt_rcvbuf=" << dvbstreamer5::protocols::srt_vps::kSrtReceiveBufferBytes
+                  << " srt_sndbuf=" << dvbstreamer5::protocols::srt_vps::kSrtSendBufferBytes
+                  << " fc_packets=" << dvbstreamer5::protocols::srt_vps::kFlightWindowPackets
+                  << " payload_size=" << dvbstreamer5::protocols::srt_vps::kPayloadSizeBytes
                   << " note=kernel-udp-buffer-remains-host-controlled"
                   << std::endl;
     }
@@ -4712,7 +4712,7 @@ void configureHttpSink(GstElement* sink, const StreamConfig& cfg) {
     // architecture for passthrough MPEG-TS as well.  This isolates public HTTP
     // clients from the GStreamer pipeline and avoids multifdsink client queue /
     // recovery semantics affecting a long-running TS connection.
-    const guint internalPort = static_cast<guint>(tvs::protocols::transcodedHttpInternalPort(cfg));
+    const guint internalPort = static_cast<guint>(dvbstreamer5::protocols::transcodedHttpInternalPort(cfg));
     g_object_set(sink,
         "host", "127.0.0.1",
         "port", internalPort,
@@ -4873,9 +4873,9 @@ void configureLiveQueue(GstElement* queue, guint64 maxSizeTime = 750000000ULL) {
 }
 
 bool isContinuousSrtOrHttpInput(const StreamConfig& cfg) {
-    const auto kind = tvs::stream_protocols::inputKind(cfg);
-    return kind == tvs::stream_protocols::InputProtocolKind::Srt ||
-           kind == tvs::stream_protocols::InputProtocolKind::Http;
+    const auto kind = dvbstreamer5::stream_protocols::inputKind(cfg);
+    return kind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
+           kind == dvbstreamer5::stream_protocols::InputProtocolKind::Http;
 }
 
 void configureOutputQueue(
@@ -4885,7 +4885,7 @@ void configureOutputQueue(
     if (!queue) return;
     (void)activeInputCfg;
 
-    // 202.57: restore TVStreamer5/main semantics.  Stable UDP uses the normal
+    // 202.57: restore DVBStreamer5/main semantics.  Stable UDP uses the normal
     // 10-second non-leaky output queue; there is no 750 ms drop-oldest stage.
     // Other output types retain the existing 3-second queue.
     configureQueue(queue, isUdpOutput(outputCfg) ? kUdpQueueLatency : 3000000000ULL);
@@ -4942,8 +4942,8 @@ void configureTsMux(GstElement* mux, const StreamConfig& cfg) {
         nullptr);
     // 203.05/202.74: timestamp clamping belongs to SRT only. HLS fallback
     // remux must preserve hlsdemux's segment timeline and discontinuities.
-    if (tvs::stream_protocols::inputKind(cfg) ==
-        tvs::stream_protocols::InputProtocolKind::Srt) {
+    if (dvbstreamer5::stream_protocols::inputKind(cfg) ==
+        dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
         setBooleanPropertyIfPresent(mux, "enforce-increasing-timestamps", TRUE);
         setBooleanPropertyIfPresent(mux, "skip-backwards-streams", TRUE);
     }
@@ -4988,7 +4988,7 @@ void sendServiceDescription(GstElement* mux, const StreamConfig& cfg) {
     GstMpegtsDescriptor* descriptor = gst_mpegts_descriptor_from_dvb_service(
         GST_DVB_SERVICE_DIGITAL_TELEVISION,
         cfg.serviceName.empty() ? cfg.name.c_str() : cfg.serviceName.c_str(),
-        cfg.serviceProvider.empty() ? "TVStreamer5" : cfg.serviceProvider.c_str());
+        cfg.serviceProvider.empty() ? "DVBStreamer5" : cfg.serviceProvider.c_str());
     if (descriptor) {
         g_ptr_array_add(service->descriptors, descriptor);
     }
@@ -5219,8 +5219,8 @@ GstElement* makeCapsFilter(const char* capsDescription) {
 
 
 bool isExternalSrtListenerOutput(const StreamConfig& outputConfig) {
-    return tvs::protocols::outputKind(outputConfig) == tvs::protocols::OutputKind::Srt &&
-           tvs::protocols::srtOutputMode(outputConfig) != "caller";
+    return dvbstreamer5::protocols::outputKind(outputConfig) == dvbstreamer5::protocols::OutputKind::Srt &&
+           dvbstreamer5::protocols::srtOutputMode(outputConfig) != "caller";
 }
 
 void stopPipelineAndWait(GstElement* pipeline, GstClockTime timeout = 2 * GST_SECOND) {
@@ -5322,15 +5322,15 @@ bool restartContinuousNetworkSourceInPlace(StreamState* state) {
         return false;
     }
 
-    const auto activeKind = tvs::stream_protocols::inputKind(state->runtimeConfig);
+    const auto activeKind = dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig);
     const char* expectedProtocol =
-        activeKind == tvs::stream_protocols::InputProtocolKind::Srt ? "SRT" : "HTTP-MPEGTS";
+        activeKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ? "SRT" : "HTTP-MPEGTS";
 
     GstElementFactory* factory = gst_element_get_factory(source);
     const gchar* factoryName = factory
         ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory))
         : nullptr;
-    const bool factoryMatches = activeKind == tvs::stream_protocols::InputProtocolKind::Srt
+    const bool factoryMatches = activeKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt
         ? (g_strcmp0(factoryName, "srtsrc") == 0 ||
            g_strcmp0(factoryName, "srtclientsrc") == 0)
         : (g_strcmp0(factoryName, "souphttpsrc") == 0 ||
@@ -5375,7 +5375,7 @@ bool restartContinuousNetworkSourceInPlace(StreamState* state) {
 
 bool srtInputStatsEnabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("TVS_SRT_INPUT_STATS");
+        const char* value = std::getenv("DVBSTREAMER5_SRT_INPUT_STATS");
         return value && *value && std::strcmp(value, "0") != 0;
     }();
     return enabled;
@@ -5383,8 +5383,8 @@ bool srtInputStatsEnabled() {
 
 void logSrtInputStatsSnapshot(StreamState* state, const char* reason) {
     if (!state || !state->pipeline ||
-        tvs::stream_protocols::inputKind(state->runtimeConfig) !=
-            tvs::stream_protocols::InputProtocolKind::Srt) {
+        dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) !=
+            dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
         return;
     }
 
@@ -5597,7 +5597,7 @@ bool StreamManager::acquireSharedDvbFrontend(StreamState* state, std::string& er
 
     // Heavy DVB packet diagnostics are intentionally disabled in the normal
     // hot path.  Enable them only when troubleshooting with
-    // TVS_DVB_DIAGNOSTICS=1.
+    // DVBSTREAMER5_DVB_DIAGNOSTICS=1.
     if (dvbDiagnosticsEnabled()) {
         // v155 byte-for-byte diagnostics at the DVB source. This probe publishes
         // recent exact TS packet fingerprints for the corresponding service relay
@@ -6177,7 +6177,7 @@ void StreamManager::attachSrtConnectionMonitoring(GstElement* sink, const Stream
 
 GstElement* StreamManager::createExternalSrtOutputPipeline(const StreamConfig& cfg, std::string& error) {
     error.clear();
-    const uint16_t relayPort = tvs::protocols::transcodedSrtInternalPort(cfg);
+    const uint16_t relayPort = dvbstreamer5::protocols::transcodedSrtInternalPort(cfg);
 
     for (const char* factory : {"udpsrc", "queue", "tsparse"}) {
         if (!hasElementFactory(factory)) {
@@ -6275,7 +6275,7 @@ GstElement* StreamManager::createExternalSrtOutputPipeline(const StreamConfig& c
               << " udp=127.0.0.1:" << relayPort
               << " -> srt=" << (cfg.outputHost.empty() ? "auto" : cfg.outputHost)
               << ":" << ((cfg.outputPort > 0 && cfg.outputPort <= 65535) ? cfg.outputPort : 7001)
-              << " mode=" << tvs::protocols::srtOutputMode(cfg)
+              << " mode=" << dvbstreamer5::protocols::srtOutputMode(cfg)
               << " monitoring=direct-callbacks"
               << std::endl;
     return pipeline;
@@ -6287,7 +6287,7 @@ bool StreamManager::startExternalSrtOutputs(StreamState* state, std::string& err
     }
     error.clear();
 
-    for (const auto& outputConfig : tvs::protocols::outputConfigs(state->config)) {
+    for (const auto& outputConfig : dvbstreamer5::protocols::outputConfigs(state->config)) {
         if (!isExternalSrtListenerOutput(outputConfig)) {
             continue;
         }
@@ -6381,7 +6381,7 @@ GstElement* StreamManager::createTranscodedUdpRelayPipeline(StreamState* state, 
         return nullptr;
     }
 
-    const std::string fifoPath = tvs::protocols::transcodedFifoRelayPath(state->config);
+    const std::string fifoPath = dvbstreamer5::protocols::transcodedFifoRelayPath(state->config);
     GstElement* pipeline = trackManagedPipeline(gst_pipeline_new((state->config.id + "_transcoded_udp_relay").c_str()));
     GstElement* src = gst_element_factory_make("filesrc", "transcoded_udp_fifo_src");
     GstElement* queue = gst_element_factory_make("queue", "transcoded_udp_fifo_queue");
@@ -6418,12 +6418,12 @@ GstElement* StreamManager::createTranscodedUdpRelayPipeline(StreamState* state, 
 namespace {
 
 bool nativeInputNeedsDeviceBinding(const StreamConfig& config) {
-    const auto input = tvs::stream_protocols::inputKind(config);
+    const auto input = dvbstreamer5::stream_protocols::inputKind(config);
     const std::string interface = config.inputInterfaceAddressConfigured
         ? config.inputInterfaceAddress
         : config.interfaceAddress;
-    if ((input != tvs::stream_protocols::InputProtocolKind::Udp &&
-         input != tvs::stream_protocols::InputProtocolKind::Rtp) ||
+    if ((input != dvbstreamer5::stream_protocols::InputProtocolKind::Udp &&
+         input != dvbstreamer5::stream_protocols::InputProtocolKind::Rtp) ||
         interface.empty()) {
         return false;
     }
@@ -6448,25 +6448,25 @@ bool nativeInputNeedsDeviceBinding(const StreamConfig& config) {
 }
 
 bool nativeUdpRelayEligible(const StreamConfig& config) {
-    const auto input = tvs::stream_protocols::inputKind(config);
+    const auto input = dvbstreamer5::stream_protocols::inputKind(config);
     const auto outputs = outputConfigs(config);
     if (outputs.empty() ||
         std::any_of(outputs.begin(), outputs.end(), [](const StreamConfig& output) {
-            const std::string type = tvs::protocols::normalizedOutputType(output);
+            const std::string type = dvbstreamer5::protocols::normalizedOutputType(output);
             return type != "udp-vbr" && type != "udp-cbr" && type != "rtp";
         })) {
         return false;
     }
     const bool networkInput =
-        input == tvs::stream_protocols::InputProtocolKind::Udp ||
-        input == tvs::stream_protocols::InputProtocolKind::Rtp ||
-        input == tvs::stream_protocols::InputProtocolKind::Http ||
-        input == tvs::stream_protocols::InputProtocolKind::Hls;
-    const bool dvbInput = input == tvs::stream_protocols::InputProtocolKind::Dvb;
+        input == dvbstreamer5::stream_protocols::InputProtocolKind::Udp ||
+        input == dvbstreamer5::stream_protocols::InputProtocolKind::Rtp ||
+        input == dvbstreamer5::stream_protocols::InputProtocolKind::Http ||
+        input == dvbstreamer5::stream_protocols::InputProtocolKind::Hls;
+    const bool dvbInput = input == dvbstreamer5::stream_protocols::InputProtocolKind::Dvb;
     const bool pacedFileInput =
-        input == tvs::stream_protocols::InputProtocolKind::File &&
+        input == dvbstreamer5::stream_protocols::InputProtocolKind::File &&
         std::all_of(outputs.begin(), outputs.end(), [](const StreamConfig& output) {
-            return tvs::protocols::normalizedOutputType(output) == "udp-cbr";
+            return dvbstreamer5::protocols::normalizedOutputType(output) == "udp-cbr";
         });
 #if !defined(__linux__)
     if (nativeInputNeedsDeviceBinding(config)) return false;
@@ -6648,8 +6648,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 });
         });
     const bool nativeDvbInput =
-        tvs::stream_protocols::inputKind(effectiveConfig) ==
-        tvs::stream_protocols::InputProtocolKind::Dvb;
+        dvbstreamer5::stream_protocols::inputKind(effectiveConfig) ==
+        dvbstreamer5::stream_protocols::InputProtocolKind::Dvb;
     DvbSatelliteParams nativeDvbParams;
     std::string nativeDvbFrontendKey;
     bool nativeDvbFrontendReserved = false;
@@ -6698,8 +6698,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         std::string inputInterface;
         std::string inputInterfaceDeviceName;
         if (!resolveNativeInterface(
-                tvs::stream_protocols::inputKind(effectiveConfig) ==
-                        tvs::stream_protocols::InputProtocolKind::File
+                dvbstreamer5::stream_protocols::inputKind(effectiveConfig) ==
+                        dvbstreamer5::stream_protocols::InputProtocolKind::File
                     ? std::string()
                     : nativeInputInterface(effectiveConfig),
                 inputInterface, interfaceError,
@@ -6715,11 +6715,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return false;
         }
 
-        tvs::media::network::NativeUdpRelayConfig relayConfig;
+        dvbstreamer5::media::network::NativeUdpRelayConfig relayConfig;
         relayConfig.inputUri = normalizeInputUri(effectiveConfig.inputUri);
         const bool nativeHlsInput =
-            tvs::stream_protocols::inputKind(effectiveConfig) ==
-            tvs::stream_protocols::InputProtocolKind::Hls;
+            dvbstreamer5::stream_protocols::inputKind(effectiveConfig) ==
+            dvbstreamer5::stream_protocols::InputProtocolKind::Hls;
         relayConfig.externallyFedInput = nativeHlsInput;
         const bool selectDvbService = nativeDvbInput &&
             effectiveConfig.inputServiceId > 0;
@@ -6785,7 +6785,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 };
         }
         auto nativePreviewHub =
-            std::make_shared<tvs::media::network::NativePreviewHub>();
+            std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
         MptsOutputManager* const nativeMptsManager =
             hasMptsOutput ? state->mptsOutputManager : nullptr;
         const std::string nativeStreamId = effectiveConfig.id;
@@ -6819,12 +6819,12 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 return false;
             }
             relayConfig.outputs.push_back({
-                tvs::protocols::normalizedOutputType(outputConfig),
+                dvbstreamer5::protocols::normalizedOutputType(outputConfig),
                 outputConfig.outputHost,
                 outputConfig.outputPort,
                 outputInterface});
         }
-        auto relay = std::make_unique<tvs::media::network::NativeUdpRelay>();
+        auto relay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
         std::string relayError;
         bool relayStarted = false;
         {
@@ -6843,10 +6843,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return false;
         }
 
-        std::unique_ptr<tvs::hls_scheduler::Scheduler> nativeHlsScheduler;
+        std::unique_ptr<dvbstreamer5::hls_scheduler::Scheduler> nativeHlsScheduler;
         if (nativeHlsInput) {
             auto* const relayTarget = relay.get();
-            nativeHlsScheduler = std::make_unique<tvs::hls_scheduler::Scheduler>(
+            nativeHlsScheduler = std::make_unique<dvbstreamer5::hls_scheduler::Scheduler>(
                 effectiveConfig,
                 [relayTarget](const std::uint8_t* data, std::size_t size, bool) {
                     return relayTarget->pushInput(data, size);
@@ -6962,7 +6962,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         allOutputsUseStableUdp(effectiveConfig) &&
         GstTranscoderProcess::isAvailable()) {
         std::string relayError;
-        if (!tvs::protocols::prepareFifoRelay(effectiveConfig, relayError)) {
+        if (!dvbstreamer5::protocols::prepareFifoRelay(effectiveConfig, relayError)) {
             state->statusMessage = "transcoded UDP relay setup failed: " + relayError;
             releaseSharedDvbInput(state.get());
             if (error) *error = relayError;
@@ -6973,7 +6973,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         const StreamConfig relayConfig = transcodeRelayOutputConfig(state->runtimeConfig);
         std::string gstError;
         if (!gstTranscoder->start(relayConfig, gstError)) {
-            tvs::protocols::removeFifoRelay(effectiveConfig);
+            dvbstreamer5::protocols::removeFifoRelay(effectiveConfig);
             state->statusMessage = "gstreamer transcoder relay failed: " + gstError;
             releaseSharedDvbInput(state.get());
             if (error) *error = gstError.empty() ? "GStreamer transcoder relay failed to start" : gstError;
@@ -6985,7 +6985,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (!relayPipeline) {
             state->gstTranscoder->stop();
             state->gstTranscoder.reset();
-            tvs::protocols::removeFifoRelay(effectiveConfig);
+            dvbstreamer5::protocols::removeFifoRelay(effectiveConfig);
             state->statusMessage = "transcoded UDP output failed: " + relayError;
             releaseSharedDvbInput(state.get());
             if (error) *error = relayError.empty() ? "failed to create transcoded UDP output" : relayError;
@@ -7018,7 +7018,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             state->pipeline = nullptr;
             state->gstTranscoder->stop();
             state->gstTranscoder.reset();
-            tvs::protocols::removeFifoRelay(effectiveConfig);
+            dvbstreamer5::protocols::removeFifoRelay(effectiveConfig);
             state->statusMessage = "transcoded UDP relay playback failed";
             releaseSharedDvbInput(state.get());
             if (error) *error = "failed to start post-transcode StableUdpOutput pipeline";
@@ -7055,7 +7055,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 if (state->pipeline) gst_object_unref(state->pipeline);
                 if (state->gstTranscoder) state->gstTranscoder->stop();
             }
-            tvs::protocols::removeFifoRelay(effectiveConfig);
+            dvbstreamer5::protocols::removeFifoRelay(effectiveConfig);
             if (state) releaseSharedDvbInput(state.get());
             if (error) *error = "duplicate stream start detected: " + streamConfig.id;
             return false;
@@ -7447,7 +7447,7 @@ bool StreamManager::teardownStreamState(
               << std::endl;
 
     trimReleasedPipelineMemory();
-    tvs::protocols::removeFifoRelay(stoppedConfig);
+    dvbstreamer5::protocols::removeFifoRelay(stoppedConfig);
     CardManager::instance().releaseService(id);
 
     if (notifyManualStop) {
@@ -7647,7 +7647,7 @@ void StreamManager::stopAll() {
         state.outputContexts.clear();
         state.sourceContext.reset();
         trimReleasedPipelineMemory();
-        tvs::protocols::removeFifoRelay(state.config);
+        dvbstreamer5::protocols::removeFifoRelay(state.config);
     }
 }
 
@@ -7933,8 +7933,8 @@ std::string StreamManager::buildPipelineDescription(const StreamConfig& cfg) {
     std::ostringstream desc;
     desc << "manual-pipeline"
          << " input=" << cfg.inputUri
-         << " input_proto=" << tvs::stream_protocols::inputKindName(tvs::stream_protocols::inputKind(cfg))
-         << " output_proto=" << tvs::stream_protocols::outputKindName(tvs::stream_protocols::outputKind(cfg))
+         << " input_proto=" << dvbstreamer5::stream_protocols::inputKindName(dvbstreamer5::stream_protocols::inputKind(cfg))
+         << " output_proto=" << dvbstreamer5::stream_protocols::outputKindName(dvbstreamer5::stream_protocols::outputKind(cfg))
          << " input_mode=" << cfg.inputMode
          << " input_iface=" << (inputInterface.empty() ? "auto" : inputInterface)
          << " test_pattern=" << (cfg.testPattern ? "on" : "off")
@@ -7964,7 +7964,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                                   const std::string& previewSession) {
     uint16_t relayPort = 0;
     std::shared_ptr<std::atomic<uint32_t>> privateDemand;
-    std::shared_ptr<tvs::media::network::NativePreviewHub> nativePreviewHub;
+    std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         auto found = streams.find(id);
@@ -7989,7 +7989,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         // tcpserversink port.  HttpServer owns the public HTTP socket and relays
         // raw MPEG-TS bytes from this local-only endpoint.
         nativePreviewHub = found->second->nativePreviewHub;
-        relayPort = tvs::protocols::transcodedHttpInternalPort(found->second->config);
+        relayPort = dvbstreamer5::protocols::transcodedHttpInternalPort(found->second->config);
         // The in-process preview tee probe is demand-controlled. The separate
         // gst-launch transcoder is not in this process and has no such probe.
         if (!nativePreviewHub && !hasTranscodedHttpOutput(found->second->config) &&
@@ -8591,7 +8591,7 @@ void StreamManager::notifyStreamState(
     const std::string& title,
     const std::string& details) {
     const std::string serverName = configManager.config.serverName.empty()
-        ? "TVStreamer5"
+        ? "DVBStreamer5"
         : configManager.config.serverName;
     std::ostringstream message;
     const bool english = telegramUsesEnglish(configManager);
@@ -8694,8 +8694,8 @@ bool StreamManager::restartPipelineWithInput(StreamState* state, const std::stri
     GstElement* oldPipeline = state->pipeline;
     GstBus* oldBus = state->bus;
     const bool strictHlsGenerationTeardown =
-        tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-            tvs::stream_protocols::InputProtocolKind::Hls;
+        dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+            dvbstreamer5::stream_protocols::InputProtocolKind::Hls;
 
     // HLS owns several dynamic-pad/souphttpsrc/hlsdemux objects. Detach the
     // appsink callback before NULL so the old StableUdpSender is destroyed even
@@ -9207,7 +9207,7 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
     const StreamConfig& cfg = state->runtimeConfig;
     const std::string input = cfg.testPattern ? kTestPatternUri : normalizeInputUri(cfg.inputUri);
     const std::string inputLower = toLower(input);
-    const auto inputProtocol = tvs::stream_protocols::inputKind(cfg);
+    const auto inputProtocol = dvbstreamer5::stream_protocols::inputKind(cfg);
 
     auto addQueue = [&](const char* name, guint64 maxSizeTime = 3000000000ULL, bool live = false) -> GstElement* {
         GstElement* queue = gst_element_factory_make("queue", name);
@@ -9219,11 +9219,11 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
         return queue;
     };
 
-    if (tvs::stream_protocols::isTestPatternInput(inputProtocol)) {
+    if (dvbstreamer5::stream_protocols::isTestPatternInput(inputProtocol)) {
         return createTestPatternChain(cfg, pipeline, terminalElement);
     }
 
-    if (inputProtocol == tvs::stream_protocols::InputProtocolKind::Dvb) {
+    if (inputProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Dvb) {
         if (!hasElementFactory("dvbsrc") || !hasElementFactory("tsparse")) {
             std::cerr << "missing DVB input elements: dvbsrc or tsparse" << std::endl;
             return nullptr;
@@ -9322,7 +9322,7 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
         return src;
     }
 
-    if (inputProtocol == tvs::stream_protocols::InputProtocolKind::Rtmp) {
+    if (inputProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Rtmp) {
         if (!hasElementFactory("rtmpsrc") || !hasElementFactory("flvdemux") || !hasElementFactory("mpegtsmux")) {
             std::cerr << "missing RTMP input elements: rtmpsrc, flvdemux or mpegtsmux" << std::endl;
             return nullptr;
@@ -9366,7 +9366,7 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
         return src;
     }
 
-    if (inputProtocol == tvs::stream_protocols::InputProtocolKind::Rtsp) {
+    if (inputProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Rtsp) {
         if (!hasElementFactory("rtspsrc") || !hasElementFactory("mpegtsmux")) {
             std::cerr << "missing RTSP input elements: rtspsrc or mpegtsmux" << std::endl;
             return nullptr;
@@ -9429,9 +9429,9 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
         return src;
     }
 
-    if (tvs::network_input::handles(cfg)) {
+    if (dvbstreamer5::network_input::handles(cfg)) {
         std::string networkInputError;
-        GstElement* src = tvs::network_input::build(
+        GstElement* src = dvbstreamer5::network_input::build(
             state,
             pipeline,
             terminalElement,
@@ -9446,8 +9446,8 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
         return src;
     }
 
-    if (inputProtocol == tvs::stream_protocols::InputProtocolKind::Udp ||
-        inputProtocol == tvs::stream_protocols::InputProtocolKind::Rtp) {
+    if (inputProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Udp ||
+        inputProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Rtp) {
         std::string error;
         GstElement* src = UdpInput::build(pipeline, cfg, terminalElement, error);
         if (!src) {
@@ -9460,7 +9460,7 @@ GstElement* StreamManager::createSourceChain(StreamState* state, GstElement* pip
     // Never reinterpret an unknown URI scheme as a local file.  Apart from
     // producing a misleading GstFileSrc "No such file" error, that made a
     // perfectly valid UDP URI with pasted whitespace look like a filename.
-    if (inputProtocol != tvs::stream_protocols::InputProtocolKind::File) {
+    if (inputProtocol != dvbstreamer5::stream_protocols::InputProtocolKind::File) {
         std::cerr << "Unsupported input URI/protocol: raw=\"" << cfg.inputUri
                   << "\" normalized=\"" << input << "\" mode=" << cfg.inputMode
                   << std::endl;
@@ -9824,14 +9824,14 @@ bool StreamManager::buildOutputBranch(
         state && !state->config.transcodeEnabled &&
         ((state->sharedDvbInput && !state->sharedDvbServiceRelayUri.empty() &&
           state->runtimeConfig.inputUri == state->sharedDvbServiceRelayUri) ||
-         (tvs::stream_protocols::isDvbInput(
-              tvs::stream_protocols::inputKind(state->runtimeConfig)) &&
+         (dvbstreamer5::stream_protocols::isDvbInput(
+              dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig)) &&
           state->runtimeConfig.inputServiceId > 0));
     const bool privateRtspPreview = type == "http" &&
         outputConfig.outputHost == "127.0.0.1" && outputConfig.outputPort == 0 &&
         state && !state->config.transcodeEnabled &&
-        tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-            tvs::stream_protocols::InputProtocolKind::Rtsp &&
+        dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+            dvbstreamer5::stream_protocols::InputProtocolKind::Rtsp &&
         state->runtimeConfig.inputServiceId == 0;
     if (privateDvbPreview || privateRtspPreview) {
         GstElement* queue = gst_element_factory_make(
@@ -9869,24 +9869,24 @@ bool StreamManager::buildOutputBranch(
     // to non-transcoded passthrough streams.
     const bool transcodedInput = state && state->config.transcodeEnabled;
     const auto sourceProtocol = state
-        ? tvs::stream_protocols::inputKind(state->runtimeConfig)
-        : tvs::stream_protocols::InputProtocolKind::Unknown;
+        ? dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig)
+        : dvbstreamer5::stream_protocols::InputProtocolKind::Unknown;
     const bool sharedDvbSpts = state && state->sharedDvbInput &&
         !state->sharedDvbServiceRelayUri.empty() &&
         state->runtimeConfig.inputUri == state->sharedDvbServiceRelayUri;
     const bool hlsTransportTs = state &&
-        sourceProtocol == tvs::stream_protocols::InputProtocolKind::Hls &&
+        sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Hls &&
         state->runtimeConfig.inputServiceId == 0;
     // 202.22: SRT commonly carries an already-finished SPTS. If no explicit
     // service selection was requested, keep that transport intact like direct
     // HTTP MPEG-TS and the restored 202.74 HLS direct transport.
     const bool srtTransportTs = state &&
-        sourceProtocol == tvs::stream_protocols::InputProtocolKind::Srt &&
+        sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Srt &&
         state->runtimeConfig.inputServiceId == 0;
     const bool sourceAlreadySingleProgramTs = state && (
         state->runtimeConfig.testPattern || sharedDvbSpts ||
         isDirectHttpMpegTsConfig(state->runtimeConfig) || hlsTransportTs || srtTransportTs ||
-        (tvs::stream_protocols::isDvbInput(sourceProtocol) && state->runtimeConfig.inputServiceId > 0));
+        (dvbstreamer5::stream_protocols::isDvbInput(sourceProtocol) && state->runtimeConfig.inputServiceId > 0));
     // DVB service selection is done by dvbsrc PID filters resolved from the
     // selected service PMT (PAT/PMT/PCR + all elementary PIDs). Test bars are
     // also already a complete SPTS. Feeding either through another
@@ -9912,7 +9912,7 @@ bool StreamManager::buildOutputBranch(
     // requested A/V PID headers. Preserve provider PCR/PTS/DTS and transport
     // continuity instead of rebuilding elementary streams.
     const bool hlsPacketRemap = state &&
-        sourceProtocol == tvs::stream_protocols::InputProtocolKind::Hls &&
+        sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Hls &&
         state->runtimeConfig.inputServiceId == 0 &&
         outputConfig.remapEnabled && usesStableUdpShaper(outputConfig);
     const bool needsRemux = ((outputConfig.remapEnabled && !remapAlreadyApplied && !hlsPacketRemap) ||
@@ -9967,10 +9967,10 @@ bool StreamManager::buildPassthroughPipeline(
     }
     const StreamConfig& cfg = outputConfig;
     const auto sourceProtocol = state
-        ? tvs::stream_protocols::inputKind(state->runtimeConfig)
-        : tvs::stream_protocols::InputProtocolKind::Unknown;
+        ? dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig)
+        : dvbstreamer5::stream_protocols::InputProtocolKind::Unknown;
     const bool hlsPacketRemap = state &&
-        sourceProtocol == tvs::stream_protocols::InputProtocolKind::Hls &&
+        sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Hls &&
         state->runtimeConfig.inputServiceId == 0 &&
         cfg.remapEnabled && usesStableUdpShaper(cfg);
 
@@ -9984,8 +9984,8 @@ bool StreamManager::buildPassthroughPipeline(
     // reservoir for UDP; all source chains reaching this function expose TS,
     // and DVB/test chains are already packet-aligned upstream.
     const bool tvStreamer5NetworkStableUdp = usesStableUdpShaper(cfg) &&
-        (sourceProtocol == tvs::stream_protocols::InputProtocolKind::Srt ||
-         sourceProtocol == tvs::stream_protocols::InputProtocolKind::Http) &&
+        (sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
+         sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Http) &&
         !hlsPacketRemap;
     const bool directStableUdpTs = usesStableUdpShaper(cfg) && !hlsPacketRemap &&
         !tvStreamer5NetworkStableUdp;
@@ -10075,14 +10075,14 @@ bool StreamManager::buildPassthroughPipeline(
 
     configureTsPacketAlignment(tsparse);
     if (tvStreamer5NetworkStableUdp) {
-        // TVStreamer5/main direct UDP path: rebuild a stable running-time on
+        // DVBStreamer5/main direct UDP path: rebuild a stable running-time on
         // the incoming transport before the reservoir.  This is intentionally
         // limited to SRT/HTTP; DVB/HLS direct paths remain SAT5-specific.
         setBooleanPropertyIfPresent(tsparse, "set-timestamps", TRUE);
         setUInt64PropertyIfPresent(
             tsparse, "smoothing-latency", kTvStreamer5TsSmoothingLatency);
-        std::cerr << "TVStreamer5 network TS path 202.57: input="
-                  << (sourceProtocol == tvs::stream_protocols::InputProtocolKind::Srt
+        std::cerr << "DVBStreamer5 network TS path 202.57: input="
+                  << (sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Srt
                         ? "SRT" : "HTTP-MPEGTS")
                   << " tsparse=set-timestamps"
                   << " smoothing_ms="
@@ -10277,9 +10277,9 @@ bool StreamManager::buildRemapPipeline(
         (state && state->sharedDvbInput && !state->sharedDvbServiceRelayUri.empty() &&
          state->runtimeConfig.inputUri == state->sharedDvbServiceRelayUri) ||
         (state && isDirectHttpMpegTsConfig(state->runtimeConfig)) ||
-        (state && tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-            tvs::stream_protocols::InputProtocolKind::Hls) ||
-        (state && tvs::stream_protocols::isDvbInput(tvs::stream_protocols::inputKind(state->runtimeConfig)) &&
+        (state && dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+            dvbstreamer5::stream_protocols::InputProtocolKind::Hls) ||
+        (state && dvbstreamer5::stream_protocols::isDvbInput(dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig)) &&
          state->runtimeConfig.inputServiceId > 0);
     const uint32_t selectedInputServiceId = sourceAlreadySingleProgramForDemux ? 0U : cfg.inputServiceId;
     if (selectedInputServiceId > 0) {
@@ -10300,9 +10300,9 @@ bool StreamManager::buildRemapPipeline(
         // Other multi-program inputs (UDP/SRT/File/etc.) still use inputServiceId.
         const bool sourceAlreadySingleProgram =
             cfg.testPattern ||
-            tvs::stream_protocols::isDvbInput(tvs::stream_protocols::inputKind(cfg)) ||
-            tvs::stream_protocols::inputKind(cfg) ==
-                tvs::stream_protocols::InputProtocolKind::Hls;
+            dvbstreamer5::stream_protocols::isDvbInput(dvbstreamer5::stream_protocols::inputKind(cfg)) ||
+            dvbstreamer5::stream_protocols::inputKind(cfg) ==
+                dvbstreamer5::stream_protocols::InputProtocolKind::Hls;
         const uint32_t inputServiceId = sourceAlreadySingleProgram ? 0U : cfg.inputServiceId;
         if (inputServiceId > 0) {
             setIntPropertyIfPresent(demux, "program-number", static_cast<gint>(inputServiceId));
@@ -10416,9 +10416,9 @@ bool StreamManager::buildHlsOutputPipeline(
     // video.m3u8/segment files are ever opened).  When no explicit remap is
     // requested, feed the already-built SPTS directly to hlssink.  For CBR the
     // input RTSP mux already owns target-rate NULL stuffing via configureTsMux().
-    const auto sourceProtocol = tvs::stream_protocols::inputKind(state->runtimeConfig);
+    const auto sourceProtocol = dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig);
     const bool directRtspTs =
-        sourceProtocol == tvs::stream_protocols::InputProtocolKind::Rtsp &&
+        sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Rtsp &&
         state->runtimeConfig.inputServiceId == 0 &&
         !state->config.transcodeEnabled &&
         !cfg.remapEnabled &&
@@ -10504,7 +10504,7 @@ bool StreamManager::buildHlsOutputPipeline(
 
     const bool sourceAlreadySingleProgram =
         cfg.testPattern ||
-        tvs::stream_protocols::isDvbInput(tvs::stream_protocols::inputKind(cfg));
+        dvbstreamer5::stream_protocols::isDvbInput(dvbstreamer5::stream_protocols::inputKind(cfg));
     if (!sourceAlreadySingleProgram && cfg.inputServiceId > 0) {
         setIntPropertyIfPresent(demux, "program-number", static_cast<gint>(cfg.inputServiceId));
     }
@@ -10572,7 +10572,7 @@ bool StreamManager::buildRtspOutputPipeline(
     g_signal_connect(demux, "pad-added", G_CALLBACK(StreamManager::onDemuxPadAdded), contextPtr);
 
     std::cerr << "RTSP Push passthrough: tsdemux -> elementary parsers -> rtspclientsink"
-              << " location=" << tvs::protocols::rtspOutputLocation(cfg)
+              << " location=" << dvbstreamer5::protocols::rtspOutputLocation(cfg)
               << " listener=off" << std::endl;
     return true;
 }
@@ -10639,8 +10639,8 @@ bool StreamManager::buildRtmpOutputPipeline(
 
 GstElement* StreamManager::createOutputSink(StreamState* state, const StreamConfig& cfg, GstElement* pipeline, const std::string& sinkName) {
     const std::string type = outputType(cfg);
-    const auto outputProtocol = tvs::stream_protocols::outputKind(cfg);
-    if (outputProtocol == tvs::stream_protocols::OutputProtocolKind::Unknown) {
+    const auto outputProtocol = dvbstreamer5::stream_protocols::outputKind(cfg);
+    if (outputProtocol == dvbstreamer5::stream_protocols::OutputProtocolKind::Unknown) {
         std::cerr << "unknown output protocol module for type: " << type << std::endl;
         return nullptr;
     }
@@ -10660,10 +10660,10 @@ GstElement* StreamManager::createOutputSink(StreamState* state, const StreamConf
         // are not guessed; existing upstream/NULL watchdogs still apply.
         if (state && udpCbrOutputEnabled(cfg) && cfg.remapEnabled && !cfg.transcodeEnabled &&
             (cfg.videoPid > 0 || cfg.audioPid > 0) &&
-            (tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-                 tvs::stream_protocols::InputProtocolKind::Http ||
-             tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-                 tvs::stream_protocols::InputProtocolKind::Srt)) {
+            (dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+                 dvbstreamer5::stream_protocols::InputProtocolKind::Http ||
+             dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+                 dvbstreamer5::stream_protocols::InputProtocolKind::Srt)) {
             udpHealth = std::make_shared<UdpMediaDeliveryHealth>();
             udpHealth->outputEndpoint = cfg.outputHost + ":" + std::to_string(cfg.outputPort);
         }
@@ -10720,7 +10720,7 @@ GstElement* StreamManager::createOutputSink(StreamState* state, const StreamConf
     } else if (type == "hls") {
         configureHlsSink(sink, cfg);
     } else if (type == "rtsp") {
-        const std::string location = tvs::protocols::rtspOutputLocation(cfg);
+        const std::string location = dvbstreamer5::protocols::rtspOutputLocation(cfg);
         g_object_set(sink, "location", location.c_str(), nullptr);
         setIntPropertyIfPresent(sink, "protocols", 4);
         setUIntPropertyIfPresent(sink, "latency", 200);
@@ -10866,10 +10866,10 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
         isAudio && !ctx->flvMux &&
         usesStableUdpShaper(ctx->config) &&
         udpCbrOutputEnabled(ctx->config);
-    const auto remapInputKind = tvs::stream_protocols::inputKind(ctx->config);
+    const auto remapInputKind = dvbstreamer5::stream_protocols::inputKind(ctx->config);
     const bool tvStreamer5NetworkRemap =
-        remapInputKind == tvs::stream_protocols::InputProtocolKind::Srt ||
-        remapInputKind == tvs::stream_protocols::InputProtocolKind::Http;
+        remapInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
+        remapInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Http;
     const bool tvStreamer5AudioClock =
         stableUdpAudioReservoir && tvStreamer5NetworkRemap;
 
@@ -10886,7 +10886,7 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
         (tvStreamer5AudioClock && !audioClockSync)) {
         std::cerr << "remap skipped unsupported elementary stream caps: " << capsString;
         if (tvStreamer5AudioClock && !audioClockSync) {
-            std::cerr << " (clocksync unavailable for TVStreamer5 network remap)";
+            std::cerr << " (clocksync unavailable for DVBStreamer5 network remap)";
         }
         std::cerr << std::endl;
         if (queue) gst_object_unref(queue);
@@ -10956,8 +10956,8 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
     }
     const bool srtVideoParser =
         isVideo &&
-        tvs::stream_protocols::inputKind(ctx->config) ==
-            tvs::stream_protocols::InputProtocolKind::Srt &&
+        dvbstreamer5::stream_protocols::inputKind(ctx->config) ==
+            dvbstreamer5::stream_protocols::InputProtocolKind::Srt &&
         (parserFactory == "h264parse" || parserFactory == "h265parse");
     const bool hlsCompatibilityElementaryPad =
         ctx->hlsCompatTsDemux && demux == ctx->hlsCompatTsDemux;
@@ -11076,7 +11076,7 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
                       ? " srt_parameter_sets=every-idr parser_passthrough=off"
                       : "")
                   << (tvStreamer5NetworkRemap
-                      ? " remap_profile=TVStreamer5"
+                      ? " remap_profile=DVBStreamer5"
                       : "")
                   << (hlsCompatibilityElementaryPad && isAudio
                       ? " hls_compat_audio_pacer=off"
@@ -11614,8 +11614,8 @@ void StreamManager::maybeAutoRaiseUdpCbr(
     // HLS variants are selected by hlsdemux. Its segmented delivery is bursty,
     // so using the measured input rate to mutate the output CBR can cause a
     // feedback loop that selects a heavier variant and destabilizes playback.
-    if (tvs::stream_protocols::inputKind(state->runtimeConfig) ==
-        tvs::stream_protocols::InputProtocolKind::Hls) {
+    if (dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig) ==
+        dvbstreamer5::stream_protocols::InputProtocolKind::Hls) {
         state->autoCbrExcessSamples = 0;
         state->autoCbrPeakBitrate = 0;
         return;
@@ -11654,14 +11654,14 @@ void StreamManager::maybeAutoRaiseUdpCbr(
         static_cast<long double>(elapsedUs));
     const uint64_t shaperInputBitrate = StableUdpOutput::maxInputBitrateEstimate(
         state->config.id);
-    const auto autoCbrInputKind = tvs::stream_protocols::inputKind(state->runtimeConfig);
+    const auto autoCbrInputKind = dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig);
     // Prefer the shaper's media-clock estimate when available. This avoids
     // treating a fast HLS/HTTP segment download as a real TS bitrate jump.
     // For segmented/progressive HTTP wait for that estimate instead of using
     // raw socket delivery speed.
     if (!state->config.transcodeEnabled && shaperInputBitrate == 0 &&
-        (autoCbrInputKind == tvs::stream_protocols::InputProtocolKind::Hls ||
-         autoCbrInputKind == tvs::stream_protocols::InputProtocolKind::Http)) {
+        (autoCbrInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Hls ||
+         autoCbrInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Http)) {
         state->autoCbrExcessSamples = 0;
         state->autoCbrPeakBitrate = 0;
         return;
@@ -12060,10 +12060,10 @@ void StreamManager::monitorBus(const std::string& id) {
     const bool hasUdpCbrOutput20370 = std::any_of(
         configuredOutputs20370.begin(), configuredOutputs20370.end(),
         [](const StreamConfig& output) { return udpCbrOutputEnabled(output); });
-    const auto configuredInputKind = tvs::stream_protocols::inputKind(state->config);
-    if (configuredInputKind == tvs::stream_protocols::InputProtocolKind::Srt) {
-        const int watchdogLatencyMs = tvs::protocols::srt_vps::latencyMs(state->config, 500);
-        const int watchdogPollTimeoutMs = tvs::protocols::srt_vps::pollTimeoutMs(state->config, 1000);
+    const auto configuredInputKind = dvbstreamer5::stream_protocols::inputKind(state->config);
+    if (configuredInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt) {
+        const int watchdogLatencyMs = dvbstreamer5::protocols::srt_vps::latencyMs(state->config, 500);
+        const int watchdogPollTimeoutMs = dvbstreamer5::protocols::srt_vps::pollTimeoutMs(state->config, 1000);
         std::cerr << "SRT input watchdog 203.67: startup_wait_ms=15000"
                   << " fast_reconnect_ms=4000 reconnect_grace_ms=4000"
                   << " full_rebuild_ms=8000 primary_probe_ms=15000"
@@ -12073,12 +12073,12 @@ void StreamManager::monitorBus(const std::string& id) {
                   << " latency_ms=" << watchdogLatencyMs
                   << " vps_vds_profile=" << (state->config.srtVpsVdsOptimization ? "on" : "off")
                   << " queue_ms=6000 queue_max_mb=64" << std::endl;
-    } else if (configuredInputKind == tvs::stream_protocols::InputProtocolKind::Http) {
+    } else if (configuredInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Http) {
         std::cerr << "HTTP MPEG-TS watchdog 202.57: loss_detect_ms=30000 rebuild_ms=30000"
                   << " source_retries=gstreamer-default error_recovery=on eos_recovery=on"
                   << " pipeline_retry_ms=5000 recovery=source-only-first recovery_jitter_ms=0..2500"
                   << " queue_ms=3000 queue_max_mb=32" << std::endl;
-    } else if (configuredInputKind == tvs::stream_protocols::InputProtocolKind::Hls) {
+    } else if (configuredInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Hls) {
         std::cerr << "HLS input watchdog 203.22: loss_wait_ms=15000"
                   << " buffered_ahead_guard=on buffered_floor_ms=1000"
                   << " primary_probe_ms=15000 generic_live_watchdog_ms=6000"
@@ -12089,11 +12089,11 @@ void StreamManager::monitorBus(const std::string& id) {
     }
 
     if (!state->config.transcodeEnabled && state->config.remapEnabled &&
-        (configuredInputKind == tvs::stream_protocols::InputProtocolKind::Srt ||
-         configuredInputKind == tvs::stream_protocols::InputProtocolKind::Udp ||
-         configuredInputKind == tvs::stream_protocols::InputProtocolKind::Rtp)) {
+        (configuredInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
+         configuredInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Udp ||
+         configuredInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Rtp)) {
         std::cerr << "MEDIA WATCH 203.66: stream=" << id
-                  << " protocol=" << tvs::stream_protocols::inputKindName(configuredInputKind)
+                  << " protocol=" << dvbstreamer5::stream_protocols::inputKindName(configuredInputKind)
                   << " transport_counter=input-bytes"
                   << " media_counter=pat-pmt-audio-video-pids"
                   << " output_counter=normalized-media-pids"
@@ -12178,17 +12178,17 @@ void StreamManager::monitorBus(const std::string& id) {
         maybeAutoRaiseUdpCbr(state, now);
         // Use runtimeConfig here: after failover the configured primary protocol
         // may differ from the protocol that is actually feeding this pipeline.
-        const auto activeInputKind = tvs::stream_protocols::inputKind(state->runtimeConfig);
+        const auto activeInputKind = dvbstreamer5::stream_protocols::inputKind(state->runtimeConfig);
         const bool srtInput =
-            activeInputKind == tvs::stream_protocols::InputProtocolKind::Srt;
+            activeInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt;
         const bool httpMpegTsInput =
-            activeInputKind == tvs::stream_protocols::InputProtocolKind::Http;
+            activeInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Http;
         const bool recoverableNetworkInput = srtInput || httpMpegTsInput;
         const bool hlsInput =
             !state->usingBackup &&
-            activeInputKind == tvs::stream_protocols::InputProtocolKind::Hls;
+            activeInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Hls;
         const int hlsSourceUnavailableStatus = hlsInput
-            ? tvs::hls_scheduler::sourceUnavailableHttpStatus(state->pipeline) : 0;
+            ? dvbstreamer5::hls_scheduler::sourceUnavailableHttpStatus(state->pipeline) : 0;
         const bool hlsSourceUnavailable =
             hlsSourceUnavailableStatus == 404 || hlsSourceUnavailableStatus == 410;
         if (hlsSourceUnavailable) {
@@ -12766,8 +12766,8 @@ void StreamManager::monitorBus(const std::string& id) {
         }
 
         const bool udpLikeInput =
-            activeInputKind == tvs::stream_protocols::InputProtocolKind::Udp ||
-            activeInputKind == tvs::stream_protocols::InputProtocolKind::Rtp;
+            activeInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Udp ||
+            activeInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Rtp;
         const bool mediaWatchEligible =
             !state->config.testPattern && !state->config.transcodeEnabled &&
             state->config.remapEnabled && (recoverableNetworkInput || udpLikeInput);
@@ -12828,7 +12828,7 @@ void StreamManager::monitorBus(const std::string& id) {
                 ? state->primaryInputUri : state->activeInputUri;
             const bool recoverBackup = state->usingBackup;
             std::cerr << "MEDIA WATCH 203.69: stream=" << id
-                      << " protocol=" << tvs::stream_protocols::inputKindName(activeInputKind)
+                      << " protocol=" << dvbstreamer5::stream_protocols::inputKindName(activeInputKind)
                       << " reason=" << reason20369
                       << " input_media_gap_ms="
                       << std::chrono::duration_cast<std::chrono::milliseconds>(inputMediaGap).count()
@@ -12935,7 +12935,7 @@ void StreamManager::monitorBus(const std::string& id) {
                   deliveredVideoPtsGap >= std::chrono::seconds(3)))) {
                 allUdpOutputsVerified20370 = false;
             }
-            const auto fault20370 = tvs::udp_media_delivery::classifyFault({
+            const auto fault20370 = dvbstreamer5::udp_media_delivery::classifyFault({
                 networkMediaEligible20369 && mediaWatchEligible &&
                     hasUdpCbrOutput20370 && reconnectCooldownDone20369 &&
                     now - state->lastPrimaryRetry >= kNetworkMediaStartupGrace20369,
@@ -12948,7 +12948,7 @@ void StreamManager::monitorBus(const std::string& id) {
                 std::chrono::duration_cast<std::chrono::milliseconds>(deliveredMediaGap).count(),
                 std::chrono::duration_cast<std::chrono::milliseconds>(deliveredVideoPtsGap).count()
             });
-            const char* fault = tvs::udp_media_delivery::faultReason(fault20370);
+            const char* fault = dvbstreamer5::udp_media_delivery::faultReason(fault20370);
             if (fault && !anyUdpFault20370) {
                 anyUdpFault20370 = true;
                 udpFaultReason20370 = fault;
@@ -13272,7 +13272,7 @@ void StreamManager::monitorBus(const std::string& id) {
                 ? state->primaryInputUri : state->activeInputUri;
             const bool recoverBackup = state->usingBackup;
             std::cerr << "MEDIA STALL RECOVERY 203.66: stream=" << id
-                      << " protocol=" << tvs::stream_protocols::inputKindName(activeInputKind)
+                      << " protocol=" << dvbstreamer5::stream_protocols::inputKindName(activeInputKind)
                       << " reason=input-media-progress-output-media-stalled"
                       << " input_media_packets=" << currentInputMediaPackets
                       << " output_media_packets=" << currentOutputMediaPackets
@@ -13406,7 +13406,7 @@ void StreamManager::monitorBus(const std::string& id) {
             // Read this as close as possible to the watchdog decision. The HLS
             // worker can publish a newly downloaded segment concurrently.
             const uint64_t hlsGuaranteedBufferedAheadMs = hlsInput
-                ? tvs::hls_scheduler::guaranteedBufferedAheadMilliseconds(state->pipeline)
+                ? dvbstreamer5::hls_scheduler::guaranteedBufferedAheadMilliseconds(state->pipeline)
                 : 0;
             const bool hlsBufferedAheadProtects =
                 hlsInput &&

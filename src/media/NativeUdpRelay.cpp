@@ -21,7 +21,7 @@
 #include <arpa/inet.h>
 #endif
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 namespace {
 
 struct UdpInputEndpoint {
@@ -132,9 +132,9 @@ bool parseOutputEndpoint(
 }
 
 bool flushPackets(
-    const std::vector<tvs::media::mpegts::Packet>& packets,
+    const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,
     bool rtpOutput,
-    tvs::media::rtp::MpegTsPacketizer& packetizer,
+    dvbstreamer5::media::rtp::MpegTsPacketizer& packetizer,
     UdpSocket& output,
     std::atomic<std::uint64_t>& outputBytes,
     std::string& error) {
@@ -154,38 +154,38 @@ bool flushPackets(
         for (std::size_t first = 0; first < packets.size(); first += kPacketsPerDatagram) {
             const std::size_t count =
                 (std::min)(kPacketsPerDatagram, packets.size() - first);
-            std::array<std::uint8_t, kPacketsPerDatagram * tvs::media::mpegts::kPacketSize> bytes {};
+            std::array<std::uint8_t, kPacketsPerDatagram * dvbstreamer5::media::mpegts::kPacketSize> bytes {};
             for (std::size_t index = 0; index < count; ++index) {
                 std::copy(
                     packets[first + index].begin(),
                     packets[first + index].end(),
                     bytes.begin() + static_cast<std::ptrdiff_t>(
-                        index * tvs::media::mpegts::kPacketSize));
+                        index * dvbstreamer5::media::mpegts::kPacketSize));
             }
-            const std::size_t size = count * tvs::media::mpegts::kPacketSize;
+            const std::size_t size = count * dvbstreamer5::media::mpegts::kPacketSize;
             if (!output.send(bytes.data(), size, error)) return false;
         }
     }
 
     outputBytes.fetch_add(
-        packets.size() * tvs::media::mpegts::kPacketSize, std::memory_order_relaxed);
+        packets.size() * dvbstreamer5::media::mpegts::kPacketSize, std::memory_order_relaxed);
     return true;
 }
 
 bool sendCbrDatagram(
-    const tvs::media::mpegts::CbrDatagram& packets,
+    const dvbstreamer5::media::mpegts::CbrDatagram& packets,
     UdpSocket& output,
     std::atomic<std::uint64_t>& outputBytes,
     std::string& error) {
     std::array<std::uint8_t,
-        tvs::media::mpegts::kPacketsPerCbrDatagram *
-            tvs::media::mpegts::kPacketSize> bytes {};
+        dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
+            dvbstreamer5::media::mpegts::kPacketSize> bytes {};
     for (std::size_t index = 0; index < packets.size(); ++index) {
         std::copy(
             packets[index].begin(),
             packets[index].end(),
             bytes.begin() + static_cast<std::ptrdiff_t>(
-                index * tvs::media::mpegts::kPacketSize));
+                index * dvbstreamer5::media::mpegts::kPacketSize));
     }
     if (!output.send(bytes.data(), bytes.size(), error)) return false;
     outputBytes.fetch_add(bytes.size(), std::memory_order_relaxed);
@@ -462,12 +462,12 @@ void NativeUdpRelay::finishHttpInput(const std::string& error) {
 
 void NativeUdpRelay::runHttpInput() {
     std::string location = config_.inputUri;
-    tvs::http::RequestOptions options;
+    dvbstreamer5::http::RequestOptions options;
     options.connectTimeoutMs = 10000;
     options.readTimeoutMs = 15000;
     options.writeTimeoutMs = 10000;
     options.userAgent = config_.userAgent.empty()
-        ? "Mozilla/5.0 TVStreamer5"
+        ? "Mozilla/5.0 DVBStreamer5"
         : config_.userAgent;
     options.stopping = &httpStopRequested_;
     options.maxBodyBytes = (std::numeric_limits<std::size_t>::max)();
@@ -482,8 +482,8 @@ void NativeUdpRelay::runHttpInput() {
         options.headers.emplace_back(config_.accessKeyName, config_.accessKeyValue);
     } else if (config_.accessKeyMode == "query" &&
         !config_.accessKeyName.empty() && !config_.accessKeyValue.empty()) {
-        const std::string name = tvs::http::encodeQueryComponent(config_.accessKeyName);
-        const std::string value = tvs::http::encodeQueryComponent(config_.accessKeyValue);
+        const std::string name = dvbstreamer5::http::encodeQueryComponent(config_.accessKeyName);
+        const std::string value = dvbstreamer5::http::encodeQueryComponent(config_.accessKeyValue);
         const std::string key = name + "=";
         const auto fragmentPosition = location.find('#');
         const std::string fragment = fragmentPosition == std::string::npos
@@ -512,9 +512,9 @@ void NativeUdpRelay::runHttpInput() {
             config_.accessKeyMode == "query");
     options.maxRedirects = hasAccessKey ? 0 : 8;
 
-    tvs::http::Response response;
+    dvbstreamer5::http::Response response;
     std::string requestError;
-    const bool ok = tvs::http::get(location, options, response, requestError,
+    const bool ok = dvbstreamer5::http::get(location, options, response, requestError,
         [this](const std::uint8_t* data, std::size_t size) {
             return enqueueHttpData(data, size);
         });
@@ -531,8 +531,8 @@ void NativeUdpRelay::run() {
     struct OutputWorker {
         UdpSocket* socket = nullptr;
         bool rtp = false;
-        std::unique_ptr<tvs::media::rtp::MpegTsPacketizer> packetizer;
-        std::unique_ptr<tvs::media::mpegts::CbrTsPacer> cbrPacer;
+        std::unique_ptr<dvbstreamer5::media::rtp::MpegTsPacketizer> packetizer;
+        std::unique_ptr<dvbstreamer5::media::mpegts::CbrTsPacer> cbrPacer;
     };
 
     UdpInputEndpoint inputEndpoint;
@@ -550,10 +550,10 @@ void NativeUdpRelay::run() {
     const bool rtpInput = networkInput && inputEndpoint.scheme == "rtp";
     bool fileInputEof = false;
     bool fileHadTsPackets = false;
-    tvs::media::mpegts::PacketFramer framer;
-    tvs::media::mpegts::ContinuityTracker continuity;
-    std::vector<tvs::media::mpegts::Packet> packets;
-    std::vector<tvs::media::mpegts::Packet> remappedPackets;
+    dvbstreamer5::media::mpegts::PacketFramer framer;
+    dvbstreamer5::media::mpegts::ContinuityTracker continuity;
+    std::vector<dvbstreamer5::media::mpegts::Packet> packets;
+    std::vector<dvbstreamer5::media::mpegts::Packet> remappedPackets;
     std::vector<std::uint8_t> observedTransport;
     std::vector<OutputWorker> outputs;
     outputs.reserve(config_.outputs.size());
@@ -567,7 +567,7 @@ void NativeUdpRelay::run() {
             const auto outputSeed = seed + index;
             const std::uint32_t sourceId =
                 static_cast<std::uint32_t>(outputSeed ^ (outputSeed >> 32));
-            output.packetizer = std::make_unique<tvs::media::rtp::MpegTsPacketizer>(
+            output.packetizer = std::make_unique<dvbstreamer5::media::rtp::MpegTsPacketizer>(
                 sourceId,
                 static_cast<std::uint16_t>(outputSeed >> 16),
                 std::uint8_t{33},
@@ -575,7 +575,7 @@ void NativeUdpRelay::run() {
         }
         if (config_.outputs[index].outputType == "udp-cbr") {
             try {
-                output.cbrPacer = std::make_unique<tvs::media::mpegts::CbrTsPacer>(
+                output.cbrPacer = std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
                     config_.targetBitrate);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
@@ -599,12 +599,12 @@ void NativeUdpRelay::run() {
                 outputs.begin(), outputs.end(), [](const OutputWorker& output) {
                     return output.cbrPacer &&
                         output.cbrPacer->queuedPackets() <
-                            tvs::media::mpegts::kPacketsPerCbrDatagram;
+                            dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram;
                 });
             if (!fileInputEof && needsFileData) {
                 constexpr std::size_t kFileReadSize =
-                    tvs::media::mpegts::kPacketsPerCbrDatagram *
-                    tvs::media::mpegts::kPacketSize;
+                    dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
+                    dvbstreamer5::media::mpegts::kPacketSize;
                 fileInput_.read(
                     reinterpret_cast<char*>(datagram.data()),
                     static_cast<std::streamsize>(kFileReadSize));
@@ -751,9 +751,9 @@ void NativeUdpRelay::run() {
             if (received > 0) {
                 inputBytes_.fetch_add(received, std::memory_order_relaxed);
                 if (rtpInput) {
-                    tvs::media::rtp::PacketView rtp;
-                    if (!tvs::media::rtp::parsePacket(datagram.data(), received, rtp) ||
-                        !tvs::media::rtp::decodeMpegTsPayload(rtp, packets)) {
+                    dvbstreamer5::media::rtp::PacketView rtp;
+                    if (!dvbstreamer5::media::rtp::parsePacket(datagram.data(), received, rtp) ||
+                        !dvbstreamer5::media::rtp::decodeMpegTsPayload(rtp, packets)) {
                         continuityErrors_.fetch_add(1, std::memory_order_relaxed);
                         continue;
                     }
@@ -780,17 +780,17 @@ void NativeUdpRelay::run() {
         if (!packets.empty() && config_.processTransport) {
             constexpr std::size_t kCaBatchPackets = 77;
             std::array<std::uint8_t,
-                kCaBatchPackets * tvs::media::mpegts::kPacketSize> caBatch {};
+                kCaBatchPackets * dvbstreamer5::media::mpegts::kPacketSize> caBatch {};
             for (std::size_t first = 0; first < packets.size(); first += kCaBatchPackets) {
                 const std::size_t count = (std::min)(
                     kCaBatchPackets, packets.size() - first);
                 const std::size_t bytes =
-                    count * tvs::media::mpegts::kPacketSize;
+                    count * dvbstreamer5::media::mpegts::kPacketSize;
                 for (std::size_t index = 0; index < count; ++index) {
                     std::memcpy(
-                        caBatch.data() + index * tvs::media::mpegts::kPacketSize,
+                        caBatch.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
                         packets[first + index].data(),
-                        tvs::media::mpegts::kPacketSize);
+                        dvbstreamer5::media::mpegts::kPacketSize);
                 }
                 if (!config_.processTransport(caBatch.data(), bytes)) {
                     error = "native conditional-access transport processing failed";
@@ -802,8 +802,8 @@ void NativeUdpRelay::run() {
                 for (std::size_t index = 0; index < count; ++index) {
                     std::memcpy(
                         packets[first + index].data(),
-                        caBatch.data() + index * tvs::media::mpegts::kPacketSize,
-                        tvs::media::mpegts::kPacketSize);
+                        caBatch.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
+                        dvbstreamer5::media::mpegts::kPacketSize);
                 }
             }
             if (!running_.load(std::memory_order_acquire)) break;
@@ -813,23 +813,23 @@ void NativeUdpRelay::run() {
             for (const auto& packet : packets) {
                 const auto continuityStatus =
                     continuity.observe(packet.data(), packet.size());
-                if (continuityStatus == tvs::media::mpegts::ContinuityStatus::Gap ||
-                    continuityStatus == tvs::media::mpegts::ContinuityStatus::Duplicate ||
-                    continuityStatus == tvs::media::mpegts::ContinuityStatus::TransportError ||
-                    continuityStatus == tvs::media::mpegts::ContinuityStatus::InvalidPacket) {
+                if (continuityStatus == dvbstreamer5::media::mpegts::ContinuityStatus::Gap ||
+                    continuityStatus == dvbstreamer5::media::mpegts::ContinuityStatus::Duplicate ||
+                    continuityStatus == dvbstreamer5::media::mpegts::ContinuityStatus::TransportError ||
+                    continuityStatus == dvbstreamer5::media::mpegts::ContinuityStatus::InvalidPacket) {
                     continuityErrors_.fetch_add(1, std::memory_order_relaxed);
                 }
             }
 
             if (config_.observeTransport) {
                 observedTransport.resize(
-                    packets.size() * tvs::media::mpegts::kPacketSize);
+                    packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
                 for (std::size_t index = 0; index < packets.size(); ++index) {
                     std::memcpy(
                         observedTransport.data() +
-                            index * tvs::media::mpegts::kPacketSize,
+                            index * dvbstreamer5::media::mpegts::kPacketSize,
                         packets[index].data(),
-                        tvs::media::mpegts::kPacketSize);
+                        dvbstreamer5::media::mpegts::kPacketSize);
                 }
                 config_.observeTransport(
                     observedTransport.data(), observedTransport.size());
@@ -865,7 +865,7 @@ void NativeUdpRelay::run() {
             if (!output.cbrPacer || !output.cbrPacer->started()) {
                 continue;
             }
-            tvs::media::mpegts::CbrDatagram cbrDatagram {};
+            dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram {};
             if (output.cbrPacer->nextDatagram(
                     std::chrono::steady_clock::now(), cbrDatagram) &&
                 !sendCbrDatagram(cbrDatagram, *output.socket, outputBytes_, error)) {
@@ -891,4 +891,4 @@ void NativeUdpRelay::run() {
     dvbInput_.close();
 }
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

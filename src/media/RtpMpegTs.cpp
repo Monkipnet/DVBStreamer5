@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace tvs::media::rtp {
+namespace dvbstreamer5::media::rtp {
 namespace {
 
 std::uint16_t read16(const std::uint8_t* data) noexcept {
@@ -154,4 +154,4 @@ bool MpegTsPacketizer::packetize(
     return true;
 }
 
-} // namespace tvs::media::rtp
+} // namespace dvbstreamer5::media::rtp

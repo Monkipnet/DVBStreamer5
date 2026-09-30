@@ -8,14 +8,14 @@
 #include <utility>
 #include <vector>
 
-namespace tvs::http {
+namespace dvbstreamer5::http {
 
 using Headers = std::vector<std::pair<std::string, std::string>>;
 using ContentReceiver = std::function<bool(const std::uint8_t*, std::size_t)>;
 
 struct RequestOptions {
     Headers headers;
-    std::string userAgent = "Mozilla/5.0 TVStreamer5";
+    std::string userAgent = "Mozilla/5.0 DVBStreamer5";
     long connectTimeoutMs = 3000;
     long readTimeoutMs = 12000;
     long writeTimeoutMs = 3000;
@@ -42,4 +42,4 @@ bool get(const std::string& url,
          std::string& error,
          const ContentReceiver& receiver = {});
 
-} // namespace tvs::http
+} // namespace dvbstreamer5::http

@@ -3,7 +3,7 @@
 #include "protocols/GstProtocolTypes.h"
 #include "protocols/outputs/GstOutputProtocolUtils.h"
 
-namespace tvs::protocols::outputs {
+namespace dvbstreamer5::protocols::outputs {
 
 bool appendFifoSink(std::vector<std::string>& args, const StreamConfig& cfg, GstOutputSpec& spec) {
     // The FIFO is only an internal hand-off after encoding.  Do not shape or
@@ -30,4 +30,4 @@ bool appendFifoSink(std::vector<std::string>& args, const StreamConfig& cfg, Gst
     return true;
 }
 
-} // namespace tvs::protocols::outputs
+} // namespace dvbstreamer5::protocols::outputs

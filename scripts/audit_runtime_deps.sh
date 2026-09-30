@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-binary="${1:-build/TVStreamer5}"
+binary="${1:-build/DVBStreamer5}"
 if [[ ! -f "$binary" ]]; then
   echo "Binary not found: $binary" >&2
   exit 2

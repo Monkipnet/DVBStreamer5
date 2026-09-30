@@ -306,9 +306,9 @@ struct StreamState {
     MptsOutputManager* mptsOutputManager = nullptr;
     std::unique_ptr<RemapContext> sourceContext;
     std::unique_ptr<GstTranscoderProcess> gstTranscoder;
-    std::unique_ptr<tvs::media::network::NativeUdpRelay> nativeUdpRelay;
-    std::shared_ptr<tvs::media::network::NativePreviewHub> nativePreviewHub;
-    std::unique_ptr<tvs::hls_scheduler::Scheduler> nativeHlsScheduler;
+    std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeUdpRelay;
+    std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;
+    std::unique_ptr<dvbstreamer5::hls_scheduler::Scheduler> nativeHlsScheduler;
     std::string nativeDvbFrontendKey;
     std::vector<std::unique_ptr<ExternalSrtOutputState>> externalSrtOutputs;
     std::vector<std::unique_ptr<RemapContext>> outputContexts;

@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace tvs::protocols {
+namespace dvbstreamer5::protocols {
 
 std::string normalizedOutputType(const StreamConfig& cfg) {
     std::string type = toLower(cfg.outputType);
@@ -124,8 +124,8 @@ std::string srtOutputMode(const StreamConfig& cfg) {
 }
 
 std::string hlsDirectory(const StreamConfig& cfg) {
-    std::filesystem::create_directories("/tmp/tvstreamer5-hls/" + cfg.id);
-    return "/tmp/tvstreamer5-hls/" + cfg.id;
+    std::filesystem::create_directories("/tmp/dvbstreamer5-hls/" + cfg.id);
+    return "/tmp/dvbstreamer5-hls/" + cfg.id;
 }
 
 std::string rtmpOutputLocation(const StreamConfig& cfg) {
@@ -181,7 +181,7 @@ std::string transcodedFifoRelayPath(const StreamConfig& cfg) {
             safe.push_back('_');
         }
     }
-    return "/tmp/tvstreamer5-relay/" + safe + ".ts";
+    return "/tmp/dvbstreamer5-relay/" + safe + ".ts";
 }
 
 bool prepareFifoRelay(const StreamConfig& cfg, std::string& error) {
@@ -223,4 +223,4 @@ void removeFifoRelay(const StreamConfig& cfg) {
     }
 }
 
-} // namespace tvs::protocols
+} // namespace dvbstreamer5::protocols

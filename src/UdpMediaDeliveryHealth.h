@@ -18,7 +18,7 @@ struct UdpMediaDeliveryHealth {
     std::atomic<uint64_t> videoPtsAdvances{0};
 };
 
-namespace tvs::udp_media_delivery {
+namespace dvbstreamer5::udp_media_delivery {
 
 struct PacketProgress {
     uint64_t mediaPackets = 0;
@@ -49,7 +49,7 @@ inline PacketProgress inspectSuccessfulDatagram(
         ++progress.mediaPackets;
         if (videoPid != 0 && pid == videoPid && (packet[1] & 0x40U)) {
             uint64_t pts = 0;
-            if (tvs::ts_media_progress::videoPesPts90k(packet, 188, pts)) {
+            if (dvbstreamer5::ts_media_progress::videoPesPts90k(packet, 188, pts)) {
                 ++progress.videoPesStarts;
                 if (ptsKnown && previousPts != pts) ++progress.videoPtsAdvances;
                 previousPts = pts;
@@ -102,4 +102,4 @@ inline const char* faultReason(Fault fault) {
     }
 }
 
-} // namespace tvs::udp_media_delivery
+} // namespace dvbstreamer5::udp_media_delivery

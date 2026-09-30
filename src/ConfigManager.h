@@ -63,7 +63,7 @@ struct StreamConfig {
     std::string hlsAccessKeyMode = "none";
     std::string hlsAccessKeyName = "Authorization";
     std::string hlsAccessKeyValue;
-    std::string hlsUserAgent = "Mozilla/5.0 TVStreamer5";
+    std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
     // Manual per-stream provider-PCR rate clock (203.36). Existing streams default off.
     bool hlsSlowPcrAssist = false;
     // 203.40: manual HLS pre-buffered provider-PCR interval pacing. The existing
@@ -89,7 +89,7 @@ struct StreamConfig {
     // exposed through Flussonic-compatible archive/timeshift playlist URLs.
     bool hlsArchiveEnabled = false;
     uint32_t hlsArchiveHours = 24;
-    std::string hlsArchivePath = "/var/lib/tvstreamer5/archive";
+    std::string hlsArchivePath = "/var/lib/dvbstreamer5/archive";
     std::string transcodeAudioCodec = "aac";
     uint64_t transcodeAudioBitrate = 192000;
     uint32_t audioPid = 0;
@@ -122,7 +122,7 @@ struct CamClientConfig {
 struct AppConfig {
     std::string login = "admin";
     std::string password = "admin";
-    std::string serverName = "TVStreamer5";
+    std::string serverName = "DVBStreamer5";
     int httpPort = 9000;
     std::string language = "en";
     std::string telegramToken;

@@ -1,4 +1,4 @@
-# TVStreamer5 English interface
+# DVBStreamer5 English interface
 
 This port keeps the numeric application version **1.0.0** unchanged.
 When the English UI is selected, the About dialog displays **1.0.0 EN**.

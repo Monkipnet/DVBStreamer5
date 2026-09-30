@@ -16,7 +16,7 @@
 #include <unistd.h>
 #endif
 
-namespace tvs::media::network {
+namespace dvbstreamer5::media::network {
 namespace {
 #ifdef __linux__
 constexpr std::uint16_t kDmxAllPids = 0x2000;
@@ -333,4 +333,4 @@ void LinuxDvbInput::close() noexcept {
     demuxFds_.clear();
 }
 
-} // namespace tvs::media::network
+} // namespace dvbstreamer5::media::network

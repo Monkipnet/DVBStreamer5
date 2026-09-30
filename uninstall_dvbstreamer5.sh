@@ -1,28 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Removes TVStreamer5 binaries/services and dependencies that were newly
-# installed by install_tvstreamer5_binary.sh.
+# Removes DVBStreamer5 binaries/services and dependencies that were newly
+# installed by install_dvbstreamer5_binary.sh.
 #
 # By default user configuration and backup files are preserved in the install
 # directory. Pass --purge-data to delete the entire application directory too.
 
-APP_NAME="TVStreamer5"
-SERVICE_NAME="tvstreamer5.service"
-LEGACY_APP_NAME="TVStreammerSAT5"
-LEGACY_SERVICE_NAME="tvstreammersat5.service"
+APP_NAME="DVBStreamer5"
+SERVICE_NAME="dvbstreamer5.service"
 OSCAM_SERVICE_NAME="oscam-mini.service"
-STATE_DIR="${TVS_INSTALLER_STATE_DIR:-/var/lib/tvstreamer5-installer}"
-INSTALL_DIR="${TVS_INSTALL_DIR:-/opt/TVStreamer5}"
-LEGACY_STATE_DIR="/var/lib/tvstreammersat5-installer"
-LEGACY_INSTALL_DIR="/opt/TVStreammerSAT5"
+STATE_DIR="${DVBSTREAMER5_INSTALLER_STATE_DIR:-/var/lib/dvbstreamer5-installer}"
+INSTALL_DIR="${DVBSTREAMER5_INSTALL_DIR:-/opt/DVBStreamer5}"
 PURGE_DATA=0
 PURGE_DEPS=1
 DRY_RUN=0
 
 usage() {
     cat <<'USAGE'
-Usage: sudo ./uninstall_tvstreamer5.sh [options]
+Usage: sudo ./uninstall_dvbstreamer5.sh [options]
 
 Options:
   --purge-data       Also delete configs, UI key, subscribers and backup-files
@@ -32,7 +28,7 @@ Options:
   -h, --help         Show this help
 
 Default behavior removes program binaries/services and installer-added packages,
-but preserves user data/configuration under /opt/TVStreamer5.
+but preserves user data/configuration under /opt/DVBStreamer5.
 USAGE
 }
 
@@ -89,51 +85,31 @@ run() {
     fi
 }
 
-if [[ -f "$STATE_DIR/install-dir.txt" && "$INSTALL_DIR" == "/opt/TVStreamer5" ]]; then
+if [[ -f "$STATE_DIR/install-dir.txt" && "$INSTALL_DIR" == "/opt/DVBStreamer5" ]]; then
     RECORDED_DIR="$(head -n1 "$STATE_DIR/install-dir.txt" 2>/dev/null || true)"
     [[ -n "$RECORDED_DIR" ]] && INSTALL_DIR="$RECORDED_DIR"
-elif [[ "$INSTALL_DIR" == "/opt/TVStreamer5" && -d "$LEGACY_INSTALL_DIR" ]]; then
-    INSTALL_DIR="$LEGACY_INSTALL_DIR"
-fi
-if [[ "$STATE_DIR" == "/var/lib/tvstreamer5-installer" && ! -d "$STATE_DIR" && -d "$LEGACY_STATE_DIR" ]]; then
-    STATE_DIR="$LEGACY_STATE_DIR"
 fi
 
-echo "Removing TVStreamer5 from: $INSTALL_DIR"
+echo "Removing DVBStreamer5 from: $INSTALL_DIR"
 [[ "$PURGE_DATA" -eq 1 ]] && echo "User data/configuration will also be deleted."
 
-for service in "$SERVICE_NAME" "$LEGACY_SERVICE_NAME" "$OSCAM_SERVICE_NAME"; do
+for service in "$SERVICE_NAME" "$OSCAM_SERVICE_NAME"; do
     if systemctl list-unit-files "$service" >/dev/null 2>&1 || [[ -f "/etc/systemd/system/$service" ]]; then
         run systemctl disable --now "$service" || true
     fi
 done
 
-# These units are TVStreamer5-specific. Remove them even if an older manual
+# These units are DVBStreamer5-specific. Remove them even if an older manual
 # installation created them, otherwise systemd would retain broken ExecStart paths.
 run rm -f "/etc/systemd/system/$SERVICE_NAME"
-run rm -f "/etc/systemd/system/$LEGACY_SERVICE_NAME"
 run rm -f "/etc/systemd/system/$OSCAM_SERVICE_NAME"
 run systemctl daemon-reload
-run systemctl reset-failed "$SERVICE_NAME" "$LEGACY_SERVICE_NAME" "$OSCAM_SERVICE_NAME" || true
+run systemctl reset-failed "$SERVICE_NAME" "$OSCAM_SERVICE_NAME" || true
 
 if [[ "$PURGE_DATA" -eq 1 ]]; then
     run rm -rf -- "$INSTALL_DIR"
-    # Older CMake versions installed the CA plugin in a lower-case path.
-    if [[ "$INSTALL_DIR" != "/opt/tvstreamer5" ]]; then
-        run rm -rf -- "/opt/tvstreamer5/ca-plugins"
-        if [[ -d /opt/tvstreamer5 ]] && [[ -z "$(find /opt/tvstreamer5 -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
-            run rmdir /opt/tvstreamer5 || true
-        fi
-    fi
-    if [[ "$INSTALL_DIR" != "/opt/tvstreammersat5" ]]; then
-        run rm -rf -- "/opt/tvstreammersat5/ca-plugins"
-        if [[ -d /opt/tvstreammersat5 ]] && [[ -z "$(find /opt/tvstreammersat5 -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
-            run rmdir /opt/tvstreammersat5 || true
-        fi
-    fi
 else
     run rm -f -- "$INSTALL_DIR/$APP_NAME"
-    run rm -f -- "$INSTALL_DIR/$LEGACY_APP_NAME"
     run rm -rf -- "$INSTALL_DIR/ca-plugins"
     run rm -f -- "$INSTALL_DIR/oscam-mini/oscam-mini"
     run rm -rf -- "$INSTALL_DIR/oscam-mini/default-config"
@@ -168,13 +144,10 @@ else
 fi
 
 run rm -rf -- "$STATE_DIR"
-if [[ "$STATE_DIR" != "$LEGACY_STATE_DIR" ]]; then
-    run rm -rf -- "$LEGACY_STATE_DIR"
-fi
 
 if [[ "$DRY_RUN" -eq 0 ]]; then
     echo
-    echo "TVStreamer5 binaries and services removed."
+    echo "DVBStreamer5 binaries and services removed."
     if [[ "$PURGE_DATA" -eq 1 ]]; then
         echo "User data/configuration removed: $INSTALL_DIR"
     else
