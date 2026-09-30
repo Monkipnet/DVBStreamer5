@@ -17,7 +17,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${APT_GET[@]}" update
 SRT_RUNTIME=""
 if [[ ! -f "$ROOT_DIR/third_party/srt-embedded/libsrt-runtime.so" ]]; then
-  for pkg in libsrt1.5-gnutls libsrt1.5-openssl; do
+  for pkg in libsrt1.5-openssl libsrt1.5-gnutls; do
     if apt-cache show "$pkg" >/dev/null 2>&1; then SRT_RUNTIME="$pkg"; break; fi
   done
   if [[ -z "$SRT_RUNTIME" ]]; then
@@ -35,5 +35,5 @@ DEPS=(build-essential cmake nodejs pkg-config
 "${APT_GET[@]}" install -y --no-install-recommends "${DEPS[@]}"
 "${APT_GET[@]}" clean
 
-echo "Dependencies installed. CMake will embed the installed SRT 1.5 runtime directly into DVBStreamer5."
+echo "Dependencies installed. CMake will embed the SRT 1.5 payload and OpenSSL-backed crypto shims directly into DVBStreamer5."
 echo "Build: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel --target DVBStreamer5"

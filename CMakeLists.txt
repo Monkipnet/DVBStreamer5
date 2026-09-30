@@ -16,10 +16,10 @@ find_package(Threads REQUIRED)
 
 enable_testing()
 
-# Stage 6: embed the SRT 1.5 runtime directly into every consumer of
-# dvbstreamer5_media_core.  The build host only needs a compatible SRT 1.5
-# shared object as input; the final DVBStreamer5 ELF has no DT_NEEDED entry for
-# libsrt and NativeSrtTransport loads these embedded bytes through memfd.
+# Stage 7: SRT remains an embedded build-time payload, but its GnuTLS/Nettle
+# crypto ABI is satisfied by two tiny embedded compatibility modules backed by
+# the OpenSSL already used by DVBStreamer5.  The deployed executable therefore
+# needs neither libsrt, libgnutls nor libnettle as external runtime libraries.
 if(NOT UNIX OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
     message(FATAL_ERROR "Embedded SRT runtime currently supports Linux x86_64 only")
 endif()
@@ -33,14 +33,14 @@ set(DVBSTREAMER5_SRT_RUNTIME "" CACHE FILEPATH
 if(NOT DVBSTREAMER5_SRT_RUNTIME)
     set(_dvbstreamer5_srt_candidates
         "${CMAKE_SOURCE_DIR}/third_party/srt-embedded/libsrt-runtime.so"
-        "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-gnutls.so.1.5"
-        "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-gnutls.so.1.5"
         "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-openssl.so.1.5"
         "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-openssl.so.1.5"
-        "/usr/lib/x86_64-linux-gnu/libsrt-gnutls.so.1.5"
-        "/lib/x86_64-linux-gnu/libsrt-gnutls.so.1.5"
+        "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-gnutls.so.1.5"
+        "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libsrt-gnutls.so.1.5"
         "/usr/lib/x86_64-linux-gnu/libsrt-openssl.so.1.5"
         "/lib/x86_64-linux-gnu/libsrt-openssl.so.1.5"
+        "/usr/lib/x86_64-linux-gnu/libsrt-gnutls.so.1.5"
+        "/lib/x86_64-linux-gnu/libsrt-gnutls.so.1.5"
     )
     foreach(_candidate IN LISTS _dvbstreamer5_srt_candidates)
         if(EXISTS "${_candidate}")
@@ -79,6 +79,74 @@ add_custom_command(
 set_source_files_properties("${DVBSTREAMER5_SRT_EMBED_OBJ}" PROPERTIES
     GENERATED TRUE
     EXTERNAL_OBJECT TRUE
+)
+
+# OpenSSL-backed compatibility SONAMEs for a GnuTLS-flavoured SRT payload.
+# They intentionally export only the seven crypto ABI symbols used by SRT 1.5.x.
+add_library(dvbstreamer5_srt_gnutls_openssl_shim SHARED
+    src/media/srt_compat/GnutlsOpenSslShim.c
+)
+target_link_libraries(dvbstreamer5_srt_gnutls_openssl_shim PRIVATE OpenSSL::Crypto)
+target_link_options(dvbstreamer5_srt_gnutls_openssl_shim PRIVATE
+    "-Wl,--version-script=${CMAKE_SOURCE_DIR}/src/media/srt_compat/gnutls.map"
+)
+set_target_properties(dvbstreamer5_srt_gnutls_openssl_shim PROPERTIES
+    OUTPUT_NAME gnutls
+    VERSION 30.0.0
+    SOVERSION 30
+)
+
+add_library(dvbstreamer5_srt_nettle_openssl_shim SHARED
+    src/media/srt_compat/NettleOpenSslShim.c
+)
+target_link_libraries(dvbstreamer5_srt_nettle_openssl_shim PRIVATE OpenSSL::Crypto)
+target_compile_options(dvbstreamer5_srt_nettle_openssl_shim PRIVATE -Wno-deprecated-declarations)
+target_link_options(dvbstreamer5_srt_nettle_openssl_shim PRIVATE
+    "-Wl,--version-script=${CMAKE_SOURCE_DIR}/src/media/srt_compat/nettle.map"
+)
+set_target_properties(dvbstreamer5_srt_nettle_openssl_shim PROPERTIES
+    OUTPUT_NAME nettle
+    VERSION 8.0.0
+    SOVERSION 8
+)
+
+set(DVBSTREAMER5_SRT_GNUTLS_SHIM_BIN "${DVBSTREAMER5_SRT_EMBED_DIR}/dvbstreamer5_srt_gnutls_shim.bin")
+set(DVBSTREAMER5_SRT_GNUTLS_SHIM_OBJ "${DVBSTREAMER5_SRT_EMBED_DIR}/dvbstreamer5_srt_gnutls_shim.o")
+add_custom_command(
+    OUTPUT "${DVBSTREAMER5_SRT_GNUTLS_SHIM_OBJ}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:dvbstreamer5_srt_gnutls_openssl_shim>" "${DVBSTREAMER5_SRT_GNUTLS_SHIM_BIN}"
+    COMMAND "${DVBSTREAMER5_OBJCOPY}"
+            --input-target=binary
+            --output-target=elf64-x86-64
+            --binary-architecture=i386:x86-64
+            --rename-section .data=.rodata,alloc,load,readonly,data,contents
+            dvbstreamer5_srt_gnutls_shim.bin
+            dvbstreamer5_srt_gnutls_shim.o
+    WORKING_DIRECTORY "${DVBSTREAMER5_SRT_EMBED_DIR}"
+    DEPENDS dvbstreamer5_srt_gnutls_openssl_shim
+    VERBATIM
+)
+
+set(DVBSTREAMER5_SRT_NETTLE_SHIM_BIN "${DVBSTREAMER5_SRT_EMBED_DIR}/dvbstreamer5_srt_nettle_shim.bin")
+set(DVBSTREAMER5_SRT_NETTLE_SHIM_OBJ "${DVBSTREAMER5_SRT_EMBED_DIR}/dvbstreamer5_srt_nettle_shim.o")
+add_custom_command(
+    OUTPUT "${DVBSTREAMER5_SRT_NETTLE_SHIM_OBJ}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:dvbstreamer5_srt_nettle_openssl_shim>" "${DVBSTREAMER5_SRT_NETTLE_SHIM_BIN}"
+    COMMAND "${DVBSTREAMER5_OBJCOPY}"
+            --input-target=binary
+            --output-target=elf64-x86-64
+            --binary-architecture=i386:x86-64
+            --rename-section .data=.rodata,alloc,load,readonly,data,contents
+            dvbstreamer5_srt_nettle_shim.bin
+            dvbstreamer5_srt_nettle_shim.o
+    WORKING_DIRECTORY "${DVBSTREAMER5_SRT_EMBED_DIR}"
+    DEPENDS dvbstreamer5_srt_nettle_openssl_shim
+    VERBATIM
+)
+set_source_files_properties(
+    "${DVBSTREAMER5_SRT_GNUTLS_SHIM_OBJ}"
+    "${DVBSTREAMER5_SRT_NETTLE_SHIM_OBJ}"
+    PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE
 )
 
 add_library(dvbstreamer5_boost_headers INTERFACE)
@@ -130,6 +198,8 @@ add_library(dvbstreamer5_media_core
     src/media/NativeHlsSegmenter.cpp
     src/media/NativeSrtTransport.cpp
     ${DVBSTREAMER5_SRT_EMBED_OBJ}
+    ${DVBSTREAMER5_SRT_GNUTLS_SHIM_OBJ}
+    ${DVBSTREAMER5_SRT_NETTLE_SHIM_OBJ}
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core

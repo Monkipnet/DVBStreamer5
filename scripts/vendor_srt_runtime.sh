@@ -8,13 +8,13 @@ mkdir -p "$DEST_DIR"
 source_path="${1:-}"
 if [[ -z "$source_path" ]]; then
   source_path="$(ldconfig -p 2>/dev/null | awk '
-    /libsrt-gnutls\.so\.1\.5/ {print $NF; exit}
-    /libsrt-openssl\.so\.1\.5/ {fallback=$NF}
+    /libsrt-openssl\.so\.1\.5/ {print $NF; found=1; exit}
+    /libsrt-gnutls\.so\.1\.5/ {fallback=$NF}
     END {if (!found && fallback) print fallback}
   ')"
 fi
 if [[ -z "$source_path" || ! -e "$source_path" ]]; then
-  echo "SRT 1.5 runtime not found. Install libsrt1.5-gnutls (or pass a path)." >&2
+  echo "SRT 1.5 runtime not found. Install libsrt1.5-openssl/libsrt1.5-gnutls (or pass a path)." >&2
   exit 1
 fi
 source_path="$(readlink -f "$source_path")"

@@ -1,0 +1,4 @@
+GNUTLS_3_4 {
+    global: gnutls_rnd;
+    local: *;
+};

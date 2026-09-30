@@ -2,9 +2,26 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include <thread>
 #include <vector>
+
+namespace {
+bool externalLegacyCryptoMapped(std::string& detail) {
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        if (line.find("libgnutls.so") != std::string::npos ||
+            line.find("libnettle.so") != std::string::npos) {
+            detail = line;
+            return true;
+        }
+    }
+    return false;
+}
+}
 
 int main() {
     using namespace dvbstreamer5::media::srt;
@@ -13,10 +30,12 @@ int main() {
         std::cerr << "SRT runtime unavailable: " << detail << "\n";
         return 1;
     }
-    if (detail.find("embedded:libsrt-1.5") == std::string::npos) {
-        std::cerr << "SRT runtime is not using the embedded payload: " << detail << "\n";
+    if (detail.find("embedded:libsrt-1.5") == std::string::npos ||
+        detail.find("OpenSSL crypto shims") == std::string::npos) {
+        std::cerr << "SRT runtime is not using the embedded OpenSSL crypto path: " << detail << "\n";
         return 6;
     }
+
     EndpointConfig listener;
     listener.host = "0.0.0.0";
     listener.bindAddress = "127.0.0.1";
@@ -24,6 +43,8 @@ int main() {
     listener.mode = "listener";
     listener.latencyMs = 60;
     listener.ioTimeoutMs = 300;
+    listener.passphrase = "DVBStreamer5-Stage7";
+    listener.pbkeylen = 16;
 
     NativeSrtOutput output;
     std::string error;
@@ -38,6 +59,8 @@ int main() {
     caller.mode = "caller";
     caller.latencyMs = 60;
     caller.ioTimeoutMs = 300;
+    caller.passphrase = listener.passphrase;
+    caller.pbkeylen = listener.pbkeylen;
 
     std::vector<std::uint8_t> received;
     std::atomic<bool> got{false};
@@ -55,15 +78,18 @@ int main() {
 
     std::vector<std::uint8_t> block(1316, 0xff);
     for (std::size_t i = 0; i < block.size(); i += 188) block[i] = 0x47;
-    for (int i = 0; i < 50 && !output.connected(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (int i = 0; i < 50 && !output.connected(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     if (!output.push(block.data(), block.size())) {
         std::cerr << "push failed\n";
         input.stop(); output.stop(); return 3;
     }
-    for (int i = 0; i < 60 && !got; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (int i = 0; i < 60 && !got; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     input.stop(); output.stop();
+
     if (!got || received.size() < block.size()) {
-        std::cerr << "did not receive SRT payload, received=" << received.size()
+        std::cerr << "did not receive encrypted SRT payload, received=" << received.size()
                   << " input_error=" << input.lastError() << " output_error=" << output.lastError() << "\n";
         return 4;
     }
@@ -71,6 +97,13 @@ int main() {
         std::cerr << "payload mismatch\n";
         return 5;
     }
-    std::cout << "PASS: native SRT loopback " << detail << "\n";
+
+    std::string mapped;
+    if (externalLegacyCryptoMapped(mapped)) {
+        std::cerr << "external GnuTLS/Nettle runtime was mapped: " << mapped << "\n";
+        return 7;
+    }
+
+    std::cout << "PASS: encrypted native SRT loopback via OpenSSL shims " << detail << "\n";
     return 0;
 }

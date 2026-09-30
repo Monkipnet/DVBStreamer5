@@ -1,0 +1,10 @@
+NETTLE_8 {
+    global:
+        nettle_aes_set_encrypt_key;
+        nettle_aes_set_decrypt_key;
+        nettle_aes_encrypt;
+        nettle_aes_decrypt;
+        nettle_ctr_crypt;
+        nettle_pbkdf2_hmac_sha1;
+    local: *;
+};

@@ -46,8 +46,10 @@ Runtime dependency audit:
 ./scripts/audit_runtime_deps.sh build/DVBStreamer5
 ```
 
-## Embedded SRT (Stage 6)
+## Embedded SRT + OpenSSL crypto shims (Stage 7)
 
-SRT input/output no longer depends on a separately installed `libsrt*.so` at runtime. During the source build, an SRT 1.5 shared object is converted by `objcopy` into a read-only ELF object and linked into `DVBStreamer5`. `NativeSrtTransport` exposes it through an anonymous Linux `memfd` and loads `/proc/self/fd/<n>`, so the deployed program has no `DT_NEEDED` entry for `libsrt` and no SRT `.so` file beside the executable.
+SRT input/output remains embedded in the final `DVBStreamer5` ELF and has no external `libsrt*.so` runtime dependency. Stage 7 additionally removes the external GnuTLS/Nettle dependency from a GnuTLS-flavoured SRT payload: two tiny compatibility modules export only the seven ABI symbols used by SRT 1.5.x and implement RNG, AES-CTR and PBKDF2-HMAC-SHA1 through the same OpenSSL `libcrypto` already used by DVBStreamer5.
 
-`install_deps.sh` uses the distro SRT 1.5 package only as a build-time source for the embedded payload; it does not copy the library into the Git working tree. The binary installer does not install SRT. Use `-DDVBSTREAMER5_SRT_RUNTIME=/path/to/libsrt-*.so.1.5` to embed a specific SRT 1.5 build. Caller/listener, TSBPD, live/message API, latency/buffers/FC, passphrase/PBKEYLEN, streamid, reconnect and subscriber filtering remain unchanged.
+At runtime the GnuTLS-compatible shim (`SONAME libgnutls.so.30`) and Nettle-compatible shim (`SONAME libnettle.so.8`) are loaded from anonymous Linux `memfd` objects with `RTLD_GLOBAL` before the embedded SRT object. This satisfies the embedded SRT `DT_NEEDED` entries without loading system `libgnutls` or `libnettle`. The deployed executable therefore needs neither a separate SRT package nor GnuTLS/Nettle packages.
+
+`install_deps.sh` uses a distro SRT 1.5 shared object only as a build-time payload and prefers the OpenSSL flavour when available. `-DDVBSTREAMER5_SRT_RUNTIME=/path/to/libsrt-*.so.1.5` still selects an explicit payload. Caller/listener, TSBPD, live/message API, latency/buffers/FC, encrypted passphrase/PBKEYLEN, streamid, reconnect and subscriber filtering remain unchanged.

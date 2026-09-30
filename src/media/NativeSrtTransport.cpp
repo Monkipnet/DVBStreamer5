@@ -35,9 +35,73 @@ constexpr int SRTS_CONNECTED = 5;
 extern "C" {
 extern const unsigned char _binary_dvbstreamer5_srt_runtime_bin_start[];
 extern const unsigned char _binary_dvbstreamer5_srt_runtime_bin_end[];
+extern const unsigned char _binary_dvbstreamer5_srt_gnutls_shim_bin_start[];
+extern const unsigned char _binary_dvbstreamer5_srt_gnutls_shim_bin_end[];
+extern const unsigned char _binary_dvbstreamer5_srt_nettle_shim_bin_start[];
+extern const unsigned char _binary_dvbstreamer5_srt_nettle_shim_bin_end[];
 }
 
 constexpr unsigned int kMemfdCloexec = 0x0001U;
+
+bool loadEmbeddedModule(const unsigned char* begin, const unsigned char* end,
+                        const char* memfdName, int flags,
+                        int& fd, void*& handle, std::string& error) {
+    const std::size_t bytes = static_cast<std::size_t>(end - begin);
+    if (bytes < 1024) {
+        error = std::string("embedded module is empty or invalid: ") + memfdName;
+        return false;
+    }
+#if defined(SYS_memfd_create)
+    fd = static_cast<int>(::syscall(SYS_memfd_create, memfdName, kMemfdCloexec));
+#else
+    fd = -1;
+    errno = ENOSYS;
+#endif
+    if (fd < 0) {
+        error = std::string("memfd_create failed for ") + memfdName + ": " + std::strerror(errno);
+        return false;
+    }
+    std::size_t offset = 0;
+    while (offset < bytes) {
+        const ssize_t written = ::write(fd, begin + offset, bytes - offset);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            error = std::string("writing embedded module failed for ") + memfdName + ": " + std::strerror(errno);
+            ::close(fd);
+            fd = -1;
+            return false;
+        }
+        if (written == 0) {
+            error = std::string("writing embedded module returned zero bytes for ") + memfdName;
+            ::close(fd);
+            fd = -1;
+            return false;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    const std::string path = "/proc/self/fd/" + std::to_string(fd);
+    handle = ::dlopen(path.c_str(), flags);
+    if (!handle) {
+        const char* dlError = ::dlerror();
+        error = std::string("loading embedded module failed for ") + memfdName + ": " +
+                (dlError ? dlError : "unknown dlopen error");
+        ::close(fd);
+        fd = -1;
+        return false;
+    }
+    return true;
+}
+
+void unloadEmbeddedModule(void*& handle, int& fd) noexcept {
+    if (handle) {
+        ::dlclose(handle);
+        handle = nullptr;
+    }
+    if (fd >= 0) {
+        ::close(fd);
+        fd = -1;
+    }
+}
 
 struct SrtApi {
     using FnStartup=int(*)(); using FnCleanup=int(*)(); using FnCreate=SrtSocket(*)();
@@ -47,49 +111,80 @@ struct SrtApi {
     using FnSend=int(*)(SrtSocket,const char*,int,int,int); using FnRecv=int(*)(SrtSocket,char*,int);
     using FnError=const char*(*)(); using FnVersion=std::uint32_t(*)(); using FnState=int(*)(SrtSocket);
     using FnLog=void(*)(int);
-    void* handle=nullptr; int embeddedFd=-1; FnStartup startup=nullptr; FnCleanup cleanup=nullptr; FnCreate create=nullptr;
+
+    void* handle=nullptr;
+    void* gnutlsShimHandle=nullptr;
+    void* nettleShimHandle=nullptr;
+    int embeddedFd=-1;
+    int gnutlsShimFd=-1;
+    int nettleShimFd=-1;
+    FnStartup startup=nullptr; FnCleanup cleanup=nullptr; FnCreate create=nullptr;
     FnClose close=nullptr; FnSet set=nullptr; FnBind bind=nullptr; FnListen listen=nullptr;
     FnAccept accept=nullptr; FnConnect connect=nullptr; FnSend send=nullptr; FnRecv recv=nullptr;
     FnError error=nullptr; FnVersion version=nullptr; FnState state=nullptr; FnLog log=nullptr;
     bool initialized=false; std::string libraryName; std::string loadError;
-    ~SrtApi(){ if(initialized&&cleanup) cleanup(); if(handle) ::dlclose(handle); if(embeddedFd>=0) ::close(embeddedFd); }
-    template<class T> bool sym(T& out,const char* name){ out=reinterpret_cast<T>(::dlsym(handle,name)); if(out) return true; loadError=std::string("missing embedded SRT symbol ")+name; return false; }
+
+    ~SrtApi() {
+        if (initialized && cleanup) cleanup();
+        unloadEmbeddedModule(handle, embeddedFd);
+        unloadEmbeddedModule(nettleShimHandle, nettleShimFd);
+        unloadEmbeddedModule(gnutlsShimHandle, gnutlsShimFd);
+    }
+
+    template<class T> bool sym(T& out,const char* name){
+        out=reinterpret_cast<T>(::dlsym(handle,name));
+        if(out) return true;
+        loadError=std::string("missing embedded SRT symbol ")+name;
+        return false;
+    }
+
+    void unloadAll() noexcept {
+        unloadEmbeddedModule(handle, embeddedFd);
+        unloadEmbeddedModule(nettleShimHandle, nettleShimFd);
+        unloadEmbeddedModule(gnutlsShimHandle, gnutlsShimFd);
+    }
+
     bool load(){
         if(handle) return initialized;
-        const auto* begin=_binary_dvbstreamer5_srt_runtime_bin_start;
-        const auto* end=_binary_dvbstreamer5_srt_runtime_bin_end;
-        const std::size_t bytes=static_cast<std::size_t>(end-begin);
-        if(bytes<4096){ loadError="embedded SRT runtime payload is empty or invalid"; return false; }
-#if defined(SYS_memfd_create)
-        embeddedFd=static_cast<int>(::syscall(SYS_memfd_create,"dvbstreamer5-srt-runtime",kMemfdCloexec));
-#else
-        embeddedFd=-1;
-        errno=ENOSYS;
-#endif
-        if(embeddedFd<0){ loadError=std::string("memfd_create for embedded SRT failed: ")+std::strerror(errno); return false; }
-        std::size_t offset=0;
-        while(offset<bytes){
-            const ssize_t written=::write(embeddedFd,begin+offset,bytes-offset);
-            if(written<0){
-                if(errno==EINTR) continue;
-                loadError=std::string("writing embedded SRT runtime failed: ")+std::strerror(errno);
-                ::close(embeddedFd); embeddedFd=-1; return false;
-            }
-            if(written==0){ loadError="writing embedded SRT runtime returned zero bytes"; ::close(embeddedFd); embeddedFd=-1; return false; }
-            offset+=static_cast<std::size_t>(written);
+
+        if (!loadEmbeddedModule(_binary_dvbstreamer5_srt_gnutls_shim_bin_start,
+                                _binary_dvbstreamer5_srt_gnutls_shim_bin_end,
+                                "dvbstreamer5-srt-gnutls-openssl-shim",
+                                RTLD_NOW | RTLD_GLOBAL,
+                                gnutlsShimFd, gnutlsShimHandle, loadError)) {
+            return false;
         }
-        const std::string path="/proc/self/fd/"+std::to_string(embeddedFd);
-        handle=::dlopen(path.c_str(),RTLD_NOW|RTLD_LOCAL);
-        if(!handle){ const char* e=::dlerror(); loadError=std::string("loading embedded SRT runtime failed: ")+(e?e:"unknown dlopen error"); ::close(embeddedFd); embeddedFd=-1; return false; }
-        libraryName="embedded:libsrt-1.5 (memfd, "+std::to_string(bytes)+" bytes)";
+        if (!loadEmbeddedModule(_binary_dvbstreamer5_srt_nettle_shim_bin_start,
+                                _binary_dvbstreamer5_srt_nettle_shim_bin_end,
+                                "dvbstreamer5-srt-nettle-openssl-shim",
+                                RTLD_NOW | RTLD_GLOBAL,
+                                nettleShimFd, nettleShimHandle, loadError)) {
+            unloadAll();
+            return false;
+        }
+        if (!loadEmbeddedModule(_binary_dvbstreamer5_srt_runtime_bin_start,
+                                _binary_dvbstreamer5_srt_runtime_bin_end,
+                                "dvbstreamer5-srt-runtime",
+                                RTLD_NOW | RTLD_LOCAL,
+                                embeddedFd, handle, loadError)) {
+            unloadAll();
+            return false;
+        }
+
+        const std::size_t bytes=static_cast<std::size_t>(
+            _binary_dvbstreamer5_srt_runtime_bin_end-_binary_dvbstreamer5_srt_runtime_bin_start);
+        libraryName="embedded:libsrt-1.5 + OpenSSL crypto shims (memfd, "+std::to_string(bytes)+" bytes)";
         if(!sym(startup,"srt_startup")||!sym(cleanup,"srt_cleanup")||!sym(create,"srt_create_socket")||!sym(close,"srt_close")||!sym(set,"srt_setsockopt")||!sym(bind,"srt_bind")||!sym(listen,"srt_listen")||!sym(accept,"srt_accept")||!sym(connect,"srt_connect")||!sym(send,"srt_sendmsg")||!sym(recv,"srt_recvmsg")||!sym(error,"srt_getlasterror_str")||!sym(version,"srt_getversion")||!sym(state,"srt_getsockstate")){
-            ::dlclose(handle); handle=nullptr; ::close(embeddedFd); embeddedFd=-1; return false;
+            unloadAll(); return false;
         }
         log=reinterpret_cast<FnLog>(::dlsym(handle,"srt_setloglevel"));
-        if(startup()!=0){ loadError="embedded srt_startup failed"; ::dlclose(handle); handle=nullptr; ::close(embeddedFd); embeddedFd=-1; return false; }
+        if(startup()!=0){ loadError="embedded srt_startup failed"; unloadAll(); return false; }
         if(log) log(2);
         constexpr std::uint32_t min=0x010500;
-        if(version()<min){ std::ostringstream o; o<<"embedded SRT runtime 0x"<<std::hex<<version()<<" is older than required 1.5.0"; loadError=o.str(); cleanup(); ::dlclose(handle); handle=nullptr; ::close(embeddedFd); embeddedFd=-1; return false; }
+        if(version()<min){
+            std::ostringstream o; o<<"embedded SRT runtime 0x"<<std::hex<<version()<<" is older than required 1.5.0";
+            loadError=o.str(); cleanup(); initialized=false; unloadAll(); return false;
+        }
         initialized=true; return true;
     }
     std::string lastError()const{ const char* e=error?error():nullptr; return e&&*e?e:"unknown SRT error"; }

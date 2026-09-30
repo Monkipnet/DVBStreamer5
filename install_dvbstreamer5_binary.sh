@@ -204,18 +204,6 @@ if command -v apt-cache >/dev/null 2>&1; then
     elif apt-cache show libssl3 >/dev/null 2>&1; then
         DEPS+=(libssl3)
     fi
-    # The SRT ELF itself is embedded in DVBStreamer5. A gnutls-flavoured SRT
-    # payload still resolves its crypto runtime dependencies when loaded from memfd.
-    if apt-cache show libgnutls30t64 >/dev/null 2>&1; then
-        DEPS+=(libgnutls30t64)
-    elif apt-cache show libgnutls30 >/dev/null 2>&1; then
-        DEPS+=(libgnutls30)
-    fi
-    if apt-cache show libnettle8t64 >/dev/null 2>&1; then
-        DEPS+=(libnettle8t64)
-    elif apt-cache show libnettle8 >/dev/null 2>&1; then
-        DEPS+=(libnettle8)
-    fi
 fi
 if [[ "$INSTALL_DEPS" == yes ]]; then
     command -v apt-get >/dev/null 2>&1 || fail 'apt-get is required for installing dependencies.'
