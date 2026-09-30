@@ -208,7 +208,7 @@ NativeUdpRelay::~NativeUdpRelay() {
 bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& error) {
     stop();
     config_ = config;
-    if (config_.outputs.empty()) {
+    if (config_.outputs.empty() && !config_.allowNoNetworkOutput) {
         config_.outputs.push_back({
             config.outputType,
             config.outputHost,

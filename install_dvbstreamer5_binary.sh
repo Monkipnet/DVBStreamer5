@@ -197,11 +197,14 @@ fi
 (( EUID == 0 )) || fail 'Run this command with sudo (or as root).'
 command -v systemctl >/dev/null 2>&1 || fail 'systemctl is not available.'
 
-DEPS=(ca-certificates libssl-dev gstreamer1.0-tools
-      gstreamer1.0-plugins-base gstreamer1.0-plugins-good
-      gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
-      gstreamer1.0-libav gstreamer1.0-rtsp gstreamer1.0-vaapi
-      vainfo intel-media-va-driver)
+DEPS=(ca-certificates libpcsclite1 pcscd pcsc-tools libccid)
+if command -v apt-cache >/dev/null 2>&1; then
+    if apt-cache show libssl3t64 >/dev/null 2>&1; then
+        DEPS+=(libssl3t64)
+    elif apt-cache show libssl3 >/dev/null 2>&1; then
+        DEPS+=(libssl3)
+    fi
+fi
 if [[ "$INSTALL_DEPS" == yes ]]; then
     command -v apt-get >/dev/null 2>&1 || fail 'apt-get is required for installing dependencies.'
     apt-get update

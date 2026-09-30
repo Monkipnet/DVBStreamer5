@@ -71,7 +71,6 @@ RUN_ARGS=(
     "${DEVICE_ARGS[@]}"
     "${VOLUME_ARGS[@]}"
     -w /data
-    -e "GST_DEBUG=${GST_DEBUG:-1}"
 )
 
 if [[ -n "${DVBSTREAMER5_UDP_STARTUP_BUFFER_MS:-}" ]]; then

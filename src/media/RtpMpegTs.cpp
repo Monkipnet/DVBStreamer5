@@ -84,7 +84,7 @@ bool decodeMpegTsPayload(
         return false;
     }
 
-    // Match GStreamer's RTP/MP2T depayloader: RFC 2250 carries complete
+    // Match standard RTP/MP2T depayloading: RFC 2250 carries complete
     // 188-byte TS packets, so discard any incomplete trailing bytes.
     const std::size_t usableSize =
         rtp.payloadSize - (rtp.payloadSize % mpegts::kPacketSize);

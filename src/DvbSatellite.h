@@ -1,6 +1,5 @@
 #pragma once
 
-#include <gst/gst.h>
 #include <jsoncpp/json/json.h>
 
 #include <cstdint>
@@ -31,7 +30,6 @@ bool isDvbUri(const std::string& uri);
 bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& error);
 std::string buildUri(const DvbSatelliteParams& params);
 
-bool configureSource(GstElement* source, const DvbSatelliteParams& params, std::string& error);
 // Serialize short-lived scan/signal pipelines with a real stream startup on the
 // same physical frontend. The guard is released automatically when destroyed.
 std::unique_lock<std::mutex> acquireFrontendTuneGuard(const DvbSatelliteParams& params);

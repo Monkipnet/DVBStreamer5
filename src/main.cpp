@@ -1,6 +1,5 @@
 #include <iostream>
 #include <boost/asio.hpp>
-#include <gst/gst.h>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -11,14 +10,10 @@
 #include "StreamManager.h"
 #include "HttpServer.h"
 #include "AppVersion.h"
-#include "TranscoderModule.h"
 
-int main(int argc, char** argv) {
-    if (argc == 3 && std::string(argv[1]) == "--transcoder-encoder-probe") {
-        return TranscoderModule::runEncoderProbeWorker(argv[2]);
-    }
+int main() {
 #if defined(__GLIBC__)
-    // 202.46: this process owns hundreds of GStreamer/SRT worker threads.
+    // Limit glibc allocator arenas for long-running network worker threads.
     // glibc otherwise creates many independent malloc arenas and keeps freed
     // pages cached in those arenas, which makes RSS look like a leak after
     // queue warm-up/reconnects.  A modest arena cap still gives enough allocator
@@ -31,20 +26,7 @@ int main(int argc, char** argv) {
               << " | support=" << dvbstreamer5::app::kSupportEmail << std::endl;
     std::cerr << "main() entered" << std::endl;
 
-    // Initialize GStreamer before HttpServer is created. The web UI queries
-    // transcoder capabilities during startup, and GstElementFactory lookups
-    // return no factories until the GStreamer registry has been initialized.
-    GError* gstError = nullptr;
-    if (!gst_init_check(nullptr, nullptr, &gstError)) {
-        std::cerr << "GStreamer initialization failed";
-        if (gstError && gstError->message) {
-            std::cerr << ": " << gstError->message;
-        }
-        std::cerr << std::endl;
-        if (gstError) g_error_free(gstError);
-        return 1;
-    }
-    std::cerr << "GStreamer initialized" << std::endl;
+    std::cerr << "Native media engine initialized" << std::endl;
 
     ConfigManager configManager;
     if (!configManager.load()) {

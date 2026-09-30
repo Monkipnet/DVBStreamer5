@@ -46,28 +46,8 @@ std::string outputKindName(OutputProtocolKind kind) {
     }
 }
 
-std::vector<const char*> requiredElementsForOutput(OutputProtocolKind kind) {
-    switch (kind) {
-        case OutputProtocolKind::UdpCbr:
-        case OutputProtocolKind::UdpVbr:
-        case OutputProtocolKind::Udp:
-            return {"udpsink"};
-        case OutputProtocolKind::Rtp:
-            return {"rtpmp2tpay", "udpsink"};
-        case OutputProtocolKind::Http:
-            return {"tcpserversink"};
-        case OutputProtocolKind::Hls:
-            return {"hlssink"};
-        case OutputProtocolKind::Srt:
-            return {"srtsink"};
-        case OutputProtocolKind::Rtsp:
-            return {"rtspclientsink"};
-        case OutputProtocolKind::Rtmp:
-        case OutputProtocolKind::Youtube:
-            return {"flvmux", "rtmpsink"};
-        default:
-            return {};
-    }
+std::vector<const char*> requiredElementsForOutput(OutputProtocolKind) {
+    return {};
 }
 
 bool isUdpLikeOutput(OutputProtocolKind kind) {

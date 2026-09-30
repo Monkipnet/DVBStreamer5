@@ -31,7 +31,7 @@ Options:
 
 Supported target: glibc-based x86_64 Linux. Debian/Ubuntu, Fedora/RHEL/
 Rocky/Alma, openSUSE/SLES and Arch package managers are detected for host-only
-PC/SC/CCID dependencies. Bundled application/GStreamer libraries are used for
+PC/SC/CCID dependencies. Bundled application libraries are used for
 all application runtime dependencies. Alpine/musl is intentionally rejected.
 USAGE
 }
@@ -88,7 +88,7 @@ echo "Install dir: $INSTALL_DIR"
 
 # Only host-coupled facilities are installed from the target distribution:
 # pcscd and the CCID USB driver. Application, OpenSSL,
-# dvbcsa, GStreamer core/plugins/codecs and libpcsclite userspace client are in
+# dvbcsa and libpcsclite userspace client are in
 # the payload. GPU/DVB kernel drivers are intentionally host-provided.
 install_pcsc_packages() {
   (( NO_PCSC )) && return 0
@@ -330,10 +330,6 @@ fi
 # Validate the packaged runtime in exactly the environment used by the service.
 if (( ! DRY_RUN )); then
   export LD_LIBRARY_PATH="$INSTALL_DIR/runtime/lib"
-  export GST_PLUGIN_SYSTEM_PATH_1_0=""
-  export GST_PLUGIN_PATH_1_0="$INSTALL_DIR/runtime/gstreamer-1.0"
-  export GST_PLUGIN_SCANNER="$INSTALL_DIR/runtime/libexec/gstreamer-1.0/gst-plugin-scanner"
-  export GST_REGISTRY="$INSTALL_DIR/runtime/gstreamer-registry.bin"
 
   if ldd "$INSTALL_DIR/DVBStreamer5" | grep -q 'not found'; then
     echo "Missing application library:" >&2; ldd "$INSTALL_DIR/DVBStreamer5" | grep 'not found' >&2; exit 1
@@ -342,17 +338,6 @@ if (( ! DRY_RUN )); then
     echo "Missing OSCam-mini library:" >&2; ldd "$INSTALL_DIR/oscam-mini/oscam-mini" | grep 'not found' >&2; exit 1
   fi
 
-  REQUIRED_GST=(udpsrc udpsink tsparse tsdemux mpegtsmux souphttpsrc hlsdemux hlssink srtsrc srtsink rtspsrc rtmpsrc x264enc avdec_h264)
-  MISSING=()
-  GST_INSPECT="$INSTALL_DIR/runtime/bin/gst-inspect-1.0"
-  if [[ -x "$GST_INSPECT" ]]; then
-    for e in "${REQUIRED_GST[@]}"; do
-      "$GST_INSPECT" "$e" >/dev/null 2>&1 || MISSING+=("$e")
-    done
-    ((${#MISSING[@]}==0)) || echo "Warning: bundled GStreamer is missing elements: ${MISSING[*]}" >&2
-  else
-    echo "Warning: bundled gst-inspect-1.0 is missing; GStreamer validation skipped." >&2
-  fi
 fi
 
 if (( ! DRY_RUN )); then

@@ -48,6 +48,7 @@ struct NativeUdpRelayConfig {
     int outputPort = 0;
     std::uint64_t targetBitrate = 2000000;
     std::vector<NativeUdpRelayOutputConfig> outputs;
+    bool allowNoNetworkOutput = false;
 };
 
 class NativeUdpRelay {

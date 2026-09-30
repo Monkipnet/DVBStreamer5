@@ -1,7 +1,6 @@
 #include "DvbSatellite.h"
 #include "media/LinuxDvbInput.h"
 
-#include <glib.h>
 #include <linux/dvb/frontend.h>
 
 #include <algorithm>
@@ -291,30 +290,6 @@ const char* driverModeName(int mode) {
     }
 }
 
-struct DvbsrcCapabilities {
-    bool available = false;
-    bool streamId = false;
-    bool diseqcSource = false;
-};
-
-bool hasWritableProperty(GObjectClass* objectClass, const char* name) {
-    if (!objectClass || !name) return false;
-    GParamSpec* property = g_object_class_find_property(objectClass, name);
-    return property && (property->flags & G_PARAM_WRITABLE) != 0;
-}
-
-DvbsrcCapabilities inspectDvbsrcCapabilities() {
-    DvbsrcCapabilities capabilities;
-    GstElement* source = gst_element_factory_make("dvbsrc", nullptr);
-    if (!source) return capabilities;
-    capabilities.available = true;
-    GObjectClass* objectClass = G_OBJECT_GET_CLASS(source);
-    capabilities.streamId = hasWritableProperty(objectClass, "stream-id");
-    capabilities.diseqcSource = hasWritableProperty(objectClass, "diseqc-source");
-    gst_object_unref(source);
-    return capabilities;
-}
-
 int clampPercent(double value) {
     return std::clamp(static_cast<int>(std::lround(value)), 0, 100);
 }
@@ -388,28 +363,58 @@ Json::Value statsToJson(const FrontendStats& stats) {
     return root;
 }
 
+bool validUtf8(const uint8_t* data, size_t size) {
+    size_t i = 0;
+    while (i < size) {
+        const uint8_t c = data[i++];
+        if (c < 0x80) continue;
+        unsigned continuation = 0;
+        uint32_t codepoint = 0;
+        if ((c & 0xE0) == 0xC0) { continuation = 1; codepoint = c & 0x1F; if (codepoint < 2) return false; }
+        else if ((c & 0xF0) == 0xE0) { continuation = 2; codepoint = c & 0x0F; }
+        else if ((c & 0xF8) == 0xF0) { continuation = 3; codepoint = c & 0x07; }
+        else return false;
+        if (i + continuation > size) return false;
+        for (unsigned j = 0; j < continuation; ++j) {
+            const uint8_t cc = data[i++];
+            if ((cc & 0xC0) != 0x80) return false;
+            codepoint = (codepoint << 6) | (cc & 0x3F);
+        }
+        if ((continuation == 2 && codepoint < 0x800) ||
+            (continuation == 3 && codepoint < 0x10000) ||
+            (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) return false;
+    }
+    return true;
+}
+
+void appendUtf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) out.push_back(static_cast<char>(cp));
+    else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
 std::string decodeDvbText(const uint8_t* data, size_t size) {
     if (!data || size == 0) return {};
-    while (size > 0 && *data < 0x20) {
-        ++data;
-        --size;
-    }
+    while (size > 0 && *data < 0x20) { ++data; --size; }
     if (!size) return {};
-    std::string raw(reinterpret_cast<const char*>(data), size);
-    if (g_utf8_validate(raw.data(), static_cast<gssize>(raw.size()), nullptr)) return raw;
+    if (validUtf8(data, size)) return std::string(reinterpret_cast<const char*>(data), size);
 
-    GError* error = nullptr;
-    gsize bytesRead = 0;
-    gsize bytesWritten = 0;
-    gchar* converted = g_convert(raw.data(), raw.size(), "UTF-8", "ISO_6937", &bytesRead, &bytesWritten, &error);
-    if (!converted) {
-        if (error) g_error_free(error);
-        error = nullptr;
-        converted = g_convert(raw.data(), raw.size(), "UTF-8", "ISO-8859-1", &bytesRead, &bytesWritten, &error);
+    // Dependency-free fallback for legacy single-byte DVB service names.
+    // Full ISO-6937 diacritic composition can be added later without pulling
+    // a general-purpose media/runtime framework back into the project.
+    std::string result;
+    result.reserve(size * 2);
+    for (size_t i = 0; i < size; ++i) {
+        const uint8_t c = data[i];
+        if (c < 0x20) continue;
+        appendUtf8(result, c);
     }
-    std::string result = converted ? std::string(converted, bytesWritten) : raw;
-    if (converted) g_free(converted);
-    if (error) g_error_free(error);
     return result;
 }
 
@@ -1007,88 +1012,6 @@ std::string buildUri(const DvbSatelliteParams& params) {
     return uri.str();
 }
 
-bool configureSource(GstElement* source, const DvbSatelliteParams& params, std::string& error) {
-    if (!source) {
-        error = "DVB source is null";
-        return false;
-    }
-    const std::string factoryName = GST_OBJECT_NAME(source) ? GST_OBJECT_NAME(source) : "dvbsrc";
-    if (!g_object_class_find_property(G_OBJECT_GET_CLASS(source), "frequency")) {
-        error = factoryName + ": incompatible dvbsrc plugin";
-        return false;
-    }
-
-    GObjectClass* objectClass = G_OBJECT_GET_CLASS(source);
-    const bool hasDiseqcSource = hasWritableProperty(objectClass, "diseqc-source");
-    const bool hasStreamId = hasWritableProperty(objectClass, "stream-id");
-    if (params.diseqcSource >= 0 && !hasDiseqcSource) {
-        error = factoryName + ": installed dvbsrc has no diseqc-source property";
-        return false;
-    }
-    if (params.streamId >= 0 && !hasStreamId) {
-        error = factoryName + ": installed dvbsrc has no stream-id property required for ISI " +
-            std::to_string(params.streamId);
-        return false;
-    }
-
-    g_object_set(source,
-        "adapter", params.adapter,
-        "frontend", params.frontend,
-        "frequency", params.frequencyKHz,
-        "symbol-rate", params.symbolRateK,
-        "polarity", params.polarity.c_str(),
-        "lnb-lof1", params.lnbLof1KHz,
-        "lnb-lof2", params.lnbLof2KHz,
-        "lnb-slof", params.lnbSlofKHz,
-        "pids", (params.pids.empty() ? "8192" : params.pids.c_str()),
-        "stats-reporting-interval", 20U,
-        "tuning-timeout", static_cast<guint64>(5000000),
-        nullptr);
-    if (hasDiseqcSource) g_object_set(source, "diseqc-source", params.diseqcSource, nullptr);
-    if (hasStreamId) g_object_set(source, "stream-id", params.streamId, nullptr);
-
-    gint configuredAdapter = -1;
-    gint configuredFrontend = -1;
-    g_object_get(source,
-        "adapter", &configuredAdapter,
-        "frontend", &configuredFrontend,
-        nullptr);
-    if (configuredAdapter != params.adapter || configuredFrontend != params.frontend) {
-        std::ostringstream mismatch;
-        mismatch << "dvbsrc adapter/frontend mismatch: requested "
-                 << params.adapter << ':' << params.frontend
-                 << " but element reports "
-                 << configuredAdapter << ':' << configuredFrontend;
-        error = mismatch.str();
-        return false;
-    }
-    gst_util_set_object_arg(G_OBJECT(source), "delsys", params.deliverySystem.c_str());
-    gst_util_set_object_arg(G_OBJECT(source), "modulation", params.modulation.c_str());
-    gst_util_set_object_arg(G_OBJECT(source), "code-rate-hp", params.fec.c_str());
-    gst_util_set_object_arg(G_OBJECT(source), "pilot", "auto");
-    gst_util_set_object_arg(G_OBJECT(source), "rolloff", "auto");
-    if (params.diseqcSource >= 0) {
-        gint configuredDiseqcSource = -1;
-        g_object_get(source, "diseqc-source", &configuredDiseqcSource, nullptr);
-        if (configuredDiseqcSource != params.diseqcSource) {
-            error = "dvbsrc diseqc-source mismatch: requested " +
-                std::to_string(params.diseqcSource) + " but element reports " +
-                std::to_string(configuredDiseqcSource);
-            return false;
-        }
-    }
-    if (params.streamId >= 0) {
-        gint configuredStreamId = -1;
-        g_object_get(source, "stream-id", &configuredStreamId, nullptr);
-        if (configuredStreamId != params.streamId) {
-            error = "dvbsrc stream-id mismatch: requested " + std::to_string(params.streamId) +
-                " but element reports " + std::to_string(configuredStreamId);
-            return false;
-        }
-    }
-    return true;
-}
-
 Json::Value adapters() {
     Json::Value root;
     Json::Value list(Json::arrayValue);
@@ -1131,10 +1054,8 @@ Json::Value adapters() {
     root["adapters"] = list;
     root["available"] = !list.empty();
     root["native_dvb_available"] = nativeDvbAvailable;
-    const DvbsrcCapabilities dvbsrc = inspectDvbsrcCapabilities();
-    root["dvbsrc_available"] = dvbsrc.available;
-    root["dvbsrc_stream_id_supported"] = dvbsrc.streamId;
-    root["dvbsrc_diseqc_source_supported"] = dvbsrc.diseqcSource;
+    root["native_stream_id_supported"] = true;
+    root["native_diseqc_source_supported"] = true;
     return root;
 }
 

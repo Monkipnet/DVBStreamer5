@@ -11,11 +11,9 @@ dvbstreamer5_generate_embedded_web_assets(
     EMBEDDED_WEB_ASSET_SOURCE
 )
 
-find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
-pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-base-1.0 gstreamer-audio-1.0 gstreamer-app-1.0 gstreamer-mpegts-1.0)
 
 add_library(dvbstreamer5_boost_headers INTERFACE)
 target_include_directories(dvbstreamer5_boost_headers INTERFACE
@@ -78,11 +76,6 @@ endif()
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
-    ${GSTREAMER_INCLUDE_DIRS}
-)
-
-link_directories(
-    ${GSTREAMER_LIBRARY_DIRS}
 )
 
 add_executable(DVBStreamer5
@@ -95,19 +88,10 @@ add_executable(DVBStreamer5
     src/ca/backends/newcamd/NewcamdPlugin.cpp
     src/ca/backends/newcamd/NewcamdClient.cpp
     src/TelegramNotifier.cpp
-    src/UdpInput.cpp
     src/StableUdpOutput.cpp
-    src/NetupOutputPacer.cpp
-    src/NetworkTsInput.cpp
-    src/HlsSegmentScheduler.cpp
     src/mpts/MptsOutputManager.cpp
     src/StreamManager.cpp
     src/TranscoderModule.cpp
-    src/media/GstMp2Encoder.cpp
-    src/GstTranscoderProcess.cpp
-    src/protocols/GstProtocolTypes.cpp
-    src/protocols/GstInputProtocols.cpp
-    src/protocols/GstOutputProtocols.cpp
     src/protocols/stream/StreamInputProtocol.cpp
     src/protocols/stream/StreamOutputProtocol.cpp
     src/protocols/stream/inputs/StreamTestInputProtocol.cpp
@@ -126,22 +110,6 @@ add_executable(DVBStreamer5
     src/protocols/stream/outputs/StreamSrtOutputProtocol.cpp
     src/protocols/stream/outputs/StreamRtspOutputProtocol.cpp
     src/protocols/stream/outputs/StreamRtmpOutputProtocol.cpp
-    src/protocols/inputs/GstHttpInputProtocol.cpp
-    src/protocols/inputs/GstHlsInputProtocol.cpp
-    src/protocols/inputs/GstUdpInputProtocol.cpp
-    src/protocols/inputs/GstRtpInputProtocol.cpp
-    src/protocols/inputs/GstSrtInputProtocol.cpp
-    src/protocols/inputs/GstRtspInputProtocol.cpp
-    src/protocols/inputs/GstRtmpInputProtocol.cpp
-    src/protocols/outputs/GstOutputProtocolUtils.cpp
-    src/protocols/outputs/GstFifoOutputProtocol.cpp
-    src/protocols/outputs/GstUdpOutputProtocol.cpp
-    src/protocols/outputs/GstRtpOutputProtocol.cpp
-    src/protocols/outputs/GstSrtOutputProtocol.cpp
-    src/protocols/outputs/GstHttpOutputProtocol.cpp
-    src/protocols/outputs/GstHlsOutputProtocol.cpp
-    src/protocols/outputs/GstRtspOutputProtocol.cpp
-    src/protocols/outputs/GstRtmpOutputProtocol.cpp
     src/HttpServer.cpp
     ${EMBEDDED_WEB_ASSET_SOURCE}
     src/OscamMiniManager.cpp
@@ -151,13 +119,10 @@ target_link_libraries(DVBStreamer5
     dvbstreamer5_boost_headers
     dvbstreamer5_media_core
     dvbstreamer5_jsoncpp
-    ${GSTREAMER_LIBRARIES}
     dvbstreamer5_dvbcsa
     OpenSSL::Crypto
     pthread
     dl
-    glib-2.0
-    gio-2.0
 )
 option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
 if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
@@ -189,6 +154,8 @@ if(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
         OUTPUT_NAME "dvbstreamer5-ca-passthrough-example"
     )
 endif()
+
+enable_testing()
 
 install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)
 

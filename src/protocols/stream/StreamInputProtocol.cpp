@@ -47,31 +47,8 @@ std::string inputKindName(InputProtocolKind kind) {
     }
 }
 
-std::vector<const char*> requiredElementsForInput(InputProtocolKind kind) {
-    switch (kind) {
-        case InputProtocolKind::TestPattern:
-            return {"videotestsrc", "audiotestsrc", "x264enc", "avenc_aac", "mpegtsmux"};
-        case InputProtocolKind::Udp:
-            return {"udpsrc"};
-        case InputProtocolKind::Rtp:
-            return {"udpsrc", "rtpmp2tdepay"};
-        case InputProtocolKind::Http:
-            return {"souphttpsrc"};
-        case InputProtocolKind::Hls:
-            return {"souphttpsrc", "hlsdemux", "mpegtsmux"};
-        case InputProtocolKind::Srt:
-            return {"srtsrc", "clocksync"};
-        case InputProtocolKind::Rtsp:
-            return {"rtspsrc", "mpegtsmux"};
-        case InputProtocolKind::Rtmp:
-            return {"rtmpsrc", "flvdemux", "mpegtsmux"};
-        case InputProtocolKind::Dvb:
-            return {"dvbsrc", "tsparse", "tsdemux", "mpegtsmux"};
-        case InputProtocolKind::File:
-            return {"filesrc"};
-        default:
-            return {};
-    }
+std::vector<const char*> requiredElementsForInput(InputProtocolKind) {
+    return {};
 }
 
 bool isTestPatternInput(InputProtocolKind kind) {

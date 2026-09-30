@@ -8,7 +8,6 @@
 #include "DvbSatellite.h"
 #include "CardManager.h"
 #include "OscamMiniManager.h"
-#include "protocols/GstProtocolTypes.h"
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -42,6 +41,13 @@
 
 namespace {
 
+
+uint64_t nativeMuxBitrate(const StreamConfig& cfg) {
+    const uint64_t video = std::max<uint64_t>(500000, cfg.transcodeVideoBitrate);
+    const uint64_t audio = std::max<uint64_t>(64000, cfg.transcodeAudioBitrate);
+    const uint64_t minimum = video + audio + 1200000;
+    return cfg.targetBitrate > 0 ? std::max<uint64_t>(cfg.targetBitrate, minimum) : minimum;
+}
 constexpr const char* kProgramVersion = dvbstreamer5::app::kProgramVersion;
 
 // 202.50: quality history must not follow the web UI polling rate.  /api/state
@@ -59,7 +65,7 @@ constexpr std::size_t kQualityMaxSamplesPerStream = 10000;
 
 // 202.47: the web UI polls /api/state and /api/system-metrics continuously.
 // Creating a detached pthread for every request churned pthread stacks and
-// glibc/GStreamer allocator arenas, making anonymous RSS climb even while all
+// glibc allocator arenas, making anonymous RSS climb even while all
 // streaming queues stayed bounded. Reuse a fixed worker pool instead.
 constexpr std::size_t kHttpSessionWorkers = 24;
 constexpr uint32_t kMaxQueuedHttpSessions = 256;
@@ -1545,65 +1551,65 @@ std::string HttpServer::listInterfaces() {
       }
 #endif
 
-      // Enumerate live GStreamer queue occupancy only once per minute. Doing
+      // Collect live native queue occupancy only once per minute. Doing
       // this on every /api/system-metrics request would add avoidable pipeline
       // locking to the media server hot path.
-      const Json::Value gstQueueMemory = streamManager.queueMemorySnapshot();
-      const uint64_t gstQueueBytes = gstQueueMemory.get("bytes", Json::UInt64(0)).asUInt64();
-      const uint64_t gstQueueCount = gstQueueMemory.get("queue_count", Json::UInt64(0)).asUInt64();
-      const uint64_t gstQueueMaxBytes = gstQueueMemory.get("max_queue_bytes", Json::UInt64(0)).asUInt64();
-      const std::string gstQueueMaxName = gstQueueMemory.get("max_queue_name", "").asString();
-      const std::string gstQueueMaxStream = gstQueueMemory.get("max_stream_id", "").asString();
+      const Json::Value nativeQueueMemory = streamManager.queueMemorySnapshot();
+      const uint64_t mediaQueueBytes = nativeQueueMemory.get("bytes", Json::UInt64(0)).asUInt64();
+      const uint64_t mediaQueueCount = nativeQueueMemory.get("queue_count", Json::UInt64(0)).asUInt64();
+      const uint64_t mediaQueueMaxBytes = nativeQueueMemory.get("max_queue_bytes", Json::UInt64(0)).asUInt64();
+      const std::string mediaQueueMaxName = nativeQueueMemory.get("max_queue_name", "").asString();
+      const std::string mediaQueueMaxStream = nativeQueueMemory.get("max_stream_id", "").asString();
       const uint64_t telemetryScratchUsedBytes =
-          gstQueueMemory.get("telemetry_scratch_used_bytes", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("telemetry_scratch_used_bytes", Json::UInt64(0)).asUInt64();
       const uint64_t telemetryScratchCapacityBytes =
-          gstQueueMemory.get("telemetry_scratch_capacity_bytes", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("telemetry_scratch_capacity_bytes", Json::UInt64(0)).asUInt64();
       const uint64_t telemetryScratchMaxCapacityBytes =
-          gstQueueMemory.get("telemetry_scratch_max_capacity_bytes", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("telemetry_scratch_max_capacity_bytes", Json::UInt64(0)).asUInt64();
       const uint64_t telemetryRemainderCapacityBytes =
-          gstQueueMemory.get("telemetry_remainder_capacity_bytes", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("telemetry_remainder_capacity_bytes", Json::UInt64(0)).asUInt64();
       const std::string telemetryScratchMaxName =
-          gstQueueMemory.get("telemetry_scratch_max_name", "").asString();
+          nativeQueueMemory.get("telemetry_scratch_max_name", "").asString();
       const std::string telemetryScratchMaxStream =
-          gstQueueMemory.get("telemetry_scratch_max_stream", "").asString();
-      const uint64_t managedPipelineCount = gstQueueMemory.get("managed_pipeline_count", Json::UInt64(0)).asUInt64();
-      const uint64_t gstElementCount = gstQueueMemory.get("gst_element_count", Json::UInt64(0)).asUInt64();
-      const uint64_t gstPadCount = gstQueueMemory.get("gst_pad_count", Json::UInt64(0)).asUInt64();
-      const uint64_t pipelineCreated = gstQueueMemory.get("pipeline_created", Json::UInt64(0)).asUInt64();
-      const uint64_t pipelineFinalized = gstQueueMemory.get("pipeline_finalized", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("telemetry_scratch_max_stream", "").asString();
+      const uint64_t managedPipelineCount = nativeQueueMemory.get("managed_pipeline_count", Json::UInt64(0)).asUInt64();
+      const uint64_t mediaElementCount = nativeQueueMemory.get("media_element_count", Json::UInt64(0)).asUInt64();
+      const uint64_t mediaEndpointCount = nativeQueueMemory.get("media_endpoint_count", Json::UInt64(0)).asUInt64();
+      const uint64_t pipelineCreated = nativeQueueMemory.get("pipeline_created", Json::UInt64(0)).asUInt64();
+      const uint64_t pipelineFinalized = nativeQueueMemory.get("pipeline_finalized", Json::UInt64(0)).asUInt64();
       const uint64_t sharedDvbBusDropped =
-          gstQueueMemory.get("shared_dvb_bus_dropped", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("shared_dvb_bus_dropped", Json::UInt64(0)).asUInt64();
       const uint64_t externalSrtBusDropped =
-          gstQueueMemory.get("external_srt_bus_dropped", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("external_srt_bus_dropped", Json::UInt64(0)).asUInt64();
       const uint64_t httpRelayForcedDisconnects =
-          gstQueueMemory.get("http_relay_forced_disconnects", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceOnlyRestarts = gstQueueMemory.get("source_only_restarts", Json::UInt64(0)).asUInt64();
-      const uint64_t fullPipelineRestarts = gstQueueMemory.get("full_pipeline_restarts", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceReconnectStarted = gstQueueMemory.get("source_reconnect_started", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceReconnectCompleted = gstQueueMemory.get("source_reconnect_completed", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceReconnectSuppressed = gstQueueMemory.get("source_reconnect_suppressed", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceReconnectTimeouts = gstQueueMemory.get("source_reconnect_timeouts", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceReconnectFailed = gstQueueMemory.get("source_reconnect_failed", Json::UInt64(0)).asUInt64();
-      const uint64_t sourceReconnectInflight = gstQueueMemory.get("source_reconnect_inflight", Json::UInt64(0)).asUInt64();
-      const uint64_t autoCbrRaises = gstQueueMemory.get("auto_cbr_raises", Json::UInt64(0)).asUInt64();
-      const std::string autoCbrLastStream = gstQueueMemory.get("auto_cbr_last_stream", "").asString();
-      const uint64_t autoCbrLastMeasuredBitrate = gstQueueMemory.get("auto_cbr_last_measured_bitrate", Json::UInt64(0)).asUInt64();
-      const uint64_t autoCbrLastOldTarget = gstQueueMemory.get("auto_cbr_last_old_target", Json::UInt64(0)).asUInt64();
-      const uint64_t autoCbrLastNewTarget = gstQueueMemory.get("auto_cbr_last_new_target", Json::UInt64(0)).asUInt64();
-      const uint64_t autoCbrConfigSaves = gstQueueMemory.get("auto_cbr_config_saves", Json::UInt64(0)).asUInt64();
-      const uint64_t autoCbrConfigSaveFailed = gstQueueMemory.get("auto_cbr_config_save_failed", Json::UInt64(0)).asUInt64();
-      const uint64_t streamStoppingCount = gstQueueMemory.get("stream_stopping_count", Json::UInt64(0)).asUInt64();
-      const uint64_t streamStartingCount = gstQueueMemory.get("stream_starting_count", Json::UInt64(0)).asUInt64();
-      const uint64_t streamStartWaits = gstQueueMemory.get("stream_start_waits", Json::UInt64(0)).asUInt64();
-      const uint64_t streamStartWaitTimeouts = gstQueueMemory.get("stream_start_wait_timeouts", Json::UInt64(0)).asUInt64();
-      const uint64_t streamFinalizeTimeouts = gstQueueMemory.get("stream_finalize_timeouts", Json::UInt64(0)).asUInt64();
-      const uint64_t streamForcedRetires = gstQueueMemory.get("stream_forced_retires", Json::UInt64(0)).asUInt64();
-      const uint64_t teardownRestartRequests = gstQueueMemory.get("teardown_restart_requests", Json::UInt64(0)).asUInt64();
-      const bool serviceRestartPending = gstQueueMemory.get("service_restart_pending", false).asBool();
-      const uint64_t hlsRebuilds = gstQueueMemory.get("hls_rebuilds", Json::UInt64(0)).asUInt64();
-      const uint64_t hlsRecoverySuppressed = gstQueueMemory.get("hls_recovery_suppressed", Json::UInt64(0)).asUInt64();
-      const uint64_t remapCreated = gstQueueMemory.get("remap_created", Json::UInt64(0)).asUInt64();
-      const uint64_t remapDestroyed = gstQueueMemory.get("remap_destroyed", Json::UInt64(0)).asUInt64();
+          nativeQueueMemory.get("http_relay_forced_disconnects", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceOnlyRestarts = nativeQueueMemory.get("source_only_restarts", Json::UInt64(0)).asUInt64();
+      const uint64_t fullPipelineRestarts = nativeQueueMemory.get("full_pipeline_restarts", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceReconnectStarted = nativeQueueMemory.get("source_reconnect_started", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceReconnectCompleted = nativeQueueMemory.get("source_reconnect_completed", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceReconnectSuppressed = nativeQueueMemory.get("source_reconnect_suppressed", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceReconnectTimeouts = nativeQueueMemory.get("source_reconnect_timeouts", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceReconnectFailed = nativeQueueMemory.get("source_reconnect_failed", Json::UInt64(0)).asUInt64();
+      const uint64_t sourceReconnectInflight = nativeQueueMemory.get("source_reconnect_inflight", Json::UInt64(0)).asUInt64();
+      const uint64_t autoCbrRaises = nativeQueueMemory.get("auto_cbr_raises", Json::UInt64(0)).asUInt64();
+      const std::string autoCbrLastStream = nativeQueueMemory.get("auto_cbr_last_stream", "").asString();
+      const uint64_t autoCbrLastMeasuredBitrate = nativeQueueMemory.get("auto_cbr_last_measured_bitrate", Json::UInt64(0)).asUInt64();
+      const uint64_t autoCbrLastOldTarget = nativeQueueMemory.get("auto_cbr_last_old_target", Json::UInt64(0)).asUInt64();
+      const uint64_t autoCbrLastNewTarget = nativeQueueMemory.get("auto_cbr_last_new_target", Json::UInt64(0)).asUInt64();
+      const uint64_t autoCbrConfigSaves = nativeQueueMemory.get("auto_cbr_config_saves", Json::UInt64(0)).asUInt64();
+      const uint64_t autoCbrConfigSaveFailed = nativeQueueMemory.get("auto_cbr_config_save_failed", Json::UInt64(0)).asUInt64();
+      const uint64_t streamStoppingCount = nativeQueueMemory.get("stream_stopping_count", Json::UInt64(0)).asUInt64();
+      const uint64_t streamStartingCount = nativeQueueMemory.get("stream_starting_count", Json::UInt64(0)).asUInt64();
+      const uint64_t streamStartWaits = nativeQueueMemory.get("stream_start_waits", Json::UInt64(0)).asUInt64();
+      const uint64_t streamStartWaitTimeouts = nativeQueueMemory.get("stream_start_wait_timeouts", Json::UInt64(0)).asUInt64();
+      const uint64_t streamFinalizeTimeouts = nativeQueueMemory.get("stream_finalize_timeouts", Json::UInt64(0)).asUInt64();
+      const uint64_t streamForcedRetires = nativeQueueMemory.get("stream_forced_retires", Json::UInt64(0)).asUInt64();
+      const uint64_t teardownRestartRequests = nativeQueueMemory.get("teardown_restart_requests", Json::UInt64(0)).asUInt64();
+      const bool serviceRestartPending = nativeQueueMemory.get("service_restart_pending", false).asBool();
+      const uint64_t hlsRebuilds = nativeQueueMemory.get("hls_rebuilds", Json::UInt64(0)).asUInt64();
+      const uint64_t hlsRecoverySuppressed = nativeQueueMemory.get("hls_recovery_suppressed", Json::UInt64(0)).asUInt64();
+      const uint64_t remapCreated = nativeQueueMemory.get("remap_created", Json::UInt64(0)).asUInt64();
+      const uint64_t remapDestroyed = nativeQueueMemory.get("remap_destroyed", Json::UInt64(0)).asUInt64();
       const auto stableUdpMemory = StableUdpOutput::memoryStats();
       std::cerr << "MEMORY DIAG 202.70: rss_mb=" << (static_cast<double>(processRssKb) / 1024.0)
                 << " anon_mb=" << (static_cast<double>(processAnonKb) / 1024.0)
@@ -1633,11 +1639,11 @@ std::string HttpServer::listInterfaces() {
                 << " post_trim_malloc_arena_mb="
                 << (static_cast<double>(postTrimMallocArenaBytes) / (1024.0 * 1024.0))
                 << " mpts_queue_mb=" << (static_cast<double>(mptsQueueBytes) / (1024.0 * 1024.0))
-                << " gst_queue_mb=" << (static_cast<double>(gstQueueBytes) / (1024.0 * 1024.0))
-                << " gst_queue_count=" << gstQueueCount
-                << " gst_queue_max_mb=" << (static_cast<double>(gstQueueMaxBytes) / (1024.0 * 1024.0))
-                << " gst_queue_max=" << (gstQueueMaxStream.empty() ? "-" : gstQueueMaxStream)
-                << ":" << (gstQueueMaxName.empty() ? "-" : gstQueueMaxName)
+                << " media_queue_mb=" << (static_cast<double>(mediaQueueBytes) / (1024.0 * 1024.0))
+                << " media_queue_count=" << mediaQueueCount
+                << " media_queue_max_mb=" << (static_cast<double>(mediaQueueMaxBytes) / (1024.0 * 1024.0))
+                << " media_queue_max=" << (mediaQueueMaxStream.empty() ? "-" : mediaQueueMaxStream)
+                << ":" << (mediaQueueMaxName.empty() ? "-" : mediaQueueMaxName)
                 << " stable_ring_cap_mb="
                 << (static_cast<double>(stableUdpMemory.packetRingCapacityBytes) / (1024.0 * 1024.0))
                 << " stable_chunk_mb="
@@ -1674,8 +1680,8 @@ std::string HttpServer::listInterfaces() {
                 << " pipelines_unaccounted="
                 << ((pipelineCreated >= pipelineFinalized + managedPipelineCount)
                         ? pipelineCreated - pipelineFinalized - managedPipelineCount : 0)
-                << " gst_elements=" << gstElementCount
-                << " gst_pads=" << gstPadCount
+                << " media_elements=" << mediaElementCount
+                << " media_endpoints=" << mediaEndpointCount
                 << " remap_live=" << (remapCreated >= remapDestroyed ? remapCreated - remapDestroyed : 0)
                 << " remap_created=" << remapCreated
                 << " remap_destroyed=" << remapDestroyed
@@ -2576,7 +2582,7 @@ std::string HttpServer::qualityHistory(const std::string& target) {
         const uint64_t inputKbps = liveState.get("bitrate_in_kbps", Json::UInt64(0)).asUInt64();
         const uint64_t outputKbps = liveState.get("bitrate_out_kbps", Json::UInt64(0)).asUInt64();
         const uint64_t targetKbps = (liveConfig->transcodeEnabled
-            ? dvbstreamer5::protocols::muxBitrate(*liveConfig)
+            ? nativeMuxBitrate(*liveConfig)
             : liveConfig->targetBitrate) / 1000;
         const uint64_t inputTotal = liveState.get("input_cc_errors_total", Json::UInt64(0)).asUInt64();
         const uint64_t outputTotal = liveState.get("output_cc_errors_total", Json::UInt64(0)).asUInt64();
@@ -2614,7 +2620,7 @@ std::string HttpServer::qualityHistory(const std::string& target) {
                    statusLower.find("failed") != std::string::npos ||
                    statusLower.find("ended") != std::string::npos) {
             level = "error";
-            message = "Ошибка GStreamer: " + status;
+            message = "Ошибка media engine: " + status;
         } else if (inputKbps == 0) {
             level = "warn";
             message = "Нет входного битрейта при активном потоке";
@@ -2676,7 +2682,7 @@ void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value&
     sample.active = state.get("active", false).asBool();
     sample.inputKbps = state.get("bitrate_in_kbps", Json::UInt64(0)).asUInt64();
     sample.outputKbps = state.get("bitrate_out_kbps", Json::UInt64(0)).asUInt64();
-    sample.targetKbps = (cfg.transcodeEnabled ? dvbstreamer5::protocols::muxBitrate(cfg) : cfg.targetBitrate) / 1000;
+    sample.targetKbps = (cfg.transcodeEnabled ? nativeMuxBitrate(cfg) : cfg.targetBitrate) / 1000;
     const uint64_t fallbackInputCc = state.get("input_cc_errors", state.get("cc_errors", Json::UInt64(0))).asUInt64();
     const uint64_t fallbackOutputCc = state.get("output_cc_errors", Json::UInt64(0)).asUInt64();
     sample.inputCcErrorsTotal = state.get("input_cc_errors_total", Json::UInt64(fallbackInputCc)).asUInt64();
@@ -2705,7 +2711,7 @@ void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value&
                statusLower.find("failed") != std::string::npos ||
                statusLower.find("ended") != std::string::npos) {
         sample.level = "error";
-        sample.message = "Ошибка GStreamer: " + sample.status;
+        sample.message = "Ошибка media engine: " + sample.status;
     } else if (sample.inputKbps == 0) {
         sample.level = "warn";
         sample.message = "Нет входного битрейта при активном потоке";
@@ -3219,7 +3225,7 @@ void HttpServer::handleRestartProgram() {
             // process. --no-block is essential: a synchronous `systemctl restart`
             // launched from the service can wait for the very process that is
             // executing it. Queue the restart job and let PID 1 perform a full
-            // stop/start with a new process, new allocator and new GStreamer state.
+            // stop/start with a new process, new allocator and new media-engine state.
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             std::cerr << "PROGRAM RESTART 202.60: action=systemd-full-restart service=dvbstreamer5.service"
                       << std::endl;
@@ -3822,7 +3828,7 @@ const uiRuToEn = new Map([
   ['свободен', 'free'],
   ['Параметры тюнера изменены. Выполните сканирование заново.', 'Tuner parameters changed. Run the scan again.'],
   ['Ошибка чтения DVB frontend', 'Failed to read DVB frontend'],
-  ['GStreamer dvbsrc не найден. Установите gstreamer1.0-plugins-bad.', 'GStreamer dvbsrc was not found. Install gstreamer1.0-plugins-bad.'],
+  ['Native Linux DVB frontend недоступен.', 'Native Linux DVB frontend is unavailable.'],
   ['DVB frontend не обнаружен в /dev/dvb.', 'No DVB frontend was found in /dev/dvb.'],
   ['Не удалось получить список DVB frontend', 'Failed to get the DVB frontend list'],
   ['Каналы не найдены. Проверьте частоту, Symbol Rate, поляризацию и уровень сигнала.', 'No channels found. Check frequency, symbol rate, polarization and signal level.'],
@@ -3847,7 +3853,7 @@ const uiRuToEn = new Map([
   ['Сканирование', 'Scanning'],
   ['Удерживать LOCK', 'Keep LOCK'],
   ['Поиск DVB frontend...', 'Searching for DVB frontend...'],
-  ['Проверка свойств GStreamer dvbsrc...', 'Checking GStreamer dvbsrc properties...'],
+  ['Проверка native Linux DVB...', 'Checking native Linux DVB...'],
   ['Отключён', 'Disabled'],
   ['Авто', 'Auto'],
   ['мультисвитч', 'multiswitch'],
@@ -3884,7 +3890,7 @@ const uiRuToEn = new Map([
   ['Загрузка...', 'Uploading...'],
   ['Не удалось загрузить файл', 'Failed to upload file'],
   ['Ошибка загрузки файла', 'File upload error'],
-  ['не установлены необходимые GStreamer-плагины', 'required GStreamer plugins are not installed'],
+  ['native transcoder components are not available', 'native transcoder components are not available'],
 
   ['Редактирование трансляции', 'Edit stream'],
   ['Настройка трансляции', 'Stream settings'],
@@ -4060,7 +4066,7 @@ function translateUiText(value) {
     [/^Ошибка HTTP MPEG-TS: (.+)$/, 'HTTP MPEG-TS error: $1'],
     [/^Не удалось получить HTTP-предпросмотр: (.+)$/, 'Failed to get HTTP preview: $1'],
     [/^Поток не активен: (.+)$/, 'Stream is not active: $1'],
-    [/^Ошибка GStreamer: (.+)$/, 'GStreamer error: $1'],
+    [/^Ошибка media engine: (.+)$/, 'Media engine error: $1'],
     [/^CC-errors MPEG-TS: вход=([0-9]+), выход=([0-9]+)$/, 'MPEG-TS CC errors: input=$1, output=$2'],
     [/^CC-errors MPEG-TS за интервал: вход=([0-9]+), выход=([0-9]+)$/, 'MPEG-TS CC errors for interval: input=$1, output=$2']
   ];
@@ -5633,17 +5639,17 @@ function updateSatelliteDeviceInfo(prefix=null) {
   info.textContent = `${shownPrefix} ${device}${model ? ` · ${model}` : ''}${modeText}`;
 }
 function updateSatelliteCapabilityInfo() {
-  const info = document.getElementById('satGstInfo');
+  const info = document.getElementById('satDvbInfo');
   if (!info) return;
   if (!dvbCapabilities.dvbsrcAvailable) {
     info.textContent = language === 'en'
-      ? 'GStreamer dvbsrc is not installed; native Linux DVB remains available.'
-      : 'GStreamer dvbsrc не установлен; нативный Linux DVB остаётся доступен.';
+      ? 'Native Linux DVB is unavailable on this host.'
+      : 'Native Linux DVB недоступен на этом хосте.';
     return;
   }
   const yes = language === 'en' ? 'yes' : 'да';
   const no = language === 'en' ? 'no' : 'нет';
-  info.textContent = `GStreamer dvbsrc · stream-id: ${dvbCapabilities.streamIdSupported ? yes : no} · diseqc-source: ${dvbCapabilities.diseqcSourceSupported ? yes : no}`;
+  info.textContent = `Native Linux DVB · stream-id: ${dvbCapabilities.streamIdSupported ? yes : no} · diseqc-source: ${dvbCapabilities.diseqcSourceSupported ? yes : no}`;
 }
 function applyTbsDriverModeUi() {
   const item = selectedDvbFrontend();
@@ -5815,12 +5821,12 @@ async function loadSatelliteAdapters() {
     const frontendBeforeLoad = Number(document.getElementById('satFrontend')?.value || 0);
     dvbAdapters = Array.isArray(data.adapters) ? data.adapters : [];
     dvbCapabilities = {
-      dvbsrcAvailable:!!data.dvbsrc_available,
-      streamIdSupported:!!data.dvbsrc_stream_id_supported,
-      diseqcSourceSupported:!!data.dvbsrc_diseqc_source_supported
+      dvbsrcAvailable:!!data.native_dvb_available,
+      streamIdSupported:!!data.native_stream_id_supported,
+      diseqcSourceSupported:!!data.native_diseqc_source_supported
     };
     updateSatelliteCapabilityInfo();
-    if (!(data.native_dvb_available ?? data.dvbsrc_available)) {
+    if (!(data.native_dvb_available ?? data.native_dvb_available)) {
       refreshSatelliteAdapterOptions(adapterBeforeLoad, frontendBeforeLoad);
       if (info) info.textContent = 'Нативный DVB-S/S2 frontend доступен только в Linux.';
       return;
@@ -5919,7 +5925,7 @@ async function startSatelliteScan() {
     // Do not restart background /api/dvb-signal polling after a scan. The scan
     // already produced the final signal/quality snapshot. Reopening dvbsrc here
     // can race the Start button of a newly saved tile and make the real stream
-    // fail with gst_base_src_start()/EBUSY. Changing tuner parameters still
+    // fail with frontend open/EBUSY. Changing tuner parameters still
     // performs an explicit one-shot signal update.
     clearInterval(satelliteSignalTimer);
     satelliteSignalTimer = null;
@@ -5989,7 +5995,7 @@ function openAddChannelModal() {
     </div>
     <div id="satDeviceInfo" class="sat-scan-status" style="margin-top:8px">Поиск DVB frontend...</div>
     <div id="satDriverModeHint" class="sat-scan-status" style="margin-top:4px"></div>
-    <div id="satGstInfo" class="sat-scan-status" style="margin-top:4px">Проверка свойств GStreamer dvbsrc...</div>
+    <div id="satDvbInfo" class="sat-scan-status" style="margin-top:4px">Проверка native Linux DVB...</div>
     <div class="cam-panel">
       <div class="cam-head"><strong>CAM clients / Newcamd</strong><button id="satCamRefresh" class="button-secondary" type="button" onclick="refreshCamClients()">Refresh</button></div>
       <div id="satCamClients" class="cam-list"><div class="cam-empty">Loading CAM clients...</div></div>
@@ -6259,7 +6265,7 @@ function openStreamForm(stream) {
     const camOptions = camClientOptions(stream.conditional_access_client || '');
     const transcoderStatus = transcoderAvailable
       ? `Доступно: H.264=${transcoderInfo.video_encoder || 'нет'}, HEVC=${transcoderInfo.hevc_video_encoder || 'нет'}, NVENC ${transcoderInfo.nvenc_available ? 'да' : 'нет'}, Intel ${transcoderInfo.intel_available ? (transcoderInfo.intel_encoder || 'да') : 'нет'}, x264 ${transcoderInfo.x264_available ? 'да' : 'нет'}, x265 ${transcoderInfo.x265_available ? 'да' : 'нет'}, AAC ${transcoderInfo.aac_encoder || 'нет'}, MP3 ${transcoderInfo.mp3_encoder || 'нет'}, MP2 ${transcoderInfo.mp2_encoder_available ? 'TwoLAME' : 'нет'}, deinterlace ${transcoderInfo.deinterlace ? 'да' : 'нет'}`
-      : `Недоступно: ${transcoderMissing || transcoderInfo.message || 'не установлены необходимые GStreamer-плагины'}`;
+      : `Недоступно: ${transcoderMissing || transcoderInfo.message || 'native transcoder components are not available'}`;
     openModal(`
       <h2>${stream.name ? 'Редактирование трансляции' : 'Настройка трансляции'}</h2>
       <div class="form-grid">
