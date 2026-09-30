@@ -55,6 +55,7 @@ add_subdirectory(third_party/libdvbcsa)
 add_library(dvbstreamer5_media_core
     src/media/CbrTsPacer.cpp
     src/media/MpegTsRemapper.cpp
+    src/media/NativeMpegTsMux.cpp
     src/media/Mp2Encoder.cpp
     src/media/TransportStream.cpp
     src/media/RtpMpegTs.cpp

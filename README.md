@@ -35,7 +35,9 @@ frontend пока нельзя одновременно занять двумя 
 Браузерные библиотеки предпросмотра из `web/vendor/` встраиваются в исполняемый
 файл при сборке; развёрнутому приложению каталог `web/` не нужен. MPEG-2 video
 транскодирование отменено. MP2 доступен через in-process транскодирование
-TwoLAME; автономный тест кодека не проверяет интеграцию с GStreamer MPEG-TS mux.
+TwoLAME. Начиная со Stage 2, финальный SPTS после транскодирования формируется
+`NativeMpegTsMux`: PAT/PMT/SDT, PES, PTS/DTS, PCR, continuity counters и CBR
+NULL stuffing создаются собственным C++ кодом без `mpegtsmux` и `tsparse`.
 Подробности, лицензии и caveats описаны в
 [документации по кодекам](docs/TRANSCODER_CODECS.md).
 Для локальных MPEG-TS-файлов доступен paced UDP CBR с заданным битрейтом и
@@ -143,11 +145,12 @@ src/protocols/stream/outputs/  выходы обычного поточного 
 
 Для одного канала можно настроить основной и дополнительные выходы разных типов.
 
-H.264-транскодирование поддерживает CPU `x264enc` и NVIDIA NVENC через GStreamer
-`nvh264enc`. В режиме `Auto` программа предпочитает NVENC, если элемент `nvh264enc`
-доступен, и автоматически использует `x264enc` иначе. Для NVENC требуется рабочий
-проприетарный драйвер NVIDIA с поддержкой NVENC и GStreamer `nvcodec`; проверить
-сервер можно командами `nvidia-smi` и `gst-inspect-1.0 nvh264enc`.
+H.264/H.265 encode/decode пока использует доступные GStreamer codec plugins
+(`x264enc`/`x265enc`, NVIDIA NVENC, Intel QSV/VA), но транспортная часть
+транскодера уже нативная: закодированные access units через `appsink` поступают
+в `NativeMpegTsMux`, а готовый 188-байтовый MPEG-TS возвращается через `appsrc`.
+В режиме `Auto` программа предпочитает аппаратный encoder, если он проходит
+runtime-probe, и использует CPU encoder как fallback.
 
 ## Веб-панель
 
@@ -488,8 +491,8 @@ curl http://127.0.0.1:9000/health
 
 ```bash
 ./scripts/check_transcoder_plugins.sh
-gst-inspect-1.0 dvbsrc
-gst-inspect-1.0 mpegtsmux
+gst-inspect-1.0 appsrc
+gst-inspect-1.0 appsink
 ```
 
 Для подробного журнала GStreamer:

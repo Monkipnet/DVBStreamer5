@@ -11,13 +11,12 @@ if ! command -v gst-inspect-1.0 >/dev/null 2>&1; then
 fi
 
 required=(
-  uridecodebin
+  parsebin
   decodebin
   queue
   videoconvert
   deinterlace
   videoscale
-  videorate
   capsfilter
   h264parse
   h265parse
@@ -25,9 +24,8 @@ required=(
   audioresample
   audiorate
   aacparse
-  mpegtsmux
-  identity
-  udpsink
+  appsrc
+  appsink
 )
 
 missing=()
@@ -96,14 +94,19 @@ input_elements=(
   "rtmp:rtmpsrc"
 )
 
-output_elements=(
-  "udp/udp-cbr/udp-vbr:mpegtsmux tsparse identity udpsink"
-  "rtp:mpegtsmux tsparse identity rtpmp2tpay udpsink"
-  "http:mpegtsmux tsparse identity tcpserversink"
-  "hls:mpegtsmux tsparse identity hlssink"
-  "srt:mpegtsmux tsparse identity srtsink udpsink"
-  "rtmp/youtube:flvmux rtmpsink"
-  "rtsp-push:rtspclientsink"
+transcoded_output_elements=(
+  "udp/udp-cbr/udp-vbr:appsink"
+  "rtp:rtpmp2tpay udpsink"
+  "http:tcpserversink"
+  "hls:hlssink"
+  "srt:srtsink"
+  "rtmp/youtube:tsparse tsdemux flvmux rtmpsink"
+  "rtsp-push:tsparse tsdemux rtspclientsink"
+)
+
+passthrough_remap_elements=(
+  "generic-remap:tsparse tsdemux mpegtsmux"
+  "hls-passthrough:tsparse tsdemux hlssink2"
 )
 
 print_group() {
@@ -131,8 +134,10 @@ print_group() {
   done
 }
 
-echo "DVBStreamer5 in-process GStreamer core is available."
+echo "DVBStreamer5 Stage 2 transcoder core is available."
 echo "  external gst-launch: disabled"
+echo "  MPEG-TS mux: native (PAT/PMT/SDT/PES/PCR/CBR)"
+echo "  transcoder mpegtsmux/tsparse/udpsink dependency: removed"
 echo "  Auto video encoder: ${nvenc_encoder:-${x264_encoder:-not available}}"
 echo "  NVIDIA NVENC: ${nvenc_encoder:-not available}"
 echo "  CPU x264: ${x264_encoder:-not available}"
@@ -143,4 +148,6 @@ echo "  MP3 encoder: ${mp3_encoder:-not available}"
 echo
 print_group "Input protocol elements:" "${input_elements[@]}"
 echo
-print_group "Output protocol elements:" "${output_elements[@]}"
+print_group "Transcoded output protocol elements:" "${transcoded_output_elements[@]}"
+echo
+print_group "Passthrough/remap-only GStreamer elements:" "${passthrough_remap_elements[@]}"

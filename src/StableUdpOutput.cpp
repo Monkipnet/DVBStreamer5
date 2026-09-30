@@ -46,9 +46,9 @@ constexpr std::size_t kMaxBufferedBytes = 8 * 1024 * 1024;
 // DVBStreamer5-compatible SRT/HTTP profile keeps its established 32 MiB
 // reservoir and five-second cold-start buffer. 202.55 avoids paying this
 // cold-start cost on normal reconnect by preserving the output pipeline.
-constexpr std::size_t kTvStreamer5MaxBufferedBytes = 32 * 1024 * 1024;
-constexpr uint64_t kTvStreamer5StartupReservoirNanoseconds = 5000ULL * 1000ULL * 1000ULL;
-constexpr std::size_t kTvStreamer5StartupMinimumPcrSamples = 5;
+constexpr std::size_t kDvbStreamer5MaxBufferedBytes = 32 * 1024 * 1024;
+constexpr uint64_t kDvbStreamer5StartupReservoirNanoseconds = 5000ULL * 1000ULL * 1000ULL;
+constexpr std::size_t kDvbStreamer5StartupMinimumPcrSamples = 5;
 // 202.56: real MPEG-TS packets used to live in std::deque. At steady state
 // push_back/pop_front continuously allocates/frees deque blocks on every output
 // thread. With dozens of channels that feeds glibc tcache/arenas indefinitely
@@ -220,7 +220,7 @@ bool isContinuousNetworkMpegTsInput(const StreamConfig& cfg) {
 // 203.05: restore the HLS UDP-CBR profile used by 202.74. Segmented HLS stays
 // on SAT5's HLS PTS/slow-PLL path; only continuous SRT/HTTP use the DVBStreamer5
 // network timing profile. This is the WISI-stable transport behaviour from 202.74.
-bool useTvStreamer5IpShaperProfile(const StreamConfig& cfg) {
+bool useDvbStreamer5IpShaperProfile(const StreamConfig& cfg) {
     if (isSegmentedHlsInput(cfg)) return false;
     if (dvbstreamer5::protocols::inputs::isSrtInput(cfg)) return true;
     std::string uri = cfg.inputUri;
@@ -781,7 +781,7 @@ public:
         : streamId(cfg.id),
           ownerPipeline(pipeline),
           srtInput(dvbstreamer5::protocols::inputs::isSrtInput(cfg)),
-          tvStreamer5IpProfile(useTvStreamer5IpShaperProfile(cfg)),
+          dvbStreamer5IpProfile(useDvbStreamer5IpShaperProfile(cfg)),
           srtRemapCbrSourcePcr(useSrtRemapCbrSourcePcr(cfg)),
           networkBytes(networkBytesCounter),
           mediaHealth(std::move(outputHealth)),
@@ -791,41 +791,41 @@ public:
               static_cast<uint16_t>(cfg.audioPid) : static_cast<uint16_t>(0)),
           preSendCcTrace(cfg.id, "PRE_SEND"),
           diagnosticsEnabled(tsDiagnosticsEnabled()),
-          caCleanStartEnabled(!useTvStreamer5IpShaperProfile(cfg)),
+          caCleanStartEnabled(!useDvbStreamer5IpShaperProfile(cfg)),
           conditionalAccessInput(!cfg.conditionalAccessClient.empty()),
           hlsInput(isSegmentedHlsInput(cfg)),
           // 203.05/202.74: segmented HLS owns its media-timeline slow PLL;
           // continuous SRT/HTTP retain the DVBStreamer5 network profile.
           segmentedHlsInput(
-              isSegmentedHlsInput(cfg) && !useTvStreamer5IpShaperProfile(cfg)),
+              isSegmentedHlsInput(cfg) && !useDvbStreamer5IpShaperProfile(cfg)),
           // 203.41: the existing per-stream flag selects bounded-lookahead
           // provider-PCR deadline shaping. The output sender never waits on PCR.
           hlsPcrDeadlineShaperEnabled(
               cfg.hlsPcrPhasePacing && isSegmentedHlsInput(cfg) &&
               udpShapingMode(cfg) == UdpShapingMode::Cbr &&
-              !useTvStreamer5IpShaperProfile(cfg)),
+              !useDvbStreamer5IpShaperProfile(cfg)),
           // 203.36 provider-PCR rate clock remains available for TV3-like inputs,
           // but the two manual timing modes are mutually exclusive by design.
           hlsSlowPcrAssistEnabled(
               cfg.hlsSlowPcrAssist && !cfg.hlsPcrPhasePacing),
           // Continuous network MPEG-TS keeps its existing network controller.
           continuousNetworkMpegTsInput(
-              isContinuousNetworkMpegTsInput(cfg) && !useTvStreamer5IpShaperProfile(cfg)),
+              isContinuousNetworkMpegTsInput(cfg) && !useDvbStreamer5IpShaperProfile(cfg)),
           // 202.28: SRT/HTTP use the exact DVBStreamer5 periodic-PCR profile.
           // Non-IP streams keep the proven 202.22 source-PCR behaviour.
           forceSyntheticPcr(
               useSrtRemapCbrSourcePcr(cfg)
                   ? false
-                  : (useTvStreamer5IpShaperProfile(cfg)
+                  : (useDvbStreamer5IpShaperProfile(cfg)
                         ? true
                         : forceSyntheticCbrPcr())),
           startupReservoirDurationNanoseconds(
-              useTvStreamer5IpShaperProfile(cfg)
-                  ? kTvStreamer5StartupReservoirNanoseconds
+              useDvbStreamer5IpShaperProfile(cfg)
+                  ? kDvbStreamer5StartupReservoirNanoseconds
                   : startupReservoirNanoseconds()),
           bufferLimitBytes(
-              useTvStreamer5IpShaperProfile(cfg)
-                  ? kTvStreamer5MaxBufferedBytes
+              useDvbStreamer5IpShaperProfile(cfg)
+                  ? kDvbStreamer5MaxBufferedBytes
                   : kMaxBufferedBytes),
           mode(udpShapingMode(cfg)), configuredTargetBitrate(cfg.targetBitrate),
           // v202.5: normalize the outgoing continuity domain for every Stable UDP
@@ -834,9 +834,9 @@ public:
           // makes downstream decoders report packet loss and can corrupt audio PES.
           // The HLS-specific path below still preserves a real discontinuity flag
           // and uses it as a continuity reset marker instead of masking it.
-          normalizeOutputContinuity(!useTvStreamer5IpShaperProfile(cfg)),
+          normalizeOutputContinuity(!useDvbStreamer5IpShaperProfile(cfg)),
           remapPsiNormalization(
-              useTvStreamer5IpShaperProfile(cfg) ? false : cfg.remapEnabled),
+              useDvbStreamer5IpShaperProfile(cfg) ? false : cfg.remapEnabled),
           remapOutputServiceId(static_cast<uint16_t>(
               (cfg.serviceId ? cfg.serviceId : cfg.inputServiceId) & 0xFFFFU)),
           expectedProgramId(static_cast<uint16_t>(
@@ -1403,12 +1403,12 @@ private:
             }
 
             std::array<guint8, kUdpPayloadSize> datagram {};
-            const uint64_t shaperClockNanoseconds = tvStreamer5IpProfile
+            const uint64_t shaperClockNanoseconds = dvbStreamer5IpProfile
                 ? nextSendNanoseconds
                 : mediaTimelineNanoseconds;
             const FillCounts filled = fillDatagram(
                 datagram.data(), shaperClockNanoseconds, activeBitrate);
-            if (!tvStreamer5IpProfile) {
+            if (!dvbStreamer5IpProfile) {
                 normalizeFinalDatagramContinuity(datagram.data());
                 if (diagnosticsEnabled) {
                     verifyFinalDatagramContinuity(datagram.data());
@@ -1492,17 +1492,17 @@ private:
             std::size_t startupPcrPackets = 0;
             for (const auto& packet : realPackets) {
                 if (packet.hasPcr &&
-                    (tvStreamer5IpProfile || !declaredPcrPidValid || packet.pid == declaredPcrPid)) {
+                    (dvbStreamer5IpProfile || !declaredPcrPidValid || packet.pid == declaredPcrPid)) {
                     ++startupPcrPackets;
                 }
             }
 
             const bool haveTransport = !realPackets.empty();
-            const std::size_t requiredStartupPcrSamples = tvStreamer5IpProfile
-                ? kTvStreamer5StartupMinimumPcrSamples
+            const std::size_t requiredStartupPcrSamples = dvbStreamer5IpProfile
+                ? kDvbStreamer5StartupMinimumPcrSamples
                 : kStartupMinimumPcrSamples;
             const bool havePcrLock = startupPcrPackets >= requiredStartupPcrSamples;
-            const bool pcrGraceExpired = !tvStreamer5IpProfile &&
+            const bool pcrGraceExpired = !dvbStreamer5IpProfile &&
                 now >= startAt + kStartupPcrGraceNanoseconds;
 
             if (haveTransport && (havePcrLock || pcrGraceExpired)) {
@@ -2467,7 +2467,7 @@ private:
 
     bool sourcePcrPassthrough() const {
         if (srtRemapCbrSourcePcr) return true;
-        if (tvStreamer5IpProfile) return false;
+        if (dvbStreamer5IpProfile) return false;
         // 203.05/202.74: segmented HLS CBR always owns one continuous 20 ms
         // PCR domain across HLS segment boundaries. Non-HLS keeps the existing
         // source-PCR/forced-PCR policy.
@@ -2561,7 +2561,7 @@ private:
         const uint64_t estimate = std::max<uint64_t>(1ULL, estimatedInputBitrate);
         const uint64_t bufferNow = bufferedBytes.load(std::memory_order_relaxed);
         const bool hlsTv5CbrReservoirProfile =
-            hlsInput && tvStreamer5IpProfile && mode == UdpShapingMode::Cbr;
+            hlsInput && dvbStreamer5IpProfile && mode == UdpShapingMode::Cbr;
         const uint64_t targetReservoirNanoseconds = hlsTv5CbrReservoirProfile
             ? kHlsTv5CbrTargetReservoirNanoseconds
             : kTargetReservoirNanoseconds;
@@ -3159,7 +3159,7 @@ private:
             // Non-DVBStreamer5 continuous MPEG-TS may preserve source PCR.
             // DVBStreamer5 IP inputs, including HLS since 202.83, use the proven
             // periodic 20 ms PCR transport clock instead.
-            if ((mode == UdpShapingMode::Cbr || tvStreamer5IpProfile) &&
+            if ((mode == UdpShapingMode::Cbr || dvbStreamer5IpProfile) &&
                 !sourcePcrPassthrough() &&
                 periodicPcrInitialized && slotTime >= nextPeriodicPcrNanoseconds) {
                 makePeriodicPcrPacket(outputPacket, slotTime);
@@ -3205,10 +3205,10 @@ private:
                         // another service (for example PID 461 while SID 470
                         // declares PCR PID 471), after which periodic PCR was
                         // emitted forever on the wrong PID.
-                        const bool selectedPcr = tvStreamer5IpProfile ||
+                        const bool selectedPcr = dvbStreamer5IpProfile ||
                             (declaredPcrPidValid && packet.pid == declaredPcrPid);
                         if (selectedPcr) {
-                            periodicPcrPid = tvStreamer5IpProfile
+                            periodicPcrPid = dvbStreamer5IpProfile
                                 ? packet.pid
                                 : declaredPcrPid;
                             // 203.07/202.74 compatibility: lock the synthetic
@@ -3226,13 +3226,13 @@ private:
                             std::cerr << "UDP PCR lock: program=" << declaredPcrProgram
                                       << " pcr_pid=" << periodicPcrPid
                                       << " source="
-                                      << (tvStreamer5IpProfile ? "first-PCR-DVBStreamer5" : "selected-PMT")
+                                      << (dvbStreamer5IpProfile ? "first-PCR-DVBStreamer5" : "selected-PMT")
                                       << " mode="
                                       << (sourcePcrPassthrough()
                                               ? (mode == UdpShapingMode::Vbr
                                                     ? "source-passthrough-vbr"
                                                     : "source-passthrough-cbr")
-                                              : (tvStreamer5IpProfile
+                                              : (dvbStreamer5IpProfile
                                                     ? "synthetic-dvbstreamer5-20ms"
                                                     : "synthetic-cbr-20ms"))
                                       << " pcr_phase_mode=fixed-zero-no-calibration"
@@ -3464,7 +3464,7 @@ private:
 
         std::cerr << "UDP shaper stats: stream=" << streamId
                   << " output=" << outputEndpoint
-                  << " profile=" << (tvStreamer5IpProfile ? "dvbstreamer5-ip" : "sat5")
+                  << " profile=" << (dvbStreamer5IpProfile ? "dvbstreamer5-ip" : "sat5")
                   << " input="
                   << (srtInput ? "srt"
                                : (hlsInput ? "hls"
@@ -3560,7 +3560,7 @@ private:
     GstElement* ownerPipeline = nullptr; // non-owning; appsink/sender is pipeline-owned
     std::string outputEndpoint;
     const bool srtInput = false;
-    const bool tvStreamer5IpProfile = false;
+    const bool dvbStreamer5IpProfile = false;
     const bool srtRemapCbrSourcePcr = false;
     std::atomic<uint64_t>* networkBytes = nullptr;
     std::shared_ptr<UdpMediaDeliveryHealth> mediaHealth;
@@ -3874,7 +3874,7 @@ GstElement* createSink(
     callbacks.new_sample = onNewSample;
     gst_app_sink_set_callbacks(GST_APP_SINK(sink), &callbacks, sender, destroySender);
 
-    const bool tv5IpProfile = useTvStreamer5IpShaperProfile(config);
+    const bool tv5IpProfile = useDvbStreamer5IpShaperProfile(config);
     const bool hlsTv5CbrReservoirProfile =
         isSegmentedHlsInput(config) && tv5IpProfile && mode == UdpShapingMode::Cbr;
     const uint64_t steadyTargetReservoirMs = hlsTv5CbrReservoirProfile ? 800ULL : 2500ULL;
@@ -3893,7 +3893,7 @@ GstElement* createSink(
         std::cerr << "DVBStreamer5 IP UDP shaper 202.93: source="
                   << tv5Source
                   << " profile=dvbstreamer5-compatible"
-                  << " startup_reservoir_ms=" << (kTvStreamer5StartupReservoirNanoseconds / 1000000ULL)
+                  << " startup_reservoir_ms=" << (kDvbStreamer5StartupReservoirNanoseconds / 1000000ULL)
                   << " startup_pcr_min=5"
                   << " steady_target_reservoir_ms=" << steadyTargetReservoirMs
                   << " steady_low_watermark_ms=" << steadyLowWatermarkMs
@@ -3953,10 +3953,10 @@ GstElement* createSink(
               << " vbr_rate=auto"
               << " packetization=7x188 startup_reservoir_ms="
               << (tv5IpProfile
-                    ? (kTvStreamer5StartupReservoirNanoseconds / 1000000ULL)
+                    ? (kDvbStreamer5StartupReservoirNanoseconds / 1000000ULL)
                     : (startupReservoirNanoseconds() / 1000000ULL))
               << " startup_pcr_min="
-              << (tv5IpProfile ? kTvStreamer5StartupMinimumPcrSamples : kStartupMinimumPcrSamples)
+              << (tv5IpProfile ? kDvbStreamer5StartupMinimumPcrSamples : kStartupMinimumPcrSamples)
               << " startup_pcr_grace_ms="
               << (tv5IpProfile ? 0ULL : (kStartupPcrGraceNanoseconds / 1000000ULL))
               << " target_reservoir_ms=" << steadyTargetReservoirMs

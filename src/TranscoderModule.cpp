@@ -1,9 +1,12 @@
 #include "TranscoderModule.h"
 #include "TranscodeVideoGeometry.h"
 #include "media/GstMp2Encoder.h"
+#include "media/NativeMpegTsMux.h"
 #include "utils.h"
 
 #include <algorithm>
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -31,32 +34,6 @@ bool factoryAvailable(const char* name) {
     if (!factory) return false;
     gst_object_unref(factory);
     return true;
-}
-
-bool mpegTsMuxSupportsMp2() {
-    GstElementFactory* factory = gst_element_factory_find("mpegtsmux");
-    if (!factory) return false;
-
-    GstCaps* mp2Caps = gst_caps_new_simple(
-        "audio/mpeg",
-        "mpegversion", G_TYPE_INT, 1,
-        "layer", G_TYPE_INT, 2,
-        "parsed", G_TYPE_BOOLEAN, TRUE,
-        "rate", GST_TYPE_INT_RANGE, 32000, 48000,
-        "channels", GST_TYPE_INT_RANGE, 1, 2,
-        nullptr);
-    bool supported = false;
-    const GList* templates = gst_element_factory_get_static_pad_templates(factory);
-    for (const GList* item = templates; item && !supported; item = item->next) {
-        auto* padTemplate = static_cast<GstStaticPadTemplate*>(item->data);
-        if (padTemplate->direction != GST_PAD_SINK) continue;
-        GstCaps* templateCaps = gst_static_caps_get(&padTemplate->static_caps);
-        supported = templateCaps && gst_caps_can_intersect(mp2Caps, templateCaps);
-        if (templateCaps) gst_caps_unref(templateCaps);
-    }
-    gst_caps_unref(mp2Caps);
-    gst_object_unref(factory);
-    return supported;
 }
 
 struct EncoderProbeResult {
@@ -303,7 +280,10 @@ void attachTimestampNormalizer(GstElement* element, GstClockTime fallbackDuratio
 
 struct TranscodeContext {
     GstElement* bin = nullptr;
-    GstElement* mux = nullptr;
+    GstElement* outputAppSrc = nullptr;
+    dvbstreamer5::media::mpegts::NativeMpegTsMux mux;
+    std::mutex muxMutex;
+    GstClockTime lastOutputPts = GST_CLOCK_TIME_NONE;
     StreamConfig config;
     bool videoLinked = false;
     bool audioLinked = false;
@@ -395,8 +375,6 @@ void configureAudioBitrate(GstElement* encoder, const std::string& factory, uint
     bitrate = std::clamp<uint64_t>(bitrate, 64000, 320000);
 
     if (factory == "lamemp3enc") {
-        // lamemp3enc expects kbit/s and requires bitrate mode for the cbr flag
-        // and bitrate property to take effect.
         if (g_object_class_find_property(G_OBJECT_GET_CLASS(encoder), "target")) {
             gst_util_set_object_arg(G_OBJECT(encoder), "target", "bitrate");
         }
@@ -414,29 +392,138 @@ void configureAudioBitrate(GstElement* encoder, const std::string& factory, uint
         return;
     }
 
-    // libav AAC/MP3 and the native AAC encoders use bits/s.
     if (g_object_class_find_property(G_OBJECT_GET_CLASS(encoder), "bitrate")) {
         g_object_set(encoder, "bitrate", static_cast<gint>(bitrate), nullptr);
     }
 }
 
-bool linkElementToMux(GstElement* source, GstElement* mux) {
-    if (!source || !mux) return false;
-    GstPad* srcPad = gst_element_get_static_pad(source, "src");
-    GstPad* sinkPad = gst_element_request_pad_simple(mux, "sink_%d");
-    if (!srcPad || !sinkPad) {
-        if (srcPad) gst_object_unref(srcPad);
-        if (sinkPad) {
-            gst_element_release_request_pad(mux, sinkPad);
-            gst_object_unref(sinkPad);
+struct NativeMuxSinkBinding {
+    TranscodeContext* context = nullptr;
+    dvbstreamer5::media::mpegts::ElementaryKind kind =
+        dvbstreamer5::media::mpegts::ElementaryKind::Video;
+};
+
+GstFlowReturn onNativeMuxSample(GstAppSink* sink, gpointer userData) {
+    auto* binding = static_cast<NativeMuxSinkBinding*>(userData);
+    if (!binding || !binding->context || !binding->context->outputAppSrc) return GST_FLOW_ERROR;
+    GstSample* sample = gst_app_sink_pull_sample(sink);
+    if (!sample) return GST_FLOW_EOS;
+    GstBuffer* buffer = gst_sample_get_buffer(sample);
+    if (!buffer) {
+        gst_sample_unref(sample);
+        return GST_FLOW_ERROR;
+    }
+
+    GstMapInfo map {};
+    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+        gst_sample_unref(sample);
+        return GST_FLOW_ERROR;
+    }
+
+    dvbstreamer5::media::mpegts::ElementarySample nativeSample;
+    nativeSample.data = map.data;
+    nativeSample.size = map.size;
+    const GstClockTime pts = GST_BUFFER_PTS(buffer);
+    const GstClockTime dts = GST_BUFFER_DTS(buffer);
+    const GstClockTime duration = GST_BUFFER_DURATION(buffer);
+    nativeSample.hasPts = GST_CLOCK_TIME_IS_VALID(pts);
+    nativeSample.hasDts = GST_CLOCK_TIME_IS_VALID(dts);
+    if (nativeSample.hasPts) nativeSample.pts90k = gst_util_uint64_scale(pts, 90000, GST_SECOND);
+    if (nativeSample.hasDts) nativeSample.dts90k = gst_util_uint64_scale(dts, 90000, GST_SECOND);
+    if (GST_CLOCK_TIME_IS_VALID(duration) && duration > 0) {
+        nativeSample.duration90k = gst_util_uint64_scale(duration, 90000, GST_SECOND);
+    }
+    nativeSample.randomAccess = !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+
+    std::vector<dvbstreamer5::media::mpegts::Packet> packets;
+    std::string error;
+    GstClockTime outputPts = GST_CLOCK_TIME_NONE;
+    {
+        std::lock_guard<std::mutex> lock(binding->context->muxMutex);
+        if (!binding->context->mux.write(binding->kind, nativeSample, packets, error)) {
+            std::cerr << "Native transcoder MPEG-TS mux failed: " << error << std::endl;
+            gst_buffer_unmap(buffer, &map);
+            gst_sample_unref(sample);
+            return GST_FLOW_ERROR;
         }
+        outputPts = GST_CLOCK_TIME_IS_VALID(pts) ? pts : dts;
+        if (!GST_CLOCK_TIME_IS_VALID(outputPts)) {
+            outputPts = GST_CLOCK_TIME_IS_VALID(binding->context->lastOutputPts)
+                ? binding->context->lastOutputPts +
+                    (GST_CLOCK_TIME_IS_VALID(duration) && duration > 0 ? duration : GST_MSECOND)
+                : 0;
+        } else if (GST_CLOCK_TIME_IS_VALID(binding->context->lastOutputPts) &&
+                   outputPts <= binding->context->lastOutputPts) {
+            outputPts = binding->context->lastOutputPts + 1;
+        }
+        binding->context->lastOutputPts = outputPts;
+    }
+
+    GstFlowReturn result = GST_FLOW_OK;
+    if (!packets.empty()) {
+        const gsize bytes = packets.size() * dvbstreamer5::media::mpegts::kPacketSize;
+        GstBuffer* output = gst_buffer_new_allocate(nullptr, bytes, nullptr);
+        if (!output) {
+            result = GST_FLOW_ERROR;
+        } else {
+            gst_buffer_fill(output, 0, packets.data(), bytes);
+            GST_BUFFER_PTS(output) = outputPts;
+            GST_BUFFER_DTS(output) = outputPts;
+            GST_BUFFER_DURATION(output) = duration;
+            result = gst_app_src_push_buffer(
+                GST_APP_SRC(binding->context->outputAppSrc), output);
+            if (result == GST_FLOW_FLUSHING) result = GST_FLOW_OK;
+        }
+    }
+
+    gst_buffer_unmap(buffer, &map);
+    gst_sample_unref(sample);
+    return result;
+}
+
+bool linkElementToNativeMux(
+    GstElement* source,
+    TranscodeContext* context,
+    dvbstreamer5::media::mpegts::ElementaryKind kind,
+    dvbstreamer5::media::mpegts::ElementaryCodec codec,
+    const char* capsText) {
+    if (!source || !context || !context->bin || !context->outputAppSrc) return false;
+    std::string error;
+    {
+        std::lock_guard<std::mutex> lock(context->muxMutex);
+        if (!context->mux.setCodec(kind, codec, error)) {
+            std::cerr << "Native transcoder MPEG-TS codec setup failed: " << error << std::endl;
+            return false;
+        }
+    }
+
+    GstElement* sink = gst_element_factory_make("appsink", nullptr);
+    if (!sink || !add(context->bin, sink)) {
+        if (sink && !GST_OBJECT_PARENT(sink)) gst_object_unref(sink);
         return false;
     }
-    const bool ok = gst_pad_link(srcPad, sinkPad) == GST_PAD_LINK_OK;
-    if (!ok) gst_element_release_request_pad(mux, sinkPad);
-    gst_object_unref(srcPad);
-    gst_object_unref(sinkPad);
-    return ok;
+    g_object_set(sink,
+        "emit-signals", FALSE,
+        "sync", FALSE,
+        "async", FALSE,
+        "max-buffers", 32u,
+        "drop", FALSE,
+        nullptr);
+    if (capsText && *capsText) {
+        GstCaps* caps = gst_caps_from_string(capsText);
+        if (!caps) return false;
+        gst_app_sink_set_caps(GST_APP_SINK(sink), caps);
+        gst_caps_unref(caps);
+    }
+    auto* binding = new NativeMuxSinkBinding{context, kind};
+    GstAppSinkCallbacks callbacks {};
+    callbacks.new_sample = onNativeMuxSample;
+    gst_app_sink_set_callbacks(
+        GST_APP_SINK(sink), &callbacks, binding,
+        [](gpointer p) { delete static_cast<NativeMuxSinkBinding*>(p); });
+    if (!gst_element_link(source, sink)) return false;
+    sync(sink);
+    return true;
 }
 
 void drainPad(GstElement* bin, GstPad* pad) {
@@ -460,7 +547,7 @@ void drainPad(GstElement* bin, GstPad* pad) {
 
 void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
     auto* context = static_cast<TranscodeContext*>(userData);
-    if (!context || !context->bin || !context->mux) return;
+    if (!context || !context->bin || !context->outputAppSrc) return;
 
     GstCaps* caps = gst_pad_get_current_caps(pad);
     if (!caps) caps = gst_pad_query_caps(pad, nullptr);
@@ -545,7 +632,16 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
                                         filter, encoder, parser, outQueue, nullptr)
                 : gst_element_link_many(queue, convert, deinterlace, scale,
                                         filter, encoder, parser, outQueue, nullptr));
-        if (!elementsAdded || !videoLinked || !linkElementToMux(outQueue, context->mux)) {
+        const auto nativeVideoCodec = hevc
+            ? dvbstreamer5::media::mpegts::ElementaryCodec::H265
+            : dvbstreamer5::media::mpegts::ElementaryCodec::H264;
+        const char* nativeVideoCaps = hevc
+            ? "video/x-h265,stream-format=byte-stream,alignment=au"
+            : "video/x-h264,stream-format=byte-stream,alignment=au";
+        if (!elementsAdded || !videoLinked ||
+            !linkElementToNativeMux(outQueue, context,
+                dvbstreamer5::media::mpegts::ElementaryKind::Video,
+                nativeVideoCodec, nativeVideoCaps)) {
             std::cerr << "Transcoder: failed to build video branch" << std::endl;
             gst_caps_unref(caps);
             drainPad(context->bin, pad);
@@ -657,7 +753,16 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
             }
         }
 
-        if (!branchBuilt || !branchLinked || !linkElementToMux(outQueue, context->mux)) {
+        const auto nativeAudioCodec = codec == "aac"
+            ? dvbstreamer5::media::mpegts::ElementaryCodec::AacAdts
+            : dvbstreamer5::media::mpegts::ElementaryCodec::MpegAudio;
+        const char* nativeAudioCaps = codec == "aac"
+            ? "audio/mpeg,mpegversion=4,stream-format=adts"
+            : "audio/mpeg,mpegversion=1,parsed=true";
+        if (!branchBuilt || !branchLinked ||
+            !linkElementToNativeMux(outQueue, context,
+                dvbstreamer5::media::mpegts::ElementaryKind::Audio,
+                nativeAudioCodec, nativeAudioCaps)) {
             std::cerr << "Transcoder: failed to build " << codec << " audio branch with "
                       << encoderSelection.factory << std::endl;
             gst_caps_unref(caps);
@@ -687,7 +792,7 @@ void onDecodedPadAdded(GstElement*, GstPad* pad, gpointer userData) {
 
 
 bool buildVideoPassthroughBranch(TranscodeContext* context, GstPad* pad, GstCaps* caps) {
-    if (!context || !context->bin || !context->mux || !pad || !caps || context->videoLinked) return false;
+    if (!context || !context->bin || !context->outputAppSrc || !pad || !caps || context->videoLinked) return false;
 
     const GstStructure* structure = gst_caps_get_structure(caps, 0);
     if (!structure) return false;
@@ -710,13 +815,26 @@ bool buildVideoPassthroughBranch(TranscodeContext* context, GstPad* pad, GstCaps
         return false;
     }
 
+    const auto nativeCodec = parserFactory == "h264parse"
+        ? dvbstreamer5::media::mpegts::ElementaryCodec::H264
+        : (parserFactory == "h265parse"
+            ? dvbstreamer5::media::mpegts::ElementaryCodec::H265
+            : dvbstreamer5::media::mpegts::ElementaryCodec::Mpeg2Video);
+    const char* nativeCaps = parserFactory == "h264parse"
+        ? "video/x-h264,stream-format=byte-stream,alignment=au"
+        : (parserFactory == "h265parse"
+            ? "video/x-h265,stream-format=byte-stream,alignment=au"
+            : "video/mpeg,parsed=true");
+
     GstElement* queue = gst_element_factory_make("queue", nullptr);
     GstElement* parser = gst_element_factory_make(parserFactory.c_str(), nullptr);
     GstElement* outQueue = gst_element_factory_make("queue", nullptr);
     if (!queue || !parser || !outQueue || !add(context->bin, queue) ||
         !add(context->bin, parser) || !add(context->bin, outQueue) ||
         !gst_element_link_many(queue, parser, outQueue, nullptr) ||
-        !linkElementToMux(outQueue, context->mux)) {
+        !linkElementToNativeMux(outQueue, context,
+            dvbstreamer5::media::mpegts::ElementaryKind::Video,
+            nativeCodec, nativeCaps)) {
         std::cerr << "Transcoder: failed to build video passthrough branch using "
                   << parserFactory << std::endl;
         return false;
@@ -748,7 +866,7 @@ bool buildVideoPassthroughBranch(TranscodeContext* context, GstPad* pad, GstCaps
 }
 
 bool buildAudioPassthroughBranch(TranscodeContext* context, GstPad* pad, GstCaps* caps) {
-    if (!context || !context->bin || !context->mux || !pad || !caps || context->audioLinked) return false;
+    if (!context || !context->bin || !context->outputAppSrc || !pad || !caps || context->audioLinked) return false;
 
     const GstStructure* structure = gst_caps_get_structure(caps, 0);
     if (!structure) return false;
@@ -786,13 +904,29 @@ bool buildAudioPassthroughBranch(TranscodeContext* context, GstPad* pad, GstCaps
         return false;
     }
 
+    const bool eac3 = g_strcmp0(mediaType, "audio/x-eac3") == 0;
+    const auto nativeCodec = parserFactory == "aacparse"
+        ? dvbstreamer5::media::mpegts::ElementaryCodec::AacAdts
+        : (eac3
+            ? dvbstreamer5::media::mpegts::ElementaryCodec::Eac3
+            : (parserFactory == "ac3parse"
+                ? dvbstreamer5::media::mpegts::ElementaryCodec::Ac3
+                : dvbstreamer5::media::mpegts::ElementaryCodec::MpegAudio));
+    const char* nativeCaps = parserFactory == "aacparse"
+        ? "audio/mpeg,mpegversion=4,stream-format=adts"
+        : (eac3 ? "audio/x-eac3,framed=true" :
+           (parserFactory == "ac3parse" ? "audio/x-ac3,framed=true" :
+            "audio/mpeg,mpegversion=1,parsed=true"));
+
     GstElement* queue = gst_element_factory_make("queue", nullptr);
     GstElement* parser = gst_element_factory_make(parserFactory.c_str(), nullptr);
     GstElement* outQueue = gst_element_factory_make("queue", nullptr);
     if (!queue || !parser || !outQueue || !add(context->bin, queue) ||
         !add(context->bin, parser) || !add(context->bin, outQueue) ||
         !gst_element_link_many(queue, parser, outQueue, nullptr) ||
-        !linkElementToMux(outQueue, context->mux)) {
+        !linkElementToNativeMux(outQueue, context,
+            dvbstreamer5::media::mpegts::ElementaryKind::Audio,
+            nativeCodec, nativeCaps)) {
         std::cerr << "Transcoder: failed to build audio passthrough branch using "
                   << parserFactory << std::endl;
         return false;
@@ -1008,12 +1142,12 @@ std::string TranscoderModule::workingIntelHevcEncoderFactory() {
 TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     TranscoderCapabilities result;
     result.mp2EncoderAvailable = dvbstreamer5_gst_mp2_encoder_register() &&
-        factoryAvailable("mpegaudioparse") && mpegTsMuxSupportsMp2();
+        factoryAvailable("mpegaudioparse");
     const char* required[] = {
-        "uridecodebin", "decodebin", "queue",
-        "videoconvert", "deinterlace", "videoscale", "videorate", "capsfilter",
-        "audioconvert", "audioresample",
-        "aacparse", "mpegtsmux", "udpsink", nullptr
+        "parsebin", "decodebin", "queue",
+        "videoconvert", "deinterlace", "videoscale", "capsfilter",
+        "audioconvert", "audioresample", "audiorate",
+        "aacparse", "appsrc", "appsink", nullptr
     };
 
     for (const char** name = required; *name; ++name) {
@@ -1084,7 +1218,7 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
               (result.videoEncoder.empty() ? std::string("unavailable") : result.videoEncoder) +
               ", HEVC=" +
               (result.hevcVideoEncoder.empty() ? std::string("unavailable") : result.hevcVideoEncoder) +
-              ", external gst-launch=disabled"
+              ", native MPEG-TS mux=enabled, external gst-launch=disabled"
         : "Transcoding is unavailable because required in-process media elements are missing";
     return result;
 }
@@ -1169,37 +1303,50 @@ GstElement* TranscoderModule::createBin(const StreamConfig& config, std::string&
     GstElement* bin = gst_bin_new("transcoder_bin");
     GstElement* inputQueue = gst_element_factory_make("queue", "transcode_input_queue");
     GstElement* parsebin = gst_element_factory_make("parsebin", "transcode_parsebin");
-    GstElement* mux = gst_element_factory_make("mpegtsmux", "transcode_mux");
-    GstElement* outputParse = gst_element_factory_make("tsparse", "transcode_output_tsparse");
-    if (!bin || !inputQueue || !parsebin || !mux || !outputParse ||
-        !add(bin, inputQueue) || !add(bin, parsebin) || !add(bin, mux) || !add(bin, outputParse)) {
+    GstElement* outputAppSrc = gst_element_factory_make("appsrc", "transcode_native_ts_source");
+    if (!bin || !inputQueue || !parsebin || !outputAppSrc ||
+        !add(bin, inputQueue) || !add(bin, parsebin) || !add(bin, outputAppSrc)) {
         error = "failed to create transcoder bin elements";
         if (bin) gst_object_unref(bin);
         return nullptr;
     }
 
-    const guint64 muxBitrate = static_cast<guint64>(
+    const guint64 elementaryMuxBitrate = static_cast<guint64>(
         (videoCodec == "copy" ? std::max<uint64_t>(config.transcodeVideoBitrate, 500000)
                               : config.transcodeVideoBitrate) +
         (audioCodec == "copy" ? 384000 : config.transcodeAudioBitrate) + 350000);
-    g_object_set(mux,
-        "alignment", 7,
-        "bitrate", muxBitrate,
+    const guint64 muxBitrate = static_cast<guint64>(std::max<uint64_t>(
+        elementaryMuxBitrate, config.cbr ? config.targetBitrate : 0));
+    GstCaps* tsCaps = gst_caps_new_simple(
+        "video/mpegts",
+        "systemstream", G_TYPE_BOOLEAN, TRUE,
+        "packetsize", G_TYPE_INT, 188,
         nullptr);
-    std::cerr << "Transcoder 202.78: video=" << videoCodec
+    g_object_set(outputAppSrc,
+        "caps", tsCaps,
+        "is-live", TRUE,
+        "format", GST_FORMAT_TIME,
+        "block", TRUE,
+        "max-bytes", static_cast<guint64>(8 * 1024 * 1024),
+        "do-timestamp", FALSE,
+        nullptr);
+    gst_caps_unref(tsCaps);
+    gst_app_src_set_stream_type(GST_APP_SRC(outputAppSrc), GST_APP_STREAM_TYPE_STREAM);
+
+    std::cerr << "Transcoder Stage 2: video=" << videoCodec
               << " video_encoder=" << (videoCodec == "copy" ? "copy" : selectedVideoEncoderFactory(config))
               << " audio=" << audioCodec
               << " cadence=preserve-progressive/double-interlaced-fields"
-              << " mux_bitrate=" << muxBitrate << std::endl;
-    g_object_set(outputParse, "set-timestamps", TRUE, nullptr);
-    if (!gst_element_link(inputQueue, parsebin) || !gst_element_link(mux, outputParse)) {
-        error = "failed to link transcoder bin core";
+              << " native_mux_bitrate=" << muxBitrate
+              << " mpegtsmux=off tsparse=off" << std::endl;
+    if (!gst_element_link(inputQueue, parsebin)) {
+        error = "failed to link transcoder parser input";
         gst_object_unref(bin);
         return nullptr;
     }
 
     GstPad* parseSink = gst_element_get_static_pad(inputQueue, "sink");
-    GstPad* outputSrc = gst_element_get_static_pad(outputParse, "src");
+    GstPad* outputSrc = gst_element_get_static_pad(outputAppSrc, "src");
     GstPad* ghostSink = parseSink ? gst_ghost_pad_new("sink", parseSink) : nullptr;
     GstPad* ghostSrc = outputSrc ? gst_ghost_pad_new("src", outputSrc) : nullptr;
     if (parseSink) gst_object_unref(parseSink);
@@ -1215,8 +1362,20 @@ GstElement* TranscoderModule::createBin(const StreamConfig& config, std::string&
 
     auto* context = new TranscodeContext();
     context->bin = bin;
-    context->mux = mux;
+    context->outputAppSrc = outputAppSrc;
     context->config = config;
+    dvbstreamer5::media::mpegts::NativeMuxConfig muxConfig;
+    muxConfig.serviceId = static_cast<std::uint16_t>(config.serviceId == 0 ? 1 : config.serviceId);
+    muxConfig.videoPid = static_cast<std::uint16_t>(config.videoPid);
+    muxConfig.audioPid = static_cast<std::uint16_t>(config.audioPid);
+    muxConfig.targetBitrate = muxBitrate;
+    muxConfig.serviceName = config.serviceName.empty() ? config.name : config.serviceName;
+    muxConfig.serviceProvider = config.serviceProvider.empty() ? "DVBStreamer5" : config.serviceProvider;
+    if (!context->mux.initialize(muxConfig, error)) {
+        delete context;
+        gst_object_unref(bin);
+        return nullptr;
+    }
     g_object_set_data_full(G_OBJECT(bin), "dvbstreamer5-transcode-context", context,
         [](gpointer p) { delete static_cast<TranscodeContext*>(p); });
     g_signal_connect(parsebin, "pad-added", G_CALLBACK(onDemuxPadAdded), context);

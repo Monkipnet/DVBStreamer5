@@ -4,6 +4,7 @@
 #include "media/CbrTsPacer.h"
 #include "media/LinuxDvbInput.h"
 #include "media/MpegTsRemapper.h"
+#include "media/NativeMpegTsMux.h"
 #include "media/UdpSocket.h"
 
 #ifdef NDEBUG
@@ -130,6 +131,104 @@ std::vector<std::uint8_t> makeCatSection(std::uint16_t emmPid) {
 std::uint16_t pidOf(const Packet& packet) {
     return static_cast<std::uint16_t>(
         ((static_cast<std::uint16_t>(packet[1] & 0x1f) << 8) | packet[2]));
+}
+
+
+void testNativeMpegTsMux() {
+    using namespace dvbstreamer5::media::mpegts;
+    NativeMpegTsMux mux;
+    NativeMuxConfig config;
+    config.serviceId = 42;
+    config.transportStreamId = 7;
+    config.originalNetworkId = 9;
+    config.pmtPid = 0x1000;
+    config.videoPid = 0x0200;
+    config.audioPid = 0x0201;
+    config.targetBitrate = 4000000;
+    config.serviceName = "Native Mux";
+    config.serviceProvider = "DVBStreamer5";
+    std::string error;
+    assert(mux.initialize(config, error));
+    assert(mux.setCodec(ElementaryKind::Video, ElementaryCodec::H264, error));
+    assert(mux.setCodec(ElementaryKind::Audio, ElementaryCodec::AacAdts, error));
+
+    const std::array<std::uint8_t, 8> video = {0x00,0x00,0x00,0x01,0x65,0x88,0x84,0x21};
+    ElementarySample videoSample;
+    videoSample.data = video.data();
+    videoSample.size = video.size();
+    videoSample.pts90k = 90000;
+    videoSample.dts90k = 90000;
+    videoSample.duration90k = 3600;
+    videoSample.hasPts = true;
+    videoSample.hasDts = true;
+    videoSample.randomAccess = true;
+    std::vector<Packet> output;
+    assert(mux.write(ElementaryKind::Video, videoSample, output, error));
+    assert(output.size() >= 4);
+    for (const auto& ts : output) assert(ts[0] == 0x47);
+    assert(pidOf(output[0]) == 0x0000);
+    assert(pidOf(output[1]) == 0x1000);
+    assert(pidOf(output[2]) == 0x0011);
+
+    const auto& pat = output[0];
+    assert(sectionCrc(pat.data() + 5, 16) == 0);
+    assert(pat[13] == 0x00 && pat[14] == 42);
+    assert(((pat[15] & 0x1f) << 8 | pat[16]) == 0x1000);
+
+    const auto& pmt = output[1];
+    const std::size_t pmtSectionLength = static_cast<std::size_t>(((pmt[6] & 0x0f) << 8) | pmt[7]);
+    assert(sectionCrc(pmt.data() + 5, 3 + pmtSectionLength) == 0);
+    assert(pmt[17] == 0x1b);
+    assert(((pmt[18] & 0x1f) << 8 | pmt[19]) == 0x0200);
+    assert(pmt[22] == 0x0f);
+    assert(((pmt[23] & 0x1f) << 8 | pmt[24]) == 0x0201);
+
+    bool sawVideoPes = false;
+    bool sawPcr = false;
+    for (const auto& ts : output) {
+        PacketInfo info;
+        assert(inspectPacket(ts.data(), ts.size(), info));
+        if (info.pid != 0x0200) continue;
+        sawPcr = sawPcr || info.hasPcr;
+        if (!info.payloadUnitStart || !info.hasPayload) continue;
+        const std::size_t offset = info.payloadOffset;
+        assert(offset + 9 < ts.size());
+        assert(ts[offset] == 0x00 && ts[offset+1] == 0x00 && ts[offset+2] == 0x01);
+        assert(ts[offset+3] == 0xe0);
+        sawVideoPes = true;
+    }
+    assert(sawVideoPes && sawPcr);
+
+    output.clear();
+    const std::array<std::uint8_t, 9> aac = {0xff,0xf1,0x4c,0x80,0x01,0x3f,0xfc,0x00,0x00};
+    ElementarySample audioSample;
+    audioSample.data = aac.data();
+    audioSample.size = aac.size();
+    audioSample.pts90k = 91920;
+    audioSample.duration90k = 1920;
+    audioSample.hasPts = true;
+    assert(mux.write(ElementaryKind::Audio, audioSample, output, error));
+    bool sawAudioPes = false;
+    for (const auto& ts : output) {
+        PacketInfo info;
+        assert(inspectPacket(ts.data(), ts.size(), info));
+        if (info.pid == 0x0201 && info.payloadUnitStart && info.hasPayload) {
+            const std::size_t offset = info.payloadOffset;
+            assert(ts[offset] == 0x00 && ts[offset+1] == 0x00 && ts[offset+2] == 0x01);
+            assert(ts[offset+3] == 0xc0);
+            sawAudioPes = true;
+        }
+    }
+    assert(sawAudioPes);
+
+    output.clear();
+    videoSample.pts90k = 108000;
+    videoSample.dts90k = 108000;
+    assert(mux.write(ElementaryKind::Video, videoSample, output, error));
+    const auto nullCount = std::count_if(output.begin(), output.end(), [](const Packet& ts) {
+        return pidOf(ts) == kNullPid;
+    });
+    assert(nullCount > 0);
 }
 
 void testMpegTsRemapper() {
@@ -1274,6 +1373,7 @@ void testNativePreviewHubFanout() {
 
 int main() {
     testLinuxDvbPidListParsing();
+    testNativeMpegTsMux();
     testMpegTsRemapper();
     testPacketInspectionAndPidRewrite();
     testFraming();

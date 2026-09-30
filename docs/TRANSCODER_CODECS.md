@@ -76,21 +76,32 @@ integration remains part of the application path, not a test dependency.
   source obligations preserved.
 - mjpegtools upstream: <https://sourceforge.net/projects/mjpeg/>
 
-## Transcoder routing and remaining validation
+## Transcoder routing after Stage 2
 
-There are two active transcoding implementations: the in-process dynamic
-`GstBin` in `TranscoderModule::createBin` and the isolated/shared
-`gst-launch-1.0` route. MP2 is supported by the in-process path. For MP2,
-`StreamManager` deliberately bypasses the child-process route, because that
-child does not register this application-owned element; direct child-process
-starts return an explicit unsupported-path error. The in-process pipeline is
-used for the supported output branches, and the encoder reports MPEG-1 Layer
-II caps for the mux to signal with PMT stream type `0x03`.
+The standalone `gst-launch-1.0` transcoder route is removed. The in-process
+transcoder still uses GStreamer for parsing, decoding, raw video/audio
+conversion and the currently selected H.264/H.265/AAC/MP3 encoder plugins, but
+its transport-stream output is now application-owned.
 
-The remaining validation is an application/runtime integration run with
-`mpegaudioparse` and `mpegtsmux` installed, exercising live-stream PES
-timestamps, continuity, and mux bitrate accounting. The standalone encoder
-test does not depend on runtime-created GStreamer elements.
+`NativeMpegTsMux` receives parsed encoded access units through `appsink` and
+builds the final SPTS in native C++ code. It generates PAT, PMT and SDT tables,
+PES headers, 90 kHz PTS/DTS, PCR, continuity counters and optional CBR NULL
+stuffing. The resulting aligned 188-byte packets are exposed through `appsrc`.
+Consequently the transcoder core no longer requires `mpegtsmux`, `tsparse` or
+`udpsink`. UDP output continues through the existing `StableUdpOutput`; HTTP
+and SRT use the native mux timestamps directly, and transcoded HLS is segmented
+from the native SPTS without a second demux/remux cycle.
+
+MP2 remains application-owned through the vendored TwoLAME encoder. The native
+mux advertises MPEG-1 Layer II/III with PMT stream type `0x03`, H.264 with
+`0x1b`, HEVC with `0x24`, MPEG-2 video with `0x02`, and ADTS AAC with `0x0f`.
+AC-3/E-AC-3 passthrough is carried as private stream type `0x06` with the DVB
+AC-3/E-AC-3 registration descriptor.
+
+The standalone media-core test validates native PAT/PMT CRCs, SID/PID mapping,
+H.264/AAC PMT stream types, PES framing, PCR generation and CBR NULL stuffing.
+A real live-stream integration test is still required for driver/codec-specific
+GStreamer encoder behavior and end-to-end hardware playback.
 
 No MPEG-2 video encoder work is planned.
 

@@ -12,6 +12,7 @@ add_executable(media_core_tests
     ../test_media_core.cpp
     ../../src/media/CbrTsPacer.cpp
     ../../src/media/MpegTsRemapper.cpp
+    ../../src/media/NativeMpegTsMux.cpp
     ../../src/media/TransportStream.cpp
     ../../src/media/RtpMpegTs.cpp
     ../../src/media/UdpSocket.cpp

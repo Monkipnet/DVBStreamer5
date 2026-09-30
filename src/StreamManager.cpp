@@ -87,7 +87,7 @@ constexpr guint kCaBatchPackets = 77;
 constexpr guint64 kUdpQueueLatency = 10 * GST_SECOND;
 // DVBStreamer5/main timestamps UDP TS with tsparse and 300 ms smoothing before
 // the StableUdpOutput reservoir.  This is restored only for SRT/HTTP inputs.
-constexpr guint64 kTvStreamer5TsSmoothingLatency = 300 * GST_MSECOND;
+constexpr guint64 kDvbStreamer5TsSmoothingLatency = 300 * GST_MSECOND;
 // 202.57: SRT/HTTP now follows DVBStreamer5/main again. The normal UDP output
 // queue below remains 10 seconds and non-leaky; protocol-specific short/leaky
 // queueing is intentionally removed.
@@ -9983,29 +9983,35 @@ bool StreamManager::buildPassthroughPipeline(
     // Bitrate Out=0.  Feed the already-normalised MPEG-TS directly to the
     // reservoir for UDP; all source chains reaching this function expose TS,
     // and DVB/test chains are already packet-aligned upstream.
-    const bool tvStreamer5NetworkStableUdp = usesStableUdpShaper(cfg) &&
+    const bool dvbStreamer5NetworkStableUdp = usesStableUdpShaper(cfg) &&
         (sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
          sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Http) &&
         !hlsPacketRemap;
     const bool directStableUdpTs = usesStableUdpShaper(cfg) && !hlsPacketRemap &&
-        !tvStreamer5NetworkStableUdp;
-    GstElement* tsparse = directStableUdpTs
+        !dvbStreamer5NetworkStableUdp;
+    // Stage 2: TranscoderModule now emits a native packet-aligned SPTS with its
+    // own PAT/PMT/SDT, PCR and buffer timestamps. Do not run that stream through
+    // GStreamer's tsparse again. Stable UDP already consumes TS directly, while
+    // HTTP/SRT can clock the native appsrc timestamps with clocksync.
+    const bool nativeTranscodedTs = state && state->config.transcodeEnabled;
+    GstElement* tsparse = (directStableUdpTs || nativeTranscodedTs)
         ? nullptr
         : gst_element_factory_make("tsparse", branchName("tsparse", branchIndex).c_str());
     GstElement* queue = gst_element_factory_make("queue", branchName("output_queue", branchIndex).c_str());
-    // A transcoded HTTP/SRT stream is already a CBR MPEG-TS. Pace it from the
-    // embedded PCR timeline with tsparse + clocksync instead of identity/datarate.
+    // HTTP/SRT CBR uses clocksync. Native transcoder output already carries
+    // coherent appsrc timestamps and PCR, so Stage 2 does not require tsparse.
     const bool cbrPacingActive = wallClockNetworkCbrEnabled(cfg);
     GstElement* pacer = cbrPacingActive
         ? gst_element_factory_make("clocksync", branchName("cbr_clock", branchIndex).c_str())
         : nullptr;
     GstElement* sink = createOutputSink(state, cfg, pipeline, branchName("output_sink", branchIndex));
 
-    if ((!directStableUdpTs && !tsparse) || !queue || !sink || (cbrPacingActive && !pacer)) {
+    if ((!directStableUdpTs && !nativeTranscodedTs && !tsparse) ||
+        !queue || !sink || (cbrPacingActive && !pacer)) {
         return false;
     }
 
-    if ((!directStableUdpTs && !addElementOrFail(pipeline, tsparse)) ||
+    if ((!directStableUdpTs && !nativeTranscodedTs && !addElementOrFail(pipeline, tsparse)) ||
         !addElementOrFail(pipeline, queue) ||
         (pacer && !addElementOrFail(pipeline, pacer))) {
         return false;
@@ -10013,11 +10019,15 @@ bool StreamManager::buildPassthroughPipeline(
 
     configureOutputQueue(queue, cfg, state ? &state->runtimeConfig : nullptr);
     if (cbrPacingActive) {
-        configureNetworkCbrTimestamping(tsparse);
+        if (tsparse) configureNetworkCbrTimestamping(tsparse);
         configureNetworkCbrClock(pacer);
         std::cerr << "Network CBR pacing: type=" << outputType(cfg)
                   << " target_bitrate=" << cfg.targetBitrate
-                  << " clock=pcr-tsparse+clocksync smoothing_us=100000" << std::endl;
+                  << " clock=" << (nativeTranscodedTs
+                        ? "native-mux-pts+pcr+clocksync"
+                        : "pcr-tsparse+clocksync")
+                  << (nativeTranscodedTs ? " tsparse=off" : " smoothing_us=100000")
+                  << std::endl;
     }
 
     const bool finalDvbRemapContinuity = directStableUdpTs &&
@@ -10073,20 +10083,31 @@ bool StreamManager::buildPassthroughPipeline(
         return gst_element_link_many(sourceTail, queue, sink, nullptr);
     }
 
+    if (nativeTranscodedTs) {
+        std::cerr << "Transcoder Stage 2 output: native MPEG-TS passthrough"
+                  << " type=" << outputType(cfg)
+                  << " tsparse=off mpegtsmux=off"
+                  << " pacing=" << (pacer ? "clocksync-from-native-pts" : "downstream/native")
+                  << std::endl;
+        return pacer
+            ? gst_element_link_many(sourceTail, queue, pacer, sink, nullptr)
+            : gst_element_link_many(sourceTail, queue, sink, nullptr);
+    }
+
     configureTsPacketAlignment(tsparse);
-    if (tvStreamer5NetworkStableUdp) {
+    if (dvbStreamer5NetworkStableUdp) {
         // DVBStreamer5/main direct UDP path: rebuild a stable running-time on
         // the incoming transport before the reservoir.  This is intentionally
         // limited to SRT/HTTP; DVB/HLS direct paths remain SAT5-specific.
         setBooleanPropertyIfPresent(tsparse, "set-timestamps", TRUE);
         setUInt64PropertyIfPresent(
-            tsparse, "smoothing-latency", kTvStreamer5TsSmoothingLatency);
+            tsparse, "smoothing-latency", kDvbStreamer5TsSmoothingLatency);
         std::cerr << "DVBStreamer5 network TS path 202.57: input="
                   << (sourceProtocol == dvbstreamer5::stream_protocols::InputProtocolKind::Srt
                         ? "SRT" : "HTTP-MPEGTS")
                   << " tsparse=set-timestamps"
                   << " smoothing_ms="
-                  << (kTvStreamer5TsSmoothingLatency / GST_MSECOND)
+                  << (kDvbStreamer5TsSmoothingLatency / GST_MSECOND)
                   << " output_queue_ms=10000 leaky=off"
                   << std::endl;
     }
@@ -10407,6 +10428,30 @@ bool StreamManager::buildHlsOutputPipeline(
     size_t branchIndex) {
     if (!state || !pipeline || !sourceTail) return false;
     const StreamConfig& cfg = outputConfig;
+
+    // Stage 2: a transcoded stream is already a native single-program TS.
+    // NativeMpegTsMux owns PAT/PMT/SDT, PIDs, PCR, PTS/DTS and CBR NULL stuffing,
+    // so HLS must segment that transport directly instead of tsparse/demux/remux.
+    if (state->config.transcodeEnabled && hasElementFactory("hlssink")) {
+        GstElement* queue = gst_element_factory_make(
+            "queue", branchName("hls_native_transcode_queue", branchIndex).c_str());
+        GstElement* sink = createOutputSink(
+            state, cfg, pipeline, branchName("hls_native_transcode_sink", branchIndex));
+        if (!queue || !sink || !addElementOrFail(pipeline, queue)) {
+            if (queue && !GST_OBJECT_PARENT(queue)) gst_object_unref(queue);
+            return false;
+        }
+        configureQueue(queue, 10000000000ULL);
+        const bool linked = gst_element_link_many(sourceTail, queue, sink, nullptr);
+        std::cerr << "Transcoder Stage 2 HLS: native MPEG-TS -> hlssink"
+                  << " tsparse=off tsdemux=off mpegtsmux=off"
+                  << " service_id=" << cfg.serviceId
+                  << " video_pid=" << cfg.videoPid
+                  << " audio_pid=" << cfg.audioPid
+                  << " result=" << (linked ? "ready" : "link-failed")
+                  << std::endl;
+        return linked;
+    }
 
     // 203.73 RTSP/HLS hotfix: RTSP input is already normalized to a clean
     // single-program MPEG-TS by input_rtsp_ts_mux.  Demuxing that transport and
@@ -10867,25 +10912,25 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
         usesStableUdpShaper(ctx->config) &&
         udpCbrOutputEnabled(ctx->config);
     const auto remapInputKind = dvbstreamer5::stream_protocols::inputKind(ctx->config);
-    const bool tvStreamer5NetworkRemap =
+    const bool dvbStreamer5NetworkRemap =
         remapInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Srt ||
         remapInputKind == dvbstreamer5::stream_protocols::InputProtocolKind::Http;
-    const bool tvStreamer5AudioClock =
-        stableUdpAudioReservoir && tvStreamer5NetworkRemap;
+    const bool dvbStreamer5AudioClock =
+        stableUdpAudioReservoir && dvbStreamer5NetworkRemap;
 
     GstElement* audioReservoirQueue = stableUdpAudioReservoir
         ? gst_element_factory_make("queue", nullptr)
         : nullptr;
     // 203.05/202.74: SRT/HTTP use clocksync; HLS fallback keeps only the
     // startup-only audio reservoir and follows the provider media timeline.
-    GstElement* audioClockSync = tvStreamer5AudioClock
+    GstElement* audioClockSync = dvbStreamer5AudioClock
         ? gst_element_factory_make("clocksync", nullptr)
         : nullptr;
     if (!queue || !parser ||
         (stableUdpAudioReservoir && !audioReservoirQueue) ||
-        (tvStreamer5AudioClock && !audioClockSync)) {
+        (dvbStreamer5AudioClock && !audioClockSync)) {
         std::cerr << "remap skipped unsupported elementary stream caps: " << capsString;
-        if (tvStreamer5AudioClock && !audioClockSync) {
+        if (dvbStreamer5AudioClock && !audioClockSync) {
             std::cerr << " (clocksync unavailable for DVBStreamer5 network remap)";
         }
         std::cerr << std::endl;
@@ -10962,7 +11007,7 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
     const bool hlsCompatibilityElementaryPad =
         ctx->hlsCompatTsDemux && demux == ctx->hlsCompatTsDemux;
     if (parserFactory == "h264parse" || parserFactory == "h265parse") {
-        if (tvStreamer5NetworkRemap) {
+        if (dvbStreamer5NetworkRemap) {
             g_object_set(parser, "config-interval", 1, nullptr);
         } else {
             const bool repeatHeadersEveryIdr = ctx->hlsSink2 || srtVideoParser;
@@ -11072,10 +11117,10 @@ void StreamManager::onDemuxPadAdded(GstElement* demux, GstPad* pad, gpointer use
                             ? " audio_reservoir_ms=1500 audio_reservoir_mode=startup-only audio_pacer=clocksync(sync-to-first)"
                             : " audio_reservoir_ms=1500 audio_reservoir_mode=startup-only audio_pacer=off")
                       : "")
-                  << (srtVideoParser && !tvStreamer5NetworkRemap
+                  << (srtVideoParser && !dvbStreamer5NetworkRemap
                       ? " srt_parameter_sets=every-idr parser_passthrough=off"
                       : "")
-                  << (tvStreamer5NetworkRemap
+                  << (dvbStreamer5NetworkRemap
                       ? " remap_profile=DVBStreamer5"
                       : "")
                   << (hlsCompatibilityElementaryPad && isAudio
