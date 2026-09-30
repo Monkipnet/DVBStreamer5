@@ -554,6 +554,10 @@ StreamOutputConfig primaryOutputConfig(const StreamConfig& cfg) {
     output.outputHost = cfg.outputHost;
     output.outputPort = cfg.outputPort;
     output.interfaceAddress = cfg.interfaceAddress;
+    output.srtLatencyMs = cfg.srtOutputLatencyMs;
+    output.srtPassphrase = cfg.srtOutputPassphrase;
+    output.srtStreamId = cfg.srtOutputStreamId;
+    output.srtPbKeyLen = cfg.srtOutputPbKeyLen;
     return output;
 }
 
@@ -563,6 +567,10 @@ StreamConfig configForOutput(const StreamConfig& base, const StreamOutputConfig&
     cfg.outputMode = output.outputMode;
     cfg.outputHost = output.outputHost;
     cfg.outputPort = output.outputPort;
+    cfg.srtOutputLatencyMs = output.srtLatencyMs;
+    cfg.srtOutputPassphrase = output.srtPassphrase;
+    cfg.srtOutputStreamId = output.srtStreamId;
+    cfg.srtOutputPbKeyLen = output.srtPbKeyLen;
     if (!output.interfaceAddress.empty()) {
         cfg.interfaceAddress = output.interfaceAddress;
     }
@@ -603,6 +611,20 @@ std::map<std::string, StreamConfig> streamConfigById(const std::vector<StreamCon
     return result;
 }
 
+std::string srtQueryEncode(const std::string& value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : value) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%'); out.push_back(hex[(c >> 4) & 15]); out.push_back(hex[c & 15]);
+        }
+    }
+    return out;
+}
+
 bool streamUsesSrt(const StreamConfig& cfg) {
     if (toLower(cfg.inputUri).rfind("srt://", 0) == 0 || toLower(cfg.outputType) == "srt") {
         return true;
@@ -627,7 +649,13 @@ std::string streamLink(const StreamConfig& cfg, int httpPort) {
     if (type == "srt") {
         const std::string mode = toLower(cfg.outputMode) == "caller" ? "listener" : "caller";
         const bool listener = toLower(cfg.outputMode) != "caller";
-        return "srt://" + advertisedHost(cfg, listener) + ":" + std::to_string(validPortOrDefault(cfg.outputPort, 7001)) + "?mode=" + mode;
+        std::string link = "srt://" + advertisedHost(cfg, listener) + ":" +
+            std::to_string(validPortOrDefault(cfg.outputPort, 7001)) + "?mode=" + mode +
+            "&latency=" + std::to_string(std::clamp(cfg.srtOutputLatencyMs, 20, 60000));
+        if (!cfg.srtOutputStreamId.empty() && mode == "caller") {
+            link += "&streamid=" + srtQueryEncode(cfg.srtOutputStreamId);
+        }
+        return link;
     }
     if (type == "youtube") {
         const std::string hostLower = toLower(cfg.outputHost);
@@ -4467,6 +4495,10 @@ function outputConfigsForStream(stream) {
     output_host: output.output_host || '127.0.0.1',
     output_port: Number(output.output_port || 1234),
     interface_address: String(output.interface_address || ''),
+    srt_latency_ms: Number(output.srt_latency_ms ?? output.srt_output_latency_ms ?? 120),
+    srt_passphrase: String(output.srt_passphrase ?? output.srt_output_passphrase ?? ''),
+    srt_streamid: String(output.srt_streamid ?? output.srt_output_streamid ?? ''),
+    srt_pbkeylen: Number(output.srt_pbkeylen ?? output.srt_output_pbkeylen ?? 16),
     cbr: stream.cbr
   });
   if (Array.isArray(stream.outputs) && stream.outputs.length) {
@@ -6030,7 +6062,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', additional_outputs:[]
   });
 }
@@ -6072,6 +6104,12 @@ function renderOutputRows(outputs, links=[], startIndex=0) {
         <div class="form-row"><label data-output-host-label>Адрес выхода</label><input data-output-field="output_host" value="${output.output_host||'239.0.0.1'}" placeholder="239.0.0.1" /></div>
         <div class="form-row"><label data-output-port-label>Порт</label><input data-output-field="output_port" type="number" min="1" max="65535" value="${output.output_port||1234}" placeholder="1234" /></div>
         <div class="form-row"><label>Интерфейс</label><select data-output-field="interface_address" onchange="outputInterfaceChanged(this)" ${index === 0 ? 'disabled' : ''}>${outputInterfaceOptions(interfaceAddress, index === 0 ? 'Основной интерфейс' : 'Как основной')}</select></div>
+        <div class="srt-output-options form-row full" style="grid-column:1/-1;display:${type==='srt'?'grid':'none'};grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px">
+          <div><label>SRT latency, ms</label><input data-output-field="srt_latency_ms" type="number" min="20" max="60000" value="${Number(output.srt_latency_ms||120)}" /></div>
+          <div><label>AES key</label><select data-output-field="srt_pbkeylen"><option value="16" ${Number(output.srt_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(output.srt_pbkeylen)===24?'selected':''}>AES-192</option><option value="32" ${Number(output.srt_pbkeylen)===32?'selected':''}>AES-256</option></select></div>
+          <div><label>Stream ID</label><input data-output-field="srt_streamid" value="${escapeHtmlValue(output.srt_streamid||'')}" placeholder="optional" /></div>
+          <div><label>Passphrase</label><input data-output-field="srt_passphrase" type="password" value="${escapeHtmlValue(output.srt_passphrase||'')}" autocomplete="new-password" placeholder="10–79 chars, optional" /></div>
+        </div>
         <button class="remove-output" type="button" onclick="removeStreamOutput(this)" ${index === 0 ? 'disabled' : ''}>×</button>
         <div class="form-row full" style="grid-column:1/-1"><label>URL для плеера</label><input readonly value="${link}" placeholder="Ссылка появится после сохранения" /></div>
       </div>
@@ -6111,7 +6149,11 @@ function collectOutputRows() {
       output_mode: value('output_mode') || 'listener',
       output_host: value('output_host') || '127.0.0.1',
       output_port: Number(value('output_port') || 1234),
-      interface_address: value('interface_address')
+      interface_address: value('interface_address'),
+      srt_latency_ms: Math.max(20, Math.min(60000, Number(value('srt_latency_ms') || 120))),
+      srt_passphrase: value('srt_passphrase'),
+      srt_streamid: value('srt_streamid'),
+      srt_pbkeylen: Number(value('srt_pbkeylen') || 16)
     };
   });
 }
@@ -6247,6 +6289,9 @@ function updateHlsSynchronizationVisibility() {
   const deadlineShaper = document.getElementById('streamHlsPcrPhasePacing');
   if (providerClock) providerClock.disabled = !isHls;
   if (deadlineShaper) deadlineShaper.disabled = !isHls;
+  const srtRow = document.getElementById('streamSrtInputRow');
+  const isSrt = mode?.value === 'caller' || mode?.value === 'listener' || String(document.getElementById('streamInput')?.value || '').toLowerCase().startsWith('srt://');
+  if (srtRow) srtRow.style.display = isSrt ? '' : 'none';
 }
 function openStreamForm(stream) {
   const renderStreamForm = () => {
@@ -6271,6 +6316,7 @@ function openStreamForm(stream) {
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
         <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234 или https://host/live.m3u8" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateHlsSynchronizationVisibility()"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
+        <div class="form-row full" id="streamSrtInputRow" style="display:${(stream.input_mode==='caller'||stream.input_mode==='listener'||String(stream.input_uri||'').toLowerCase().startsWith('srt://'))?'':'none'}"><label>SRT вход</label><div class="row-inline compact-row"><input id="streamSrtInputLatency" type="number" min="20" max="60000" value="${Number(stream.srt_input_latency_ms||120)}" placeholder="latency ms" /><select id="streamSrtInputPbKeyLen"><option value="16" ${Number(stream.srt_input_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(stream.srt_input_pbkeylen)===24?'selected':''}>AES-192</option><option value="32" ${Number(stream.srt_input_pbkeylen)===32?'selected':''}>AES-256</option></select><input id="streamSrtInputStreamId" value="${escapeHtmlValue(stream.srt_input_streamid||'')}" placeholder="Stream ID (optional)" /><input id="streamSrtInputPassphrase" type="password" value="${escapeHtmlValue(stream.srt_input_passphrase||'')}" autocomplete="new-password" placeholder="Passphrase 10–79 chars (optional)" /></div><small>Native SRT Caller/Listener. Passphrase пустой = без шифрования. Для шифрования минимум 10 символов.</small></div>
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
         <div class="form-row full" id="streamHlsSynchronizationRow" style="display:${stream.input_mode==='hls'?'':'none'}"><label>HLS синхронизация</label><div class="checkbox-inline"><input id="streamHlsSlowPcrAssist" type="checkbox" ${stream.hls_slow_pcr_assist ? 'checked' : ''} onchange="if(this.checked){const x=document.getElementById('streamHlsPcrPhasePacing');if(x)x.checked=false;}" /><span>Provider PCR clock (ручной режим)</span></div><small>Для каналов вроде TV3: после стабилизации provider PCR становится фиксированным media clock. Транспортный PCR остаётся синтетическим 20 ms.</small><div class="checkbox-inline" style="margin-top:8px"><input id="streamHlsPcrPhasePacing" type="checkbox" ${stream.hls_pcr_phase_pacing ? 'checked' : ''} onchange="if(this.checked){const x=document.getElementById('streamHlsSlowPcrAssist');if(x)x.checked=false;}" /><span>Provider PCR deadline shaper (ручной режим)</span></div><small>203.41: для HLS с сильными VBR burst между provider PCR. Шейпер держит ограниченный lookahead 750 ms, заранее видит будущие PCR deadlines и распределяет burst по предыдущим свободным CBR-слотам, не превышая полезный потолок выхода. В output-path нет ожидания PCR, нет feedback PLL и catch-up. Внешний UDP остаётся CBR с synthetic PCR 20 ms и NULL stuffing. Не включать вместе с Provider PCR clock.</small></div>
         <div class="form-row full" id="streamCamRow" style="display:${String(stream.input_uri||'').startsWith('dvb://')?'': 'none'}"><label>CAM client (scrambled DVB)</label><select id="streamConditionalAccessClient">${camOptions}</select><small>Select a CAM/Newcamd client for encrypted DVB services. FTA streams do not use this setting.</small></div>
@@ -6386,6 +6432,8 @@ function updateOutputHints() {
     const modeRow = row.querySelector('[data-output-field="output_mode"]')?.closest('.form-row');
     if (!hostLabel || !portLabel || !host || !port) return;
     if (modeRow) modeRow.style.display = type === 'srt' ? '' : 'none';
+    const srtOptions = row.querySelector('.srt-output-options');
+    if (srtOptions) srtOptions.style.display = type === 'srt' ? 'grid' : 'none';
     if (type === 'http' || type === 'hls') {
       hostLabel.textContent = 'Адрес для ссылки';
       portLabel.textContent = type === 'hls' ? 'HLS порт' : 'HTTP порт';
@@ -6543,6 +6591,14 @@ function saveStream(id) {
     interface_address: document.getElementById('streamInterface').value,
     input_interface_address: document.getElementById('streamInputInterface').value,
     input_mode: selectedInputMode,
+    srt_input_latency_ms: Math.max(20, Math.min(60000, Number(document.getElementById('streamSrtInputLatency')?.value || 120))),
+    srt_input_passphrase: document.getElementById('streamSrtInputPassphrase')?.value || '',
+    srt_input_streamid: document.getElementById('streamSrtInputStreamId')?.value || '',
+    srt_input_pbkeylen: Number(document.getElementById('streamSrtInputPbKeyLen')?.value || 16),
+    srt_output_latency_ms: Number(primaryOutput.srt_latency_ms || 120),
+    srt_output_passphrase: primaryOutput.srt_passphrase || '',
+    srt_output_streamid: primaryOutput.srt_streamid || '',
+    srt_output_pbkeylen: Number(primaryOutput.srt_pbkeylen || 16),
     hls_access_key_mode: document.getElementById('streamHlsAccessKeyMode').value,
     hls_access_key_name: document.getElementById('streamHlsAccessKeyName').value,
     hls_access_key_value: document.getElementById('streamHlsAccessKeyValue').value,

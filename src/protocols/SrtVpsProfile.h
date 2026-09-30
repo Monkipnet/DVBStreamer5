@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ConfigManager.h"
+#include "media/NativeSrtTransport.h"
 
 #include <array>
 #include <string>
@@ -63,6 +64,20 @@ inline std::string applyToUri(std::string uri, const StreamConfig& cfg) {
         uri = setQueryParameter(uri, name, std::to_string(number));
     }
     return uri;
+}
+
+inline dvbstreamer5::media::srt::EndpointConfig profile(
+    dvbstreamer5::media::srt::EndpointConfig endpoint, const StreamConfig& cfg) {
+    if (!cfg.srtVpsVdsOptimization) return endpoint;
+    endpoint.latencyMs = kLatencyMs;
+    endpoint.receiveLatencyMs = kLatencyMs;
+    endpoint.peerLatencyMs = kLatencyMs;
+    endpoint.receiveBufferBytes = kSrtReceiveBufferBytes;
+    endpoint.sendBufferBytes = kSrtSendBufferBytes;
+    endpoint.flightWindowPackets = kFlightWindowPackets;
+    endpoint.payloadSize = kPayloadSizeBytes;
+    endpoint.ioTimeoutMs = kPollTimeoutMs;
+    return endpoint;
 }
 
 inline int latencyMs(const StreamConfig& cfg, int normalValue) {

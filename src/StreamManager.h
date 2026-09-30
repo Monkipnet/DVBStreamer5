@@ -17,6 +17,7 @@
 #include "media/NativeUdpRelay.h"
 #include "media/NativeHlsInput.h"
 #include "media/NativeHlsSegmenter.h"
+#include "media/NativeSrtTransport.h"
 #include "TelegramNotifier.h"
 
 class MptsOutputManager;
@@ -51,6 +52,8 @@ struct StreamState {
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
+    std::unique_ptr<dvbstreamer5::media::srt::NativeSrtInput> nativeSrtInput;
+    std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>> nativeSrtOutputs;
     std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;
     std::atomic<bool> monitorStop{false};
     std::thread monitorThread;

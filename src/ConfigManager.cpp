@@ -250,6 +250,11 @@ StreamOutputConfig StreamOutputConfig::fromJson(const Json::Value& root) {
     output.outputHost = root.get("output_host", "127.0.0.1").asString();
     output.outputPort = root.get("output_port", 1234).asInt();
     output.interfaceAddress = root.get("interface_address", "").asString();
+    output.srtLatencyMs = std::clamp(root.get("srt_latency_ms", 120).asInt(), 20, 60000);
+    output.srtPassphrase = root.get("srt_passphrase", "").asString();
+    output.srtStreamId = root.get("srt_streamid", "").asString();
+    output.srtPbKeyLen = root.get("srt_pbkeylen", 16).asInt();
+    if (output.srtPbKeyLen != 16 && output.srtPbKeyLen != 24 && output.srtPbKeyLen != 32) output.srtPbKeyLen = 16;
     normalizeOutputEndpoint(output.outputHost, output.outputPort, output.outputType);
     if (toLower(output.outputType) == "srt" && (!root.isMember("output_port") || output.outputPort <= 0 || output.outputPort > 65535)) {
         output.outputPort = 7001;
@@ -264,6 +269,10 @@ Json::Value StreamOutputConfig::toJson() const {
     root["output_host"] = outputHost;
     root["output_port"] = outputPort;
     root["interface_address"] = interfaceAddress;
+    root["srt_latency_ms"] = srtLatencyMs;
+    root["srt_passphrase"] = srtPassphrase;
+    root["srt_streamid"] = srtStreamId;
+    root["srt_pbkeylen"] = srtPbKeyLen;
     return root;
 }
 
@@ -379,6 +388,16 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.inputInterfaceAddressConfigured = root.isMember("input_interface_address");
     config.inputInterfaceAddress = root.get("input_interface_address", "").asString();
     config.inputMode = root.get("input_mode", "auto").asString();
+    config.srtInputLatencyMs = std::clamp(root.get("srt_input_latency_ms", 120).asInt(), 20, 60000);
+    config.srtInputPassphrase = root.get("srt_input_passphrase", "").asString();
+    config.srtInputStreamId = root.get("srt_input_streamid", "").asString();
+    config.srtInputPbKeyLen = root.get("srt_input_pbkeylen", 16).asInt();
+    if (config.srtInputPbKeyLen != 16 && config.srtInputPbKeyLen != 24 && config.srtInputPbKeyLen != 32) config.srtInputPbKeyLen = 16;
+    config.srtOutputLatencyMs = std::clamp(root.get("srt_output_latency_ms", 120).asInt(), 20, 60000);
+    config.srtOutputPassphrase = root.get("srt_output_passphrase", "").asString();
+    config.srtOutputStreamId = root.get("srt_output_streamid", "").asString();
+    config.srtOutputPbKeyLen = root.get("srt_output_pbkeylen", 16).asInt();
+    if (config.srtOutputPbKeyLen != 16 && config.srtOutputPbKeyLen != 24 && config.srtOutputPbKeyLen != 32) config.srtOutputPbKeyLen = 16;
     config.hlsAccessKeyMode = root.get("hls_access_key_mode", "none").asString();
     if (config.hlsAccessKeyMode != "header" && config.hlsAccessKeyMode != "query") {
         config.hlsAccessKeyMode = "none";
@@ -450,6 +469,10 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.outputMode = primary.outputMode;
         config.outputHost = primary.outputHost;
         config.outputPort = primary.outputPort;
+        config.srtOutputLatencyMs = primary.srtLatencyMs;
+        config.srtOutputPassphrase = primary.srtPassphrase;
+        config.srtOutputStreamId = primary.srtStreamId;
+        config.srtOutputPbKeyLen = primary.srtPbKeyLen;
         for (Json::ArrayIndex i = 1; i < root["outputs"].size(); ++i) {
             config.additionalOutputs.push_back(StreamOutputConfig::fromJson(root["outputs"][i]));
         }
@@ -478,6 +501,14 @@ Json::Value StreamConfig::toJson() const {
         root["input_interface_address"] = inputInterfaceAddress;
     }
     root["input_mode"] = inputMode;
+    root["srt_input_latency_ms"] = srtInputLatencyMs;
+    root["srt_input_passphrase"] = srtInputPassphrase;
+    root["srt_input_streamid"] = srtInputStreamId;
+    root["srt_input_pbkeylen"] = srtInputPbKeyLen;
+    root["srt_output_latency_ms"] = srtOutputLatencyMs;
+    root["srt_output_passphrase"] = srtOutputPassphrase;
+    root["srt_output_streamid"] = srtOutputStreamId;
+    root["srt_output_pbkeylen"] = srtOutputPbKeyLen;
     root["hls_access_key_mode"] = hlsAccessKeyMode;
     root["hls_access_key_name"] = hlsAccessKeyName;
     root["hls_access_key_value"] = hlsAccessKeyValue;

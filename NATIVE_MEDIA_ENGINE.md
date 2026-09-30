@@ -18,9 +18,10 @@ Stage 4 active native media paths:
 Still disabled until native implementations are added:
 
 - video/audio transcoding
-- SRT
 - RTSP
 - RTMP / YouTube
 - generated test-pattern media
 
 HLS Stage 4 intentionally supports MPEG-TS media segments. fMP4/CMAF playlists using EXT-X-MAP and SAMPLE-AES are rejected with a clear error instead of falling back to an external media framework.
+
+Stage 5 adds native SRT input/output using the SRT runtime ABI with no development headers or link-time dependency.

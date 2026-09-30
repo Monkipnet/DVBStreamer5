@@ -18,7 +18,7 @@ Available native paths:
 - service/PID remap, PAT/PMT/SDT, PCR/PTS/DTS TS processing
 - CBR pacing, MPTS and CA/OSCam transport integration
 
-Still disabled pending native implementation: transcoding, SRT, RTSP, RTMP/YouTube and generated test pattern.
+Still disabled pending native implementation: transcoding, RTSP, RTMP/YouTube and generated test pattern.
 
 See `NATIVE_MEDIA_ENGINE.md` and `STAGE4_NOTES.md`.
 
@@ -45,3 +45,7 @@ Runtime dependency audit:
 ```bash
 ./scripts/audit_runtime_deps.sh build/DVBStreamer5
 ```
+
+## Native SRT (Stage 5)
+
+SRT input and output are implemented without GStreamer and without `libsrt-dev`. DVBStreamer5 uses a small runtime ABI loader for the standard SRT runtime (`libsrt 1.4+`), so CMake and compilation do not require SRT headers or link-time SRT libraries. Caller/listener modes, live/message API, TSBPD, latency, receive/peer latency, buffers, flight window, passphrase/PBKEYLEN, streamid, reconnect and subscriber filtering are supported. Ubuntu 22.04 and 24.04 runtime package names are detected by `install_deps.sh`.

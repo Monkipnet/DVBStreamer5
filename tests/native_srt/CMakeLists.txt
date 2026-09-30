@@ -1,0 +1,3 @@
+add_executable(dvbstreamer5_native_srt_tests test_native_srt.cpp)
+target_link_libraries(dvbstreamer5_native_srt_tests PRIVATE dvbstreamer5_media_core dl Threads::Threads)
+add_test(NAME native_srt COMMAND dvbstreamer5_native_srt_tests)

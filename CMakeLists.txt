@@ -63,6 +63,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativePreviewHub.cpp
     src/media/NativeHlsInput.cpp
     src/media/NativeHlsSegmenter.cpp
+    src/media/NativeSrtTransport.cpp
     src/media/NativeUdpRelay.cpp
 )
 target_include_directories(dvbstreamer5_media_core
@@ -71,6 +72,7 @@ target_include_directories(dvbstreamer5_media_core
 target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
     dvbstreamer5_http_client
+    ${CMAKE_DL_LIBS}
 )
 target_link_libraries(dvbstreamer5_media_core PRIVATE dvbstreamer5_twolame)
 if(WIN32)
@@ -131,6 +133,7 @@ option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP 
 if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
     add_subdirectory(tests/native_hls)
+    add_subdirectory(tests/native_srt)
 endif()
 
 option(DVBSTREAMER5_BUILD_MP2_ENCODER_TESTS "Build standalone PCM-to-MP2 encoder tests" OFF)

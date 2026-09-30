@@ -4,6 +4,7 @@
 #include "CaBackend.h"
 #include "DvbSatellite.h"
 #include "mpts/MptsOutputManager.h"
+#include "protocols/SrtVpsProfile.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -74,24 +75,21 @@ bool StreamManager::isNativeInputSupported(const StreamConfig& cfg, std::string&
     }
     if (startsWith(input, "udp://") || startsWith(input, "rtp://") ||
         startsWith(input, "http://") || startsWith(input, "https://") ||
-        startsWith(input, "file://") || DvbSatellite::isDvbUri(cfg.inputUri) ||
+        startsWith(input, "file://") || startsWith(input, "srt://") || DvbSatellite::isDvbUri(cfg.inputUri) ||
         input.find("://") == std::string::npos) {
         return true;
     }
-    if (startsWith(input, "srt://")) reason = "SRT input is not yet implemented in the native engine";
-    else if (startsWith(input, "rtsp://")) reason = "RTSP input is not yet implemented in the native engine";
+    if (startsWith(input, "rtsp://")) reason = "RTSP input is not yet implemented in the native engine";
     else if (startsWith(input, "rtmp://") || startsWith(input, "rtmps://")) reason = "RTMP input is not yet implemented in the native engine";
     else reason = "unsupported native input protocol";
     return false;
 }
 
 bool StreamManager::isNativeOutputSupported(const std::string& type, std::string& reason) {
-    if (type == "udp-cbr" || type == "udp-vbr" || type == "rtp" || type == "http" || type == "hls") {
+    if (type == "udp-cbr" || type == "udp-vbr" || type == "rtp" || type == "http" || type == "hls" || type == "srt") {
         return true;
     }
-    if (type == "hls") reason = "native HLS output is unavailable";
-    else if (type == "srt") reason = "SRT output is not yet implemented in the native media engine";
-    else if (type == "rtsp") reason = "RTSP output is not yet implemented in the native media engine";
+    if (type == "rtsp") reason = "RTSP output is not yet implemented in the native media engine";
     else if (type == "rtmp" || type == "youtube") reason = "RTMP/YouTube output is not yet implemented in the native media engine";
     else reason = "unsupported native output protocol";
     return false;
@@ -114,21 +112,27 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     std::vector<dvbstreamer5::media::network::NativeUdpRelayOutputConfig> nativeOutputs;
+    struct SrtOutputSpec {
+        std::string host; int port = 0; std::string mode; std::string iface;
+        int latency = 120; std::string passphrase; std::string streamId; int pbkeylen = 16;
+    };
+    std::vector<SrtOutputSpec> srtOutputSpecs;
     bool hasHttpOutput = false;
     bool hasHlsOutput = false;
     auto appendOutput = [&](const std::string& type, const std::string& host, int port,
-                            const std::string& iface) -> bool {
+                            const std::string& iface, const std::string& mode,
+                            int srtLatency, const std::string& srtPassphrase,
+                            const std::string& srtStreamId, int srtPbKeyLen) -> bool {
         std::string outputReason;
         if (!isNativeOutputSupported(type, outputReason)) {
             if (error) *error = outputReason;
             return false;
         }
-        if (type == "http") {
-            hasHttpOutput = true;
-            return true;
-        }
-        if (type == "hls") {
-            hasHlsOutput = true;
+        if (type == "http") { hasHttpOutput = true; return true; }
+        if (type == "hls") { hasHlsOutput = true; return true; }
+        if (type == "srt") {
+            srtOutputSpecs.push_back({host, port, mode.empty() ? "listener" : mode, iface,
+                                      srtLatency, srtPassphrase, srtStreamId, srtPbKeyLen});
             return true;
         }
         nativeOutputs.push_back({type, host, port, cleanInterface(iface)});
@@ -136,14 +140,13 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     };
 
     if (!appendOutput(normalizedOutputType(streamConfig), streamConfig.outputHost,
-                      streamConfig.outputPort, streamConfig.interfaceAddress)) {
-        return false;
-    }
+                      streamConfig.outputPort, streamConfig.interfaceAddress, streamConfig.outputMode,
+                      streamConfig.srtOutputLatencyMs, streamConfig.srtOutputPassphrase,
+                      streamConfig.srtOutputStreamId, streamConfig.srtOutputPbKeyLen)) return false;
     for (const auto& extra : streamConfig.additionalOutputs) {
         if (!appendOutput(normalizedOutputType(streamConfig, &extra), extra.outputHost,
-                          extra.outputPort, extra.interfaceAddress)) {
-            return false;
-        }
+                          extra.outputPort, extra.interfaceAddress, extra.outputMode,
+                          extra.srtLatencyMs, extra.srtPassphrase, extra.srtStreamId, extra.srtPbKeyLen)) return false;
     }
 
     {
@@ -169,14 +172,54 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     const std::string inputMode = toLower(streamConfig.inputMode);
     const bool hlsInput = inputMode == "hls" || toLower(normalizedInput).find(".m3u8") != std::string::npos ||
         toLower(normalizedInput).rfind("hls://", 0) == 0;
+    const bool srtInput = toLower(normalizedInput).rfind("srt://", 0) == 0;
     if (hlsInput) state->nativeHlsInput = std::make_unique<dvbstreamer5::media::hls::NativeHlsInput>();
+    if (srtInput) state->nativeSrtInput = std::make_unique<dvbstreamer5::media::srt::NativeSrtInput>();
+    for (const auto& spec : srtOutputSpecs) {
+        auto output = std::make_unique<dvbstreamer5::media::srt::NativeSrtOutput>();
+        dvbstreamer5::media::srt::EndpointConfig srtConfig;
+        std::string host = spec.host.empty() ? std::string("0.0.0.0") : spec.host;
+        std::string srtUri = "srt://" + host + ":" + std::to_string(spec.port) + "?mode=" +
+            (spec.mode.empty() ? std::string("listener") : spec.mode);
+        srtUri = dvbstreamer5::protocols::srt_vps::applyToUri(srtUri, streamConfig);
+        std::string srtError;
+        if (!dvbstreamer5::media::srt::parseUri(srtUri, srtConfig, srtError)) {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = srtError;
+            return false;
+        }
+        srtConfig.latencyMs = std::clamp(spec.latency, 20, 60000);
+        srtConfig.passphrase = spec.passphrase;
+        srtConfig.streamId = spec.streamId;
+        srtConfig.pbkeylen = spec.pbkeylen;
+        srtConfig.bindAddress = cleanInterface(spec.iface);
+        if (srtConfig.mode == "listener") srtConfig.host = "0.0.0.0";
+        const std::string currentStreamId = streamConfig.id;
+        if (!output->start(
+                srtConfig,
+                [this, currentStreamId](const std::string& peerIp) {
+                    return isClientAllowedForStream(currentStreamId, peerIp);
+                },
+                [this, currentStreamId](const std::string& peerIp) {
+                    if (!peerIp.empty()) addStreamSession(currentStreamId, peerIp, "srt");
+                },
+                [this, currentStreamId](const std::string& peerIp) {
+                    if (!peerIp.empty()) removeStreamSession(currentStreamId, peerIp, "srt");
+                },
+                srtError)) {
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = srtError.empty() ? "native SRT output failed" : srtError;
+            return false;
+        }
+        state->nativeSrtOutputs.push_back(std::move(output));
+    }
     if (hasHlsOutput) state->nativeHlsSegmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
-    relay.inputUri = hlsInput ? "external://hls" : normalizedInput;
-    relay.externallyFedInput = hlsInput;
+    relay.inputUri = hlsInput ? "external://hls" : (srtInput ? "external://srt" : normalizedInput);
+    relay.externallyFedInput = hlsInput || srtInput;
     relay.outputs = nativeOutputs;
-    relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput) && nativeOutputs.empty();
+    relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput || !srtOutputSpecs.empty()) && nativeOutputs.empty();
     relay.inputInterfaceAddress = cleanInterface(streamConfig.inputInterfaceAddress);
     relay.inputInterfaceAddressConfigured = streamConfig.inputInterfaceAddressConfigured;
     relay.interfaceAddress = cleanInterface(streamConfig.interfaceAddress);
@@ -248,9 +291,12 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     auto previewHub = state->nativePreviewHub;
     auto* hlsSegmenter = state->nativeHlsSegmenter.get();
     auto* mpts = mptsOutputManager.get();
+    std::vector<dvbstreamer5::media::srt::NativeSrtOutput*> srtOutputs;
+    for (auto& output : state->nativeSrtOutputs) srtOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
-    relay.observeTransport = [previewHub, hlsSegmenter, mpts, streamId](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [previewHub, hlsSegmenter, mpts, srtOutputs, streamId](const uint8_t* data, std::size_t size) {
         if (hlsSegmenter) hlsSegmenter->push(data, size);
+        for (auto* output : srtOutputs) if (output) output->push(data, size);
         previewHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
     };
@@ -266,6 +312,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         hlsConfig.archiveHours = streamConfig.hlsArchiveHours;
         std::string hlsError;
         if (!state->nativeHlsSegmenter->start(hlsConfig, hlsError)) {
+            for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = hlsError.empty() ? "native HLS output failed" : hlsError;
             return false;
@@ -277,6 +324,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         auto guard = relay.dvbInputSource ? DvbSatellite::acquireFrontendTuneGuard(dvbParams)
                                          : std::unique_lock<std::mutex>();
         if (!state->nativeRelay->start(relay, relayError)) {
+            for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
             if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = relayError.empty() ? "native relay failed" : relayError;
@@ -293,6 +341,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 [relayPtr](const std::string& finishError) { relayPtr->finishInput(finishError); },
                 hlsError)) {
             state->nativeRelay->stop();
+            for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
             if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = hlsError.empty() ? "native HLS input failed" : hlsError;
@@ -300,9 +349,43 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
     }
 
+    if (state->nativeSrtInput) {
+        auto* relayPtr = state->nativeRelay.get();
+        auto* statePtr = state.get();
+        dvbstreamer5::media::srt::EndpointConfig srtConfig;
+        std::string srtError;
+        if (!dvbstreamer5::media::srt::parseUri(normalizedInput, srtConfig, srtError)) {
+            state->nativeRelay->stop();
+            for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
+            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = srtError;
+            return false;
+        }
+        if (inputMode == "caller" || inputMode == "listener") srtConfig.mode = inputMode;
+        srtConfig.latencyMs = streamConfig.srtInputLatencyMs;
+        if (!streamConfig.srtInputPassphrase.empty()) srtConfig.passphrase = streamConfig.srtInputPassphrase;
+        if (!streamConfig.srtInputStreamId.empty()) srtConfig.streamId = streamConfig.srtInputStreamId;
+        srtConfig.pbkeylen = streamConfig.srtInputPbKeyLen;
+        srtConfig.bindAddress = cleanInterface(streamConfig.inputInterfaceAddress);
+        srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
+        if (!state->nativeSrtInput->start(
+                srtConfig,
+                [relayPtr](const std::uint8_t* data, std::size_t size) { return relayPtr->pushInput(data, size); },
+                [statePtr](const std::string& status) { if (statePtr) statePtr->statusMessage = "SRT " + status; },
+                srtError)) {
+            state->nativeRelay->stop();
+            for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
+            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = srtError.empty() ? "native SRT input failed" : srtError;
+            return false;
+        }
+    }
+
     state->active.store(true);
     state->running.store(true);
-    state->statusMessage = hlsInput ? "running (native HLS input)" : "running (native media engine)";
+    state->statusMessage = hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : "running (native media engine)");
     StreamState* rawState = state.get();
     {
         std::lock_guard<std::mutex> lock(managerMutex);
@@ -327,7 +410,8 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         auto* relay = state->nativeRelay.get();
         if (!relay) break;
         const uint64_t in = relay->inputBytes();
-        const uint64_t out = relay->outputBytes();
+        uint64_t out = relay->outputBytes();
+        for (const auto& output : state->nativeSrtOutputs) if (output) out += output->sentBytes();
         const uint64_t cc = relay->continuityErrors();
         state->inputBytes.store(in);
         state->outputBytes.store(out);
@@ -373,7 +457,9 @@ bool StreamManager::stopStream(const std::string& id) {
     state->monitorStop.store(true);
     if (state->nativePreviewHub) state->nativePreviewHub->close();
     if (state->nativeHlsInput) state->nativeHlsInput->stop();
+    if (state->nativeSrtInput) state->nativeSrtInput->stop();
     if (state->nativeRelay) state->nativeRelay->stop();
+    for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
     if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
     if (state->monitorThread.joinable()) state->monitorThread.join();
     state->running.store(false);
@@ -607,8 +693,24 @@ size_t StreamManager::enforceSubscriberAccess() {
     return count;
 }
 
-size_t StreamManager::restartSrtOutputsForStreams(const std::vector<std::string>&) { return 0; }
-size_t StreamManager::restartAllSrtOutputs() { return 0; }
+size_t StreamManager::restartSrtOutputsForStreams(const std::vector<std::string>& streamIds) {
+    std::vector<StreamConfig> restart;
+    for (const auto& cfg : configManager.config.streams) {
+        if (std::find(streamIds.begin(), streamIds.end(), cfg.id) != streamIds.end() && isStreamActive(cfg.id)) restart.push_back(cfg);
+    }
+    size_t count = 0; for (const auto& cfg : restart) { std::string error; if (restartStream(cfg, &error)) ++count; }
+    return count;
+}
+size_t StreamManager::restartAllSrtOutputs() {
+    std::vector<StreamConfig> restart;
+    for (const auto& cfg : configManager.config.streams) {
+        bool uses = toLower(cfg.inputUri).rfind("srt://",0)==0 || toLower(cfg.outputType)=="srt";
+        for (const auto& out : cfg.additionalOutputs) uses = uses || toLower(out.outputType)=="srt";
+        if (uses && isStreamActive(cfg.id)) restart.push_back(cfg);
+    }
+    size_t count = 0; for (const auto& cfg : restart) { std::string error; if (restartStream(cfg, &error)) ++count; }
+    return count;
+}
 
 void StreamManager::configureMptsOutputs() {
     if (mptsOutputManager) mptsOutputManager->configure(configManager.config.mptsOutputs, configManager.config.streams);

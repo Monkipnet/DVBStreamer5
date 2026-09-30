@@ -198,6 +198,11 @@ fi
 command -v systemctl >/dev/null 2>&1 || fail 'systemctl is not available.'
 
 DEPS=(ca-certificates libpcsclite1 pcscd pcsc-tools libccid)
+SRT_RUNTIME=''
+for pkg in libsrt1.5-gnutls libsrt1.4-gnutls libsrt1.5-openssl libsrt1.4-openssl; do
+    if apt-cache show "$pkg" >/dev/null 2>&1; then SRT_RUNTIME="$pkg"; break; fi
+done
+[[ -n "$SRT_RUNTIME" ]] && DEPS+=("$SRT_RUNTIME")
 if command -v apt-cache >/dev/null 2>&1; then
     if apt-cache show libssl3t64 >/dev/null 2>&1; then
         DEPS+=(libssl3t64)

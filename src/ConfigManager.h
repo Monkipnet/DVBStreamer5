@@ -12,6 +12,10 @@ struct StreamOutputConfig {
     std::string outputHost = "127.0.0.1";
     int outputPort = 1234;
     std::string interfaceAddress;
+    int srtLatencyMs = 120;
+    std::string srtPassphrase;
+    std::string srtStreamId;
+    int srtPbKeyLen = 16;
 
     Json::Value toJson() const;
     static StreamOutputConfig fromJson(const Json::Value& root);
@@ -58,6 +62,14 @@ struct StreamConfig {
     std::string inputInterfaceAddress;
     bool inputInterfaceAddressConfigured = false;
     std::string inputMode = "auto";
+    int srtInputLatencyMs = 120;
+    std::string srtInputPassphrase;
+    std::string srtInputStreamId;
+    int srtInputPbKeyLen = 16;
+    int srtOutputLatencyMs = 120;
+    std::string srtOutputPassphrase;
+    std::string srtOutputStreamId;
+    int srtOutputPbKeyLen = 16;
     // Per-stream HTTP access credentials for HLS manifests, segments and EXT-X-KEY URIs.
     // mode: none | header | query. The value is stored per stream and never shared.
     std::string hlsAccessKeyMode = "none";
