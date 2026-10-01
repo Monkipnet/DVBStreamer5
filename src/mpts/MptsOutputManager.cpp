@@ -1,4 +1,5 @@
 #include "MptsOutputManager.h"
+#include "media/DvbText.h"
 
 #include "utils.h"
 
@@ -699,10 +700,10 @@ struct MptsOutputManager::Runtime {
             };
             while (index < ready.size()) {
                 const auto& service = *ready[index];
-                std::string provider = service.provider.empty() ? "DVBStreamer5" : service.provider;
-                std::string name = service.name.empty() ? service.config.streamId : service.name;
-                if (provider.size() > 63) provider.resize(63);
-                if (name.size() > 63) name.resize(63);
+                const std::string providerText = service.provider.empty() ? "DVBStreamer5" : service.provider;
+                const std::string nameText = service.name.empty() ? service.config.streamId : service.name;
+                auto provider = dvbstreamer5::media::dvbtext::encode(providerText, 63);
+                auto name = dvbstreamer5::media::dvbtext::encode(nameText, 63);
                 const size_t descriptorPayload = 3 + provider.size() + name.size();
                 const size_t descriptorSize = descriptorPayload + 2;
                 const size_t serviceEntrySize = 5 + descriptorSize;

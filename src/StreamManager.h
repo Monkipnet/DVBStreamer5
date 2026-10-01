@@ -22,6 +22,7 @@
 #include "media/NativeRtmpTransport.h"
 #include "media/NativeSrtTransport.h"
 #include "media/NativeTranscoderPipeline.h"
+#include "media/NativeTestPatternSource.h"
 #include "TelegramNotifier.h"
 
 class MptsOutputManager;
@@ -43,6 +44,7 @@ struct StreamState {
 
     std::atomic<uint64_t> inputBitrate{0};
     std::atomic<uint64_t> outputBitrate{0};
+    std::atomic<uint64_t> outputPayloadBitrate{0};
     std::atomic<uint64_t> inputBytes{0};
     std::atomic<uint64_t> outputBytes{0};
     std::atomic<uint64_t> inputCcErrors{0};
@@ -55,6 +57,18 @@ struct StreamState {
 
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
+    struct HlsAbrVariantRuntime {
+        std::string name;
+        int width = 0;
+        int height = 0;
+        std::uint64_t videoBitrate = 0;
+        std::uint64_t muxBitrate = 0;
+        bool failed = false;
+        std::string lastError;
+        std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> transcoder;
+        std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> segmenter;
+    };
+    std::vector<std::unique_ptr<HlsAbrVariantRuntime>> hlsAbrVariants;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
     std::unique_ptr<dvbstreamer5::media::cmaf::NativeCmafSegmenter> nativeCmafSegmenter;
@@ -67,6 +81,8 @@ struct StreamState {
     std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;
     std::atomic<bool> monitorStop{false};
     std::thread monitorThread;
+    std::atomic<bool> testPatternStop{false};
+    std::thread testPatternThread;
 };
 
 class StreamManager {

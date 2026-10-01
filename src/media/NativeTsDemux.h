@@ -58,6 +58,47 @@ private:
         std::vector<std::uint8_t> bytes;
         bool randomAccessHint = false;
     };
+    struct H264SpsState {
+        bool valid = false;
+        std::uint32_t id = 0;
+        std::uint32_t log2MaxFrameNum = 4;
+        std::uint32_t picOrderCntType = 0;
+        std::uint32_t log2MaxPicOrderCntLsb = 4;
+        bool deltaPicOrderAlwaysZero = false;
+        bool frameMbsOnly = true;
+    };
+    struct H264PpsState {
+        bool valid = false;
+        std::uint32_t id = 0;
+        std::uint32_t spsId = 0;
+        bool bottomFieldPicOrderInFramePresent = false;
+    };
+    struct H264SliceState {
+        bool valid = false;
+        bool idr = false;
+        std::uint8_t nalRefIdc = 0;
+        std::uint32_t firstMb = 0;
+        std::uint32_t ppsId = 0;
+        std::uint32_t frameNum = 0;
+        bool fieldPic = false;
+        bool bottomField = false;
+        std::uint32_t idrPicId = 0;
+        std::uint32_t picOrderCntLsb = 0;
+        std::int32_t deltaPicOrderCntBottom = 0;
+        std::int32_t deltaPicOrderCnt0 = 0;
+        std::int32_t deltaPicOrderCnt1 = 0;
+    };
+    struct VideoAuAssembler {
+        DemuxStreamInfo stream;
+        std::vector<std::uint8_t> bytes;
+        std::uint64_t pts90k = 0;
+        std::uint64_t dts90k = 0;
+        bool hasPts = false;
+        bool hasDts = false;
+        bool randomAccess = false;
+        std::map<std::uint32_t, H264SpsState> h264Sps;
+        std::map<std::uint32_t, H264PpsState> h264Pps;
+    };
 
     void consumePacket(const Packet& packet, std::string& error);
     void consumePsi(std::uint16_t pid, const PacketInfo& info, const std::uint8_t* payload, std::size_t size);
@@ -66,6 +107,8 @@ private:
     void parsePmt(const std::vector<std::uint8_t>& section);
     void consumePes(const PacketInfo& info, const std::uint8_t* payload, std::size_t size);
     void flushPes(std::uint16_t pid);
+    void queueVideoSample(DemuxSample&& sample);
+    void flushVideoAu(std::uint16_t pid);
     void notifyProgram();
 
     static ElementaryCodec codecFromStreamType(std::uint8_t streamType,
@@ -81,10 +124,13 @@ private:
     std::map<std::uint16_t, SectionAssembler> psi_;
     std::map<std::uint16_t, DemuxStreamInfo> streamsByPid_;
     std::map<std::uint16_t, PesAssembler> pes_;
+    std::map<std::uint16_t, VideoAuAssembler> videoAu_;
     SampleCallback sampleCallback_;
     ProgramCallback programCallback_;
     std::uint16_t programNumber_ = 0;
     std::uint16_t pmtPid_ = 0xffff;
+    std::uint64_t pesTrimEvents_ = 0;
+    std::uint64_t pesTruncatedEvents_ = 0;
 };
 
 } // namespace dvbstreamer5::media::mpegts

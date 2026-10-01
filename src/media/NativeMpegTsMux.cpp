@@ -1,4 +1,5 @@
 #include "media/NativeMpegTsMux.h"
+#include "media/DvbText.h"
 
 #include <algorithm>
 #include <cstring>
@@ -43,6 +44,7 @@ std::uint8_t NativeMpegTsMux::streamType(ElementaryCodec codec) noexcept {
         case ElementaryCodec::H265: return 0x24;
         case ElementaryCodec::Mpeg2Video: return 0x02;
         case ElementaryCodec::AacAdts: return 0x0f;
+        case ElementaryCodec::AacLatm: return 0x11;
         case ElementaryCodec::MpegAudio: return 0x03;
         case ElementaryCodec::Ac3:
         case ElementaryCodec::Eac3: return 0x06;
@@ -194,8 +196,13 @@ std::vector<std::uint8_t> NativeMpegTsMux::makePmtSection() const {
 }
 
 std::vector<std::uint8_t> NativeMpegTsMux::makeSdtSection() const {
-    const std::string provider = trimmedServiceString(config_.serviceProvider, 255);
-    const std::string name = trimmedServiceString(config_.serviceName, 255);
+    // A service_descriptor has an 8-bit descriptor_length. Keep the combined
+    // provider/name payload below 255 bytes and use the DVB UTF-8 selector for
+    // Cyrillic and other non-ASCII service names.
+    auto provider = dvbtext::encode(config_.serviceProvider, 120);
+    auto name = dvbtext::encode(config_.serviceName, 120);
+    while (3 + provider.size() + name.size() > 255 && !name.empty()) name.pop_back();
+    while (3 + provider.size() + name.size() > 255 && !provider.empty()) provider.pop_back();
     std::vector<std::uint8_t> descriptor;
     descriptor.reserve(5 + provider.size() + name.size());
     descriptor.push_back(0x48);

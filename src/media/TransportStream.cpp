@@ -90,6 +90,18 @@ void PacketFramer::push(
                 pending_[candidate + 2 * kPacketSize] != kSyncByte) {
                 continue;
             }
+
+            // A stray 0x47 byte inside payload can satisfy the sync-spacing
+            // heuristic, especially when two HTTP live connections meet at
+            // an arbitrary byte boundary after reconnect.  Never emit a
+            // candidate unless its MPEG-TS header/adaptation field is itself
+            // structurally valid.  Invalid candidates are skipped one byte at
+            // a time until a genuine packet boundary is found.
+            PacketInfo candidateInfo;
+            if (!inspectPacket(
+                    pending_.data() + candidate, kPacketSize, candidateInfo)) {
+                continue;
+            }
             break;
         }
 

@@ -425,8 +425,12 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.transcodeVideoCodec = "h264";
     }
     config.transcodeVideoEncoder = toLower(root.get("transcode_video_encoder", "auto").asString());
-    if (config.transcodeVideoEncoder != "auto" && config.transcodeVideoEncoder != "x264" &&
-        config.transcodeVideoEncoder != "nvenc" && config.transcodeVideoEncoder != "intel") {
+    if (config.transcodeVideoEncoder == "x264" || config.transcodeVideoEncoder == "x265")
+        config.transcodeVideoEncoder = "cpu";
+    if (config.transcodeVideoEncoder == "intel") config.transcodeVideoEncoder = "qsv";
+    if (config.transcodeVideoEncoder != "auto" && config.transcodeVideoEncoder != "cpu" &&
+        config.transcodeVideoEncoder != "nvenc" && config.transcodeVideoEncoder != "qsv" &&
+        config.transcodeVideoEncoder != "vaapi") {
         config.transcodeVideoEncoder = "auto";
     }
     config.transcodeVideoBitrate = root.get("transcode_video_bitrate", Json::UInt64(6000000)).asUInt64();

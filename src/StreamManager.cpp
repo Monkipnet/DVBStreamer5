@@ -15,7 +15,9 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <filesystem>
+#include <sstream>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -47,6 +49,97 @@ bool startsWith(const std::string& value, const char* prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
+struct AbrProfile {
+    std::string name;
+    int width = 0;
+    int height = 0;
+    std::uint64_t videoBitrate = 0;
+};
+
+std::vector<AbrProfile> makeAbrProfiles(int primaryWidth, int primaryHeight,
+                                        std::uint64_t primaryVideoBitrate) {
+    struct Candidate { const char* name; int width; int height; std::uint64_t nominal; };
+    static constexpr Candidate candidates[] = {
+        {"1080p", 1920, 1080, 6500000ULL},
+        {"720p", 1280, 720, 3500000ULL},
+        {"480p", 854, 480, 1800000ULL},
+        {"360p", 640, 360, 950000ULL},
+    };
+    std::vector<AbrProfile> out;
+    const std::uint64_t primaryPixels = static_cast<std::uint64_t>(primaryWidth) *
+        static_cast<std::uint64_t>(primaryHeight);
+    for (const auto& c : candidates) {
+        if (out.size() >= 3) break;
+        if (c.width >= primaryWidth || c.height >= primaryHeight) continue;
+        const std::uint64_t pixels = static_cast<std::uint64_t>(c.width) *
+            static_cast<std::uint64_t>(c.height);
+        if (pixels >= primaryPixels) continue;
+        std::uint64_t scaled = primaryVideoBitrate > 0
+            ? (primaryVideoBitrate * pixels * 135ULL) / (primaryPixels * 100ULL)
+            : c.nominal;
+        scaled = std::min<std::uint64_t>(scaled, c.nominal);
+        scaled = std::max<std::uint64_t>(scaled, 600000ULL);
+        if (primaryVideoBitrate > 800000ULL) {
+            scaled = std::min<std::uint64_t>(scaled, primaryVideoBitrate - 200000ULL);
+        }
+        out.push_back({c.name, c.width, c.height, scaled});
+    }
+    return out;
+}
+
+std::filesystem::path hlsRuntimeDirectory(const StreamConfig& cfg) {
+    return cfg.hlsArchiveEnabled
+        ? std::filesystem::path(cfg.hlsArchivePath) / cfg.id
+        : std::filesystem::path("/tmp/dvbstreamer5-hls") / cfg.id;
+}
+
+bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int primaryHeight,
+                            std::uint64_t primaryVideoBitrate,
+                            const std::vector<std::unique_ptr<StreamState::HlsAbrVariantRuntime>>& variants,
+                            std::string& error) {
+    const auto dir = hlsRuntimeDirectory(cfg);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) { error = "cannot create HLS ABR directory: " + ec.message(); return false; }
+    const auto tmp = dir / "master.m3u8.tmp";
+    const auto dst = dir / "master.m3u8";
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) { error = "cannot create HLS ABR master playlist"; return false; }
+    const std::uint64_t audio = cfg.transcodeAudioCodec == "copy" ? 192000ULL : cfg.transcodeAudioBitrate;
+    auto codecs = [&cfg]() {
+        const std::string v = toLower(cfg.transcodeVideoCodec);
+        const std::string a = toLower(cfg.transcodeAudioCodec);
+        std::string c = (v == "hevc" || v == "h265") ? "hvc1.1.6.L120.B0" : "avc1.640028";
+        if (a == "aac") c += ",mp4a.40.2";
+        else if (a == "mp3") c += ",mp4a.6B";
+        return c;
+    }();
+    auto emit = [&](int w, int h, std::uint64_t vb, const std::string& uri) {
+        const std::uint64_t bandwidth = std::max<std::uint64_t>(700000ULL, vb + audio + 180000ULL);
+        out << "#EXT-X-STREAM-INF:BANDWIDTH=" << bandwidth
+            << ",AVERAGE-BANDWIDTH=" << (vb + audio)
+            << ",RESOLUTION=" << w << "x" << h
+            << ",FRAME-RATE=25.000,CODECS=\"" << codecs << "\"\n";
+        out << uri << "\n";
+    };
+    out << "#EXTM3U\n#EXT-X-VERSION:3\n# DVBStreamer5 native ABR\n";
+    emit(primaryWidth, primaryHeight, primaryVideoBitrate, "video.m3u8");
+    for (const auto& v : variants) {
+        if (!v) continue;
+        emit(v->width, v->height, v->videoBitrate, "abr/" + v->name + "/video.m3u8");
+    }
+    out.flush();
+    if (!out) { error = "failed to write HLS ABR master playlist"; return false; }
+    out.close();
+    std::filesystem::rename(tmp, dst, ec);
+    if (ec) {
+        std::filesystem::remove(dst, ec); ec.clear();
+        std::filesystem::rename(tmp, dst, ec);
+    }
+    if (ec) { error = "cannot publish HLS ABR master playlist: " + ec.message(); return false; }
+    return true;
+}
+
 } // namespace
 
 StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
@@ -71,9 +164,8 @@ std::string StreamManager::normalizedOutputType(const StreamConfig& cfg,
 bool StreamManager::isNativeInputSupported(const StreamConfig& cfg, std::string& reason) {
     const std::string input = toLower(normalizeInputUri(cfg.inputUri));
     const std::string mode = toLower(cfg.inputMode);
-    if (cfg.testPattern || mode == "test") {
-        reason = "test-pattern generation is not yet implemented in the native media engine";
-        return false;
+    if (cfg.testPattern || mode == "test" || input == "test://bars" || input == "testsrc://bars" || input == "bars://hd") {
+        return true;
     }
     if (startsWith(input, "udp://") || startsWith(input, "rtp://") ||
         startsWith(input, "http://") || startsWith(input, "https://") ||
@@ -178,14 +270,41 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
         dvbstreamer5::media::transcode::NativeTranscoderConfig tc;
         tc.videoCodec = toLower(streamConfig.transcodeVideoCodec);
+        tc.videoEncoder = toLower(streamConfig.transcodeVideoEncoder);
         tc.audioCodec = toLower(streamConfig.transcodeAudioCodec);
         if (!TranscoderModule::resolutionSize(streamConfig.transcodeResolution, tc.width, tc.height)) {
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = "invalid native transcode resolution: " + streamConfig.transcodeResolution;
             return false;
         }
-        tc.videoBitrate = streamConfig.transcodeVideoBitrate;
         tc.audioBitrate = streamConfig.transcodeAudioBitrate;
+        tc.videoBitrate = streamConfig.transcodeVideoBitrate;
+        // A CBR transport cannot sustainably carry an elementary-video target
+        // equal to the complete TS target: audio, PES/TS headers, PSI/SI and
+        // encoder overshoot also consume bitrate.  When transcoding to CBR,
+        // reserve explicit mux headroom and cap only the *effective* encoder
+        // target.  Keep the user's configured value unchanged on disk/UI.
+        if (streamConfig.cbr && streamConfig.targetBitrate >= 1000000ULL &&
+            tc.videoCodec != "copy") {
+            const std::uint64_t percentageHeadroom = streamConfig.targetBitrate / 20ULL; // 5%
+            const std::uint64_t reserve = std::max<std::uint64_t>(
+                500000ULL, tc.audioBitrate + percentageHeadroom);
+            const std::uint64_t videoBudget = streamConfig.targetBitrate > reserve
+                ? streamConfig.targetBitrate - reserve
+                : streamConfig.targetBitrate / 2ULL;
+            const std::uint64_t effectiveVideo = std::max<std::uint64_t>(500000ULL,
+                std::min<std::uint64_t>(tc.videoBitrate, videoBudget));
+            if (effectiveVideo != tc.videoBitrate) {
+                std::cerr << "NATIVE TRANSCODER CBR BUDGET stream=" << streamConfig.name
+                          << " target_kbps=" << (streamConfig.targetBitrate / 1000ULL)
+                          << " requested_video_kbps=" << (tc.videoBitrate / 1000ULL)
+                          << " effective_video_kbps=" << (effectiveVideo / 1000ULL)
+                          << " audio_kbps=" << (tc.audioBitrate / 1000ULL)
+                          << " reserve_kbps=" << (reserve / 1000ULL)
+                          << std::endl;
+            }
+            tc.videoBitrate = effectiveVideo;
+        }
         tc.serviceId = static_cast<std::uint16_t>(streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff ? streamConfig.serviceId : 1);
         tc.videoPid = static_cast<std::uint16_t>(streamConfig.videoPid > 0 && streamConfig.videoPid <= 0x1ffe ? streamConfig.videoPid : 0x0100);
         tc.audioPid = static_cast<std::uint16_t>(streamConfig.audioPid > 0 && streamConfig.audioPid <= 0x1ffe ? streamConfig.audioPid : 0x0101);
@@ -198,6 +317,47 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             if (error) *error = transcodeError.empty() ? "native transcoder initialization failed" : transcodeError;
             return false;
         }
+
+        // V10.8.2: a multibitrate checkbox must create real independent
+        // renditions, not merely point the UI at a non-existent master.m3u8.
+        // Every lower HLS rendition receives the same post-remap/post-CA TS
+        // and owns its own native decode/scale/encode/mux pipeline.
+        if (hasHlsOutput && streamConfig.transcodeMultibitrateEnabled &&
+            tc.videoCodec != "copy") {
+            if (toLower(streamConfig.hlsContainer) != "mpegts") {
+                CardManager::instance().releaseService(streamConfig.id);
+                if (error) *error = "native multibitrate HLS currently requires MPEG-TS container";
+                return false;
+            }
+            const auto profiles = makeAbrProfiles(tc.width, tc.height, streamConfig.transcodeVideoBitrate);
+            for (const auto& profile : profiles) {
+                auto variant = std::make_unique<StreamState::HlsAbrVariantRuntime>();
+                variant->name = profile.name;
+                variant->width = profile.width;
+                variant->height = profile.height;
+                variant->videoBitrate = profile.videoBitrate;
+                variant->muxBitrate = profile.videoBitrate + tc.audioBitrate +
+                    std::max<std::uint64_t>(300000ULL, profile.videoBitrate / 20ULL);
+                variant->transcoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
+                variant->segmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
+                auto abrTc = tc;
+                abrTc.width = variant->width;
+                abrTc.height = variant->height;
+                abrTc.videoBitrate = variant->videoBitrate;
+                abrTc.muxBitrate = variant->muxBitrate;
+                std::string abrError;
+                if (!variant->transcoder->initialize(abrTc, abrError)) {
+                    CardManager::instance().releaseService(streamConfig.id);
+                    if (error) *error = "HLS ABR " + variant->name + " transcoder failed: " + abrError;
+                    return false;
+                }
+                std::cerr << "NATIVE HLS ABR RENDITION init name=" << variant->name
+                          << " size=" << variant->width << "x" << variant->height
+                          << " video_kbps=" << (variant->videoBitrate / 1000ULL)
+                          << " mux_kbps=" << (variant->muxBitrate / 1000ULL) << std::endl;
+                state->hlsAbrVariants.push_back(std::move(variant));
+            }
+        }
     }
     const std::string normalizedInput = normalizeInputUri(streamConfig.inputUri);
     const std::string inputMode = toLower(streamConfig.inputMode);
@@ -206,6 +366,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     const bool srtInput = toLower(normalizedInput).rfind("srt://", 0) == 0;
     const bool rtspInput = toLower(normalizedInput).rfind("rtsp://", 0) == 0;
     const bool rtmpInput = toLower(normalizedInput).rfind("rtmp://", 0) == 0 || toLower(normalizedInput).rfind("rtmps://", 0) == 0;
+    const bool testInput = streamConfig.testPattern || inputMode == "test" ||
+        toLower(normalizedInput) == "test://bars" || toLower(normalizedInput) == "testsrc://bars" ||
+        toLower(normalizedInput) == "bars://hd";
     if (hlsInput) state->nativeHlsInput = std::make_unique<dvbstreamer5::media::hls::NativeHlsInput>();
     if (srtInput) state->nativeSrtInput = std::make_unique<dvbstreamer5::media::srt::NativeSrtInput>();
     if (rtspInput) state->nativeRtspInput = std::make_unique<dvbstreamer5::media::rtsp::NativeRtspInput>();
@@ -270,8 +433,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
-    relay.inputUri = hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput)));
-    relay.externallyFedInput = hlsInput || srtInput || rtspInput || rtmpInput;
+    relay.inputUri = testInput ? "external://test" : (hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput))));
+    relay.externallyFedInput = testInput || hlsInput || srtInput || rtspInput || rtmpInput;
     relay.outputs = nativeOutputs;
     relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput || !srtOutputSpecs.empty() || !rtspOutputSpecs.empty() || !rtmpOutputSpecs.empty()) && nativeOutputs.empty();
     relay.inputInterfaceAddress = cleanInterface(streamConfig.inputInterfaceAddress);
@@ -282,6 +445,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
+    relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
 
     DvbSatelliteParams dvbParams;
     std::string dvbError;
@@ -341,6 +505,30 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return CaBackendManager::instance().processTransport(streamId, data, size);
         };
     }
+    if (!state->hlsAbrVariants.empty()) {
+        StreamState* statePtr = state.get();
+        relay.observeInputTransport = [statePtr](const std::uint8_t* data, std::size_t size) {
+            if (!statePtr || !data || size == 0) return;
+            for (auto& variant : statePtr->hlsAbrVariants) {
+                if (!variant || variant->failed || !variant->transcoder || !variant->segmenter) continue;
+                std::vector<std::uint8_t> encoded;
+                std::string abrError;
+                if (!variant->transcoder->process(data, size, encoded, abrError)) {
+                    variant->failed = true;
+                    variant->lastError = abrError.empty() ? "native ABR transcoder failed" : abrError;
+                    std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
+                              << " error=" << variant->lastError << std::endl;
+                    continue;
+                }
+                if (!encoded.empty() && !variant->segmenter->push(encoded.data(), encoded.size())) {
+                    variant->failed = true;
+                    variant->lastError = variant->segmenter->lastError();
+                    std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
+                              << " error=" << variant->lastError << std::endl;
+                }
+            }
+        };
+    }
     if (state->nativeTranscoder) {
         auto* transcoder = state->nativeTranscoder.get();
         relay.transformTransport = [transcoder](const std::uint8_t* data, std::size_t size,
@@ -385,6 +573,52 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = hlsError.empty() ? "native HLS output failed" : hlsError;
             return false;
+        }
+
+        if (!state->hlsAbrVariants.empty()) {
+            const auto baseDir = hlsConfig.directory;
+            std::error_code abrEc;
+            if (!streamConfig.hlsArchiveEnabled) {
+                std::filesystem::remove_all(baseDir / "abr", abrEc);
+                abrEc.clear();
+                std::filesystem::remove(baseDir / "master.m3u8", abrEc);
+                abrEc.clear();
+            }
+            for (auto& variant : state->hlsAbrVariants) {
+                auto variantCfg = hlsConfig;
+                variantCfg.directory = baseDir / "abr" / variant->name;
+                std::string variantError;
+                if (!variant->segmenter->start(variantCfg, variantError)) {
+                    for (auto& started : state->hlsAbrVariants) {
+                        if (started && started->segmenter) started->segmenter->stop();
+                    }
+                    state->nativeHlsSegmenter->stop();
+                    CardManager::instance().releaseService(streamConfig.id);
+                    if (error) *error = "HLS ABR " + variant->name + " segmenter failed: " + variantError;
+                    return false;
+                }
+                std::cerr << "NATIVE HLS ABR SEGMENTER start name=" << variant->name
+                          << " directory=" << variantCfg.directory.string() << std::endl;
+            }
+            int primaryW = 0, primaryH = 0;
+            if (!TranscoderModule::resolutionSize(streamConfig.transcodeResolution, primaryW, primaryH)) {
+                primaryW = 1920; primaryH = 1080;
+            }
+            std::string masterError;
+            if (!writeAbrMasterPlaylist(streamConfig, primaryW, primaryH,
+                                        streamConfig.transcodeVideoBitrate,
+                                        state->hlsAbrVariants, masterError)) {
+                for (auto& started : state->hlsAbrVariants) {
+                    if (started && started->segmenter) started->segmenter->stop();
+                }
+                state->nativeHlsSegmenter->stop();
+                CardManager::instance().releaseService(streamConfig.id);
+                if (error) *error = masterError;
+                return false;
+            }
+            std::cerr << "NATIVE HLS ABR MASTER ready variants="
+                      << (state->hlsAbrVariants.size() + 1)
+                      << " path=" << (baseDir / "master.m3u8").string() << std::endl;
         }
     }
     if (state->nativeCmafSegmenter) {
@@ -487,9 +721,50 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if(!state->nativeRtmpInput->start(cfg,[relayPtr](const std::uint8_t*d,std::size_t n){return relayPtr->pushInput(d,n);},[statePtr](const std::string&st){if(statePtr)statePtr->statusMessage="RTMP "+st;},e)){state->nativeRelay->stop(); CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTMP input failed":e; return false;}
     }
 
+    if (testInput) {
+        auto* relayPtr = state->nativeRelay.get();
+        auto* statePtr = state.get();
+        dvbstreamer5::media::testpattern::NativeTestPatternConfig testConfig;
+        testConfig.serviceId = static_cast<std::uint16_t>(streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff ? streamConfig.serviceId : 1);
+        testConfig.videoPid = static_cast<std::uint16_t>(streamConfig.videoPid > 0 && streamConfig.videoPid <= 0x1ffe ? streamConfig.videoPid : 0x0100);
+        testConfig.audioPid = static_cast<std::uint16_t>(streamConfig.audioPid > 0 && streamConfig.audioPid <= 0x1ffe ? streamConfig.audioPid : 0x0101);
+        testConfig.muxBitrate = 0; // wall-clock source pacing; output CBR remains handled by the normal pipeline.
+        testConfig.videoBitrate = 2500000;
+        testConfig.audioBitrate = 128000;
+        testConfig.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+        testConfig.serviceProvider = streamConfig.serviceProvider;
+        state->testPatternStop.store(false);
+        try {
+            state->testPatternThread = std::thread([relayPtr, statePtr, testConfig]() mutable {
+                dvbstreamer5::media::testpattern::NativeTestPatternSource source;
+                std::string e;
+                if (!source.run(testConfig,
+                                [relayPtr](const std::uint8_t* d, std::size_t n) { return relayPtr->pushInput(d, n); },
+                                statePtr->testPatternStop, e)) {
+                    if (!statePtr->testPatternStop.load()) {
+                        // If the relay stopped accepting input because the
+                        // transcoder/output path failed, preserve the actual
+                        // downstream error instead of hiding it behind the
+                        // generic test-pattern sink message.
+                        const std::string relayError = relayPtr->lastError();
+                        statePtr->statusMessage = !relayError.empty()
+                            ? relayError
+                            : (e.empty() ? "native test-pattern generator failed" : e);
+                        relayPtr->finishInput(statePtr->statusMessage);
+                    }
+                }
+            });
+        } catch (const std::exception& ex) {
+            state->nativeRelay->stop();
+            CardManager::instance().releaseService(streamConfig.id);
+            if (error) *error = std::string("native test-pattern thread failed: ") + ex.what();
+            return false;
+        }
+    }
+
     state->active.store(true);
     state->running.store(true);
-    state->statusMessage = hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : (rtspInput ? "running (native RTSP input)" : (rtmpInput ? "running (native RTMP input)" : "running (native media engine)")));
+    state->statusMessage = testInput ? "running (native test pattern)" : (hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : (rtspInput ? "running (native RTSP input)" : (rtmpInput ? "running (native RTMP input)" : "running (native media engine)"))));
     if (streamConfig.transcodeEnabled) state->statusMessage += " + native transcoder";
     StreamState* rawState = state.get();
     {
@@ -508,13 +783,19 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 }
 
 void StreamManager::monitorNativeStream(StreamState* state) {
-    uint64_t lastIn = 0, lastOut = 0, lastCc = 0;
+    uint64_t lastIn = 0, lastOut = 0, lastPayloadOut = 0, lastCc = 0;
+    std::array<std::uint64_t, 5> inputRateWindow{};
+    std::array<std::uint64_t, 5> payloadRateWindow{};
+    std::size_t rateWindowIndex = 0;
+    std::size_t rateWindowSamples = 0;
+    std::uint64_t monitorTicks = 0;
     while (!state->monitorStop.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (state->monitorStop.load()) break;
         auto* relay = state->nativeRelay.get();
         if (!relay) break;
-        const uint64_t in = relay->inputBytes();
+        const uint64_t in = relay->sourceInputBytes();
+        const uint64_t payloadOut = relay->payloadOutputBytes();
         uint64_t out = relay->outputBytes();
         for (const auto& output : state->nativeSrtOutputs) if (output) out += output->sentBytes();
         for (const auto& output : state->nativeRtspOutputs) if (output) out += output->sentBytes();
@@ -522,16 +803,64 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const uint64_t cc = relay->continuityErrors();
         state->inputBytes.store(in);
         state->outputBytes.store(out);
-        state->inputBitrate.store((in - lastIn) * 8);
+        const std::uint64_t inputDelta = in - lastIn;
+        const std::uint64_t payloadDelta = payloadOut - lastPayloadOut;
+        inputRateWindow[rateWindowIndex] = inputDelta;
+        payloadRateWindow[rateWindowIndex] = payloadDelta;
+        rateWindowIndex = (rateWindowIndex + 1U) % inputRateWindow.size();
+        rateWindowSamples = (std::min)(rateWindowSamples + 1U, inputRateWindow.size());
+        std::uint64_t inputWindowBytes = 0;
+        std::uint64_t payloadWindowBytes = 0;
+        for (std::size_t i = 0; i < rateWindowSamples; ++i) {
+            inputWindowBytes += inputRateWindow[i];
+            payloadWindowBytes += payloadRateWindow[i];
+        }
+        state->inputBitrate.store((inputWindowBytes * 8U) / rateWindowSamples);
         const uint64_t outRate = (out - lastOut) * 8;
         state->outputBitrate.store(outRate ? outRate : state->inputBitrate.load());
+        state->outputPayloadBitrate.store((payloadWindowBytes * 8U) / rateWindowSamples);
+        ++monitorTicks;
+        if (state->config.transcodeEnabled && (monitorTicks % 5U) == 0U) {
+            std::cerr << "NATIVE RATE stream=" << state->config.name
+                      << " source_kbps=" << (state->inputBitrate.load() / 1000)
+                      << " payload_kbps=" << (state->outputPayloadBitrate.load() / 1000)
+                      << " cbr_kbps=" << (state->outputBitrate.load() / 1000)
+                      << " cc_delta=" << (cc - lastCc)
+                      << std::endl;
+        }
+
+        // For long-running HTTP inputs the relay intentionally stays alive while
+        // reconnecting.  Surface that state instead of leaving the UI falsely
+        // ONLINE with empty bitrate fields.  As soon as data resumes, restore
+        // the normal running status.
+        const std::string relayErrorNow = relay->lastError();
+        if (in == 0 && !relayErrorNow.empty()) {
+            state->statusMessage = relayErrorNow;
+        } else if (in > 0 && lastIn == 0) {
+            const std::string normalized = normalizeInputUri(state->config.inputUri);
+            const std::string mode = toLower(state->config.inputMode);
+            const bool hls = mode == "hls" || toLower(normalized).find(".m3u8") != std::string::npos ||
+                toLower(normalized).rfind("hls://", 0) == 0;
+            const bool srt = toLower(normalized).rfind("srt://", 0) == 0;
+            const bool rtsp = toLower(normalized).rfind("rtsp://", 0) == 0;
+            const bool rtmp = toLower(normalized).rfind("rtmp://", 0) == 0 || toLower(normalized).rfind("rtmps://", 0) == 0;
+            state->statusMessage = hls ? "running (native HLS input)" :
+                (srt ? "running (native SRT input)" :
+                (rtsp ? "running (native RTSP input)" :
+                (rtmp ? "running (native RTMP input)" : "running (native media engine)")));
+            if (state->config.transcodeEnabled) state->statusMessage += " + native transcoder";
+        }
         state->inputCcErrors.store(cc);
         state->inputCcErrorsDelta.store(cc - lastCc);
         lastIn = in;
         lastOut = out;
+        lastPayloadOut = payloadOut;
         lastCc = cc;
         if (!relay->isRunning()) {
             if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+            for (auto& variant : state->hlsAbrVariants) {
+                if (variant && variant->segmenter) variant->segmenter->stop();
+            }
             state->running.store(false);
             state->active.store(false);
             const std::string relayError = relay->lastError();
@@ -562,16 +891,21 @@ bool StreamManager::stopStream(const std::string& id) {
         }
     }
     state->monitorStop.store(true);
+    state->testPatternStop.store(true);
     if (state->nativePreviewHub) state->nativePreviewHub->close();
     if (state->nativeHlsInput) state->nativeHlsInput->stop();
     if (state->nativeSrtInput) state->nativeSrtInput->stop();
     if (state->nativeRtspInput) state->nativeRtspInput->stop();
     if (state->nativeRtmpInput) state->nativeRtmpInput->stop();
     if (state->nativeRelay) state->nativeRelay->stop();
+    if (state->testPatternThread.joinable()) state->testPatternThread.join();
     for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtspOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtmpOutputs) if (output) output->stop();
     if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+    for (auto& variant : state->hlsAbrVariants) {
+        if (variant && variant->segmenter) variant->segmenter->stop();
+    }
     if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
     if (state->monitorThread.joinable()) state->monitorThread.join();
     state->running.store(false);

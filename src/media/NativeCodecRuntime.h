@@ -58,6 +58,15 @@ struct RuntimeCapabilities {
     std::string aacDecoderLibrary;
     std::string aacEncoderLibrary;
     std::string mpegAudioLibrary;
+    bool vaapiRuntime = false;
+    bool qsvEncoder = false;
+    bool qsvH264Encoder = false;
+    bool qsvHevcEncoder = false;
+    bool nvencEncoder = false;
+    bool nvencH264Encoder = false;
+    bool nvencHevcEncoder = false;
+    std::string intelHardwareLibrary;
+    std::string nvencHardwareLibrary;
 };
 
 RuntimeCapabilities inspectRuntimeCapabilities();
@@ -106,6 +115,7 @@ public:
 
 std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec codec, std::string& error);
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec codec, std::string& error);
+std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec codec, const std::string& backend, std::string& error);
 std::unique_ptr<AudioDecoder> createAudioDecoder(mpegts::ElementaryCodec codec, std::string& error);
 std::unique_ptr<AudioEncoder> createAacEncoder(std::string& error);
 

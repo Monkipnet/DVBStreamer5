@@ -38,6 +38,10 @@ struct NativeUdpRelayConfig {
     // input is a contiguous MPEG-TS block after remap/CA, output is a new
     // contiguous MPEG-TS block. Empty output is valid while codecs buffer.
     std::function<bool(const std::uint8_t*, std::size_t, std::vector<std::uint8_t>&, std::string&)> transformTransport;
+    // Optional tap of the post-remap/post-CA input before the primary transform.
+    // Native HLS ABR uses this to feed additional independent rendition encoders
+    // from the exact same clean MPEG-TS input without re-reading the source.
+    std::function<void(const std::uint8_t*, std::size_t)> observeInputTransport;
     std::function<void(const std::uint8_t*, std::size_t)> observeTransport;
     std::string inputInterfaceAddress;
     std::string inputInterfaceDeviceName;
@@ -51,6 +55,9 @@ struct NativeUdpRelayConfig {
     std::string outputHost;
     int outputPort = 0;
     std::uint64_t targetBitrate = 2000000;
+    // Pace observeTransport consumers (SRT/RTSP/RTMP/HLS/preview) at the
+    // configured CBR instead of delivering mux bursts immediately.
+    bool paceObservedTransport = false;
     std::vector<NativeUdpRelayOutputConfig> outputs;
     bool allowNoNetworkOutput = false;
 };
@@ -70,7 +77,9 @@ public:
 
     bool isRunning() const noexcept;
     std::uint64_t inputBytes() const noexcept;
+    std::uint64_t sourceInputBytes() const noexcept;
     std::uint64_t outputBytes() const noexcept;
+    std::uint64_t payloadOutputBytes() const noexcept;
     std::uint64_t continuityErrors() const noexcept;
     std::string lastError() const;
 
@@ -99,7 +108,9 @@ private:
     std::atomic<bool> httpStopRequested_{false};
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> inputBytes_{0};
+    std::atomic<std::uint64_t> httpReceivedBytes_{0};
     std::atomic<std::uint64_t> outputBytes_{0};
+    std::atomic<std::uint64_t> payloadOutputBytes_{0};
     std::atomic<std::uint64_t> continuityErrors_{0};
     mutable std::mutex errorMutex_;
     std::string lastError_;

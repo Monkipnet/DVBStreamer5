@@ -232,7 +232,9 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
         httpFinished_ = false;
     }
     inputBytes_.store(0, std::memory_order_relaxed);
+    httpReceivedBytes_.store(0, std::memory_order_relaxed);
     outputBytes_.store(0, std::memory_order_relaxed);
+    payloadOutputBytes_.store(0, std::memory_order_relaxed);
     continuityErrors_.store(0, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(errorMutex_);
@@ -398,8 +400,19 @@ std::uint64_t NativeUdpRelay::inputBytes() const noexcept {
     return inputBytes_.load(std::memory_order_relaxed);
 }
 
+std::uint64_t NativeUdpRelay::sourceInputBytes() const noexcept {
+    if (httpInputSource_) {
+        return httpReceivedBytes_.load(std::memory_order_relaxed);
+    }
+    return inputBytes_.load(std::memory_order_relaxed);
+}
+
 std::uint64_t NativeUdpRelay::outputBytes() const noexcept {
     return outputBytes_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t NativeUdpRelay::payloadOutputBytes() const noexcept {
+    return payloadOutputBytes_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t NativeUdpRelay::continuityErrors() const noexcept {
@@ -470,12 +483,15 @@ void NativeUdpRelay::runHttpInput() {
     options.connectTimeoutMs = 10000;
     options.readTimeoutMs = 15000;
     options.writeTimeoutMs = 10000;
-    options.keepAlive = true;
     options.userAgent = config_.userAgent.empty()
         ? "Mozilla/5.0 DVBStreamer5"
         : config_.userAgent;
     options.stopping = &httpStopRequested_;
     options.maxBodyBytes = (std::numeric_limits<std::size_t>::max)();
+    // This is a long-running live input. Keep the request connection alive
+    // while the origin is streaming; if it still closes, the loop below
+    // reconnects without stopping the relay.
+    options.keepAlive = true;
 
     if (config_.accessKeyMode == "header" &&
         !config_.accessKeyName.empty() && !config_.accessKeyValue.empty()) {
@@ -517,28 +533,30 @@ void NativeUdpRelay::runHttpInput() {
             config_.accessKeyMode == "query");
     options.maxRedirects = hasAccessKey ? 0 : 8;
 
-    // A live HTTP transport is allowed to disappear temporarily. Do not turn
-    // the whole stream OFFLINE on EOF/read timeout/reset; reconnect with a
-    // bounded backoff and keep the MPEG-TS relay alive.
     int reconnectDelaySeconds = 1;
+    std::uint64_t attempt = 0;
     while (running_.load(std::memory_order_acquire) &&
            !httpStopRequested_.load(std::memory_order_acquire)) {
+        ++attempt;
+        std::cerr << "NATIVE HTTP INPUT attempt=" << attempt
+                  << " url=" << location << std::endl;
         dvbstreamer5::http::Response response;
         std::string requestError;
-        std::size_t receivedThisAttempt = 0;
-        bool clearedTransientError = false;
+        bool receivedAny = false;
+        std::uint64_t receivedBytes = 0;
 
         const bool ok = dvbstreamer5::http::get(
             location, options, response, requestError,
-            [this, &receivedThisAttempt, &clearedTransientError](
-                const std::uint8_t* data, std::size_t size) {
-                if (!data || size == 0) return true;
-                receivedThisAttempt += size;
-                if (!clearedTransientError) {
+            [this, &receivedAny, &receivedBytes, attempt](const std::uint8_t* data, std::size_t size) {
+                if (size != 0 && !receivedAny) {
+                    receivedAny = true;
+                    std::cerr << "NATIVE HTTP INPUT connected attempt=" << attempt
+                              << " first_chunk=" << size << std::endl;
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_.clear();
-                    clearedTransientError = true;
                 }
+                receivedBytes += size;
+                httpReceivedBytes_.fetch_add(size, std::memory_order_relaxed);
                 return enqueueHttpData(data, size);
             });
 
@@ -547,41 +565,61 @@ void NativeUdpRelay::runHttpInput() {
             break;
         }
 
-        std::string reconnectReason;
+        // A live HTTP response ending normally is still a disconnect from our
+        // point of view. Treat both EOF and transport errors as reconnectable.
+        std::string reconnectError;
         if (!ok) {
-            reconnectReason = requestError.empty()
-                ? "HTTP transport ended"
-                : requestError;
-            if (response.status != 0 &&
-                reconnectReason.find("HTTP " + std::to_string(response.status)) == std::string::npos) {
-                reconnectReason += " (HTTP " + std::to_string(response.status) + ")";
+            reconnectError = "native HTTP input reconnecting: " + requestError;
+            if (response.status != 0) {
+                reconnectError += " (HTTP " + std::to_string(response.status) + ")";
             }
         } else {
-            reconnectReason = "remote HTTP server closed the live stream";
+            reconnectError = "native HTTP input ended; reconnecting";
         }
         {
             std::lock_guard<std::mutex> lock(errorMutex_);
-            lastError_ = "native HTTP input reconnecting: " + reconnectReason;
+            lastError_ = reconnectError;
         }
+        std::cerr << "NATIVE HTTP INPUT disconnected attempt=" << attempt
+                  << " bytes=" << receivedBytes
+                  << " status=" << response.status
+                  << " ok=" << (ok ? 1 : 0)
+                  << " error=" << (requestError.empty() ? "-" : requestError)
+                  << std::endl;
 
-        // If data flowed, a disconnect is likely a normal upstream rotation;
-        // retry quickly. Repeated failures back off to at most five seconds.
-        if (receivedThisAttempt != 0) {
-            reconnectDelaySeconds = 1;
+        // Preserve the byte boundary between two independent HTTP responses.
+        // The consumer uses an empty queue item as a discontinuity marker and
+        // resets PacketFramer before accepting bytes from the next connection.
+        // Without this marker a partial 188-byte packet from the old socket can
+        // be concatenated with the first bytes of the new socket and create a
+        // syntactically broken MPEG-TS packet.
+        {
+            std::lock_guard<std::mutex> lock(httpQueueMutex_);
+            httpQueue_.emplace_back();
         }
+        httpQueueCondition_.notify_all();
+
+        // If we actually received transport data before the disconnect, start
+        // the next retry again at 1 second. Repeated immediate failures back
+        // off to a maximum of 5 seconds.
+        const int retryDelaySeconds = reconnectDelaySeconds;
+        reconnectDelaySeconds = receivedAny
+            ? 1
+            : (std::min)(5, reconnectDelaySeconds * 2);
 
         std::unique_lock<std::mutex> lock(httpQueueMutex_);
         httpQueueCondition_.wait_for(
             lock,
-            std::chrono::seconds(reconnectDelaySeconds),
+            std::chrono::seconds(retryDelaySeconds),
             [this] {
                 return !running_.load(std::memory_order_acquire) ||
                     httpStopRequested_.load(std::memory_order_acquire);
             });
-        if (receivedThisAttempt == 0) {
-            reconnectDelaySeconds = (std::min)(5, reconnectDelaySeconds + 1);
-        }
     }
+
+    // Only stopping the relay, or a permanent validation error above, marks
+    // the HTTP source finished. Transient network failures never do.
+    finishHttpInput({});
 }
 
 void NativeUdpRelay::run() {
@@ -607,7 +645,15 @@ void NativeUdpRelay::run() {
     const bool rtpInput = networkInput && inputEndpoint.scheme == "rtp";
     bool fileInputEof = false;
     bool fileHadTsPackets = false;
-    dvbstreamer5::media::mpegts::PacketFramer framer;
+    // V10.3: keep the source/input MPEG-TS framer completely separate from
+    // the post-transform/output framer. HTTP reads are not guaranteed to end
+    // on 188-byte packet boundaries, so inputFramer can legitimately retain a
+    // partial source TS packet between iterations. Reusing that same framer
+    // for transcoder output contaminates the pending source bytes with muxed
+    // output bytes and corrupts the next live input packet. Test-pattern input
+    // often hid this because its chunks were already packet-aligned.
+    dvbstreamer5::media::mpegts::PacketFramer inputFramer;
+    dvbstreamer5::media::mpegts::PacketFramer transformedFramer;
     dvbstreamer5::media::mpegts::ContinuityTracker continuity;
     std::vector<dvbstreamer5::media::mpegts::Packet> packets;
     std::vector<dvbstreamer5::media::mpegts::Packet> remappedPackets;
@@ -645,6 +691,75 @@ void NativeUdpRelay::run() {
         outputs.push_back(std::move(output));
         ++seed;
     }
+
+    // observeTransport consumers such as SRT/RTSP/RTMP receive the already
+    // muxed transport stream.  Do not put that stream through CbrTsPacer:
+    // the transcoder mux has already inserted the configured CBR null packets,
+    // and a second packet queue both double-stuffs the stream and can overflow
+    // after timestamp catch-up bursts.  Instead apply wall-clock backpressure
+    // directly while delivering the existing packets.
+    bool observedPacingStarted = false;
+    std::chrono::steady_clock::time_point observedNextDeadline {};
+    std::uint64_t observedPacingRemainder = 0;
+
+    auto observePackets = [&](
+        const std::vector<dvbstreamer5::media::mpegts::Packet>& observedPackets) -> bool {
+        if (!config_.observeTransport || observedPackets.empty()) return true;
+
+        constexpr std::size_t kObservedPacketsPerBatch = 7;
+        constexpr std::uint64_t kNanosecondsPerSecond = 1000000000ULL;
+        const bool paced = config_.paceObservedTransport && config_.targetBitrate > 0;
+
+        for (std::size_t first = 0; first < observedPackets.size();
+             first += kObservedPacketsPerBatch) {
+            if (!running_.load(std::memory_order_acquire)) return false;
+
+            const std::size_t count = (std::min)(
+                kObservedPacketsPerBatch, observedPackets.size() - first);
+
+            if (paced) {
+                auto now = std::chrono::steady_clock::now();
+                if (!observedPacingStarted) {
+                    observedPacingStarted = true;
+                    observedNextDeadline = now;
+                }
+                if (observedNextDeadline > now) {
+                    std::this_thread::sleep_until(observedNextDeadline);
+                    now = std::chrono::steady_clock::now();
+                }
+                // If the process was suspended or the source jumped far ahead,
+                // do not attempt a long high-speed catch-up burst.
+                if (now - observedNextDeadline > std::chrono::milliseconds(250)) {
+                    observedNextDeadline = now;
+                    observedPacingRemainder = 0;
+                }
+            }
+
+            std::array<std::uint8_t,
+                kObservedPacketsPerBatch * dvbstreamer5::media::mpegts::kPacketSize> bytes {};
+            for (std::size_t index = 0; index < count; ++index) {
+                std::memcpy(
+                    bytes.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
+                    observedPackets[first + index].data(),
+                    dvbstreamer5::media::mpegts::kPacketSize);
+            }
+            config_.observeTransport(
+                bytes.data(), count * dvbstreamer5::media::mpegts::kPacketSize);
+
+            if (paced) {
+                const std::uint64_t bits =
+                    static_cast<std::uint64_t>(count) *
+                    dvbstreamer5::media::mpegts::kPacketSize * 8ULL;
+                const std::uint64_t numerator =
+                    bits * kNanosecondsPerSecond + observedPacingRemainder;
+                const std::uint64_t nanoseconds = numerator / config_.targetBitrate;
+                observedPacingRemainder = numerator % config_.targetBitrate;
+                observedNextDeadline += std::chrono::nanoseconds(nanoseconds);
+            }
+        }
+        return true;
+    };
+
     std::array<std::uint8_t, 65536> datagram {};
     std::string error;
 
@@ -674,7 +789,7 @@ void NativeUdpRelay::run() {
                 fileInputEof = fileInput_.eof();
                 if (received > 0) {
                     inputBytes_.fetch_add(received, std::memory_order_relaxed);
-                    framer.push(datagram.data(), received, packets);
+                    inputFramer.push(datagram.data(), received, packets);
                     fileHadTsPackets = fileHadTsPackets || !packets.empty();
                 }
             }
@@ -754,12 +869,24 @@ void NativeUdpRelay::run() {
                 auto chunk = std::move(httpQueue_.front());
                 httpQueue_.pop_front();
                 httpQueuedBytes_ -= chunk.size();
-                received = chunk.size();
-                std::copy(chunk.begin(), chunk.end(), datagram.begin());
                 lock.unlock();
                 httpQueueCondition_.notify_all();
+
+                if (chunk.empty()) {
+                    // HTTP reconnect boundary.  Do not join an incomplete TS
+                    // packet from the previous response with bytes from the
+                    // next response.  Continuity counters are also expected to
+                    // jump when a live origin reconnects.
+                    inputFramer.reset();
+                    transformedFramer.reset();
+                    continuity.reset();
+                    continue;
+                }
+
+                received = chunk.size();
+                std::copy(chunk.begin(), chunk.end(), datagram.begin());
                 inputBytes_.fetch_add(received, std::memory_order_relaxed);
-                framer.push(datagram.data(), received, packets);
+                inputFramer.push(datagram.data(), received, packets);
             } else if (httpFinished_) {
                 const bool cbrDrained = std::all_of(
                     outputs.begin(), outputs.end(), [](const OutputWorker& output) {
@@ -815,7 +942,7 @@ void NativeUdpRelay::run() {
                         continue;
                     }
                 } else {
-                    framer.push(datagram.data(), received, packets);
+                    inputFramer.push(datagram.data(), received, packets);
                 }
             }
         }
@@ -823,6 +950,15 @@ void NativeUdpRelay::run() {
         if (!packets.empty() && config_.remapEnabled) {
             remappedPackets.clear();
             for (const auto& packet : packets) {
+                // Live network inputs can contain an isolated damaged packet
+                // around reconnect/discontinuity.  A malformed TS packet must
+                // be dropped and counted, not turn the whole service OFFLINE.
+                dvbstreamer5::media::mpegts::PacketInfo packetInfo;
+                if (!dvbstreamer5::media::mpegts::inspectPacket(
+                        packet.data(), packet.size(), packetInfo)) {
+                    continuityErrors_.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
                 if (!remapper_.process(packet, remappedPackets, error)) {
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_ = error.empty() ? "native MPEG-TS remap failed" : error;
@@ -866,12 +1002,20 @@ void NativeUdpRelay::run() {
             if (!running_.load(std::memory_order_acquire)) break;
         }
 
-        if (!packets.empty() && config_.transformTransport) {
+        if (!packets.empty() && (config_.transformTransport || config_.observeInputTransport)) {
             observedTransport.resize(packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
             for (std::size_t index = 0; index < packets.size(); ++index) {
                 std::memcpy(observedTransport.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
                             packets[index].data(), dvbstreamer5::media::mpegts::kPacketSize);
             }
+            if (config_.observeInputTransport) {
+                config_.observeInputTransport(observedTransport.data(), observedTransport.size());
+            }
+        }
+
+        if (!packets.empty() && config_.transformTransport) {
+            // observedTransport was already materialized above so that ABR taps and
+            // the primary transcoder consume byte-identical post-remap/post-CA TS.
             std::vector<std::uint8_t> transformed;
             if (!config_.transformTransport(observedTransport.data(), observedTransport.size(), transformed, error)) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
@@ -881,11 +1025,22 @@ void NativeUdpRelay::run() {
             }
             packets.clear();
             if (!transformed.empty()) {
-                framer.push(transformed.data(), transformed.size(), packets);
+                transformedFramer.push(transformed.data(), transformed.size(), packets);
             }
         }
 
         if (!packets.empty()) {
+            // Count the real MPEG-TS payload produced by the pipeline before
+            // CBR null-packet stuffing and before duplicating it to outputs.
+            std::size_t nonNullPacketCount = 0;
+            for (const auto& packet : packets) {
+                const std::uint16_t pid = static_cast<std::uint16_t>(
+                    ((packet[1] & 0x1fU) << 8) | packet[2]);
+                if (pid != 0x1fffU) ++nonNullPacketCount;
+            }
+            payloadOutputBytes_.fetch_add(
+                nonNullPacketCount * dvbstreamer5::media::mpegts::kPacketSize,
+                std::memory_order_relaxed);
             for (const auto& packet : packets) {
                 const auto continuityStatus =
                     continuity.observe(packet.data(), packet.size());
@@ -897,18 +1052,8 @@ void NativeUdpRelay::run() {
                 }
             }
 
-            if (config_.observeTransport) {
-                observedTransport.resize(
-                    packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
-                for (std::size_t index = 0; index < packets.size(); ++index) {
-                    std::memcpy(
-                        observedTransport.data() +
-                            index * dvbstreamer5::media::mpegts::kPacketSize,
-                        packets[index].data(),
-                        dvbstreamer5::media::mpegts::kPacketSize);
-                }
-                config_.observeTransport(
-                    observedTransport.data(), observedTransport.size());
+            if (config_.observeTransport && !observePackets(packets)) {
+                break;
             }
 
             for (auto& output : outputs) {

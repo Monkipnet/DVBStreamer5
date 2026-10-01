@@ -238,8 +238,8 @@ void testMpegTsRemapper() {
     config.outputServiceId = 42;
     config.outputVideoPid = 0x200;
     config.outputAudioPid = 0x201;
-    config.serviceName = "Remapped";
-    config.serviceProvider = "DVBStreamer5";
+    config.serviceName = u8"Беларусь 1";
+    config.serviceProvider = u8"Оператор";
     std::string error;
     assert(remapper.initialize(config, error));
 
@@ -295,12 +295,10 @@ public:
     explicit HttpTsTestServer(
         std::vector<std::uint8_t> body,
         int responseCode = 200,
-        std::string redirectLocation = {},
-        int maxConnections = 1)
+        std::string redirectLocation = {})
         : body_(std::move(body)),
           responseCode_(responseCode),
-          redirectLocation_(std::move(redirectLocation)),
-          maxConnections_(std::max(1, maxConnections)) {
+          redirectLocation_(std::move(redirectLocation)) {
         listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         assert(listener_ != kInvalidSocket);
         int reuseAddress = 1;
@@ -370,51 +368,49 @@ private:
 #endif
 
     void serve() {
-        for (int connection = 0; connection < maxConnections_; ++connection) {
-            const Socket client = ::accept(listener_, nullptr, nullptr);
-            if (client == kInvalidSocket) {
-                return;
-            }
-
-            std::string request;
-            std::array<char, 4096> buffer {};
-            while (request.find("\r\n\r\n") == std::string::npos &&
-                request.size() < 16384) {
-#ifdef _WIN32
-                const int count = ::recv(
-                    client, buffer.data(), static_cast<int>(buffer.size()), 0);
-#else
-                const ssize_t count = ::recv(
-                    client, buffer.data(), buffer.size(), 0);
-#endif
-                if (count <= 0) {
-                    break;
-                }
-                request.append(buffer.data(), static_cast<std::size_t>(count));
-            }
-            {
-                std::lock_guard<std::mutex> lock(requestMutex_);
-                request_ = std::move(request);
-            }
-
-            const std::string statusLine = responseCode_ == 200
-                ? "HTTP/1.1 200 OK\r\n"
-                : "HTTP/1.1 " + std::to_string(responseCode_) +
-                    (responseCode_ == 302 ? " Found\r\n" : " Not Found\r\n");
-            const std::string locationHeader = redirectLocation_.empty()
-                ? std::string()
-                : "Location: " + redirectLocation_ + "\r\n";
-            const std::string responseHeaders = statusLine + locationHeader +
-                "Content-Type: video/mp2t\r\nContent-Length: " +
-                std::to_string(body_.size()) + "\r\nConnection: close\r\n\r\n";
-            sendAll(client,
-                reinterpret_cast<const std::uint8_t*>(responseHeaders.data()),
-                responseHeaders.size());
-            if (responseCode_ == 200) {
-                sendAll(client, body_.data(), body_.size());
-            }
-            closeSocket(client);
+        const Socket client = ::accept(listener_, nullptr, nullptr);
+        if (client == kInvalidSocket) {
+            return;
         }
+
+        std::string request;
+        std::array<char, 4096> buffer {};
+        while (request.find("\r\n\r\n") == std::string::npos &&
+            request.size() < 16384) {
+#ifdef _WIN32
+            const int count = ::recv(
+                client, buffer.data(), static_cast<int>(buffer.size()), 0);
+#else
+            const ssize_t count = ::recv(
+                client, buffer.data(), buffer.size(), 0);
+#endif
+            if (count <= 0) {
+                break;
+            }
+            request.append(buffer.data(), static_cast<std::size_t>(count));
+        }
+        {
+            std::lock_guard<std::mutex> lock(requestMutex_);
+            request_ = std::move(request);
+        }
+
+        const std::string statusLine = responseCode_ == 200
+            ? "HTTP/1.1 200 OK\r\n"
+            : "HTTP/1.1 " + std::to_string(responseCode_) +
+                (responseCode_ == 302 ? " Found\r\n" : " Not Found\r\n");
+        const std::string locationHeader = redirectLocation_.empty()
+            ? std::string()
+            : "Location: " + redirectLocation_ + "\r\n";
+        const std::string responseHeaders = statusLine + locationHeader +
+            "Content-Type: video/mp2t\r\nContent-Length: " +
+            std::to_string(body_.size()) + "\r\nConnection: close\r\n\r\n";
+        sendAll(client,
+            reinterpret_cast<const std::uint8_t*>(responseHeaders.data()),
+            responseHeaders.size());
+        if (responseCode_ == 200) {
+            sendAll(client, body_.data(), body_.size());
+        }
+        closeSocket(client);
     }
 
     static void sendAll(Socket socket, const std::uint8_t* data, std::size_t size) {
@@ -440,7 +436,6 @@ private:
     std::vector<std::uint8_t> body_;
     int responseCode_ = 200;
     std::string redirectLocation_;
-    int maxConnections_ = 1;
     mutable std::mutex requestMutex_;
     std::string request_;
     std::thread worker_;
@@ -521,6 +516,28 @@ void testFraming() {
     framer.reset();
     framer.push(input.data(), input.size(), output);
     assert(output.size() == 6);
+
+    // A false sync byte with an impossible adaptation-field length must not be
+    // emitted as a packet.  This reproduces the kind of byte boundary that can
+    // occur when a live HTTP connection is re-established mid-packet.
+    Packet malformed {};
+    malformed.fill(0xff);
+    malformed[0] = 0x47;
+    malformed[1] = 0x00;
+    malformed[2] = 0x20;
+    malformed[3] = 0x30;
+    malformed[4] = 184; // payload+adaptation cannot fit in 188 bytes
+    std::vector<std::uint8_t> reconnectBytes;
+    reconnectBytes.insert(reconnectBytes.end(), malformed.begin(), malformed.end());
+    reconnectBytes.insert(reconnectBytes.end(), first.begin(), first.end());
+    reconnectBytes.insert(reconnectBytes.end(), second.begin(), second.end());
+    reconnectBytes.insert(reconnectBytes.end(), third.begin(), third.end());
+
+    output.clear();
+    framer.reset();
+    framer.push(reconnectBytes.data(), reconnectBytes.size(), output);
+    assert(output.size() == 3);
+    assert(output[0] == first && output[1] == second && output[2] == third);
 }
 
 void testContinuityTracking() {
@@ -1174,13 +1191,18 @@ void testNativeHttpCbrRelay() {
         assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
     }
 
-    // HTTP MPEG-TS is treated as a live input. A clean server close must
-    // leave the relay running so it can reconnect instead of going OFFLINE.
-    assert(relay.isRunning());
+    const auto stopDeadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(2);
+    while (relay.isRunning() &&
+        std::chrono::steady_clock::now() < stopDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    assert(!relay.isRunning());
     relay.stop();
     httpServer.join();
+    assert(relay.lastError().empty());
     assert(relay.inputBytes() == 8 * 188);
-    assert(relay.outputBytes() >= 2 * 7 * 188);
+    assert(relay.outputBytes() == 2 * 7 * 188);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: test-secret") != std::string::npos);
     assert(request.find("DVBStreamer5-test") != std::string::npos);
@@ -1217,9 +1239,16 @@ void testNativeHttpQueryAccessKey() {
     assert(std::equal(
         sourcePacket.begin(), sourcePacket.end(), received.begin()));
 
-    assert(relay.isRunning());
+    const auto stopDeadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(2);
+    while (relay.isRunning() &&
+        std::chrono::steady_clock::now() < stopDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    assert(!relay.isRunning());
     relay.stop();
     httpServer.join();
+    assert(relay.lastError().empty());
     const std::string request = httpServer.request();
     assert(request.find("GET /live.ts?stream%20key=a%26b HTTP/1.1") !=
         std::string::npos);
@@ -1259,11 +1288,18 @@ void testNativeHttpVbrAndRtpFanout() {
     assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(view, decoded));
     assert(decoded.size() == 1 && decoded.front() == sourcePacket);
 
-    assert(relay.isRunning());
+    const auto stopDeadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(2);
+    while (relay.isRunning() &&
+        std::chrono::steady_clock::now() < stopDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    assert(!relay.isRunning());
     relay.stop();
     httpServer.join();
+    assert(relay.lastError().empty());
     assert(relay.inputBytes() == sourcePacket.size());
-    assert(relay.outputBytes() >= 2 * sourcePacket.size());
+    assert(relay.outputBytes() == 2 * sourcePacket.size());
 }
 
 void testNativeHttpFailureIsReported() {
@@ -1282,16 +1318,16 @@ void testNativeHttpFailureIsReported() {
     };
     assert(relay.start(config, error));
 
-    const auto errorDeadline = std::chrono::steady_clock::now() +
+    const auto stopDeadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(2);
-    while (relay.lastError().find("HTTP 404") == std::string::npos &&
-        std::chrono::steady_clock::now() < errorDeadline) {
+    while (relay.isRunning() &&
+        std::chrono::steady_clock::now() < stopDeadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    assert(relay.isRunning());
-    assert(relay.lastError().find("HTTP 404") != std::string::npos);
+    assert(!relay.isRunning());
     relay.stop();
     httpServer.join();
+    assert(relay.lastError().find("HTTP 404") != std::string::npos);
 }
 
 void testNativeHttpDoesNotRedirectAccessKeys() {
@@ -1314,56 +1350,18 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
     };
     assert(relay.start(config, error));
 
-    const auto errorDeadline = std::chrono::steady_clock::now() +
+    const auto stopDeadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(2);
-    while (relay.lastError().find("HTTP 302") == std::string::npos &&
-        std::chrono::steady_clock::now() < errorDeadline) {
+    while (relay.isRunning() &&
+        std::chrono::steady_clock::now() < stopDeadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    assert(relay.isRunning());
-    assert(relay.lastError().find("HTTP 302") != std::string::npos);
+    assert(!relay.isRunning());
     relay.stop();
     httpServer.join();
+    assert(relay.lastError().find("HTTP 302") != std::string::npos);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: must-not-leak") != std::string::npos);
-}
-
-void testNativeHttpReconnectsAfterServerClose() {
-    using namespace dvbstreamer5::media::network;
-    UdpSocket receiver;
-    std::string error;
-    assert(receiver.openReceiver("127.0.0.1", 0, "", "", 0, error));
-
-    const Packet sourcePacket = packet(0x0144, 2);
-    std::vector<std::uint8_t> body(sourcePacket.begin(), sourcePacket.end());
-    HttpTsTestServer httpServer(body, 200, {}, 2);
-
-    NativeUdpRelay relay;
-    NativeUdpRelayConfig config;
-    config.inputUri =
-        "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/live.ts";
-    config.outputs = {
-        {"udp-vbr", "127.0.0.1", receiver.localPort(), ""}
-    };
-    assert(relay.start(config, error));
-
-    std::array<std::uint8_t, 2048> received {};
-    std::size_t receivedSize = 0;
-    assert(receiver.receive(
-        received.data(), received.size(), receivedSize, 2500, error));
-    assert(receivedSize == sourcePacket.size());
-    assert(std::equal(sourcePacket.begin(), sourcePacket.end(), received.begin()));
-
-    receivedSize = 0;
-    assert(receiver.receive(
-        received.data(), received.size(), receivedSize, 3500, error));
-    assert(receivedSize == sourcePacket.size());
-    assert(std::equal(sourcePacket.begin(), sourcePacket.end(), received.begin()));
-    assert(relay.isRunning());
-    assert(relay.inputBytes() >= 2 * sourcePacket.size());
-
-    relay.stop();
-    httpServer.join();
 }
 
 void testNativePreviewHubFanout() {
@@ -1417,7 +1415,6 @@ int main() {
     testNativeHttpVbrAndRtpFanout();
     testNativeHttpFailureIsReported();
     testNativeHttpDoesNotRedirectAccessKeys();
-    testNativeHttpReconnectsAfterServerClose();
     testNativePreviewHubFanout();
     std::cout << "PASS: native MPEG-TS/RTP and CBR output relay over UDP\n";
 }

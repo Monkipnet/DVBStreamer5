@@ -10,8 +10,18 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     const auto native = dvbstreamer5::media::codec::inspectRuntimeCapabilities();
     result.x264Available = native.h264Encoder;
     result.x265Available = native.hevcEncoder;
-    result.videoEncoder = native.h264Encoder ? "OpenH264" : std::string{};
-    result.hevcVideoEncoder = native.hevcEncoder ? "native HEVC encoder" : std::string{};
+    result.nvencAvailable = native.nvencH264Encoder;
+    result.nvencHevcAvailable = native.nvencHevcEncoder;
+    result.intelAvailable = native.qsvH264Encoder;
+    result.intelHevcAvailable = native.qsvHevcEncoder;
+    result.intelEncoder = native.intelHardwareLibrary;
+    result.intelHevcEncoder = native.intelHardwareLibrary;
+    result.videoEncoder = native.h264Encoder ? "OpenH264 CPU" : std::string{};
+    result.hevcVideoEncoder = native.hevcEncoder ? "Kvazaar CPU" : std::string{};
+    if (native.nvencH264Encoder) result.videoEncoder += result.videoEncoder.empty() ? "NVENC" : " + NVENC";
+    if (native.qsvH264Encoder) result.videoEncoder += result.videoEncoder.empty() ? "QSV/VAAPI" : " + QSV/VAAPI";
+    if (native.nvencHevcEncoder) result.hevcVideoEncoder += result.hevcVideoEncoder.empty() ? "NVENC" : " + NVENC";
+    if (native.qsvHevcEncoder) result.hevcVideoEncoder += result.hevcVideoEncoder.empty() ? "QSV/VAAPI" : " + QSV/VAAPI";
     result.aacEncoder = native.aacEncoder ? "native AAC encoder" : std::string{};
     result.audioEncoder = result.aacEncoder;
     result.mp2EncoderAvailable = true;
@@ -32,13 +42,17 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
                        native.hevcDecoder && native.hevcEncoder &&
                        native.aacDecoder && native.aacEncoder;
     result.message = result.available
-        ? "native video/audio transcoder available; no GStreamer/FFmpeg media framework"
+        ? "native video/audio transcoder available; direct CPU/NVENC/QSV-VAAPI backends; no GStreamer/FFmpeg/libav media framework"
         : "native transcoder core active; one or more codec backends are unavailable";
     return result;
 }
 
 bool TranscoderModule::resolutionSize(const std::string& resolution, int& width, int& height) {
-    static const std::regex pattern(R"(^\s*([0-9]{2,5})x([0-9]{2,5})\s*$)", std::regex::icase);
+    // Accept the UI's optional anamorphic/aspect suffix (for example
+    // 720x576_16_9) while keeping coded dimensions independent from DAR.
+    static const std::regex pattern(
+        R"(^\s*([0-9]{2,5})x([0-9]{2,5})(?:_([0-9]{1,3})_([0-9]{1,3}))?\s*$)",
+        std::regex::icase);
     std::smatch match;
     if (!std::regex_match(resolution, match, pattern)) return false;
     try {

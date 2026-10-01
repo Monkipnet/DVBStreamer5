@@ -16,6 +16,7 @@ enum class ElementaryCodec {
     H265,
     Mpeg2Video,
     AacAdts,
+    AacLatm,
     MpegAudio,
     Ac3,
     Eac3

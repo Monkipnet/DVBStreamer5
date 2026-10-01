@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 #include <utility>
 
 namespace dvbstreamer5::media::mpegts {
@@ -23,6 +24,103 @@ bool validSectionCrc(const std::vector<std::uint8_t>& section) {
     return crc == 0;
 }
 
+
+struct NalSpan {
+    std::size_t startCode = 0;
+    std::size_t nal = 0;
+};
+
+std::vector<NalSpan> annexBStarts(const std::vector<std::uint8_t>& data) {
+    std::vector<NalSpan> out;
+    for (std::size_t i = 0; i + 3 < data.size();) {
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+            out.push_back({i, i + 3});
+            i += 3;
+            continue;
+        }
+        if (i + 4 < data.size() && data[i] == 0 && data[i + 1] == 0 &&
+            data[i + 2] == 0 && data[i + 3] == 1) {
+            out.push_back({i, i + 4});
+            i += 4;
+            continue;
+        }
+        ++i;
+    }
+    return out;
+}
+
+bool h264FirstMbInSliceZero(const std::uint8_t* nal, std::size_t size) {
+    if (!nal || size < 2) return false;
+    std::vector<std::uint8_t> rbsp;
+    rbsp.reserve(size - 1);
+    int zeros = 0;
+    for (std::size_t i = 1; i < size; ++i) {
+        const std::uint8_t b = nal[i];
+        if (zeros >= 2 && b == 0x03) {
+            zeros = 0;
+            continue;
+        }
+        rbsp.push_back(b);
+        zeros = (b == 0) ? zeros + 1 : 0;
+    }
+    std::size_t bit = 0;
+    std::size_t leading = 0;
+    while (bit < rbsp.size() * 8U) {
+        const bool one = (rbsp[bit / 8U] & (0x80U >> (bit % 8U))) != 0;
+        ++bit;
+        if (one) break;
+        ++leading;
+        if (leading > 31) return false;
+    }
+    if (bit > rbsp.size() * 8U) return false;
+    std::uint32_t suffix = 0;
+    for (std::size_t i = 0; i < leading; ++i) {
+        if (bit >= rbsp.size() * 8U) return false;
+        suffix = (suffix << 1) |
+            ((rbsp[bit / 8U] & (0x80U >> (bit % 8U))) ? 1U : 0U);
+        ++bit;
+    }
+    const std::uint32_t value = ((1U << leading) - 1U) + suffix;
+    return value == 0;
+}
+
+bool isVideoAuBoundary(ElementaryCodec codec,
+                       const std::uint8_t* nal, std::size_t size,
+                       bool seenVcl) {
+    if (!nal || size == 0) return false;
+    if (codec == ElementaryCodec::H264) {
+        const std::uint8_t type = nal[0] & 0x1fU;
+        if (type == 9) return seenVcl;
+        if (type >= 1 && type <= 5 && seenVcl)
+            return h264FirstMbInSliceZero(nal, size);
+        return false;
+    }
+    if (codec == ElementaryCodec::H265) {
+        if (size < 3) return false;
+        const std::uint8_t type = static_cast<std::uint8_t>((nal[0] >> 1) & 0x3fU);
+        if (type == 35) return seenVcl;
+        if (type <= 31 && seenVcl) {
+            // first_slice_segment_in_pic_flag is the first bit after the
+            // two-byte HEVC NAL header.
+            return (nal[2] & 0x80U) != 0;
+        }
+    }
+    return false;
+}
+
+bool isVideoVcl(ElementaryCodec codec, const std::uint8_t* nal, std::size_t size) {
+    if (!nal || size == 0) return false;
+    if (codec == ElementaryCodec::H264) {
+        const std::uint8_t type = nal[0] & 0x1fU;
+        return type >= 1 && type <= 5;
+    }
+    if (codec == ElementaryCodec::H265) {
+        const std::uint8_t type = static_cast<std::uint8_t>((nal[0] >> 1) & 0x3fU);
+        return type <= 31;
+    }
+    return false;
+}
+
 } // namespace
 
 void NativeTsDemux::setSampleCallback(SampleCallback callback) {
@@ -41,8 +139,11 @@ void NativeTsDemux::reset() {
     psi_.clear();
     streamsByPid_.clear();
     pes_.clear();
+    videoAu_.clear();
     programNumber_ = 0;
     pmtPid_ = 0xffff;
+    pesTrimEvents_ = 0;
+    pesTruncatedEvents_ = 0;
 }
 
 std::vector<DemuxStreamInfo> NativeTsDemux::streams() const {
@@ -76,6 +177,10 @@ void NativeTsDemux::flush() {
         pids.push_back(pid);
     }
     for (const auto pid : pids) flushPes(pid);
+    std::vector<std::uint16_t> videoPids;
+    videoPids.reserve(videoAu_.size());
+    for (const auto& [pid, state] : videoAu_) { (void)state; videoPids.push_back(pid); }
+    for (const auto pid : videoPids) flushVideoAu(pid);
 }
 
 void NativeTsDemux::consumePacket(const Packet& packet, std::string& error) {
@@ -155,6 +260,7 @@ void NativeTsDemux::parsePat(const std::vector<std::uint8_t>& section) {
             pmtPid_ = pid;
             streamsByPid_.clear();
             pes_.clear();
+            videoAu_.clear();
             psi_.erase(pid);
         }
         break;
@@ -169,8 +275,8 @@ ElementaryCodec NativeTsDemux::codecFromStreamType(std::uint8_t streamType,
         case 0x24: return ElementaryCodec::H265;
         case 0x01:
         case 0x02: return ElementaryCodec::Mpeg2Video;
-        case 0x0f:
-        case 0x11: return ElementaryCodec::AacAdts;
+        case 0x0f: return ElementaryCodec::AacAdts;
+        case 0x11: return ElementaryCodec::AacLatm;
         case 0x03:
         case 0x04: return ElementaryCodec::MpegAudio;
         case 0x81: return ElementaryCodec::Ac3;
@@ -292,18 +398,34 @@ bool NativeTsDemux::containsRandomAccessNal(ElementaryCodec codec, const std::ui
 bool NativeTsDemux::parsePes(const PesAssembler& pes, DemuxSample& sample) {
     const auto& b = pes.bytes;
     if (b.size() < 9 || b[0] != 0 || b[1] != 0 || b[2] != 1) return false;
+    const std::uint16_t pesPacketLength = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(b[4]) << 8) | b[5]);
     const std::uint8_t flags = b[7];
     const std::size_t headerLength = b[8];
     const std::size_t payloadOffset = 9 + headerLength;
     if (payloadOffset > b.size()) return false;
+
+    std::size_t payloadEnd = b.size();
+    if (pesPacketLength != 0) {
+        // ISO/IEC 13818-1: PES_packet_length counts bytes following the
+        // length field.  A TS packet may therefore contain payload stuffing
+        // after the declared PES packet. Never pass those bytes to a codec.
+        const std::size_t declaredEnd = 6U + static_cast<std::size_t>(pesPacketLength);
+        if (declaredEnd < payloadOffset || b.size() < declaredEnd) return false;
+        payloadEnd = declaredEnd;
+    }
+
     sample.stream = pes.stream;
     sample.hasPts = (flags & 0x80U) != 0 && headerLength >= 5;
     sample.hasDts = (flags & 0x40U) != 0 && headerLength >= 10;
     if (sample.hasPts) sample.pts90k = readPts(b.data() + 9);
     if (sample.hasDts) sample.dts90k = readPts(b.data() + 14);
     else if (sample.hasPts) sample.dts90k = sample.pts90k;
-    sample.data.assign(b.begin() + static_cast<std::ptrdiff_t>(payloadOffset), b.end());
-    sample.randomAccess = pes.randomAccessHint || containsRandomAccessNal(pes.stream.codec, sample.data.data(), sample.data.size());
+    sample.data.assign(
+        b.begin() + static_cast<std::ptrdiff_t>(payloadOffset),
+        b.begin() + static_cast<std::ptrdiff_t>(payloadEnd));
+    sample.randomAccess = pes.randomAccessHint ||
+        containsRandomAccessNal(pes.stream.codec, sample.data.data(), sample.data.size());
     return !sample.data.empty();
 }
 
@@ -315,8 +437,190 @@ void NativeTsDemux::flushPes(std::uint16_t pid) {
     current.randomAccessHint = it->second.randomAccessHint;
     current.bytes.swap(it->second.bytes);
     it->second.randomAccessHint = false;
+
+    if (current.bytes.size() >= 6) {
+        const std::uint16_t pesPacketLength = static_cast<std::uint16_t>(
+            (static_cast<std::uint16_t>(current.bytes[4]) << 8) | current.bytes[5]);
+        if (pesPacketLength != 0) {
+            const std::size_t declaredEnd = 6U + static_cast<std::size_t>(pesPacketLength);
+            if (current.bytes.size() > declaredEnd) {
+                ++pesTrimEvents_;
+                if (pesTrimEvents_ <= 8 || (pesTrimEvents_ % 500U) == 0U) {
+                    std::cerr << "NATIVE PES TRIM pid=" << pid
+                              << " codec=" << static_cast<int>(current.stream.codec)
+                              << " assembled=" << current.bytes.size()
+                              << " declared=" << declaredEnd
+                              << " trim=" << (current.bytes.size() - declaredEnd)
+                              << " events=" << pesTrimEvents_ << std::endl;
+                }
+            } else if (current.bytes.size() < declaredEnd) {
+                ++pesTruncatedEvents_;
+                if (pesTruncatedEvents_ <= 8 || (pesTruncatedEvents_ % 100U) == 0U) {
+                    std::cerr << "NATIVE PES TRUNCATED pid=" << pid
+                              << " codec=" << static_cast<int>(current.stream.codec)
+                              << " assembled=" << current.bytes.size()
+                              << " declared=" << declaredEnd
+                              << " events=" << pesTruncatedEvents_ << std::endl;
+                }
+            }
+        }
+    }
+
     DemuxSample sample;
-    if (parsePes(current, sample) && sampleCallback_) sampleCallback_(std::move(sample));
+    if (!parsePes(current, sample)) return;
+
+    // V8.9: the live LVM source is AVC Main 720x576p25 with B pictures.  Its
+    // PES boundaries are not guaranteed to be AVC access-unit boundaries.
+    // OpenH264 DecodeFrameNoDelay expects a complete input picture.  Assemble
+    // H.264 access units using the AVC primary-coded-picture boundary rules
+    // (frame_num/PPS/field/POC/IDR identity), rather than the V8.6
+    // first_mb_in_slice-only heuristic.  Other elementary streams keep their
+    // original PES packetization.
+    // V9.5: keep H.264 PES payload byte-exact and let the OpenH264 wrapper
+    // perform Annex-B NAL framing. DecodeFrame2 is slice-level and reports
+    // output only when a complete picture has been reconstructed. This avoids
+    // guessing access-unit boundaries in the MPEG-TS demuxer.
+    if (sampleCallback_) sampleCallback_(std::move(sample));
+}
+
+void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
+    auto& state = videoAu_[sample.stream.pid];
+    state.stream = sample.stream;
+
+    if (state.bytes.empty()) {
+        state.pts90k = sample.pts90k;
+        state.dts90k = sample.dts90k;
+        state.hasPts = sample.hasPts;
+        state.hasDts = sample.hasDts;
+        state.randomAccess = sample.randomAccess;
+    }
+    state.bytes.insert(state.bytes.end(), sample.data.begin(), sample.data.end());
+    state.randomAccess = state.randomAccess || sample.randomAccess;
+
+    // V9.3: follow the picture grouping used by OpenH264's own h264dec
+    // console application.  The LVM input is AVC Main with B pictures.  The
+    // previous SPS/PPS/POC parser was more ambitious than OpenH264 itself and
+    // could split a broadcast access unit incorrectly.  Here we keep the
+    // elementary stream byte-exact across PES boundaries and cut only at the
+    // same robust markers used by OpenH264: a second picture whose first
+    // slice has first_mb_in_slice == 0, repeated SPS/PPS after VCL, or a
+    // second AUD.  This preserves multi-slice pictures and B-picture decode
+    // order without inventing or rewriting NAL bytes.
+    for (;;) {
+        auto starts = annexBStarts(state.bytes);
+        if (starts.empty()) return;
+
+        // A live HTTP join can begin in the middle of a NAL.  Discard only
+        // the undecodable prefix before the first Annex-B start code.  Do it
+        // once the start code is known; never alter bytes between NAL units.
+        if (starts.front().startCode != 0) {
+            const std::size_t prefix = starts.front().startCode;
+            state.bytes.erase(state.bytes.begin(),
+                              state.bytes.begin() + static_cast<std::ptrdiff_t>(prefix));
+            starts = annexBStarts(state.bytes);
+        }
+        if (starts.size() < 2) return; // last NAL may still span the next PES
+
+        unsigned spsCount = 0;
+        unsigned ppsCount = 0;
+        unsigned nonIdrPictureCount = 0;
+        unsigned idrPictureCount = 0;
+        unsigned audCount = 0;
+        std::size_t boundary = 0;
+
+        // Only NAL units with a following start code are known complete.
+        for (std::size_t i = 0; i + 1 < starts.size(); ++i) {
+            const auto& cur = starts[i];
+            const std::size_t nalEnd = starts[i + 1].startCode;
+            if (cur.nal >= nalEnd) continue;
+            const std::uint8_t* nal = state.bytes.data() + cur.nal;
+            const std::size_t nalSize = nalEnd - cur.nal;
+            const std::uint8_t type = static_cast<std::uint8_t>(nal[0] & 0x1fU);
+
+            if (type == 1) {
+                const bool firstMbZero = h264FirstMbInSliceZero(nal, nalSize);
+                ++nonIdrPictureCount;
+                if (firstMbZero &&
+                    ((nonIdrPictureCount >= 1 && idrPictureCount >= 1) ||
+                     nonIdrPictureCount >= 2)) {
+                    boundary = cur.startCode;
+                    break;
+                }
+            } else if (type == 5) {
+                const bool firstMbZero = h264FirstMbInSliceZero(nal, nalSize);
+                ++idrPictureCount;
+                if (firstMbZero &&
+                    ((idrPictureCount >= 1 && nonIdrPictureCount >= 1) ||
+                     idrPictureCount >= 2)) {
+                    boundary = cur.startCode;
+                    break;
+                }
+            } else if (type == 7) {
+                ++spsCount;
+                if ((spsCount >= 1 && (nonIdrPictureCount >= 1 || idrPictureCount >= 1)) ||
+                    spsCount >= 2) {
+                    boundary = cur.startCode;
+                    break;
+                }
+            } else if (type == 8) {
+                ++ppsCount;
+                if (ppsCount >= 1 && (nonIdrPictureCount >= 1 || idrPictureCount >= 1)) {
+                    boundary = cur.startCode;
+                    break;
+                }
+            } else if (type == 9) {
+                ++audCount;
+                if (audCount >= 2) {
+                    boundary = cur.startCode;
+                    break;
+                }
+            }
+        }
+
+        if (boundary == 0) return;
+
+        DemuxSample ready;
+        ready.stream = state.stream;
+        ready.data.assign(state.bytes.begin(),
+                          state.bytes.begin() + static_cast<std::ptrdiff_t>(boundary));
+        ready.pts90k = state.pts90k;
+        ready.dts90k = state.dts90k;
+        ready.hasPts = state.hasPts;
+        ready.hasDts = state.hasDts;
+        ready.randomAccess = state.randomAccess ||
+            containsRandomAccessNal(state.stream.codec, ready.data.data(), ready.data.size());
+
+        if (sampleCallback_ && !ready.data.empty()) sampleCallback_(std::move(ready));
+
+        state.bytes.erase(state.bytes.begin(),
+                          state.bytes.begin() + static_cast<std::ptrdiff_t>(boundary));
+
+        // PTS/DTS do not participate in H.264 reference reconstruction, but
+        // keep a monotonic fallback for an AU that spans several PES packets.
+        // The source is 25 fps (confirmed by ffprobe in this debugging case).
+        constexpr std::uint64_t step90k = 90000U / 25U;
+        if (state.hasPts) state.pts90k += step90k;
+        if (state.hasDts) state.dts90k += step90k;
+        state.randomAccess = containsRandomAccessNal(
+            state.stream.codec, state.bytes.data(), state.bytes.size());
+    }
+}
+
+void NativeTsDemux::flushVideoAu(std::uint16_t pid) {
+    auto it = videoAu_.find(pid);
+    if (it == videoAu_.end() || it->second.bytes.empty()) return;
+    auto& state = it->second;
+    DemuxSample sample;
+    sample.stream = state.stream;
+    sample.data.swap(state.bytes);
+    sample.pts90k = state.pts90k;
+    sample.dts90k = state.dts90k;
+    sample.hasPts = state.hasPts;
+    sample.hasDts = state.hasDts;
+    sample.randomAccess = state.randomAccess ||
+        containsRandomAccessNal(state.stream.codec, sample.data.data(), sample.data.size());
+    state = {};
+    if (sampleCallback_ && !sample.data.empty()) sampleCallback_(std::move(sample));
 }
 
 } // namespace dvbstreamer5::media::mpegts

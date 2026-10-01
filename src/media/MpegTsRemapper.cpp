@@ -1,4 +1,5 @@
 #include "media/MpegTsRemapper.h"
+#include "media/DvbText.h"
 
 #include <algorithm>
 #include <limits>
@@ -119,12 +120,9 @@ bool addCaPids(const std::uint8_t* descriptors, std::size_t size,
 
 std::size_t boundedText(const std::string& text, std::uint8_t* output,
                         std::size_t maximum) {
-    const std::size_t size = (std::min)(text.size(), maximum);
-    for (std::size_t i = 0; i < size; ++i) {
-        const unsigned char ch = static_cast<unsigned char>(text[i]);
-        output[i] = ch >= 0x20 && ch <= 0x7e ? ch : static_cast<std::uint8_t>('?');
-    }
-    return size;
+    const auto encoded = dvbtext::encode(text, maximum);
+    std::copy(encoded.begin(), encoded.end(), output);
+    return encoded.size();
 }
 
 } // namespace
