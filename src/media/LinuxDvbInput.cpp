@@ -4,7 +4,11 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <limits>
+#include <sstream>
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -31,6 +35,124 @@ std::string devicePath(const LinuxDvbTuneConfig& config, const char* device) {
 
 std::string deviceError(const std::string& operation, const std::string& path) {
     return operation + " (" + path + "): " + std::strerror(errno);
+}
+
+std::string readFirstLine(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    std::string value;
+    if (input && std::getline(input, value)) {
+        while (!value.empty() &&
+               (value.back() == '\r' || value.back() == '\n' ||
+                value.back() == ' ' || value.back() == '\t')) {
+            value.pop_back();
+        }
+    }
+    return value;
+}
+
+std::string frontendDriverModule(const LinuxDvbTuneConfig& config) {
+    const std::filesystem::path link =
+        std::filesystem::path("/sys/class/dvb") /
+        ("dvb" + std::to_string(config.adapter) + ".frontend" +
+         std::to_string(config.frontend)) /
+        "device/driver/module";
+    std::error_code ec;
+    const auto resolved = std::filesystem::canonical(link, ec);
+    return ec ? std::string{} : resolved.filename().string();
+}
+
+int driverMode(const std::string& module) {
+    if (module.empty()) return -1;
+    const std::string value = readFirstLine(
+        std::filesystem::path("/sys/module") / module / "parameters/mode");
+    if (value.empty()) return -1;
+    try {
+        std::size_t used = 0;
+        const int mode = std::stoi(value, &used);
+        return used == value.size() && mode >= 0 && mode <= 2 ? mode : -1;
+    } catch (...) {
+        return -1;
+    }
+}
+
+const char* driverModeName(int mode) {
+    switch (mode) {
+        case 0: return "multiswitch";
+        case 1: return "direct-diseqc";
+        case 2: return "unicable";
+        default: return "unknown";
+    }
+}
+
+std::string frontendStatusText(fe_status_t status) {
+    std::ostringstream out;
+    bool first = true;
+    auto add = [&](const char* name) {
+        if (!first) out << '|';
+        out << name;
+        first = false;
+    };
+    if (status & FE_HAS_SIGNAL) add("SIGNAL");
+    if (status & FE_HAS_CARRIER) add("CARRIER");
+    if (status & FE_HAS_VITERBI) add("VITERBI");
+    if (status & FE_HAS_SYNC) add("SYNC");
+    if (status & FE_HAS_LOCK) add("LOCK");
+    if (status & FE_TIMEDOUT) add("TIMEDOUT");
+    if (status & FE_REINIT) add("REINIT");
+    return first ? "NONE" : out.str();
+}
+
+bool setTone(int fd, fe_sec_tone_mode tone, const char* phase, std::string& error) {
+    if (ioctl(fd, FE_SET_TONE, tone) == 0) return true;
+    error = std::string(phase) + ": FE_SET_TONE failed: " + std::strerror(errno);
+    return false;
+}
+
+bool setVoltage(int fd, fe_sec_voltage voltage, const char* phase, std::string& error) {
+    if (ioctl(fd, FE_SET_VOLTAGE, voltage) == 0) return true;
+    error = std::string(phase) + ": FE_SET_VOLTAGE failed: " + std::strerror(errno);
+    return false;
+}
+
+bool sendMasterCommand(int fd, const dvb_diseqc_master_cmd& value,
+                       const char* phase, std::string& error) {
+    auto command = value;
+    if (ioctl(fd, FE_DISEQC_SEND_MASTER_CMD, &command) == 0) return true;
+    error = std::string(phase) + ": FE_DISEQC_SEND_MASTER_CMD failed: " +
+        std::strerror(errno);
+    return false;
+}
+
+bool sendSwitchCommands(int fd, int source, bool horizontal,
+                        bool highBand, std::string& error) {
+    if (source < 0) return true;
+
+    if (source >= 4) {
+        dvb_diseqc_master_cmd uncommitted {};
+        uncommitted.msg[0] = 0xe0;
+        uncommitted.msg[1] = 0x10;
+        uncommitted.msg[2] = 0x39;
+        uncommitted.msg[3] = static_cast<std::uint8_t>(
+            0xf0 | ((source / 4) & 0x0f));
+        uncommitted.msg_len = 4;
+        if (!sendMasterCommand(fd, uncommitted,
+                               "DiSEqC uncommitted switch", error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    }
+
+    dvb_diseqc_master_cmd committed {};
+    committed.msg[0] = 0xe0;
+    committed.msg[1] = 0x10;
+    committed.msg[2] = 0x38;
+    committed.msg[3] = static_cast<std::uint8_t>(
+        0xf0 | ((source % 4) << 2) |
+        (horizontal ? 0x02 : 0x00) |
+        (highBand ? 0x01 : 0x00));
+    committed.msg_len = 4;
+    return sendMasterCommand(fd, committed,
+                             "DiSEqC committed switch", error);
 }
 
 fe_code_rate_t parseFec(const std::string& fec) {
@@ -81,49 +203,106 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     }
 
     const bool highBand = config.frequencyKHz >= config.lnbSlofKHz;
+    const bool horizontal = config.polarity == "H";
     const std::uint32_t lof = highBand ? config.lnbLof2KHz : config.lnbLof1KHz;
     const std::uint32_t intermediateFrequency =
         config.frequencyKHz > lof
         ? config.frequencyKHz - lof
         : lof - config.frequencyKHz;
     if (intermediateFrequency == 0 ||
-        intermediateFrequency > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+        intermediateFrequency >
+            static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
         error = "calculated satellite intermediate frequency is invalid";
         return false;
     }
 
-    if (ioctl(fd, FE_SET_TONE, SEC_TONE_OFF) != 0 ||
-        ioctl(fd, FE_SET_VOLTAGE,
-              config.polarity == "H" ? SEC_VOLTAGE_18 : SEC_VOLTAGE_13) != 0) {
-        error = "satellite LNB control failed: " + std::string(std::strerror(errno));
+    const std::string module = frontendDriverModule(config);
+    const int mode = driverMode(module);
+    const bool stid135 = module == "stid135";
+
+    std::clog
+        << "NATIVE DVB TUNE begin adapter=" << config.adapter
+        << " frontend=" << config.frontend
+        << " driver=" << (module.empty() ? "unknown" : module)
+        << " mode=" << mode << "(" << driverModeName(mode) << ")"
+        << " rf_khz=" << config.frequencyKHz
+        << " if_khz=" << intermediateFrequency
+        << " sr_ksps=" << config.symbolRateK
+        << " pol=" << config.polarity
+        << " band=" << (highBand ? "high" : "low")
+        << " diseqc=" << config.diseqcSource
+        << " stream_id=" << config.streamId
+        << '\n';
+
+    if (stid135 && mode == 2) {
+        error =
+            "STiD135 mode=2 (Unicable) detected, but DVBStreamer5 currently "
+            "has no SCR/user-band frequency parameters in LinuxDvbTuneConfig; "
+            "refusing legacy 13/18V + 22kHz tuning";
+        std::clog
+            << "NATIVE DVB TUNE reject "
+               "reason=stid135_unicable_parameters_missing\n";
         return false;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(15));
-    if (config.diseqcSource >= 0) {
-        dvb_diseqc_master_cmd command {};
-        command.msg[0] = 0xe0;
-        command.msg[1] = 0x10;
-        command.msg[2] = 0x38;
-        command.msg[3] = static_cast<std::uint8_t>(
-            0xf0 | ((config.diseqcSource & 3) << 2) |
-            (config.polarity == "H" ? 0x02 : 0x00) |
-            (highBand ? 0x01 : 0x00));
-        command.msg_len = 4;
-        if (ioctl(fd, FE_DISEQC_SEND_MASTER_CMD, &command) != 0) {
-            error = "DiSEqC switch command failed: " + std::string(std::strerror(errno));
+
+    const fe_sec_voltage voltage =
+        horizontal ? SEC_VOLTAGE_18 : SEC_VOLTAGE_13;
+    const fe_sec_tone_mode bandTone =
+        highBand ? SEC_TONE_ON : SEC_TONE_OFF;
+
+    if (stid135 && mode == 0) {
+        if (!setVoltage(fd, voltage,
+                        "STiD135 mode0 RF polarity select", error)) {
             return false;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(15));
-    }
-    if (ioctl(fd, FE_SET_TONE, highBand ? SEC_TONE_ON : SEC_TONE_OFF) != 0) {
-        error = "satellite LNB tone selection failed: " + std::string(std::strerror(errno));
-        return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+        if (!setTone(fd, bandTone,
+                     "STiD135 mode0 RF band select", error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+        if (config.diseqcSource >= 0) {
+            if (!sendSwitchCommands(fd, config.diseqcSource,
+                                    horizontal, highBand, error)) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        }
+    } else {
+        if (!setTone(fd, SEC_TONE_OFF,
+                     "satellite pre-DiSEqC tone off", error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        if (!setVoltage(fd, voltage,
+                        "satellite LNB voltage select", error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+        if (config.diseqcSource >= 0) {
+            if (!sendSwitchCommands(fd, config.diseqcSource,
+                                    horizontal, highBand, error)) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        }
+
+        if (!setTone(fd, bandTone,
+                     "satellite LNB band tone select", error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
     std::vector<dtv_property> properties(10);
     properties[0].cmd = DTV_CLEAR;
     properties[1].cmd = DTV_DELIVERY_SYSTEM;
-    properties[1].u.data = config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
+    properties[1].u.data =
+        config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
     properties[2].cmd = DTV_FREQUENCY;
     properties[2].u.data = intermediateFrequency;
     properties[3].cmd = DTV_SYMBOL_RATE;
@@ -138,25 +317,79 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     properties[7].u.data = PILOT_AUTO;
     properties[8].cmd = DTV_ROLLOFF;
     properties[8].u.data = ROLLOFF_AUTO;
+
     std::size_t count = 9;
     if (config.streamId >= 0) {
         properties[count].cmd = DTV_STREAM_ID;
-        properties[count].u.data = static_cast<std::uint32_t>(config.streamId);
+        properties[count].u.data =
+            static_cast<std::uint32_t>(config.streamId);
         ++count;
     }
     properties.resize(count + 1);
     properties[count].cmd = DTV_TUNE;
-    if (!setFrontendProperties(fd, properties, error)) return false;
 
-    const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(config.lockTimeoutMs);
+    if (!setFrontendProperties(fd, properties, error)) {
+        std::clog
+            << "NATIVE DVB TUNE property_error error=" << error << '\n';
+        return false;
+    }
+
+    std::clog
+        << "NATIVE DVB TUNE submitted properties="
+        << properties.size() << '\n';
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto deadline =
+        started + std::chrono::milliseconds(config.lockTimeoutMs);
+    auto nextLog = started;
+    fe_status_t lastStatus {};
+    bool haveLastStatus = false;
+
     while (std::chrono::steady_clock::now() < deadline) {
         fe_status_t status {};
-        if (ioctl(fd, FE_READ_STATUS, &status) == 0 && (status & FE_HAS_LOCK)) return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (ioctl(fd, FE_READ_STATUS, &status) == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (!haveLastStatus || status != lastStatus || now >= nextLog) {
+                const auto elapsed =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - started).count();
+
+                std::clog
+                    << "NATIVE DVB TUNE status elapsed_ms=" << elapsed
+                    << " flags=" << frontendStatusText(status)
+                    << " raw=0x" << std::hex
+                    << static_cast<unsigned>(status)
+                    << std::dec << '\n';
+
+                lastStatus = status;
+                haveLastStatus = true;
+                nextLog = now + std::chrono::milliseconds(500);
+            }
+
+            if (status & FE_HAS_LOCK) {
+                std::clog << "NATIVE DVB TUNE lock success\n";
+                error.clear();
+                return true;
+            }
+        } else if (errno != EAGAIN &&
+                   errno != EWOULDBLOCK &&
+                   errno != EINTR) {
+            std::clog
+                << "NATIVE DVB TUNE status_read_error errno=" << errno
+                << " error=" << std::strerror(errno) << '\n';
+        }
+
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(stid135 ? 200 : 100));
     }
-    error = "DVB frontend did not lock within " +
-        std::to_string(config.lockTimeoutMs) + " milliseconds";
+
+    error =
+        "DVB frontend did not lock within " +
+        std::to_string(config.lockTimeoutMs) +
+        " milliseconds";
+
+    std::clog
+        << "NATIVE DVB TUNE lock timeout error=" << error << '\n';
     return false;
 }
 #endif
