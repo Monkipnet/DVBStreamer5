@@ -56,6 +56,16 @@ struct AbrProfile {
     std::uint64_t videoBitrate = 0;
 };
 
+int alignAbrDimension8(int value) {
+    // Native HEVC/Kvazaar requires coded dimensions divisible by 8.  Keep
+    // every generated ABR rendition on that boundary so switching the video
+    // codec between H.264/H.265 or CPU/hardware backends cannot make one
+    // ladder entry fail during startup (notably the traditional 854x480
+    // profile).  Round to the nearest multiple of eight, with a minimum of 8.
+    if (value <= 8) return 8;
+    return std::max(8, ((value + 4) / 8) * 8);
+}
+
 std::vector<AbrProfile> makeAbrProfiles(int primaryWidth, int primaryHeight,
                                         std::uint64_t primaryVideoBitrate) {
     struct Candidate { const char* name; int width; int height; std::uint64_t nominal; };
@@ -70,9 +80,11 @@ std::vector<AbrProfile> makeAbrProfiles(int primaryWidth, int primaryHeight,
         static_cast<std::uint64_t>(primaryHeight);
     for (const auto& c : candidates) {
         if (out.size() >= 3) break;
-        if (c.width >= primaryWidth || c.height >= primaryHeight) continue;
-        const std::uint64_t pixels = static_cast<std::uint64_t>(c.width) *
-            static_cast<std::uint64_t>(c.height);
+        const int width = alignAbrDimension8(c.width);
+        const int height = alignAbrDimension8(c.height);
+        if (width >= primaryWidth || height >= primaryHeight) continue;
+        const std::uint64_t pixels = static_cast<std::uint64_t>(width) *
+            static_cast<std::uint64_t>(height);
         if (pixels >= primaryPixels) continue;
         std::uint64_t scaled = primaryVideoBitrate > 0
             ? (primaryVideoBitrate * pixels * 135ULL) / (primaryPixels * 100ULL)
@@ -82,7 +94,7 @@ std::vector<AbrProfile> makeAbrProfiles(int primaryWidth, int primaryHeight,
         if (primaryVideoBitrate > 800000ULL) {
             scaled = std::min<std::uint64_t>(scaled, primaryVideoBitrate - 200000ULL);
         }
-        out.push_back({c.name, c.width, c.height, scaled});
+        out.push_back({c.name, width, height, scaled});
     }
     return out;
 }
