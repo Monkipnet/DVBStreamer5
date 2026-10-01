@@ -22,6 +22,7 @@ struct RequestOptions {
     long totalTimeoutMs = 0;
     int maxRedirects = 8;
     bool verifyTlsPeer = true;
+    bool keepAlive = false;
     bool forwardHeadersAcrossOrigins = false;
     std::size_t maxBodyBytes = 64U * 1024U * 1024U;
     std::atomic<bool>* stopping = nullptr;

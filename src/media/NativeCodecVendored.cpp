@@ -21,38 +21,235 @@
 namespace dvbstreamer5::media::codec {
 namespace {
 
+struct H264AnnexBInfo {
+    bool annexB = false;
+    bool hasSps = false;
+    bool hasPps = false;
+    bool hasIdr = false;
+    std::vector<std::uint8_t> sps;
+    std::vector<std::uint8_t> pps;
+};
+
+std::size_t findAnnexBStartCode(const std::uint8_t* data, std::size_t size,
+                                std::size_t from, std::size_t& length) {
+    length = 0;
+    if (!data || from >= size) return size;
+    for (std::size_t i = from; i + 3 <= size; ++i) {
+        if (i + 4 <= size && data[i] == 0 && data[i + 1] == 0 &&
+            data[i + 2] == 0 && data[i + 3] == 1) {
+            length = 4;
+            return i;
+        }
+        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+            length = 3;
+            return i;
+        }
+    }
+    return size;
+}
+
+std::vector<std::uint8_t> copyAnnexBNal(const std::uint8_t* data,
+                                        std::size_t begin,
+                                        std::size_t end) {
+    while (end > begin && data[end - 1] == 0) --end;
+    if (end <= begin) return {};
+    std::vector<std::uint8_t> result = {0, 0, 0, 1};
+    result.insert(result.end(), data + begin, data + end);
+    return result;
+}
+
+H264AnnexBInfo inspectH264AnnexB(const std::uint8_t* data, std::size_t size) {
+    H264AnnexBInfo info;
+    std::size_t startCodeLength = 0;
+    std::size_t start = findAnnexBStartCode(data, size, 0, startCodeLength);
+    while (start < size) {
+        info.annexB = true;
+        const std::size_t nalBegin = start + startCodeLength;
+        if (nalBegin >= size) break;
+        std::size_t nextStartCodeLength = 0;
+        const std::size_t next = findAnnexBStartCode(
+            data, size, nalBegin, nextStartCodeLength);
+        const std::size_t nalEnd = next < size ? next : size;
+        const std::uint8_t type = static_cast<std::uint8_t>(data[nalBegin] & 0x1fU);
+        if (type == 7) {
+            info.hasSps = true;
+            info.sps = copyAnnexBNal(data, nalBegin, nalEnd);
+        } else if (type == 8) {
+            info.hasPps = true;
+            info.pps = copyAnnexBNal(data, nalBegin, nalEnd);
+        } else if (type == 5) {
+            info.hasIdr = true;
+        }
+        if (next >= size) break;
+        start = next;
+        startCodeLength = nextStartCodeLength;
+    }
+    return info;
+}
+
 class OpenH264Decoder final : public VideoDecoder {
 public:
     OpenH264Decoder() {
         if (WelsCreateDecoder(&decoder_) != 0 || !decoder_) return;
-        SDecodingParam p{};
-        p.eEcActiveIdc = ERROR_CON_DISABLE;
-        p.bParseOnly = false;
-        p.sVideoProperty.size = sizeof(p.sVideoProperty);
-        p.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
-        if (decoder_->Initialize(&p) != 0) { WelsDestroyDecoder(decoder_); decoder_ = nullptr; }
+        if (!initializeDecoder()) {
+            WelsDestroyDecoder(decoder_);
+            decoder_ = nullptr;
+        }
     }
-    ~OpenH264Decoder() override { if (decoder_) { decoder_->Uninitialize(); WelsDestroyDecoder(decoder_); } }
+    ~OpenH264Decoder() override {
+        if (decoder_) {
+            decoder_->Uninitialize();
+            WelsDestroyDecoder(decoder_);
+        }
+    }
     bool valid() const noexcept { return decoder_ != nullptr; }
-    bool decode(const std::uint8_t* data, std::size_t size, std::uint64_t pts90k, bool hasPts,
-                std::vector<RawVideoFrame>& output, std::string& error) override {
-        error.clear(); if (!decoder_) { error="OpenH264 decoder unavailable"; return false; }
+
+    bool decode(const std::uint8_t* data, std::size_t size,
+                std::uint64_t pts90k, bool hasPts,
+                std::vector<RawVideoFrame>& output,
+                std::string& error) override {
+        error.clear();
+        if (!decoder_) {
+            error = "OpenH264 decoder unavailable";
+            return false;
+        }
         if (!data || !size) return true;
-        if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) { error="H.264 access unit too large"; return false; }
-        unsigned char* planes[3]{}; SBufferInfo info{}; info.uiInBsTimeStamp = hasPts ? pts90k : 0;
-        const DECODING_STATE rc = decoder_->DecodeFrameNoDelay(data, static_cast<int>(size), planes, &info);
-        if (rc != dsErrorFree && rc != dsFramePending) { error="OpenH264 decode failed: "+std::to_string(static_cast<int>(rc)); return false; }
+        if (size > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            error = "H.264 access unit too large";
+            return false;
+        }
+
+        const H264AnnexBInfo nals = inspectH264AnnexB(data, size);
+        if (nals.hasSps && !nals.sps.empty()) sps_ = nals.sps;
+        if (nals.hasPps && !nals.pps.empty()) pps_ = nals.pps;
+
+        const std::uint8_t* decodeData = data;
+        std::size_t decodeSize = size;
+        std::vector<std::uint8_t> primedAccessUnit;
+
+        if (nals.annexB && !synchronized_) {
+            // Joining a live transport in the middle of a GOP is normal. Do
+            // not feed arbitrary P/B slices to OpenH264 before parameter sets
+            // and a random-access picture are available.
+            if (sps_.empty() || pps_.empty() || !nals.hasIdr) {
+                return true;
+            }
+            if (!nals.hasSps) {
+                primedAccessUnit.insert(
+                    primedAccessUnit.end(), sps_.begin(), sps_.end());
+            }
+            if (!nals.hasPps) {
+                primedAccessUnit.insert(
+                    primedAccessUnit.end(), pps_.begin(), pps_.end());
+            }
+            primedAccessUnit.insert(
+                primedAccessUnit.end(), data, data + size);
+            decodeData = primedAccessUnit.data();
+            decodeSize = primedAccessUnit.size();
+        }
+
+        unsigned char* planes[3]{};
+        SBufferInfo info{};
+        info.uiInBsTimeStamp = hasPts ? pts90k : 0;
+        const DECODING_STATE rc = decoder_->DecodeFrameNoDelay(
+            decodeData, static_cast<int>(decodeSize), planes, &info);
+
+        const int decodeState = static_cast<int>(rc);
+        const int fatalMask =
+            static_cast<int>(dsInvalidArgument) |
+            static_cast<int>(dsInitialOptExpected) |
+            static_cast<int>(dsOutOfMemory) |
+            static_cast<int>(dsDstBufNeedExpan);
+        if ((decodeState & fatalMask) != 0) {
+            error = "OpenH264 decode failed: " + std::to_string(decodeState);
+            return false;
+        }
+
+        // The low OpenH264 status bits describe recoverable bitstream/live
+        // transport conditions. In particular dsNoParamSets == 16 is common
+        // when attaching in the middle of a GOP. A reconnect can also cause
+        // reference/bitstream-loss flags until the next clean IDR. Do not
+        // take the whole service OFFLINE for those states; force a clean
+        // SPS/PPS + IDR resynchronization instead.
+        const int resyncMask =
+            static_cast<int>(dsNoParamSets) |
+            static_cast<int>(dsRefLost) |
+            static_cast<int>(dsBitstreamError) |
+            static_cast<int>(dsDepLayerLost) |
+            static_cast<int>(dsRefListNullPtrs);
+        if ((decodeState & resyncMask) != 0) synchronized_ = false;
+
+        if (nals.annexB && nals.hasIdr && !sps_.empty() && !pps_.empty() &&
+            (decodeState & static_cast<int>(dsNoParamSets)) == 0) {
+            synchronized_ = true;
+        }
         if (info.iBufferStatus != 1) return true;
-        const int w=info.UsrData.sSystemBuffer.iWidth,h=info.UsrData.sSystemBuffer.iHeight;
-        if(w<=0||h<=0||!planes[0]||!planes[1]||!planes[2]){error="OpenH264 returned invalid I420";return false;}
-        RawVideoFrame f; f.width=w;f.height=h;f.pts90k=pts90k;f.dts90k=pts90k;f.hasPts=hasPts;f.hasDts=hasPts;
-        f.i420.resize(static_cast<std::size_t>(w)*h*3U/2U); auto*y=f.i420.data();auto*u=y+static_cast<std::size_t>(w)*h;auto*v=u+static_cast<std::size_t>(w/2)*(h/2);
-        for(int r=0;r<h;++r)std::memcpy(y+static_cast<std::size_t>(r)*w,planes[0]+static_cast<std::size_t>(r)*info.UsrData.sSystemBuffer.iStride[0],w);
-        for(int r=0;r<h/2;++r){std::memcpy(u+static_cast<std::size_t>(r)*(w/2),planes[1]+static_cast<std::size_t>(r)*info.UsrData.sSystemBuffer.iStride[1],w/2);std::memcpy(v+static_cast<std::size_t>(r)*(w/2),planes[2]+static_cast<std::size_t>(r)*info.UsrData.sSystemBuffer.iStride[1],w/2);}
-        output.push_back(std::move(f)); return true;
+
+        const int w = info.UsrData.sSystemBuffer.iWidth;
+        const int h = info.UsrData.sSystemBuffer.iHeight;
+        if (w <= 0 || h <= 0 || !planes[0] || !planes[1] || !planes[2]) {
+            error = "OpenH264 returned invalid I420";
+            return false;
+        }
+        RawVideoFrame frame;
+        frame.width = w;
+        frame.height = h;
+        frame.pts90k = pts90k;
+        frame.dts90k = pts90k;
+        frame.hasPts = hasPts;
+        frame.hasDts = hasPts;
+        frame.i420.resize(static_cast<std::size_t>(w) * h * 3U / 2U);
+        auto* y = frame.i420.data();
+        auto* u = y + static_cast<std::size_t>(w) * h;
+        auto* v = u + static_cast<std::size_t>(w / 2) * (h / 2);
+        for (int row = 0; row < h; ++row) {
+            std::memcpy(
+                y + static_cast<std::size_t>(row) * w,
+                planes[0] + static_cast<std::size_t>(row) *
+                    info.UsrData.sSystemBuffer.iStride[0],
+                w);
+        }
+        for (int row = 0; row < h / 2; ++row) {
+            std::memcpy(
+                u + static_cast<std::size_t>(row) * (w / 2),
+                planes[1] + static_cast<std::size_t>(row) *
+                    info.UsrData.sSystemBuffer.iStride[1],
+                w / 2);
+            std::memcpy(
+                v + static_cast<std::size_t>(row) * (w / 2),
+                planes[2] + static_cast<std::size_t>(row) *
+                    info.UsrData.sSystemBuffer.iStride[1],
+                w / 2);
+        }
+        output.push_back(std::move(frame));
+        return true;
     }
-    void reset() override { if(decoder_){decoder_->Uninitialize();SDecodingParam p{};p.eEcActiveIdc=ERROR_CON_DISABLE;p.sVideoProperty.size=sizeof(p.sVideoProperty);p.sVideoProperty.eVideoBsType=VIDEO_BITSTREAM_AVC;decoder_->Initialize(&p);} }
-private: ISVCDecoder* decoder_=nullptr;
+
+    void reset() override {
+        sps_.clear();
+        pps_.clear();
+        synchronized_ = false;
+        if (decoder_) {
+            decoder_->Uninitialize();
+            initializeDecoder();
+        }
+    }
+
+private:
+    bool initializeDecoder() {
+        if (!decoder_) return false;
+        SDecodingParam params{};
+        params.eEcActiveIdc = ERROR_CON_DISABLE;
+        params.bParseOnly = false;
+        params.sVideoProperty.size = sizeof(params.sVideoProperty);
+        params.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
+        return decoder_->Initialize(&params) == 0;
+    }
+
+    ISVCDecoder* decoder_ = nullptr;
+    std::vector<std::uint8_t> sps_;
+    std::vector<std::uint8_t> pps_;
+    bool synchronized_ = false;
 };
 
 class OpenH264Encoder final : public VideoEncoder {

@@ -170,7 +170,7 @@ bool get(const std::string& url,
         // Re-encoding here would change RFC 3986 query escapes (for example
         // `%20` into `+`) and can break signed HLS URLs.
         client.set_path_encode(false);
-        client.set_keep_alive(false);
+        client.set_keep_alive(options.keepAlive);
         client.set_connection_timeout(timeout(options.connectTimeoutMs, 3000));
         client.set_read_timeout(timeout(options.readTimeoutMs, 12000));
         client.set_write_timeout(timeout(options.writeTimeoutMs, 3000));
@@ -205,7 +205,13 @@ bool get(const std::string& url,
                 callbackStopped = true;
                 return false;
             }
-            if (isRedirect(status)) return true;
+            // Never forward redirect or error-page bodies to a streaming
+            // receiver. A 4xx/5xx HTML body is not MPEG-TS and must not be
+            // allowed to poison the relay queue before the HTTP status is
+            // reported to the reconnect loop.
+            if (isRedirect(status) || (status != 0 && (status < 200 || status >= 300))) {
+                return true;
+            }
             const std::size_t available = receivedBytes < options.maxBodyBytes
                 ? options.maxBodyBytes - receivedBytes
                 : 0;

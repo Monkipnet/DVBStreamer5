@@ -470,6 +470,7 @@ void NativeUdpRelay::runHttpInput() {
     options.connectTimeoutMs = 10000;
     options.readTimeoutMs = 15000;
     options.writeTimeoutMs = 10000;
+    options.keepAlive = true;
     options.userAgent = config_.userAgent.empty()
         ? "Mozilla/5.0 DVBStreamer5"
         : config_.userAgent;
@@ -516,19 +517,71 @@ void NativeUdpRelay::runHttpInput() {
             config_.accessKeyMode == "query");
     options.maxRedirects = hasAccessKey ? 0 : 8;
 
-    dvbstreamer5::http::Response response;
-    std::string requestError;
-    const bool ok = dvbstreamer5::http::get(location, options, response, requestError,
-        [this](const std::uint8_t* data, std::size_t size) {
-            return enqueueHttpData(data, size);
-        });
-    const bool cancelled = !running_.load(std::memory_order_acquire);
-    std::string error;
-    if (!cancelled && !ok) {
-        error = "native HTTP input failed: " + requestError;
-        if (response.status != 0) error += " (HTTP " + std::to_string(response.status) + ")";
+    // A live HTTP transport is allowed to disappear temporarily. Do not turn
+    // the whole stream OFFLINE on EOF/read timeout/reset; reconnect with a
+    // bounded backoff and keep the MPEG-TS relay alive.
+    int reconnectDelaySeconds = 1;
+    while (running_.load(std::memory_order_acquire) &&
+           !httpStopRequested_.load(std::memory_order_acquire)) {
+        dvbstreamer5::http::Response response;
+        std::string requestError;
+        std::size_t receivedThisAttempt = 0;
+        bool clearedTransientError = false;
+
+        const bool ok = dvbstreamer5::http::get(
+            location, options, response, requestError,
+            [this, &receivedThisAttempt, &clearedTransientError](
+                const std::uint8_t* data, std::size_t size) {
+                if (!data || size == 0) return true;
+                receivedThisAttempt += size;
+                if (!clearedTransientError) {
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_.clear();
+                    clearedTransientError = true;
+                }
+                return enqueueHttpData(data, size);
+            });
+
+        if (!running_.load(std::memory_order_acquire) ||
+            httpStopRequested_.load(std::memory_order_acquire)) {
+            break;
+        }
+
+        std::string reconnectReason;
+        if (!ok) {
+            reconnectReason = requestError.empty()
+                ? "HTTP transport ended"
+                : requestError;
+            if (response.status != 0 &&
+                reconnectReason.find("HTTP " + std::to_string(response.status)) == std::string::npos) {
+                reconnectReason += " (HTTP " + std::to_string(response.status) + ")";
+            }
+        } else {
+            reconnectReason = "remote HTTP server closed the live stream";
+        }
+        {
+            std::lock_guard<std::mutex> lock(errorMutex_);
+            lastError_ = "native HTTP input reconnecting: " + reconnectReason;
+        }
+
+        // If data flowed, a disconnect is likely a normal upstream rotation;
+        // retry quickly. Repeated failures back off to at most five seconds.
+        if (receivedThisAttempt != 0) {
+            reconnectDelaySeconds = 1;
+        }
+
+        std::unique_lock<std::mutex> lock(httpQueueMutex_);
+        httpQueueCondition_.wait_for(
+            lock,
+            std::chrono::seconds(reconnectDelaySeconds),
+            [this] {
+                return !running_.load(std::memory_order_acquire) ||
+                    httpStopRequested_.load(std::memory_order_acquire);
+            });
+        if (receivedThisAttempt == 0) {
+            reconnectDelaySeconds = (std::min)(5, reconnectDelaySeconds + 1);
+        }
     }
-    finishHttpInput(error);
 }
 
 void NativeUdpRelay::run() {
