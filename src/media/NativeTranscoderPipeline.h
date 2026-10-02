@@ -134,6 +134,10 @@ private:
     static constexpr std::size_t kMaxMuxAudioQueue = 512;
     static constexpr std::uint64_t kMaxAvLead90k = 13500; // 150 ms
     static constexpr auto kMuxSingleStreamWait = std::chrono::milliseconds(120);
+    // A temporary stall of one encoder must not freeze all real TS payload.
+    // After this bounded hold the healthy peer is allowed to advance; the CBR
+    // pacer still smooths transport delivery and the lagging peer can catch up.
+    static constexpr auto kMuxSingleStreamMaxHold = std::chrono::milliseconds(350);
     static constexpr auto kMuxStartupPeerWait = std::chrono::milliseconds(500);
     NativeTranscoderConfig config_;
     mpegts::NativeTsDemux demux_;
