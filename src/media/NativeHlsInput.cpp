@@ -419,6 +419,110 @@ void NativeHlsInput::run() {
     dvbstreamer5::media::cmaf::Fmp4ToMpegTs fmp4;
     std::string initializedMap;
 
+    // MPEG-TS HLS segments arrive from the origin as multi-megabyte bursts.
+    // Feeding a complete 6-second segment to the relay in one call produces
+    // burst -> silence -> burst timing on UDP-VBR and also builds a very deep
+    // queue in UDP-CBR.  Keep a media-time wall-clock deadline and release
+    // conventional 7-packet (1316-byte) chunks smoothly across EXTINF.
+    bool tsPacingStarted = false;
+    Clock::time_point tsSegmentDeadline {};
+
+    auto waitUntil = [&](Clock::time_point deadline) -> bool {
+        constexpr auto kStopPoll = std::chrono::milliseconds(50);
+        while (!stopping_.load()) {
+            const auto now = Clock::now();
+            if (now >= deadline) return true;
+            const auto remaining = deadline - now;
+            std::this_thread::sleep_for((std::min)(
+                remaining,
+                std::chrono::duration_cast<Clock::duration>(kStopPoll)));
+        }
+        return false;
+    };
+
+    auto pushTsSegmentPaced = [&](const Segment& segment,
+                                  const std::vector<std::uint8_t>& bytes,
+                                  double fetchSeconds) -> bool {
+        constexpr std::size_t kTsPacketSize = 188;
+        constexpr std::size_t kPacketsPerBatch = 7;
+        constexpr std::size_t kBatchBytes = kTsPacketSize * kPacketsPerBatch;
+
+        if (bytes.empty()) {
+            error = "HLS MPEG-TS segment is empty";
+            return false;
+        }
+        if ((bytes.size() % kTsPacketSize) != 0 || bytes.front() != 0x47) {
+            error = "HLS MPEG-TS segment is not 188-byte aligned";
+            return false;
+        }
+
+        const double durationSeconds = std::max(0.001, segment.duration);
+        const auto mediaDuration = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(durationSeconds));
+        const auto now = Clock::now();
+
+        bool resync = false;
+        if (!tsPacingStarted || segment.discontinuity) {
+            tsPacingStarted = true;
+            tsSegmentDeadline = now + mediaDuration;
+            resync = segment.discontinuity;
+        } else {
+            tsSegmentDeadline += mediaDuration;
+            // A long origin/network stall should not be followed by a huge
+            // high-speed catch-up burst.  Re-anchor after two seconds late.
+            if (now > tsSegmentDeadline + std::chrono::seconds(2)) {
+                tsSegmentDeadline = now + mediaDuration;
+                resync = true;
+            }
+        }
+
+        const auto pacingStart = Clock::now();
+        const auto pacingSpan = tsSegmentDeadline > pacingStart
+            ? tsSegmentDeadline - pacingStart
+            : Clock::duration::zero();
+        const auto pacingNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            pacingSpan).count();
+
+        std::size_t offset = 0;
+        while (offset < bytes.size() && !stopping_.load()) {
+            const std::size_t chunk = (std::min)(kBatchBytes, bytes.size() - offset);
+            if (!dataCallback_(bytes.data() + offset, chunk)) {
+                error = "native HLS relay rejected paced segment data";
+                return false;
+            }
+            offset += chunk;
+
+            if (offset < bytes.size() && pacingNs > 0) {
+                const auto elapsedNs = static_cast<std::int64_t>(
+                    (static_cast<long double>(pacingNs) *
+                     static_cast<long double>(offset)) /
+                    static_cast<long double>(bytes.size()));
+                if (!waitUntil(pacingStart + std::chrono::nanoseconds(elapsedNs))) {
+                    return false;
+                }
+            }
+        }
+
+        if (stopping_.load()) return false;
+        if (!waitUntil(tsSegmentDeadline)) return false;
+
+        const auto actualPacingMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now() - pacingStart).count();
+        const std::uint64_t mediaKbps = static_cast<std::uint64_t>(
+            (static_cast<long double>(bytes.size()) * 8.0L) /
+            durationSeconds / 1000.0L);
+        std::cerr << "NATIVE HLS SEGMENT"
+                  << " seq=" << segment.sequence
+                  << " duration_ms=" << static_cast<long long>(durationSeconds * 1000.0)
+                  << " bytes=" << bytes.size()
+                  << " media_kbps=" << mediaKbps
+                  << " fetch_ms=" << static_cast<long long>(fetchSeconds * 1000.0)
+                  << " pace_ms=" << actualPacingMs
+                  << " resync=" << (resync ? 1 : 0)
+                  << std::endl;
+        return true;
+    };
+
     auto ensureMap = [&](const Playlist& pl) -> bool {
         if (!pl.hasMap) return true;
         if (pl.mapUri.empty()) { error = "HLS EXT-X-MAP is missing URI"; return false; }
@@ -447,13 +551,19 @@ void NativeHlsInput::run() {
             const Segment segment = playlist.segments[*index];
             std::vector<std::uint8_t> bytes;
             std::string effective;
+            const auto segmentFetchStart = Clock::now();
             if (!fetch(segment.url, config_, stopping_, kMaxSegmentBytes, kSegmentTimeoutMs, bytes, effective, error)) {
                 if (stopping_.load()) break;
+                std::cerr << "NATIVE HLS SEGMENT FETCH ERROR"
+                          << " seq=" << segment.sequence
+                          << " error=" << error << std::endl;
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 Playlist refreshed;
                 if (loadPlaylist(refreshed)) { playlist = std::move(refreshed); lastReload = Clock::now(); }
                 continue;
             }
+            const double segmentFetchSeconds = std::chrono::duration<double>(
+                Clock::now() - segmentFetchStart).count();
             if (playlist.hasMap && segment.keyMethod == "sample-aes") {
                 std::vector<std::uint8_t> keyBytes;
                 std::string keyEffective;
@@ -477,7 +587,7 @@ void NativeHlsInput::run() {
             }
             bool accepted = false;
             if (!playlist.hasMap) {
-                accepted = !bytes.empty() && dataCallback_(bytes.data(), bytes.size());
+                accepted = pushTsSegmentPaced(segment, bytes, segmentFetchSeconds);
             } else {
                 if (!ensureMap(playlist)) { if (!stopping_.load()) fail(error); break; }
                 accepted = !bytes.empty() && fmp4.pushFragment(bytes, error);
