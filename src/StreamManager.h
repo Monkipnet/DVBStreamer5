@@ -63,12 +63,17 @@ struct StreamState {
         int height = 0;
         std::uint64_t videoBitrate = 0;
         std::uint64_t muxBitrate = 0;
+        bool enabled = true;
         bool failed = false;
         std::string lastError;
         std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> transcoder;
         std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> segmenter;
     };
     std::vector<std::unique_ptr<HlsAbrVariantRuntime>> hlsAbrVariants;
+    mutable std::mutex hlsAbrMutex;
+    bool hlsAbrSourceResolved = false;
+    int hlsAbrPrimaryWidth = 0;
+    int hlsAbrPrimaryHeight = 0;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
     std::unique_ptr<dvbstreamer5::media::cmaf::NativeCmafSegmenter> nativeCmafSegmenter;
