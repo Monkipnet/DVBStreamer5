@@ -78,6 +78,9 @@ public:
     bool isRunning() const noexcept;
     std::uint64_t inputBytes() const noexcept;
     std::uint64_t sourceInputBytes() const noexcept;
+    // Non-null MPEG-TS bytes after service remap/CA and before transcoding.
+    // For shared DVB this is the selected channel bitrate, not the whole mux.
+    std::uint64_t selectedInputBytes() const noexcept;
     std::uint64_t outputBytes() const noexcept;
     std::uint64_t payloadOutputBytes() const noexcept;
     std::uint64_t continuityErrors() const noexcept;
@@ -109,6 +112,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> inputBytes_{0};
     std::atomic<std::uint64_t> httpReceivedBytes_{0};
+    std::atomic<std::uint64_t> selectedInputBytes_{0};
     std::atomic<std::uint64_t> outputBytes_{0};
     std::atomic<std::uint64_t> payloadOutputBytes_{0};
     std::atomic<std::uint64_t> continuityErrors_{0};
