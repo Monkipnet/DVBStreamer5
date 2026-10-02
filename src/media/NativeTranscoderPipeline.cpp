@@ -233,7 +233,7 @@ bool NativeTranscoderPipeline::pushDecodedVideoFrame(
         }
         externalVideoQueue_.push_back(std::move(frame));
     }
-    videoQueueCv_.notify_one();
+    videoEncodeQueueCv_.notify_one();
     return true;
 }
 
@@ -482,6 +482,7 @@ void NativeTranscoderPipeline::startWorkers() {
     muxStop_.store(false, std::memory_order_release);
     muxWorker_ = std::thread([this] { muxWorkerLoop(); });
     videoWorker_ = std::thread([this] { videoWorkerLoop(); });
+    videoEncodeWorker_ = std::thread([this] { videoEncodeWorkerLoop(); });
     audioWorker_ = std::thread([this] { audioWorkerLoop(); });
 }
 
@@ -496,10 +497,13 @@ void NativeTranscoderPipeline::stopWorkers() {
     }
     { std::lock_guard<std::mutex> lock(audioQueueMutex_); audioQueue_.clear(); }
     videoQueueCv_.notify_all();
+    videoEncodeQueueCv_.notify_all();
     audioQueueCv_.notify_all();
     if (videoWorker_.joinable()) videoWorker_.join();
+    if (videoEncodeWorker_.joinable()) videoEncodeWorker_.join();
     if (audioWorker_.joinable()) audioWorker_.join();
     videoWorkerActive_.store(false, std::memory_order_release);
+    videoEncodeWorkerActive_.store(false, std::memory_order_release);
     audioWorkerActive_.store(false, std::memory_order_release);
 
     // Only after producers are gone may the mux worker be stopped. For a hard
@@ -524,45 +528,64 @@ void NativeTranscoderPipeline::setFailure(std::string error) {
 void NativeTranscoderPipeline::videoWorkerLoop() {
     for (;;) {
         mpegts::DemuxSample sample;
-        std::shared_ptr<const codec::RawVideoFrame> externalFrame;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
             videoQueueCv_.wait(lock, [this] {
                 return workersStop_.load(std::memory_order_acquire) ||
-                       !videoQueue_.empty() || !externalVideoQueue_.empty();
+                       !videoQueue_.empty();
             });
             if (workersStop_.load(std::memory_order_acquire) &&
-                videoQueue_.empty() && externalVideoQueue_.empty()) break;
+                videoQueue_.empty()) break;
+            if (videoQueue_.empty()) continue;
 
-            if (externalVideoInput_.load(std::memory_order_acquire) &&
-                !externalVideoQueue_.empty()) {
-                externalFrame = std::move(externalVideoQueue_.front());
-                externalVideoQueue_.pop_front();
-            } else if (!videoQueue_.empty()) {
-                sample = std::move(videoQueue_.front());
-                videoQueue_.pop_front();
-            } else {
-                continue;
-            }
+            sample = std::move(videoQueue_.front());
+            videoQueue_.pop_front();
             videoWorkerActive_.store(true, std::memory_order_release);
         }
 
         std::string error;
         {
-            std::lock_guard<std::mutex> codecLock(videoCodecMutex_);
-            if (externalFrame) {
-                if (!handleDecodedVideoFrame(*externalFrame, error))
-                    setFailure(error);
-            } else {
-                if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
-                    videoDecoder_.reset();
-                    videoStartupReady_ = false;
-                }
-                if (!handleVideo(std::move(sample), error))
-                    setFailure(error);
+            std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
+            if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
+                videoDecoder_.reset();
+                videoStartupReady_ = false;
             }
+            if (!handleVideo(std::move(sample), error))
+                setFailure(error);
         }
+
         videoWorkerActive_.store(false, std::memory_order_release);
+        idleCv_.notify_all();
+        if (failed_.load(std::memory_order_acquire)) break;
+    }
+}
+
+void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
+    for (;;) {
+        std::shared_ptr<const codec::RawVideoFrame> frame;
+        {
+            std::unique_lock<std::mutex> lock(videoQueueMutex_);
+            videoEncodeQueueCv_.wait(lock, [this] {
+                return workersStop_.load(std::memory_order_acquire) ||
+                       !externalVideoQueue_.empty();
+            });
+            if (workersStop_.load(std::memory_order_acquire) &&
+                externalVideoQueue_.empty()) break;
+            if (externalVideoQueue_.empty()) continue;
+
+            frame = std::move(externalVideoQueue_.front());
+            externalVideoQueue_.pop_front();
+            videoEncodeWorkerActive_.store(true, std::memory_order_release);
+        }
+
+        std::string error;
+        {
+            std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
+            if (frame && !handleDecodedVideoFrame(*frame, error))
+                setFailure(error);
+        }
+
+        videoEncodeWorkerActive_.store(false, std::memory_order_release);
         idleCv_.notify_all();
         if (failed_.load(std::memory_order_acquire)) break;
     }
