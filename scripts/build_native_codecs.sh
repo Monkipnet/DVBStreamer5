@@ -34,11 +34,31 @@ cmake --build "$BUILD_ROOT/libde265" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/libde265"
 
 echo "[3/5] Kvazaar static"
-cmake -S "$ROOT/third_party/kvazaar" -B "$BUILD_ROOT/kvazaar" \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-  -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF -DBUILD_KVAZAAR_BINARY=OFF -DGIT_SUBMODULE=OFF -DUSE_CRYPTO=OFF
-cmake --build "$BUILD_ROOT/kvazaar" --parallel "$JOBS"
-cmake --install "$BUILD_ROOT/kvazaar"
+KVAZAAR_CMAKE_VERSION="$(cmake --version | awk 'NR==1 {print $3}')"
+if [[ "$(printf '%s\n' "3.25" "$KVAZAAR_CMAKE_VERSION" | sort -V | head -n1)" == "3.25" ]]; then
+  echo "Kvazaar: using CMake $KVAZAAR_CMAKE_VERSION"
+  cmake -S "$ROOT/third_party/kvazaar" -B "$BUILD_ROOT/kvazaar" \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF -DBUILD_KVAZAAR_BINARY=OFF -DGIT_SUBMODULE=OFF -DUSE_CRYPTO=OFF
+  cmake --build "$BUILD_ROOT/kvazaar" --parallel "$JOBS"
+  cmake --install "$BUILD_ROOT/kvazaar"
+else
+  echo "Kvazaar: CMake $KVAZAAR_CMAKE_VERSION is older than 3.25; using upstream Autotools build"
+  (
+    cd "$ROOT/third_party/kvazaar"
+    bash ./autogen.sh
+  )
+  mkdir -p "$BUILD_ROOT/kvazaar-autotools"
+  (
+    cd "$BUILD_ROOT/kvazaar-autotools"
+    "$ROOT/third_party/kvazaar/configure" \
+      --prefix="$PREFIX" \
+      --disable-shared \
+      --enable-static
+    make -j"$JOBS"
+    make install
+  )
+fi
 
 echo "[4/5] FDK-AAC static"
 cmake -S "$ROOT/third_party/fdk-aac" -B "$BUILD_ROOT/fdk-aac" \
