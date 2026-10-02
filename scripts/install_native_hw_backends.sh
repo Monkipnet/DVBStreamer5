@@ -80,7 +80,19 @@ install_if_available   libva2 libva-drm2 libva-dev vainfo   libdrm2 libdrm-dev p
 if ((HAS_INTEL)); then
   echo
   echo "=== Intel GPU: installing VAAPI + oneVPL/QSV support ==="
-  install_if_available     intel-media-va-driver-non-free     intel-media-va-driver     i965-va-driver     libvpl2 libvpl-dev     libmfx-gen1.2 libmfx-gen-dev     onevpl-tools
+  # intel-media-va-driver and intel-media-va-driver-non-free conflict.
+  # Keep an installed variant; otherwise prefer non-free when available.
+  if dpkg-query -W -f='${Status}' intel-media-va-driver-non-free 2>/dev/null | grep -q 'install ok installed'; then
+    echo "Intel VAAPI driver: keeping installed intel-media-va-driver-non-free"
+  elif dpkg-query -W -f='${Status}' intel-media-va-driver 2>/dev/null | grep -q 'install ok installed'; then
+    echo "Intel VAAPI driver: keeping installed intel-media-va-driver"
+  elif apt-cache show intel-media-va-driver-non-free >/dev/null 2>&1; then
+    install_if_available intel-media-va-driver-non-free
+  else
+    install_if_available intel-media-va-driver
+  fi
+
+  install_if_available i965-va-driver libvpl2 libvpl-dev libmfx-gen1.2 libmfx-gen-dev onevpl-tools
 fi
 
 if ((HAS_AMD)); then
