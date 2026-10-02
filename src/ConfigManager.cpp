@@ -13,6 +13,7 @@
 #include <set>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -46,8 +47,8 @@ std::filesystem::path uiPasswordKeyPath(const std::filesystem::path& configPath)
     return configPath.parent_path() / "dvbstreamer5-ui.key";
 }
 
-std::filesystem::path subscriberConfigPath() {
-    return std::filesystem::current_path() / "dvbstreamer5-subscribers.json";
+std::filesystem::path subscriberConfigPath(const std::filesystem::path& configPath) {
+    return configPath.parent_path() / "dvbstreamer5-subscribers.json";
 }
 
 std::string hexEncode(const unsigned char* data, size_t size) {
@@ -644,7 +645,18 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
 }
 
 ConfigManager::ConfigManager() {
-    configPath = std::filesystem::current_path() / "dvbstreamer5-config.json";
+    const char* configuredDir = std::getenv("DVBSTREAMER5_CONFIG_DIR");
+    if (configuredDir && *configuredDir) {
+        std::filesystem::path dir(configuredDir);
+        if (!dir.is_absolute()) {
+            std::cerr << "DVBSTREAMER5_CONFIG_DIR must be an absolute path: "
+                      << configuredDir << std::endl;
+            dir = std::filesystem::current_path();
+        }
+        configPath = dir / "dvbstreamer5-config.json";
+    } else {
+        configPath = std::filesystem::current_path() / "dvbstreamer5-config.json";
+    }
 }
 
 Json::Value SubscriberConfig::toJson() const {
@@ -757,7 +769,7 @@ bool ConfigManager::load() {
 }
 
 bool ConfigManager::loadSubscribers() {
-    const auto path = subscriberConfigPath();
+    const auto path = subscriberConfigPath(configPath);
     if (!std::filesystem::exists(path)) {
         subscribers = SubscriberListConfig{};
         return saveSubscribers();
@@ -807,7 +819,7 @@ bool ConfigManager::save() {
 
 bool ConfigManager::saveSubscribers() {
     std::lock_guard<std::mutex> lock(fileMutex);
-    const auto path = subscriberConfigPath();
+    const auto path = subscriberConfigPath(configPath);
     std::ofstream output(path);
     if (!output.is_open()) return false;
     Json::StreamWriterBuilder writer;
