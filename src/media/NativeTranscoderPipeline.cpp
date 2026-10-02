@@ -445,6 +445,13 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
         return;
     }
 
+    if (externalAudioInput_.load(std::memory_order_acquire)) {
+        if (inputAudioPid_ == 0xffff) {
+            inputAudioPid_ = sample.stream.pid;
+            inputAudioCodec_ = sample.stream.codec;
+        }
+        return;
+    }
     if (inputAudioPid_ == 0xffff) {
         inputAudioPid_ = sample.stream.pid;
         inputAudioCodec_ = sample.stream.codec;
@@ -1002,6 +1009,13 @@ bool NativeTranscoderPipeline::emitVideo(const codec::EncodedVideoFrame& frame, 
 
 bool NativeTranscoderPipeline::emitAudio(const codec::EncodedAudioFrame& frame,
                                          std::uint64_t duration90k, std::string& error) {
+    EncodedAudioObserver observer;
+    {
+        std::lock_guard<std::mutex> lock(encodedAudioObserverMutex_);
+        observer = encodedAudioObserver_;
+    }
+    if (observer) observer(frame, duration90k);
+
     MuxQueuedSample sample;
     sample.kind = mpegts::ElementaryKind::Audio;
     sample.data = frame.data;
