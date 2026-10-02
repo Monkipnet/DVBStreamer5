@@ -105,6 +105,11 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
 #endif
 }
 
+std::size_t NativePreviewHub::subscriberCount() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return closed_ ? 0U : subscribers_.size();
+}
+
 void NativePreviewHub::close() {
 #if !defined(_WIN32)
     std::lock_guard<std::mutex> lock(mutex_);
