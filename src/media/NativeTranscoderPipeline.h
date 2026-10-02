@@ -77,6 +77,7 @@ private:
     void startWorkers();
     void stopWorkers();
     void videoWorkerLoop();
+    void videoEncodeWorkerLoop();
     void audioWorkerLoop();
     void muxWorkerLoop();
     void setFailure(std::string error);
@@ -114,7 +115,8 @@ private:
     mutable std::mutex failureMutex_;
     mutable std::mutex outputMutex_;
     mutable std::mutex muxMutex_;
-    mutable std::mutex videoCodecMutex_;
+    mutable std::mutex videoDecoderMutex_;
+    mutable std::mutex videoEncoderMutex_;
     mutable std::mutex audioCodecMutex_;
     mutable std::mutex videoQueueMutex_;
     mutable std::mutex audioQueueMutex_;
@@ -122,10 +124,12 @@ private:
     mutable std::mutex decodedVideoObserverMutex_;
     mutable std::mutex encodedAudioObserverMutex_;
     std::condition_variable videoQueueCv_;
+    std::condition_variable videoEncodeQueueCv_;
     std::condition_variable audioQueueCv_;
     std::condition_variable idleCv_;
     std::condition_variable muxQueueCv_;
     std::thread videoWorker_;
+    std::thread videoEncodeWorker_;
     std::thread audioWorker_;
     std::thread muxWorker_;
     std::deque<mpegts::DemuxSample> videoQueue_;
@@ -136,6 +140,7 @@ private:
     std::atomic<bool> workersStop_{false};
     std::atomic<bool> muxStop_{false};
     std::atomic<bool> videoWorkerActive_{false};
+    std::atomic<bool> videoEncodeWorkerActive_{false};
     std::atomic<bool> audioWorkerActive_{false};
     std::atomic<bool> muxWorkerActive_{false};
     std::atomic<bool> videoResetRequested_{false};
@@ -144,6 +149,7 @@ private:
     bool videoDropUntilRandomAccess_ = false;
     std::uint64_t droppedVideoSamples_ = 0;
     std::uint64_t droppedExternalVideoFrames_ = 0;
+    std::uint64_t decodedVideoQueueDrops_ = 0;
     DecodedVideoObserver decodedVideoObserver_;
     EncodedAudioObserver encodedAudioObserver_;
     std::uint64_t droppedAudioSamples_ = 0;
