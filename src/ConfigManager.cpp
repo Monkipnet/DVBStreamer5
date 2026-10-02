@@ -479,6 +479,9 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.outputMode = primary.outputMode;
         config.outputHost = primary.outputHost;
         config.outputPort = primary.outputPort;
+        if (!primary.interfaceAddress.empty()) {
+            config.interfaceAddress = primary.interfaceAddress;
+        }
         config.srtOutputLatencyMs = primary.srtLatencyMs;
         config.srtOutputPassphrase = primary.srtPassphrase;
         config.srtOutputStreamId = primary.srtStreamId;
