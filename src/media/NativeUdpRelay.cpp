@@ -154,11 +154,25 @@ bool flushPackets(
             if (!output.send(datagram.data(), datagram.size(), error)) return false;
         }
     } else {
-        // WISI Chameleon documents MPEG-over-UDP/IP with 188-byte TS packets.
-        // Send exactly one MPEG-TS packet per UDP datagram for maximum
-        // interoperability with Chameleon UDP-CBR/UDP-VBR inputs.
-        for (const auto& packet : packets) {
-            if (!output.send(packet.data(), packet.size(), error)) return false;
+        // Seven 188-byte MPEG-TS packets per UDP datagram (1316-byte payload)
+        // is the conventional MPEG-over-UDP layout and matches WISI IPTV
+        // equipment that exposes a TS-packets-per-datagram setting.
+        constexpr std::size_t kPacketsPerDatagram = 7;
+        for (std::size_t first = 0; first < packets.size(); first += kPacketsPerDatagram) {
+            const std::size_t count =
+                (std::min)(kPacketsPerDatagram, packets.size() - first);
+            std::array<std::uint8_t,
+                kPacketsPerDatagram * dvbstreamer5::media::mpegts::kPacketSize> bytes {};
+            for (std::size_t index = 0; index < count; ++index) {
+                std::copy(
+                    packets[first + index].begin(),
+                    packets[first + index].end(),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(
+                        index * dvbstreamer5::media::mpegts::kPacketSize));
+            }
+            const std::size_t size =
+                count * dvbstreamer5::media::mpegts::kPacketSize;
+            if (!output.send(bytes.data(), size, error)) return false;
         }
     }
 
