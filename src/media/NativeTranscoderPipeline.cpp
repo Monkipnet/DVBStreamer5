@@ -570,16 +570,28 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // one stream far ahead of the other.
                         ready = waited >= kMuxStartupPeerWait;
                     } else {
-                        // Once both streams are established, enforce the A/V lead bound.
-                        // V10.8 allowed sameQueueDepth>=2 to bypass this check, which let
-                        // audio advance by many seconds while video encoding lagged.
-                        ready = clock <= otherClock + kMaxAvLead90k;
+                        // Once both streams are established, normally enforce the
+                        // 150 ms A/V lead bound. The old loop recomputed
+                        // now+kMuxSingleStreamWait on every wake-up, so if one encoder
+                        // paused the healthy peer could be held forever. In CBR mode
+                        // that produced only NULL packets: CBR Out stayed alive while
+                        // Payload Out fell to zero and viewers saw a freeze.
+                        const bool withinLead =
+                            clock <= otherClock + kMaxAvLead90k;
+                        const bool holdExpired =
+                            waited >= kMuxSingleStreamMaxHold;
+                        ready = withinLead || holdExpired;
                     }
                     chooseVideo = haveVideo;
                     if (!ready) {
-                        const auto deadline = otherClock == 0
+                        const auto now = std::chrono::steady_clock::now();
+                        const auto hardDeadline = otherClock == 0
                             ? only.queuedAt + kMuxStartupPeerWait
-                            : std::chrono::steady_clock::now() + kMuxSingleStreamWait;
+                            : only.queuedAt + kMuxSingleStreamMaxHold;
+                        const auto softDeadline =
+                            now + kMuxSingleStreamWait;
+                        const auto deadline =
+                            hardDeadline < softDeadline ? hardDeadline : softDeadline;
                         muxQueueCv_.wait_until(lock, deadline);
                         if (muxStop_.load(std::memory_order_acquire) &&
                             muxVideoQueue_.empty() && muxAudioQueue_.empty()) break;
