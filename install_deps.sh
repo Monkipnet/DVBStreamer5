@@ -21,6 +21,9 @@ DEPS=(build-essential cmake nodejs pkg-config
 "${APT_GET[@]}" install -y --no-install-recommends "${DEPS[@]}"
 "${APT_GET[@]}" clean
 
+# Detect GPU vendors and install native hardware codec dependencies/drivers.
+"$ROOT_DIR/scripts/install_native_hw_backends.sh"
+
 "$ROOT_DIR/scripts/vendor_srt_source.sh"
 "$ROOT_DIR/scripts/vendor_native_codecs.sh"
 "$ROOT_DIR/scripts/build_native_codecs.sh"
@@ -31,6 +34,7 @@ fi
 
 echo "Dependencies installed. SRT 1.5.7 source is vendored and will be built statically with OpenSSL EVP."
 echo "Pinned native codec sources are vendored and built into third_party/native-codecs-prefix as static libraries."
-echo "No libsrt-dev, FFmpeg/libav, GStreamer, or system codec runtime package is required."
+echo "No libsrt-dev, FFmpeg/libav, or GStreamer runtime is required."
+echo "Native hardware APIs are enabled automatically when supported: Intel oneVPL/VAAPI, NVIDIA NVENC, generic VAAPI."
 echo "WSL/NTFS note: keep the CMake build directory in the Linux filesystem."
 echo 'Build example: cmake -S "$PWD" -B "$HOME/DVBStreamer5-build" -DCMAKE_BUILD_TYPE=Release && cmake --build "$HOME/DVBStreamer5-build" --parallel 2 --target DVBStreamer5' 

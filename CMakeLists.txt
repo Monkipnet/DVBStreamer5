@@ -167,15 +167,23 @@ if(WIN32)
     target_link_libraries(dvbstreamer5_media_core PUBLIC ws2_32)
 endif()
 
+# Hardware encoders are enabled by default. A backend is compiled when its
+# native SDK headers/libraries are available on the build host.
+option(DVBSTREAMER5_ENABLE_VAAPI "Enable native VAAPI hardware backend when available" ON)
+option(DVBSTREAMER5_ENABLE_INTEL_QSV "Enable native Intel oneVPL/QSV backend when available" ON)
+option(DVBSTREAMER5_ENABLE_NVENC "Enable native NVIDIA NVENC backend when available" ON)
+
 # Optional direct hardware video backends. These are vendor/OS APIs, not media frameworks.
 # CPU codecs remain fully self-contained when the SDK headers are absent.
 
 # Direct libva backend for legacy Intel generations (for example Haswell/i965)
 # where the modern oneVPL GPU runtime exposes no implementation.
-find_path(DVBSTREAMER5_VA_INCLUDE_DIR NAMES va/va.h)
-find_library(DVBSTREAMER5_VA_LIBRARY NAMES va)
-find_library(DVBSTREAMER5_VA_DRM_LIBRARY NAMES va-drm)
-if(DVBSTREAMER5_VA_INCLUDE_DIR AND DVBSTREAMER5_VA_LIBRARY AND DVBSTREAMER5_VA_DRM_LIBRARY)
+if(DVBSTREAMER5_ENABLE_VAAPI)
+    find_path(DVBSTREAMER5_VA_INCLUDE_DIR NAMES va/va.h)
+    find_library(DVBSTREAMER5_VA_LIBRARY NAMES va)
+    find_library(DVBSTREAMER5_VA_DRM_LIBRARY NAMES va-drm)
+endif()
+if(DVBSTREAMER5_ENABLE_VAAPI AND DVBSTREAMER5_VA_INCLUDE_DIR AND DVBSTREAMER5_VA_LIBRARY AND DVBSTREAMER5_VA_DRM_LIBRARY)
     target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_VAAPI=1)
     target_include_directories(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_VA_INCLUDE_DIR})
     target_link_libraries(dvbstreamer5_media_core PRIVATE
@@ -187,9 +195,11 @@ else()
     message(STATUS "Native Intel VAAPI backend: disabled (install libva-dev)")
 endif()
 
-find_path(DVBSTREAMER5_VPL_INCLUDE_DIR NAMES vpl/mfxdispatcher.h)
-find_library(DVBSTREAMER5_VPL_LIBRARY NAMES vpl)
-if(DVBSTREAMER5_VPL_INCLUDE_DIR AND DVBSTREAMER5_VPL_LIBRARY AND EXISTS "${DVBSTREAMER5_VPL_INCLUDE_DIR}/vpl/mfxvideo.h")
+if(DVBSTREAMER5_ENABLE_INTEL_QSV)
+    find_path(DVBSTREAMER5_VPL_INCLUDE_DIR NAMES vpl/mfxdispatcher.h)
+    find_library(DVBSTREAMER5_VPL_LIBRARY NAMES vpl)
+endif()
+if(DVBSTREAMER5_ENABLE_INTEL_QSV AND DVBSTREAMER5_VPL_INCLUDE_DIR AND DVBSTREAMER5_VPL_LIBRARY AND EXISTS "${DVBSTREAMER5_VPL_INCLUDE_DIR}/vpl/mfxvideo.h")
     target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_VPL=1)
     target_include_directories(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_VPL_INCLUDE_DIR})
     target_link_libraries(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_VPL_LIBRARY})
@@ -198,8 +208,10 @@ else()
     message(STATUS "Native Intel QSV/VAAPI backend: disabled (install libvpl-dev)")
 endif()
 
-find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
-if(DVBSTREAMER5_NVENC_INCLUDE_DIR)
+if(DVBSTREAMER5_ENABLE_NVENC)
+    find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
+endif()
+if(DVBSTREAMER5_ENABLE_NVENC AND DVBSTREAMER5_NVENC_INCLUDE_DIR)
     target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_NVENC_HEADERS=1)
     target_include_directories(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_NVENC_INCLUDE_DIR})
     message(STATUS "Native NVIDIA NVENC backend: enabled (runtime loaded dynamically)")
