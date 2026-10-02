@@ -1016,7 +1016,7 @@ void HttpServer::handleSession(tcp::socket socket) {
                     stateBypassEnv && *stateBypassEnv && std::strcmp(stateBypassEnv, "0") != 0;
                 std::string stateBody;
                 if (stateBypass) {
-                    stateBody = R"({"diagnostic_state_bypass":true,"program_version":"1.0.0"})";
+                    stateBody = std::string(R"({"diagnostic_state_bypass":true,"program_version":")") + kProgramVersion + R"("})";
                 } else {
                     stateBody = currentState();
                 }
@@ -5394,7 +5394,7 @@ function openAboutModal() {
     <h2>${t('about')}</h2>
     <div class="about-list">
       <div class="about-row"><strong>${t('product')}</strong><span>DVBStreamer5</span></div>
-      <div class="about-row"><strong>${t('version')}</strong><span>${state.program_version||'1.0.0'}${language === 'en' ? ' EN' : ''}</span></div>
+      <div class="about-row"><strong>${t('version')}</strong><span>${state.program_version||'—'}${language === 'en' ? ' EN' : ''}</span></div>
       <div class="about-row"><strong>${t('name')}</strong><span>Лукомский Виталий</span></div>
       <div class="about-row"><strong>${t('country')}</strong><span>Беларусь, г. Борисов</span></div>
       <div class="about-row"><strong>${t('contactEmail')}</strong><a href="mailto:monkipnet@gmail.com">monkipnet@gmail.com</a></div>
