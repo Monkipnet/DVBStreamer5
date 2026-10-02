@@ -165,9 +165,10 @@ inline std::string decode(const std::uint8_t* data, std::size_t size) {
 
     unsigned iso8859Table = 0;
     std::size_t skip = 1;
-    if (selector >= 0x01U && selector <= 0x0bU) {
-        // DVB selector bytes map directly to ISO-8859 tables 5..15,
-        // with 0x08 reserved by the standard.
+    if (selector >= 0x01U && selector <= 0x07U) {
+        iso8859Table = static_cast<unsigned>(selector) + 4U;
+    } else if (selector >= 0x09U && selector <= 0x0bU) {
+        // 0x08 is reserved; 0x09..0x0b select ISO-8859-13..15.
         iso8859Table = static_cast<unsigned>(selector) + 4U;
     } else if (selector == 0x10U && size >= 3 && data[1] == 0x00U) {
         iso8859Table = data[2];
