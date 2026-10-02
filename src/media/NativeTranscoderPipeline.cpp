@@ -195,7 +195,7 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
               << " audio_queue=" << kMaxAudioQueue
               << " mux_video_queue=" << kMaxMuxVideoQueue
               << " mux_audio_queue=" << kMaxMuxAudioQueue
-              << " separate_workers=1 av_mux_scheduler=1 max_av_lead_ms=150 strict_peer_lead=1 live_queue_drop=1" << std::endl;
+              << " separate_workers=1 split_decode_encode=1 av_mux_scheduler=1 max_av_lead_ms=150 strict_peer_lead=1 live_queue_drop=1" << std::endl;
     return true;
 }
 
@@ -841,6 +841,7 @@ bool NativeTranscoderPipeline::waitForIdle() {
         { std::lock_guard<std::mutex> lock(muxQueueMutex_); muxVideoEmpty = muxVideoQueue_.empty(); muxAudioEmpty = muxAudioQueue_.empty(); }
         if (videoEmpty && audioEmpty && muxVideoEmpty && muxAudioEmpty &&
             !videoWorkerActive_.load(std::memory_order_acquire) &&
+            !videoEncodeWorkerActive_.load(std::memory_order_acquire) &&
             !audioWorkerActive_.load(std::memory_order_acquire) &&
             !muxWorkerActive_.load(std::memory_order_acquire)) return true;
         if (failed_.load(std::memory_order_acquire)) return false;
@@ -1174,13 +1175,14 @@ std::string NativeTranscoderPipeline::status() const {
     }
     if (!initialized_) return "not initialized";
     std::size_t vq = 0, rawVq = 0, aq = 0, mvq = 0, maq = 0;
-    std::uint64_t vdrop = 0, rawVdrop = 0, adrop = 0;
+    std::uint64_t vdrop = 0, rawVdrop = 0, primaryRawDrop = 0, adrop = 0;
     {
         std::lock_guard<std::mutex> qlock(videoQueueMutex_);
         vq = videoQueue_.size();
         rawVq = externalVideoQueue_.size();
         vdrop = droppedVideoSamples_;
         rawVdrop = droppedExternalVideoFrames_;
+        primaryRawDrop = decodedVideoQueueDrops_;
     }
     {
         std::lock_guard<std::mutex> qlock(audioQueueMutex_);
@@ -1209,6 +1211,7 @@ std::string NativeTranscoderPipeline::status() const {
            " late_audio=" + std::to_string(muxLateAudio_.load(std::memory_order_acquire)) +
            " vdrop=" + std::to_string(vdrop) +
            " raw_vdrop=" + std::to_string(rawVdrop) +
+           " primary_raw_drop=" + std::to_string(primaryRawDrop) +
            " adrop=" + std::to_string(adrop);
 }
 
