@@ -331,6 +331,14 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
             error = "native UDP output setup failed: " + error;
             return false;
         }
+        std::cerr << "NATIVE UDP OUTPUT open index=" << outputSockets_.size()
+                  << " type=" << output.outputType
+                  << " destination=" << outputHost << ":" << parsedOutputPort
+                  << " interface="
+                  << (output.interfaceAddress.empty() ? std::string("auto")
+                                                      : output.interfaceAddress)
+                  << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                  << std::endl;
         outputSockets_.push_back(std::move(outputSocket));
     }
 
@@ -625,7 +633,11 @@ void NativeUdpRelay::runHttpInput() {
 void NativeUdpRelay::run() {
     struct OutputWorker {
         UdpSocket* socket = nullptr;
+        std::size_t index = 0;
+        std::string type;
         bool rtp = false;
+        bool firstSendLogged = false;
+        std::uint64_t datagramsSent = 0;
         std::unique_ptr<dvbstreamer5::media::rtp::MpegTsPacketizer> packetizer;
         std::unique_ptr<dvbstreamer5::media::mpegts::CbrTsPacer> cbrPacer;
     };
@@ -665,7 +677,9 @@ void NativeUdpRelay::run() {
     for (std::size_t index = 0; index < config_.outputs.size(); ++index) {
         OutputWorker output;
         output.socket = outputSockets_[index].get();
-        output.rtp = config_.outputs[index].outputType == "rtp";
+        output.index = index;
+        output.type = config_.outputs[index].outputType;
+        output.rtp = output.type == "rtp";
         if (output.rtp) {
             const auto outputSeed = seed + index;
             const std::uint32_t sourceId =
@@ -1075,6 +1089,16 @@ void NativeUdpRelay::run() {
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_ = error.empty() ? "UDP output send failed" : error;
                     break;
+                } else {
+                    ++output.datagramsSent;
+                    if (!output.firstSendLogged) {
+                        output.firstSendLogged = true;
+                        std::cerr << "NATIVE UDP OUTPUT first_send index="
+                                  << output.index
+                                  << " type=" << output.type
+                                  << " packets=" << packets.size()
+                                  << std::endl;
+                    }
                 }
             }
             if (!error.empty()) {
@@ -1086,14 +1110,38 @@ void NativeUdpRelay::run() {
             if (!output.cbrPacer || !output.cbrPacer->started()) {
                 continue;
             }
-            dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram {};
-            if (output.cbrPacer->nextDatagram(
-                    std::chrono::steady_clock::now(), cbrDatagram) &&
-                !sendCbrDatagram(cbrDatagram, *output.socket, outputBytes_, error)) {
-                std::lock_guard<std::mutex> lock(errorMutex_);
-                    lastError_ = error.empty() ? "UDP CBR output send failed" : error;
-                break;
+
+            // Drain every datagram whose pacing deadline has already arrived.
+            // The previous code emitted at most one CBR datagram per input-loop
+            // iteration, so an asynchronous transcoder could make UDP-CBR lag
+            // badly behind the requested bitrate.
+            for (unsigned drained = 0; drained < 32U; ++drained) {
+                dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram {};
+                if (!output.cbrPacer->nextDatagram(
+                        std::chrono::steady_clock::now(), cbrDatagram)) {
+                    break;
+                }
+                if (!sendCbrDatagram(
+                        cbrDatagram, *output.socket, outputBytes_, error)) {
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_ = error.empty()
+                        ? "UDP CBR output send failed" : error;
+                    break;
+                }
+                ++output.datagramsSent;
+                if (!output.firstSendLogged) {
+                    output.firstSendLogged = true;
+                    std::cerr << "NATIVE UDP OUTPUT first_send index="
+                              << output.index
+                              << " type=" << output.type
+                              << " queued_packets="
+                              << output.cbrPacer->queuedPackets()
+                              << " target_kbps="
+                              << (output.cbrPacer->targetBitrate() / 1000ULL)
+                              << std::endl;
+                }
             }
+            if (!error.empty()) break;
         }
         if (!error.empty()) {
             std::lock_guard<std::mutex> lock(errorMutex_);
