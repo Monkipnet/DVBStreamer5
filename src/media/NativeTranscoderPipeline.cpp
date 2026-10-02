@@ -195,7 +195,7 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
               << " audio_queue=" << kMaxAudioQueue
               << " mux_video_queue=" << kMaxMuxVideoQueue
               << " mux_audio_queue=" << kMaxMuxAudioQueue
-              << " separate_workers=1 split_decode_encode=1 av_mux_scheduler=1 max_av_lead_ms=150 strict_peer_lead=1 live_queue_drop=1" << std::endl;
+              << " separate_workers=1 split_decode_encode=1 fps_gate=1 av_mux_scheduler=1 max_av_lead_ms=150 strict_peer_lead=1 live_queue_drop=1" << std::endl;
     return true;
 }
 
@@ -1291,6 +1291,7 @@ std::string NativeTranscoderPipeline::status() const {
            " vdrop=" + std::to_string(vdrop) +
            " raw_vdrop=" + std::to_string(rawVdrop) +
            " primary_raw_drop=" + std::to_string(primaryRawDrop) +
+           " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +
            " adrop=" + std::to_string(adrop);
 }
 
