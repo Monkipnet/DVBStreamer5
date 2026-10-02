@@ -136,6 +136,7 @@ add_library(dvbstreamer5_media_core
     src/media/RtpMpegTs.cpp
     src/media/UdpSocket.cpp
     src/media/LinuxDvbInput.cpp
+    src/media/SharedDvbInputPool.cpp
     src/media/NativePreviewHub.cpp
     src/media/NativeHlsInput.cpp
     src/media/NativeHlsSegmenter.cpp
