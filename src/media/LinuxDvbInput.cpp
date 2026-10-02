@@ -25,6 +25,9 @@ namespace {
 #ifdef __linux__
 constexpr std::uint16_t kDmxAllPids = 0x2000;
 constexpr std::size_t kMaxPidFilters = 32;
+// The kernel DVB demux default can be too small for full-transponder reads,
+// especially when CA requires PID 8192.  Keep several seconds of headroom.
+constexpr unsigned long kDmxBufferBytes = 8UL * 1024UL * 1024UL;
 #endif
 
 #ifdef __linux__
@@ -469,6 +472,14 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
             close();
             return false;
         }
+        // Best-effort increase before starting the filter.  Some
+        // drivers may reject DMX_SET_BUFFER_SIZE; tuning can still continue.
+        if (::ioctl(fd, DMX_SET_BUFFER_SIZE, kDmxBufferBytes) != 0) {
+            std::clog << "NATIVE DVB DEMUX buffer resize warning pid=" << pid
+                      << " bytes=" << kDmxBufferBytes
+                      << " error=" << std::strerror(errno) << '\n';
+        }
+
         dmx_pes_filter_params filter {};
         filter.pid = pid;
         filter.input = DMX_IN_FRONTEND;
@@ -533,6 +544,20 @@ bool LinuxDvbInput::read(
             error.clear();
             return true;
         }
+        if (errno == EOVERFLOW) {
+            ++overflowCount_;
+            // Linux DVB reports DVR/demux overrun as EOVERFLOW.  It means TS
+            // packets were lost, but the frontend is still valid; dropping the
+            // entire channel here turns a recoverable discontinuity into an
+            // OFFLINE stream.  Continue draining and let CC diagnostics expose
+            // any packet loss.
+            if (overflowCount_ <= 3 || (overflowCount_ & (overflowCount_ - 1)) == 0) {
+                std::clog << "NATIVE DVB DVR overflow recovered count="
+                          << overflowCount_ << '\n';
+            }
+            error.clear();
+            return true;
+        }
         error = "DVB transport-stream read failed: " + std::string(std::strerror(errno));
         return false;
     }
@@ -564,6 +589,7 @@ void LinuxDvbInput::close() noexcept {
     }
 #endif
     demuxFds_.clear();
+    overflowCount_ = 0;
 }
 
 } // namespace dvbstreamer5::media::network
