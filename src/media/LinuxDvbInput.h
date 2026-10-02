@@ -50,6 +50,7 @@ public:
 private:
     int dvrFd_ = -1;
     std::vector<int> demuxFds_;
+    std::uint64_t overflowCount_ = 0;
 };
 
 } // namespace dvbstreamer5::media::network
