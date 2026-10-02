@@ -6,6 +6,12 @@
 #include <kvazaar.h>
 #include <fdk-aac/aacdecoder_lib.h>
 #include <fdk-aac/aacenc_lib.h>
+extern "C" {
+#include <iv_datatypedef.h>
+#include <iv.h>
+#include <ivd.h>
+#include <impeg2d.h>
+}
 #define PL_MPEG_IMPLEMENTATION
 #define PLM_NO_STDIO
 #include <pl_mpeg/pl_mpeg.h>
@@ -14,6 +20,7 @@
 #include <array>
 #include <cmath>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -284,6 +291,412 @@ std::size_t openH264ReadPictureLength(const std::uint8_t* data, std::size_t size
     }
     return 0;
 }
+
+
+class IttiamMpeg2Decoder final : public VideoDecoder {
+public:
+    IttiamMpeg2Decoder() {
+        std::string ignored;
+        valid_ = initialize(ignored);
+        if (!valid_ && !ignored.empty()) {
+            std::cerr << "NATIVE MPEG2 DECODER init failed: "
+                      << ignored << '\n';
+        }
+    }
+
+    ~IttiamMpeg2Decoder() override {
+        release();
+    }
+
+    bool valid() const noexcept {
+        return valid_;
+    }
+
+    bool decode(const std::uint8_t* data, std::size_t size,
+                std::uint64_t pts90k, bool hasPts,
+                std::vector<RawVideoFrame>& output,
+                std::string& error) override {
+        error.clear();
+        if (!valid_ || !codec_) {
+            error = "Ittiam MPEG-2 decoder unavailable";
+            return false;
+        }
+        if (!data || size == 0) return true;
+
+        // NativeTsDemux supplies elementary MPEG-2 video PES payloads. Keep
+        // unconsumed bytes between PES calls because the decoder may stop at a
+        // picture/sequence boundary before consuming the complete buffer.
+        if (pending_.size() + size > kMaxPendingBytes) {
+            const auto sequence = findLastSequenceHeader(data, size);
+            pending_.clear();
+            if (sequence < size) {
+                pending_.insert(pending_.end(), data + sequence, data + size);
+            } else {
+                error = "MPEG-2 decoder pending input exceeded 16 MiB";
+                return false;
+            }
+        } else {
+            pending_.insert(pending_.end(), data, data + size);
+        }
+
+        for (unsigned guard = 0; guard < 64 && !pending_.empty(); ++guard) {
+            ivd_video_decode_ip_t ip{};
+            ivd_video_decode_op_t op{};
+            ip.u4_size = sizeof(ip);
+            ip.e_cmd = IVD_CMD_VIDEO_DECODE;
+            ip.u4_ts = static_cast<UWORD32>(pts90k & 0xffffffffULL);
+            ip.u4_num_Bytes = static_cast<UWORD32>(
+                std::min<std::size_t>(pending_.size(),
+                                      std::numeric_limits<UWORD32>::max()));
+            ip.pv_stream_buffer = pending_.data();
+            ip.s_out_buffer = outputBuffers_;
+            op.u4_size = sizeof(op);
+
+            const IV_API_CALL_STATUS_T status =
+                impeg2d_api_function(codec_, &ip, &op);
+
+            if (op.u4_output_present) {
+                RawVideoFrame frame;
+                if (!copyFrame(op, pts90k, hasPts, frame, error)) {
+                    return false;
+                }
+                output.push_back(std::move(frame));
+                ++outputFrames_;
+                if (outputFrames_ == 1U || (outputFrames_ % 100U) == 0U) {
+                    std::cerr << "NATIVE MPEG2 OUTPUT frames=" << outputFrames_
+                              << " size=" << op.s_disp_frm_buf.u4_y_wd
+                              << "x" << op.s_disp_frm_buf.u4_y_ht << '\n';
+                }
+            }
+
+            const std::size_t consumed =
+                std::min<std::size_t>(op.u4_num_bytes_consumed, pending_.size());
+            if (consumed != 0) {
+                pending_.erase(
+                    pending_.begin(),
+                    pending_.begin() + static_cast<std::ptrdiff_t>(consumed));
+            }
+
+            if (status != IV_SUCCESS &&
+                ((op.u4_error_code >> IVD_FATALERROR) & 1U) != 0U) {
+                error = "Ittiam MPEG-2 decode fatal error: 0x" +
+                    hex(op.u4_error_code);
+                return false;
+            }
+
+            // Recoverable "need more data" conditions are normal at PES
+            // boundaries. Preserve the bytes and wait for the next PES.
+            if (consumed == 0) break;
+        }
+
+        return true;
+    }
+
+    void reset() override {
+        pending_.clear();
+        outputFrames_ = 0;
+        if (!codec_) return;
+
+        ivd_ctl_reset_ip_t ip{};
+        ivd_ctl_reset_op_t op{};
+        ip.u4_size = sizeof(ip);
+        ip.e_cmd = IVD_CMD_VIDEO_CTL;
+        ip.e_sub_cmd = IVD_CMD_CTL_RESET;
+        op.u4_size = sizeof(op);
+        (void)impeg2d_api_function(codec_, &ip, &op);
+        std::string ignored;
+        (void)setDecodeMode(ignored);
+    }
+
+private:
+    static constexpr UWORD32 kMaxWidth = 1920;
+    static constexpr UWORD32 kMaxHeight = 1088;
+    static constexpr std::size_t kMaxPendingBytes = 16U * 1024U * 1024U;
+
+    static std::string hex(UWORD32 value) {
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string out(8, '0');
+        for (int i = 7; i >= 0; --i) {
+            out[static_cast<std::size_t>(i)] = digits[value & 0x0fU];
+            value >>= 4U;
+        }
+        return out;
+    }
+
+    static std::size_t nextPowerOfTwo(std::size_t value) {
+        std::size_t result = sizeof(void*);
+        while (result < value && result <= (std::numeric_limits<std::size_t>::max() >> 1U)) {
+            result <<= 1U;
+        }
+        return result;
+    }
+
+    static void* alignedAllocate(std::size_t alignment, std::size_t size) {
+        if (size == 0) size = 1;
+        alignment = nextPowerOfTwo(std::max<std::size_t>(alignment, sizeof(void*)));
+        void* ptr = nullptr;
+#if defined(_WIN32)
+        ptr = _aligned_malloc(size, alignment);
+#else
+        if (::posix_memalign(&ptr, alignment, size) != 0) ptr = nullptr;
+#endif
+        if (ptr) std::memset(ptr, 0, size);
+        return ptr;
+    }
+
+    static void alignedRelease(void* ptr) {
+        if (!ptr) return;
+#if defined(_WIN32)
+        _aligned_free(ptr);
+#else
+        std::free(ptr);
+#endif
+    }
+
+    static std::size_t findLastSequenceHeader(
+        const std::uint8_t* data, std::size_t size) {
+        if (!data || size < 4) return size;
+        for (std::size_t i = size - 4;; --i) {
+            if (data[i] == 0x00 && data[i + 1] == 0x00 &&
+                data[i + 2] == 0x01 && data[i + 3] == 0xb3) {
+                return i;
+            }
+            if (i == 0) break;
+        }
+        return size;
+    }
+
+    bool initialize(std::string& error) {
+        release();
+        error.clear();
+
+        iv_num_mem_rec_ip_t queryIp{};
+        iv_num_mem_rec_op_t queryOp{};
+        queryIp.u4_size = sizeof(queryIp);
+        queryIp.e_cmd = IV_CMD_GET_NUM_MEM_REC;
+        queryOp.u4_size = sizeof(queryOp);
+        if (impeg2d_api_function(nullptr, &queryIp, &queryOp) != IV_SUCCESS ||
+            queryOp.u4_num_mem_rec == 0) {
+            error = "Ittiam MPEG-2 get memory records failed";
+            return false;
+        }
+
+        memoryRecords_.resize(queryOp.u4_num_mem_rec);
+        for (auto& record : memoryRecords_) {
+            record = {};
+            record.u4_size = sizeof(iv_mem_rec_t);
+        }
+
+        impeg2d_fill_mem_rec_ip_t fillIp{};
+        impeg2d_fill_mem_rec_op_t fillOp{};
+        fillIp.s_ivd_fill_mem_rec_ip_t.u4_size = sizeof(fillIp);
+        fillIp.s_ivd_fill_mem_rec_ip_t.e_cmd = IV_CMD_FILL_NUM_MEM_REC;
+        fillIp.s_ivd_fill_mem_rec_ip_t.pv_mem_rec_location =
+            memoryRecords_.data();
+        fillIp.s_ivd_fill_mem_rec_ip_t.u4_max_frm_wd = kMaxWidth;
+        fillIp.s_ivd_fill_mem_rec_ip_t.u4_max_frm_ht = kMaxHeight;
+        fillIp.u4_share_disp_buf = 0;
+        fillIp.e_output_format = IV_YUV_420P;
+        fillIp.u4_deinterlace = 0;
+        fillIp.u4_keep_threads_active = 0;
+        fillOp.s_ivd_fill_mem_rec_op_t.u4_size = sizeof(fillOp);
+        if (impeg2d_api_function(nullptr, &fillIp, &fillOp) != IV_SUCCESS ||
+            fillOp.s_ivd_fill_mem_rec_op_t.u4_num_mem_rec_filled == 0) {
+            error = "Ittiam MPEG-2 fill memory records failed";
+            release();
+            return false;
+        }
+
+        const std::size_t records = std::min<std::size_t>(
+            memoryRecords_.size(),
+            fillOp.s_ivd_fill_mem_rec_op_t.u4_num_mem_rec_filled);
+        allocations_.reserve(records);
+        for (std::size_t i = 0; i < records; ++i) {
+            auto& record = memoryRecords_[i];
+            record.pv_base = alignedAllocate(
+                record.u4_mem_alignment, record.u4_mem_size);
+            if (!record.pv_base) {
+                error = "Ittiam MPEG-2 memory allocation failed";
+                release();
+                return false;
+            }
+            allocations_.push_back(record.pv_base);
+        }
+
+        impeg2d_init_ip_t initIp{};
+        impeg2d_init_op_t initOp{};
+        initIp.s_ivd_init_ip_t.u4_size = sizeof(initIp);
+        initIp.s_ivd_init_ip_t.e_cmd =
+            static_cast<IVD_API_COMMAND_TYPE_T>(IV_CMD_INIT);
+        initIp.s_ivd_init_ip_t.u4_num_mem_rec =
+            static_cast<UWORD32>(records);
+        initIp.s_ivd_init_ip_t.u4_frm_max_wd = kMaxWidth;
+        initIp.s_ivd_init_ip_t.u4_frm_max_ht = kMaxHeight;
+        initIp.s_ivd_init_ip_t.e_output_format = IV_YUV_420P;
+        initIp.s_ivd_init_ip_t.pv_mem_rec_location = memoryRecords_.data();
+        initIp.u4_share_disp_buf = 0;
+        initIp.u4_deinterlace = 0;
+        initIp.u4_keep_threads_active = 0;
+        initOp.s_ivd_init_op_t.u4_size = sizeof(initOp);
+
+        codec_ = static_cast<iv_obj_t*>(memoryRecords_[0].pv_base);
+        codec_->u4_size = sizeof(iv_obj_t);
+        codec_->pv_fxns =
+            reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(
+                &impeg2d_api_function));
+
+        if (impeg2d_api_function(codec_, &initIp, &initOp) != IV_SUCCESS) {
+            error = "Ittiam MPEG-2 init failed: 0x" +
+                hex(initOp.s_ivd_init_op_t.u4_error_code);
+            release();
+            return false;
+        }
+
+        ivd_ctl_getbufinfo_ip_t infoIp{};
+        ivd_ctl_getbufinfo_op_t infoOp{};
+        infoIp.u4_size = sizeof(infoIp);
+        infoIp.e_cmd = IVD_CMD_VIDEO_CTL;
+        infoIp.e_sub_cmd = IVD_CMD_CTL_GETBUFINFO;
+        infoOp.u4_size = sizeof(infoOp);
+        if (impeg2d_api_function(codec_, &infoIp, &infoOp) != IV_SUCCESS ||
+            infoOp.u4_min_num_out_bufs == 0 ||
+            infoOp.u4_min_num_out_bufs > 3) {
+            error = "Ittiam MPEG-2 output buffer query failed";
+            release();
+            return false;
+        }
+
+        outputBuffers_ = {};
+        outputBuffers_.u4_num_bufs = infoOp.u4_min_num_out_bufs;
+        for (UWORD32 i = 0; i < infoOp.u4_min_num_out_bufs; ++i) {
+            outputStorage_[i].resize(infoOp.u4_min_out_buf_size[i]);
+            outputBuffers_.pu1_bufs[i] = outputStorage_[i].data();
+            outputBuffers_.u4_min_out_buf_size[i] =
+                infoOp.u4_min_out_buf_size[i];
+        }
+
+        if (!setDecodeMode(error)) {
+            release();
+            return false;
+        }
+
+        valid_ = true;
+        return true;
+    }
+
+    bool setDecodeMode(std::string& error) {
+        if (!codec_) return false;
+        ivd_ctl_set_config_ip_t cfgIp{};
+        ivd_ctl_set_config_op_t cfgOp{};
+        cfgIp.u4_size = sizeof(cfgIp);
+        cfgIp.e_cmd = IVD_CMD_VIDEO_CTL;
+        cfgIp.e_sub_cmd = IVD_CMD_CTL_SETPARAMS;
+        cfgIp.e_vid_dec_mode = IVD_DECODE_FRAME;
+        cfgIp.u4_disp_wd = 0;
+        cfgIp.e_frm_skip_mode = IVD_SKIP_NONE;
+        cfgIp.e_frm_out_mode = IVD_DISPLAY_FRAME_OUT;
+        cfgOp.u4_size = sizeof(cfgOp);
+        if (impeg2d_api_function(codec_, &cfgIp, &cfgOp) != IV_SUCCESS) {
+            error = "Ittiam MPEG-2 set decode mode failed: 0x" +
+                hex(cfgOp.u4_error_code);
+            return false;
+        }
+        return true;
+    }
+
+    bool copyFrame(const ivd_video_decode_op_t& op,
+                   std::uint64_t inputPts, bool inputHasPts,
+                   RawVideoFrame& frame, std::string& error) const {
+        const auto& src = op.s_disp_frm_buf;
+        const int width = static_cast<int>(src.u4_y_wd);
+        const int height = static_cast<int>(src.u4_y_ht);
+        if (width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
+            !src.pv_y_buf || !src.pv_u_buf || !src.pv_v_buf) {
+            error = "Ittiam MPEG-2 decoder returned invalid YUV420 frame";
+            return false;
+        }
+
+        frame.width = width;
+        frame.height = height;
+        frame.keyFrame = op.e_pic_type == IV_I_FRAME;
+
+        std::uint64_t outputPts =
+            (inputPts & ~0xffffffffULL) | static_cast<std::uint64_t>(op.u4_ts);
+        if (outputPts + 0x80000000ULL < inputPts) {
+            outputPts += 0x100000000ULL;
+        } else if (outputPts > inputPts + 0x80000000ULL &&
+                   outputPts >= 0x100000000ULL) {
+            outputPts -= 0x100000000ULL;
+        }
+        frame.pts90k = inputHasPts ? outputPts : inputPts;
+        frame.dts90k = frame.pts90k;
+        frame.hasPts = inputHasPts;
+        frame.hasDts = inputHasPts;
+
+        const std::size_t ySize =
+            static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+        const std::size_t cWidth = static_cast<std::size_t>(width / 2);
+        const std::size_t cHeight = static_cast<std::size_t>(height / 2);
+        frame.i420.assign(ySize + 2U * cWidth * cHeight, 0);
+        std::fill(frame.i420.begin() + static_cast<std::ptrdiff_t>(ySize),
+                  frame.i420.end(), 128);
+
+        const auto* srcY = static_cast<const std::uint8_t*>(src.pv_y_buf);
+        const auto* srcU = static_cast<const std::uint8_t*>(src.pv_u_buf);
+        const auto* srcV = static_cast<const std::uint8_t*>(src.pv_v_buf);
+        auto* dstY = frame.i420.data();
+        auto* dstU = dstY + ySize;
+        auto* dstV = dstU + cWidth * cHeight;
+
+        for (int row = 0; row < height; ++row) {
+            std::memcpy(
+                dstY + static_cast<std::size_t>(row) * width,
+                srcY + static_cast<std::size_t>(row) * src.u4_y_strd,
+                static_cast<std::size_t>(width));
+        }
+        const std::size_t copyU = std::min<std::size_t>(
+            cWidth, src.u4_u_wd);
+        const std::size_t copyV = std::min<std::size_t>(
+            cWidth, src.u4_v_wd);
+        const std::size_t rowsU = std::min<std::size_t>(
+            cHeight, src.u4_u_ht);
+        const std::size_t rowsV = std::min<std::size_t>(
+            cHeight, src.u4_v_ht);
+        for (std::size_t row = 0; row < rowsU; ++row) {
+            std::memcpy(
+                dstU + row * cWidth,
+                srcU + row * src.u4_u_strd,
+                copyU);
+        }
+        for (std::size_t row = 0; row < rowsV; ++row) {
+            std::memcpy(
+                dstV + row * cWidth,
+                srcV + row * src.u4_v_strd,
+                copyV);
+        }
+        return true;
+    }
+
+    void release() {
+        valid_ = false;
+        codec_ = nullptr;
+        outputBuffers_ = {};
+        for (auto& storage : outputStorage_) storage.clear();
+        for (void* allocation : allocations_) alignedRelease(allocation);
+        allocations_.clear();
+        memoryRecords_.clear();
+        pending_.clear();
+    }
+
+    bool valid_ = false;
+    iv_obj_t* codec_ = nullptr;
+    std::vector<iv_mem_rec_t> memoryRecords_;
+    std::vector<void*> allocations_;
+    ivd_out_bufdesc_t outputBuffers_{};
+    std::array<std::vector<std::uint8_t>, 3> outputStorage_;
+    std::vector<std::uint8_t> pending_;
+    std::uint64_t outputFrames_ = 0;
+};
 
 class OpenH264Decoder final : public VideoDecoder {
 public:
@@ -984,7 +1397,7 @@ private:plm_buffer_t*buffer_=nullptr;plm_audio_t*audio_=nullptr;
 } // namespace
 
 RuntimeCapabilities inspectRuntimeCapabilities(){RuntimeCapabilities c;c.h264Decoder=c.h264Encoder=c.hevcDecoder=c.hevcEncoder=c.aacDecoder=c.aacEncoder=c.mpegAudioDecoder=true;c.h264Library="built-in OpenH264 2.6.0 static";c.hevcDecoderLibrary="built-in libde265 1.1.3 static";c.hevcEncoderLibrary="built-in Kvazaar 2.3.2 static";c.aacDecoderLibrary=c.aacEncoderLibrary="built-in FDK-AAC 2.0.3 static";c.mpegAudioLibrary="built-in PL_MPEG static";const auto hw=inspectNativeHardwareCapabilities();c.vaapiRuntime=hw.vaapiRuntime;c.qsvEncoder=hw.qsvAvailable;c.qsvH264Encoder=hw.qsvH264;c.qsvHevcEncoder=hw.qsvHevc;c.nvencEncoder=hw.nvencAvailable;c.nvencH264Encoder=hw.nvencH264;c.nvencHevcEncoder=hw.nvencHevc;c.intelHardwareLibrary=hw.intelBackend;c.nvencHardwareLibrary=hw.nvencBackend;return c;}
-std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<De265Decoder>();if(p->valid())return p;}error="built-in decoder does not support/initialize requested codec";return{};}
+std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<De265Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::Mpeg2Video){auto p=std::make_unique<IttiamMpeg2Decoder>();if(p->valid())return p;}error="built-in decoder does not support/initialize requested codec";return{};}
 static std::unique_ptr<VideoEncoder> createCpuVideoEncoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Encoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<KvazaarEncoder>();if(p->valid())return p;}error="built-in CPU encoder does not support/initialize requested codec";return{};}
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec c,std::string&error){return createVideoEncoder(c,"auto",error);}
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec c,const std::string&backend,std::string&error){std::string b=backend;std::transform(b.begin(),b.end(),b.begin(),[](unsigned char x){return static_cast<char>(std::tolower(x));});if(b.empty())b="auto";if(b=="x264"||b=="x265"||b=="cpu")return createCpuVideoEncoder(c,error);if(b=="nvenc"||b=="intel"||b=="qsv"||b=="vaapi")return createNativeHardwareVideoEncoder(c,b,error);if(b=="auto"){const auto hw=inspectNativeHardwareCapabilities();std::string ignored;if(hw.nvencAvailable){auto p=createNativeHardwareVideoEncoder(c,"nvenc",ignored);if(p){std::cerr<<"NATIVE VIDEO ENCODER auto selected=nvenc\n";return p;}}if(hw.qsvAvailable){auto p=createNativeHardwareVideoEncoder(c,"qsv",ignored);if(p){std::cerr<<"NATIVE VIDEO ENCODER auto selected=qsv-vaapi\n";return p;}}auto p=createCpuVideoEncoder(c,error);if(p)std::cerr<<"NATIVE VIDEO ENCODER auto selected=cpu\n";return p;}error="unsupported native video encoder backend: "+backend;return{};}
