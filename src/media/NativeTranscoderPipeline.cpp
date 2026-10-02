@@ -280,8 +280,11 @@ void NativeTranscoderPipeline::reset() {
         mux_.reset();
     }
     {
-        std::lock_guard<std::mutex> lock(videoCodecMutex_);
+        std::lock_guard<std::mutex> lock(videoDecoderMutex_);
         videoDecoder_.reset();
+    }
+    {
+        std::lock_guard<std::mutex> lock(videoEncoderMutex_);
         videoEncoder_.reset();
     }
     {
@@ -368,7 +371,7 @@ void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamIn
     const bool videoChanged = newVideoPid != inputVideoPid_ || newVideoCodec != inputVideoCodec_;
     const bool audioChanged = newAudioPid != inputAudioPid_ || newAudioCodec != inputAudioCodec_;
     if (videoChanged) {
-        { std::lock_guard<std::mutex> codecLock(videoCodecMutex_); videoDecoder_.reset(); }
+        { std::lock_guard<std::mutex> codecLock(videoDecoderMutex_); videoDecoder_.reset(); }
         inputVideoPid_ = newVideoPid;
         inputVideoCodec_ = newVideoCodec;
         videoResetRequested_.store(false, std::memory_order_release);
@@ -1090,7 +1093,7 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
         return false;
     }
     {
-        std::lock_guard<std::mutex> codecLock(videoCodecMutex_);
+        std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
         if (videoEncoder_) {
             std::vector<codec::EncodedVideoFrame> encoded;
             if (!videoEncoder_->flush(encoded, error)) return false;
