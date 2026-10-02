@@ -759,7 +759,10 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
 bool NativeTranscoderPipeline::waitForIdle() {
     for (int i = 0; i < 500; ++i) {
         bool videoEmpty = false, audioEmpty = false, muxVideoEmpty = false, muxAudioEmpty = false;
-        { std::lock_guard<std::mutex> lock(videoQueueMutex_); videoEmpty = videoQueue_.empty(); }
+        {
+            std::lock_guard<std::mutex> lock(videoQueueMutex_);
+            videoEmpty = videoQueue_.empty() && externalVideoQueue_.empty();
+        }
         { std::lock_guard<std::mutex> lock(audioQueueMutex_); audioEmpty = audioQueue_.empty(); }
         { std::lock_guard<std::mutex> lock(muxQueueMutex_); muxVideoEmpty = muxVideoQueue_.empty(); muxAudioEmpty = muxAudioQueue_.empty(); }
         if (videoEmpty && audioEmpty && muxVideoEmpty && muxAudioEmpty &&
