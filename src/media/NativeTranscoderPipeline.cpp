@@ -331,6 +331,7 @@ void NativeTranscoderPipeline::reset() {
     }
     droppedVideoSamples_ = 0;
     droppedExternalVideoFrames_ = 0;
+    decodedVideoQueueDrops_ = 0;
     droppedAudioSamples_ = 0;
     muxedVideoSamples_.store(0, std::memory_order_release);
     muxedAudioSamples_.store(0, std::memory_order_release);
@@ -916,29 +917,45 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
     if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);
-    if (!ensureVideoDecoder(sample.stream.codec, error) || !ensureVideoEncoder(error)) return false;
+    if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
+
     std::vector<codec::RawVideoFrame> decoded;
-    if (!videoDecoder_->decode(sample.data.data(), sample.data.size(), sample.pts90k, sample.hasPts, decoded, error)) return false;
+    if (!videoDecoder_->decode(
+            sample.data.data(), sample.data.size(),
+            sample.pts90k, sample.hasPts, decoded, error))
+        return false;
+
     decodedVideoFrames_ += decoded.size();
     for (auto& raw : decoded) {
         if (config_.deinterlace) codec::deinterlaceBlendI420(raw);
+
+        auto sharedRaw =
+            std::make_shared<codec::RawVideoFrame>(std::move(raw));
 
         DecodedVideoObserver observer;
         {
             std::lock_guard<std::mutex> lock(decodedVideoObserverMutex_);
             observer = decodedVideoObserver_;
         }
+        if (observer) observer(sharedRaw);
 
-        std::shared_ptr<const codec::RawVideoFrame> sharedRaw;
-        const codec::RawVideoFrame* sourceRaw = &raw;
-        if (observer) {
-            auto owned = std::make_shared<codec::RawVideoFrame>(std::move(raw));
-            sharedRaw = owned;
-            sourceRaw = owned.get();
-            observer(sharedRaw);
+        {
+            std::lock_guard<std::mutex> qlock(videoQueueMutex_);
+            if (externalVideoQueue_.size() >= kMaxExternalVideoQueue) {
+                externalVideoQueue_.pop_front();
+                ++decodedVideoQueueDrops_;
+                if (decodedVideoQueueDrops_ <= 4 ||
+                    (decodedVideoQueueDrops_ % 100U) == 0U) {
+                    std::cerr
+                        << "NATIVE PRIMARY RAW DROP dropped="
+                        << decodedVideoQueueDrops_
+                        << " queue=" << externalVideoQueue_.size()
+                        << std::endl;
+                }
+            }
+            externalVideoQueue_.push_back(std::move(sharedRaw));
         }
-
-        if (!handleDecodedVideoFrame(*sourceRaw, error)) return false;
+        videoEncodeQueueCv_.notify_one();
     }
     return true;
 }
