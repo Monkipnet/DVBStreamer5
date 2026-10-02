@@ -63,6 +63,8 @@ public:
     void setExternalVideoInput(bool enabled);
     void setDecodedVideoObserver(DecodedVideoObserver observer);
     bool pushDecodedVideoFrame(std::shared_ptr<const codec::RawVideoFrame> frame);
+    bool setOutputGeometryIfUnconfigured(int width, int height);
+    std::pair<int,int> configuredOutputGeometry() const;
     void setExternalAudioInput(bool enabled);
     void setEncodedAudioObserver(EncodedAudioObserver observer);
     bool pushEncodedAudioFrame(const codec::EncodedAudioFrame& frame,
@@ -153,6 +155,9 @@ private:
     bool videoRateClockValid_ = false;
     std::uint64_t videoRateNextPts90k_ = 0;
     std::uint64_t videoRateDroppedFrames_ = 0;
+    bool sourceGeometryResolved_ = false;
+    int sourceWidth_ = 0;
+    int sourceHeight_ = 0;
     DecodedVideoObserver decodedVideoObserver_;
     EncodedAudioObserver encodedAudioObserver_;
     std::uint64_t droppedAudioSamples_ = 0;
