@@ -58,6 +58,11 @@ struct StreamState {
 
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
+    // Private browser preview is always H.264/AAC MPEG-TS. It is fed only
+    // while /api/streams/<id>/preview.ts has active subscribers, so production
+    // UDP/SRT/HLS outputs remain untouched and there is no idle encode load.
+    std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativePreviewTranscoder;
+    std::atomic<bool> previewTranscodeFailed{false};
     struct HlsAbrVariantRuntime {
         std::string name;
         int width = 0;
