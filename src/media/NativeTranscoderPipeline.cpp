@@ -293,6 +293,10 @@ void NativeTranscoderPipeline::reset() {
         decodedVideoObserver_ = {};
     }
     {
+        std::lock_guard<std::mutex> lock(encodedAudioObserverMutex_);
+        encodedAudioObserver_ = {};
+    }
+    {
         std::lock_guard<std::mutex> lock(audioCodecMutex_);
         audioDecoder_.reset();
         aacEncoder_.reset();
@@ -336,6 +340,7 @@ void NativeTranscoderPipeline::reset() {
     videoDropUntilRandomAccess_ = false;
     videoResetRequested_.store(false, std::memory_order_release);
     externalVideoInput_.store(false, std::memory_order_release);
+    externalAudioInput_.store(false, std::memory_order_release);
 }
 
 void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamInfo>& streams) {
