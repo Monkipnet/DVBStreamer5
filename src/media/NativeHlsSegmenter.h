@@ -20,6 +20,9 @@ struct NativeHlsSegmenterConfig {
     std::size_t liveWindowSegments = 6;
     bool archiveEnabled = false;
     std::uint32_t archiveHours = 24;
+    // For transcoded ABR renditions every published segment must begin at a
+    // random-access point so a player can switch bitrate without freezing.
+    bool independentSegments = false;
     std::string encryption = "none"; // none | aes-128 | sample-aes
     std::string keyUri = "key.bin";
     std::array<std::uint8_t, 16> key{};
@@ -68,6 +71,7 @@ private:
     std::uint64_t completedSegments_ = 0;
     bool running_ = false;
     bool segmentHasPackets_ = false;
+    bool waitingForIndependentStart_ = false;
     bool haveFirstPcr_ = false;
     std::uint64_t firstPcr_ = 0;
     std::uint64_t lastPcr_ = 0;
