@@ -15,6 +15,7 @@
 #include "ConfigManager.h"
 #include "media/NativePreviewHub.h"
 #include "media/NativeUdpRelay.h"
+#include "media/SharedDvbInputPool.h"
 #include "media/NativeHlsInput.h"
 #include "media/NativeHlsSegmenter.h"
 #include "media/NativeCmaf.h"
@@ -146,6 +147,7 @@ private:
     TelegramNotifier& telegramNotifier;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
     std::unique_ptr<MptsOutputManager> mptsOutputManager;
+    dvbstreamer5::media::network::SharedDvbInputPool sharedDvbInputs;
     std::map<int, HttpClientSession> httpClients;
     std::map<std::string, HttpClientSession> adHocSessions;
     mutable std::mutex managerMutex;
