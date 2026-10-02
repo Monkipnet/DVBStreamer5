@@ -19,6 +19,13 @@
 #include <vpl/mfxvideo.h>
 #endif
 
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+#include <fcntl.h>
+#include <va/va.h>
+#include <va/va_drm.h>
+#include <va/va_enc_h264.h>
+#endif
+
 #if defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)
 #include <nvEncodeAPI.h>
 #endif
@@ -51,6 +58,89 @@ bool haveRenderNode() {
     return false;
 }
 
+int openRenderNode() {
+#if defined(__linux__)
+    for (int i = 128; i < 160; ++i) {
+        const std::string path = "/dev/dri/renderD" + std::to_string(i);
+        const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+        if (fd >= 0) return fd;
+    }
+#endif
+    return -1;
+}
+
+#if defined(DVBSTREAMER5_HAVE_VPL)
+bool probeOneVplHardware() {
+    mfxLoader loader = MFXLoad();
+    if (!loader) return false;
+
+    mfxConfig implCfg = MFXCreateConfig(loader);
+    if (implCfg) {
+        mfxVariant v{};
+        v.Type = MFX_VARIANT_TYPE_U32;
+        v.Data.U32 = MFX_IMPL_TYPE_HARDWARE;
+        (void)MFXSetConfigFilterProperty(
+            implCfg,
+            reinterpret_cast<const mfxU8*>("mfxImplDescription.Impl"),
+            v);
+    }
+#if defined(MFX_ACCEL_MODE_VIA_VAAPI)
+    mfxConfig accelCfg = MFXCreateConfig(loader);
+    if (accelCfg) {
+        mfxVariant v{};
+        v.Type = MFX_VARIANT_TYPE_U32;
+        v.Data.U32 = MFX_ACCEL_MODE_VIA_VAAPI;
+        (void)MFXSetConfigFilterProperty(
+            accelCfg,
+            reinterpret_cast<const mfxU8*>(
+                "mfxImplDescription.AccelerationMode"),
+            v);
+    }
+#endif
+    mfxSession session = nullptr;
+    const mfxStatus sts = MFXCreateSession(loader, 0, &session);
+    const bool ok = sts >= MFX_ERR_NONE && session != nullptr;
+    if (session) MFXClose(session);
+    MFXUnload(loader);
+    return ok;
+}
+#endif
+
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+bool hasVaEntrypoint(VADisplay display, VAProfile profile, VAEntrypoint wanted) {
+    VAEntrypoint entries[32]{};
+    int count = 0;
+    if (vaQueryConfigEntrypoints(display, profile, entries, &count) != VA_STATUS_SUCCESS)
+        return false;
+    for (int i = 0; i < count; ++i)
+        if (entries[i] == wanted) return true;
+    return false;
+}
+
+bool probeVaapiH264Encode() {
+    const int fd = openRenderNode();
+    if (fd < 0) return false;
+    VADisplay display = vaGetDisplayDRM(fd);
+    if (!display) {
+        ::close(fd);
+        return false;
+    }
+    int major = 0, minor = 0;
+    if (vaInitialize(display, &major, &minor) != VA_STATUS_SUCCESS) {
+        ::close(fd);
+        return false;
+    }
+    const bool ok =
+        hasVaEntrypoint(display, VAProfileH264High, VAEntrypointEncSlice) ||
+        hasVaEntrypoint(display, VAProfileH264Main, VAEntrypointEncSlice) ||
+        hasVaEntrypoint(display, VAProfileH264ConstrainedBaseline,
+                        VAEntrypointEncSlice);
+    vaTerminate(display);
+    ::close(fd);
+    return ok;
+}
+#endif
+
 void i420ToNv12(const RawVideoFrame& in, std::uint8_t* y, std::uint8_t* uv, int pitch) {
     const int w = in.width;
     const int h = in.height;
@@ -70,6 +160,483 @@ void i420ToNv12(const RawVideoFrame& in, std::uint8_t* y, std::uint8_t* uv, int 
         }
     }
 }
+
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+class VaapiH264Encoder final : public VideoEncoder {
+public:
+    explicit VaapiH264Encoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
+    ~VaapiH264Encoder() override { close(); }
+
+    bool configure(int width, int height, double fps, std::uint64_t bitrate,
+                   std::string& error) override {
+        error.clear();
+        close();
+        if (codec_ != mpegts::ElementaryCodec::H264) {
+            error = "direct VAAPI fallback currently supports H.264 only";
+            return false;
+        }
+        if (width <= 0 || height <= 0 || (width & 1) || (height & 1)) {
+            error = "VAAPI requires positive even dimensions";
+            return false;
+        }
+
+        drmFd_ = openRenderNode();
+        if (drmFd_ < 0) {
+            error = "VAAPI render node /dev/dri/renderD* unavailable";
+            return false;
+        }
+
+        display_ = vaGetDisplayDRM(drmFd_);
+        if (!display_) {
+            error = "vaGetDisplayDRM failed";
+            close();
+            return false;
+        }
+
+        int major = 0, minor = 0;
+        VAStatus st = vaInitialize(display_, &major, &minor);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaInitialize failed: " + std::string(vaErrorStr(st));
+            close();
+            return false;
+        }
+        vaInitialized_ = true;
+
+        if (hasVaEntrypoint(display_, VAProfileH264High, VAEntrypointEncSlice))
+            profile_ = VAProfileH264High;
+        else if (hasVaEntrypoint(display_, VAProfileH264Main, VAEntrypointEncSlice))
+            profile_ = VAProfileH264Main;
+        else if (hasVaEntrypoint(display_, VAProfileH264ConstrainedBaseline,
+                                 VAEntrypointEncSlice))
+            profile_ = VAProfileH264ConstrainedBaseline;
+        else {
+            error = "VAAPI H.264 EncSlice entrypoint unavailable";
+            close();
+            return false;
+        }
+
+        VAConfigAttrib attrs[2]{};
+        attrs[0].type = VAConfigAttribRTFormat;
+        attrs[1].type = VAConfigAttribRateControl;
+        st = vaGetConfigAttributes(
+            display_, profile_, VAEntrypointEncSlice, attrs, 2);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaGetConfigAttributes failed: " + std::string(vaErrorStr(st));
+            close();
+            return false;
+        }
+        if (!(attrs[0].value & VA_RT_FORMAT_YUV420)) {
+            error = "VAAPI H.264 encoder does not support YUV420";
+            close();
+            return false;
+        }
+
+        cbr_ = attrs[1].value != VA_ATTRIB_NOT_SUPPORTED &&
+               (attrs[1].value & VA_RC_CBR) != 0;
+        attrs[0].value = VA_RT_FORMAT_YUV420;
+        attrs[1].value = cbr_ ? VA_RC_CBR : VA_RC_CQP;
+
+        st = vaCreateConfig(
+            display_, profile_, VAEntrypointEncSlice,
+            attrs, 2, &config_);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateConfig failed: " + std::string(vaErrorStr(st));
+            close();
+            return false;
+        }
+
+        width_ = width;
+        height_ = height;
+        alignedWidth_ = (width + 15) & ~15;
+        alignedHeight_ = (height + 15) & ~15;
+        fps_ = fps > 0.0 ? fps : 25.0;
+        bitrate_ = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(bitrate, 0xffffffffULL));
+        gop_ = std::max(1, static_cast<int>(std::lround(fps_ * 2.0)));
+
+        VASurfaceAttrib surfaceAttr{};
+        surfaceAttr.type = VASurfaceAttribPixelFormat;
+        surfaceAttr.flags = VA_SURFACE_ATTRIB_SETTABLE;
+        surfaceAttr.value.type = VAGenericValueTypeInteger;
+        surfaceAttr.value.value.i = VA_FOURCC_NV12;
+
+        st = vaCreateSurfaces(
+            display_, VA_RT_FORMAT_YUV420,
+            static_cast<unsigned>(alignedWidth_),
+            static_cast<unsigned>(alignedHeight_),
+            surfaces_, 2, &surfaceAttr, 1);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateSurfaces failed: " + std::string(vaErrorStr(st));
+            close();
+            return false;
+        }
+        surfacesCreated_ = true;
+
+        st = vaCreateContext(
+            display_, config_, alignedWidth_, alignedHeight_,
+            VA_PROGRESSIVE, surfaces_, 2, &context_);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateContext failed: " + std::string(vaErrorStr(st));
+            close();
+            return false;
+        }
+
+        configured_ = true;
+        std::cerr
+            << "NATIVE HW ENCODER backend=vaapi-direct codec=h264"
+            << " size=" << width_ << "x" << height_
+            << " fps=" << fps_
+            << " bitrate_kbps=" << (bitrate_ / 1000U)
+            << " rc=" << (cbr_ ? "cbr" : "cqp")
+            << std::endl;
+        return true;
+    }
+
+    bool encode(const RawVideoFrame& input,
+                std::vector<EncodedVideoFrame>& output,
+                std::string& error) override {
+        error.clear();
+        if (!configured_) {
+            error = "VAAPI encoder not configured";
+            return false;
+        }
+        if (input.width != width_ || input.height != height_) {
+            error = "VAAPI geometry mismatch";
+            return false;
+        }
+
+        const bool idr = frameIndex_ == 0 || (frameIndex_ % gop_) == 0;
+        const int currentIndex = static_cast<int>(frameIndex_ & 1U);
+        const int referenceIndex = currentIndex ^ 1;
+        const VASurfaceID current = surfaces_[currentIndex];
+        const VASurfaceID reference =
+            frameIndex_ == 0 ? VA_INVALID_SURFACE : surfaces_[referenceIndex];
+
+        if (!uploadNv12(current, input, error))
+            return false;
+
+        VABufferID coded = VA_INVALID_ID;
+        const unsigned codedSize = static_cast<unsigned>(
+            std::max<std::size_t>(
+                1024U * 1024U,
+                static_cast<std::size_t>(alignedWidth_) *
+                    alignedHeight_ * 2U));
+        VAStatus st = vaCreateBuffer(
+            display_, context_, VAEncCodedBufferType,
+            codedSize, 1, nullptr, &coded);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateBuffer(coded) failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        std::vector<VABufferID> params;
+        auto createParam = [&](VABufferType type, const void* data,
+                               unsigned size) -> bool {
+            VABufferID id = VA_INVALID_ID;
+            VAStatus local = vaCreateBuffer(
+                display_, context_, type, size, 1,
+                const_cast<void*>(data), &id);
+            if (local != VA_STATUS_SUCCESS) {
+                error = "vaCreateBuffer(param) failed: " +
+                    std::string(vaErrorStr(local));
+                return false;
+            }
+            params.push_back(id);
+            return true;
+        };
+
+        if (idr) {
+            VAEncSequenceParameterBufferH264 seq{};
+            seq.seq_parameter_set_id = 0;
+            seq.level_idc = 40;
+            seq.intra_period = gop_;
+            seq.intra_idr_period = gop_;
+            seq.ip_period = 1;
+            seq.bits_per_second = bitrate_;
+            seq.max_num_ref_frames = 1;
+            seq.picture_width_in_mbs =
+                static_cast<unsigned short>(alignedWidth_ / 16);
+            seq.picture_height_in_mbs =
+                static_cast<unsigned short>(alignedHeight_ / 16);
+            seq.seq_fields.bits.chroma_format_idc = 1;
+            seq.seq_fields.bits.frame_mbs_only_flag = 1;
+            seq.seq_fields.bits.direct_8x8_inference_flag = 1;
+            seq.seq_fields.bits.log2_max_frame_num_minus4 = 0;
+            seq.seq_fields.bits.pic_order_cnt_type = 0;
+            seq.seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4 = 0;
+            if (alignedWidth_ != width_ || alignedHeight_ != height_) {
+                seq.frame_cropping_flag = 1;
+                seq.frame_crop_right_offset =
+                    static_cast<unsigned short>((alignedWidth_ - width_) / 2);
+                seq.frame_crop_bottom_offset =
+                    static_cast<unsigned short>((alignedHeight_ - height_) / 2);
+            }
+            if (!createParam(
+                    VAEncSequenceParameterBufferType,
+                    &seq, sizeof(seq))) {
+                destroyBuffers(params);
+                vaDestroyBuffer(display_, coded);
+                return false;
+            }
+        }
+
+        VAEncPictureParameterBufferH264 pic{};
+        pic.CurrPic.picture_id = current;
+        pic.CurrPic.frame_idx = static_cast<unsigned>(frameIndex_ & 0x0fU);
+        pic.CurrPic.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        for (auto& r : pic.ReferenceFrames) {
+            r.picture_id = VA_INVALID_SURFACE;
+            r.flags = VA_PICTURE_H264_INVALID;
+        }
+        if (!idr && reference != VA_INVALID_SURFACE) {
+            pic.ReferenceFrames[0].picture_id = reference;
+            pic.ReferenceFrames[0].frame_idx =
+                static_cast<unsigned>((frameIndex_ - 1U) & 0x0fU);
+            pic.ReferenceFrames[0].flags =
+                VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        }
+        pic.coded_buf = coded;
+        pic.pic_parameter_set_id = 0;
+        pic.seq_parameter_set_id = 0;
+        pic.frame_num = static_cast<unsigned>(frameIndex_ & 0x0fU);
+        pic.pic_init_qp = 26;
+        pic.num_ref_idx_l0_active_minus1 = 0;
+        pic.num_ref_idx_l1_active_minus1 = 0;
+        pic.pic_fields.bits.idr_pic_flag = idr ? 1 : 0;
+        pic.pic_fields.bits.reference_pic_flag = 1;
+        pic.pic_fields.bits.entropy_coding_mode_flag = 0;
+        pic.pic_fields.bits.deblocking_filter_control_present_flag = 1;
+
+        if (!createParam(
+                VAEncPictureParameterBufferType,
+                &pic, sizeof(pic))) {
+            destroyBuffers(params);
+            vaDestroyBuffer(display_, coded);
+            return false;
+        }
+
+        VAEncSliceParameterBufferH264 slice{};
+        slice.macroblock_address = 0;
+        slice.num_macroblocks = static_cast<unsigned>(
+            (alignedWidth_ / 16) * (alignedHeight_ / 16));
+        slice.slice_type = idr ? 2 : 0;
+        slice.pic_parameter_set_id = 0;
+        slice.idr_pic_id =
+            idr ? static_cast<unsigned short>((frameIndex_ / gop_) & 0xffffU)
+                : 0;
+        slice.pic_order_cnt_lsb =
+            static_cast<unsigned>((frameIndex_ * 2U) & 0x0fU);
+
+        for (auto& r : slice.RefPicList0) {
+            r.picture_id = VA_INVALID_SURFACE;
+            r.flags = VA_PICTURE_H264_INVALID;
+        }
+        for (auto& r : slice.RefPicList1) {
+            r.picture_id = VA_INVALID_SURFACE;
+            r.flags = VA_PICTURE_H264_INVALID;
+        }
+        if (!idr && reference != VA_INVALID_SURFACE) {
+            slice.RefPicList0[0].picture_id = reference;
+            slice.RefPicList0[0].frame_idx =
+                static_cast<unsigned>((frameIndex_ - 1U) & 0x0fU);
+            slice.RefPicList0[0].flags =
+                VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+        }
+        slice.slice_qp_delta = 0;
+        slice.disable_deblocking_filter_idc = 0;
+
+        if (!createParam(
+                VAEncSliceParameterBufferType,
+                &slice, sizeof(slice))) {
+            destroyBuffers(params);
+            vaDestroyBuffer(display_, coded);
+            return false;
+        }
+
+        st = vaBeginPicture(display_, context_, current);
+        if (st == VA_STATUS_SUCCESS)
+            st = vaRenderPicture(
+                display_, context_, params.data(),
+                static_cast<int>(params.size()));
+        if (st == VA_STATUS_SUCCESS)
+            st = vaEndPicture(display_, context_);
+
+        destroyBuffers(params);
+
+        if (st != VA_STATUS_SUCCESS) {
+            vaDestroyBuffer(display_, coded);
+            error = "VAAPI encode submit failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        st = vaSyncSurface(display_, current);
+        if (st != VA_STATUS_SUCCESS) {
+            vaDestroyBuffer(display_, coded);
+            error = "vaSyncSurface failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        VACodedBufferSegment* segment = nullptr;
+        st = vaMapBuffer(
+            display_, coded,
+            reinterpret_cast<void**>(&segment));
+        if (st != VA_STATUS_SUCCESS) {
+            vaDestroyBuffer(display_, coded);
+            error = "vaMapBuffer(coded) failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        EncodedVideoFrame frame;
+        frame.hasPts = input.hasPts;
+        frame.hasDts = input.hasDts;
+        frame.pts90k = input.pts90k;
+        frame.dts90k = input.hasDts ? input.dts90k : input.pts90k;
+        frame.keyFrame = idr;
+
+        for (auto* p = segment; p; p = p->next) {
+            if (!p->buf || p->size == 0) continue;
+            const auto* bytes =
+                static_cast<const std::uint8_t*>(p->buf);
+            frame.data.insert(frame.data.end(), bytes, bytes + p->size);
+        }
+
+        vaUnmapBuffer(display_, coded);
+        vaDestroyBuffer(display_, coded);
+
+        ++frameIndex_;
+        if (!frame.data.empty())
+            output.push_back(std::move(frame));
+        return true;
+    }
+
+    bool flush(std::vector<EncodedVideoFrame>&,
+               std::string& error) override {
+        error.clear();
+        return true;
+    }
+
+private:
+    bool uploadNv12(VASurfaceID surface,
+                    const RawVideoFrame& input,
+                    std::string& error) {
+        VAImage image{};
+        VAStatus st = vaDeriveImage(display_, surface, &image);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaDeriveImage failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        void* mapped = nullptr;
+        st = vaMapBuffer(display_, image.buf, &mapped);
+        if (st != VA_STATUS_SUCCESS) {
+            vaDestroyImage(display_, image.image_id);
+            error = "vaMapBuffer(surface) failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        bool ok = image.format.fourcc == VA_FOURCC_NV12;
+        if (ok) {
+            auto* base = static_cast<std::uint8_t*>(mapped);
+            const auto* srcY = input.i420.data();
+            const auto* srcU =
+                srcY + static_cast<std::size_t>(width_) * height_;
+            const auto* srcV =
+                srcU + static_cast<std::size_t>(width_ / 2) *
+                    (height_ / 2);
+
+            for (int row = 0; row < height_; ++row) {
+                std::memcpy(
+                    base + image.offsets[0] +
+                        static_cast<std::size_t>(row) * image.pitches[0],
+                    srcY + static_cast<std::size_t>(row) * width_,
+                    static_cast<std::size_t>(width_));
+            }
+
+            for (int row = 0; row < height_ / 2; ++row) {
+                auto* dst =
+                    base + image.offsets[1] +
+                    static_cast<std::size_t>(row) * image.pitches[1];
+                const auto* u =
+                    srcU + static_cast<std::size_t>(row) * (width_ / 2);
+                const auto* v =
+                    srcV + static_cast<std::size_t>(row) * (width_ / 2);
+                for (int x = 0; x < width_ / 2; ++x) {
+                    dst[2 * x] = u[x];
+                    dst[2 * x + 1] = v[x];
+                }
+            }
+        }
+
+        vaUnmapBuffer(display_, image.buf);
+        vaDestroyImage(display_, image.image_id);
+
+        if (!ok) {
+            error = "VAAPI surface is not NV12";
+            return false;
+        }
+        return true;
+    }
+
+    void destroyBuffers(const std::vector<VABufferID>& buffers) {
+        for (VABufferID id : buffers)
+            if (id != VA_INVALID_ID)
+                vaDestroyBuffer(display_, id);
+    }
+
+    void close() {
+        configured_ = false;
+        if (display_ && context_ != VA_INVALID_ID)
+            vaDestroyContext(display_, context_);
+        context_ = VA_INVALID_ID;
+
+        if (display_ && surfacesCreated_) {
+            vaDestroySurfaces(display_, surfaces_, 2);
+            surfacesCreated_ = false;
+        }
+        surfaces_[0] = surfaces_[1] = VA_INVALID_SURFACE;
+
+        if (display_ && config_ != VA_INVALID_ID)
+            vaDestroyConfig(display_, config_);
+        config_ = VA_INVALID_ID;
+
+        if (display_ && vaInitialized_)
+            vaTerminate(display_);
+        vaInitialized_ = false;
+        display_ = nullptr;
+
+        if (drmFd_ >= 0)
+            ::close(drmFd_);
+        drmFd_ = -1;
+        frameIndex_ = 0;
+    }
+
+    mpegts::ElementaryCodec codec_ = mpegts::ElementaryCodec::Unknown;
+    int drmFd_ = -1;
+    VADisplay display_ = nullptr;
+    VAProfile profile_ = VAProfileNone;
+    VAConfigID config_ = VA_INVALID_ID;
+    VAContextID context_ = VA_INVALID_ID;
+    VASurfaceID surfaces_[2]{VA_INVALID_SURFACE, VA_INVALID_SURFACE};
+    bool surfacesCreated_ = false;
+    bool vaInitialized_ = false;
+    bool configured_ = false;
+    bool cbr_ = false;
+    int width_ = 0;
+    int height_ = 0;
+    int alignedWidth_ = 0;
+    int alignedHeight_ = 0;
+    double fps_ = 25.0;
+    std::uint32_t bitrate_ = 0;
+    int gop_ = 50;
+    std::uint64_t frameIndex_ = 0;
+};
+#endif
 
 #if defined(DVBSTREAMER5_HAVE_VPL)
 class QsvVplEncoder final : public VideoEncoder {
@@ -458,15 +1025,32 @@ private:
 
 NativeHardwareCapabilities inspectNativeHardwareCapabilities() {
     NativeHardwareCapabilities c;
-    c.vaapiRuntime = haveRenderNode() && (canDlopen("libva.so.2") || canDlopen("libva.so"));
+    c.vaapiRuntime =
+        haveRenderNode() &&
+        (canDlopen("libva.so.2") || canDlopen("libva.so"));
+
+    bool vplHardware = false;
 #if defined(DVBSTREAMER5_HAVE_VPL)
-    c.qsvAvailable = haveRenderNode() && (canDlopen("libvpl.so.2") || canDlopen("libvpl.so"));
-    c.qsvH264 = c.qsvAvailable;
-    c.qsvHevc = c.qsvAvailable;
-    if (c.qsvAvailable) c.intelBackend = "oneVPL QSV via VAAPI";
-#else
-    c.intelBackend = c.vaapiRuntime ? "VAAPI runtime found; build with libvpl-dev for direct QSV/VAAPI encode" : "";
+    vplHardware = probeOneVplHardware();
 #endif
+
+    bool vaapiH264 = false;
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+    vaapiH264 = probeVaapiH264Encode();
+#endif
+
+    c.qsvAvailable = vplHardware || vaapiH264;
+    c.qsvH264 = vplHardware || vaapiH264;
+    c.qsvHevc = vplHardware;
+
+    if (vplHardware && vaapiH264)
+        c.intelBackend = "oneVPL QSV + direct VAAPI fallback";
+    else if (vplHardware)
+        c.intelBackend = "oneVPL QSV via VAAPI";
+    else if (vaapiH264)
+        c.intelBackend = "direct VAAPI H.264 (legacy Intel fallback)";
+    else if (c.vaapiRuntime)
+        c.intelBackend = "VAAPI runtime present, no supported encode entrypoint";
 #if defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)
     c.nvencAvailable = canDlopen("libnvidia-encode.so.1") && canDlopen("libcuda.so.1");
     c.nvencH264 = c.nvencAvailable;
@@ -483,14 +1067,41 @@ std::unique_ptr<VideoEncoder> createNativeHardwareVideoEncoder(
     mpegts::ElementaryCodec codec, const std::string& backend, std::string& error) {
     error.clear();
     const auto b = lower(backend);
-    if (b == "intel" || b == "qsv" || b == "vaapi") {
-#if defined(DVBSTREAMER5_HAVE_VPL)
-        auto p = std::make_unique<QsvVplEncoder>(codec);
-        return p;
+    if (b == "vaapi") {
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+        if (codec != mpegts::ElementaryCodec::H264) {
+            error = "direct VAAPI fallback currently supports H.264 only";
+            return {};
+        }
+        return std::make_unique<VaapiH264Encoder>(codec);
 #else
-        error = "Intel QSV/VAAPI backend not built: install libvpl-dev and rebuild";
+        error = "direct VAAPI backend not built: install libva-dev and rebuild";
         return {};
 #endif
+    }
+
+    if (b == "intel" || b == "qsv") {
+#if defined(DVBSTREAMER5_HAVE_VPL)
+        if (probeOneVplHardware())
+            return std::make_unique<QsvVplEncoder>(codec);
+#endif
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+        if (codec == mpegts::ElementaryCodec::H264 &&
+            probeVaapiH264Encode()) {
+            std::cerr
+                << "NATIVE HW ENCODER Intel oneVPL unavailable; "
+                   "falling back to direct VAAPI H.264"
+                << std::endl;
+            return std::make_unique<VaapiH264Encoder>(codec);
+        }
+#endif
+        error =
+            codec == mpegts::ElementaryCodec::H265
+            ? "Intel HEVC hardware encoder unavailable: oneVPL implementation "
+              "not found and direct legacy VAAPI fallback is H.264-only"
+            : "Intel hardware encoder unavailable: no oneVPL implementation "
+              "and no direct VAAPI H.264 EncSlice support";
+        return {};
     }
     if (b == "nvenc") {
 #if defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)

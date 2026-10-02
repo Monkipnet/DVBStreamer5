@@ -169,6 +169,24 @@ endif()
 
 # Optional direct hardware video backends. These are vendor/OS APIs, not media frameworks.
 # CPU codecs remain fully self-contained when the SDK headers are absent.
+
+# Direct libva backend for legacy Intel generations (for example Haswell/i965)
+# where the modern oneVPL GPU runtime exposes no implementation.
+find_path(DVBSTREAMER5_VA_INCLUDE_DIR NAMES va/va.h)
+find_library(DVBSTREAMER5_VA_LIBRARY NAMES va)
+find_library(DVBSTREAMER5_VA_DRM_LIBRARY NAMES va-drm)
+if(DVBSTREAMER5_VA_INCLUDE_DIR AND DVBSTREAMER5_VA_LIBRARY AND DVBSTREAMER5_VA_DRM_LIBRARY)
+    target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_VAAPI=1)
+    target_include_directories(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_VA_INCLUDE_DIR})
+    target_link_libraries(dvbstreamer5_media_core PRIVATE
+        ${DVBSTREAMER5_VA_LIBRARY}
+        ${DVBSTREAMER5_VA_DRM_LIBRARY}
+    )
+    message(STATUS "Native Intel VAAPI backend: enabled (direct libva)")
+else()
+    message(STATUS "Native Intel VAAPI backend: disabled (install libva-dev)")
+endif()
+
 find_path(DVBSTREAMER5_VPL_INCLUDE_DIR NAMES vpl/mfxdispatcher.h)
 find_library(DVBSTREAMER5_VPL_LIBRARY NAMES vpl)
 if(DVBSTREAMER5_VPL_INCLUDE_DIR AND DVBSTREAMER5_VPL_LIBRARY AND EXISTS "${DVBSTREAMER5_VPL_INCLUDE_DIR}/vpl/mfxvideo.h")
