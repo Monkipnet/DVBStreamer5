@@ -223,7 +223,7 @@ cat > "$STAGE/run.sh" <<EOF_RUN
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="\$(cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")" && pwd -P)"
-export LD_LIBRARY_PATH="\$ROOT/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+# Keep bundled libraries private to the explicit ELF loader below.\n# Do NOT export LD_LIBRARY_PATH: DVBStreamer5 launches host tools such as\n# systemctl/journalctl/ss, which must resolve against the target host ABI.
 export DVBSTREAMER5_CA_PLUGIN_DIR="\${DVBSTREAMER5_CA_PLUGIN_DIR:-\$ROOT/ca-plugins}"
 [[ ! -s "\$ROOT/etc/ssl/certs/ca-certificates.crt" ]] || export SSL_CERT_FILE="\$ROOT/etc/ssl/certs/ca-certificates.crt"
 [[ ! -d "\$ROOT/lib/ossl-modules" ]] || export OPENSSL_MODULES="\$ROOT/lib/ossl-modules"
@@ -237,7 +237,7 @@ if [[ -n "$OSCAM_SOURCE" ]]; then
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="\$(cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")/.." && pwd -P)"
-export LD_LIBRARY_PATH="\$ROOT/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+# Keep bundled libraries private to the explicit ELF loader below.\n# Do NOT export LD_LIBRARY_PATH into OSCam-mini or any child host utilities.
 [[ ! -s "\$ROOT/etc/ssl/certs/ca-certificates.crt" ]] || export SSL_CERT_FILE="\$ROOT/etc/ssl/certs/ca-certificates.crt"
 [[ ! -d "\$ROOT/lib/ossl-modules" ]] || export OPENSSL_MODULES="\$ROOT/lib/ossl-modules"
 exec "\$ROOT/lib/$LOADER_NAME" --library-path "\$ROOT/lib" "\$ROOT/oscam-mini/oscam-mini.bin" "\$@"
