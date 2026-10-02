@@ -88,9 +88,9 @@ The installer performs `systemctl daemon-reload`, stops/disables legacy OSCam so
 Runtime configuration exists only in:
 
 ```text
-/opt/DVBStreamer5/oscam-mini/config/oscam.conf
-/opt/DVBStreamer5/oscam-mini/config/oscam.server
-/opt/DVBStreamer5/oscam-mini/config/oscam.user
+/etc/dvbstreamer5/oscam-mini/oscam.conf
+/etc/dvbstreamer5/oscam-mini/oscam.server
+/etc/dvbstreamer5/oscam-mini/oscam.user
 ```
 
 Existing runtime configuration is never overwritten during installation. Templates are stored separately in `default-config`.
@@ -134,7 +134,7 @@ The module provides service controls, multiple Newcamd endpoints/accounts, Phoen
 
 
 ### Irdeto reader keys
-OSCam-mini reader settings support optional `boxkey`, `rsakey`, `auprovid` and editable `emmcache`. Existing runtime values are loaded from `/opt/DVBStreamer5/oscam-mini/config/oscam.server` and preserved when saving through the web UI. Real card keys are intentionally not stored in repository default configs.
+OSCam-mini reader settings support optional `boxkey`, `rsakey`, `auprovid` and editable `emmcache`. Existing runtime values are loaded from `/etc/dvbstreamer5/oscam-mini/oscam.server` and preserved when saving through the web UI. Real card keys are intentionally not stored in repository default configs.
 
 ## Compact activity rows
 
