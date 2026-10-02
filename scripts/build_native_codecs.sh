@@ -7,7 +7,7 @@ BUILD_ROOT="${DVBSTREAMER5_CODEC_BUILD_ROOT:-${TMPDIR:-/tmp}/dvbstreamer5-native
 JOBS="${DVBSTREAMER5_CODEC_JOBS:-2}"
 
 need_dir() { [[ -d "$1" ]] || { echo "Missing vendored codec source: $1" >&2; echo "Run ./scripts/vendor_native_codecs.sh first." >&2; exit 1; }; }
-for d in openh264 libde265 kvazaar fdk-aac pl_mpeg; do need_dir "$ROOT/third_party/$d"; done
+for d in openh264 libde265 kvazaar fdk-aac ittiam-libmpeg2 pl_mpeg; do need_dir "$ROOT/third_party/$d"; done
 
 rm -rf "$BUILD_ROOT" "$PREFIX"
 mkdir -p "$BUILD_ROOT" "$PREFIX/include" "$PREFIX/lib"
@@ -21,11 +21,11 @@ case "$arch" in
   *) oh_arch="$arch" ;;
 esac
 
-echo "[1/5] OpenH264 static"
+echo "[1/6] OpenH264 static"
 make -C "$ROOT/third_party/openh264" -j"$JOBS" OS=linux ARCH="$oh_arch" BUILDTYPE=Release libopenh264.a
 make -C "$ROOT/third_party/openh264" OS=linux ARCH="$oh_arch" BUILDTYPE=Release install-static PREFIX="$PREFIX"
 
-echo "[2/5] libde265 static"
+echo "[2/6] libde265 static"
 cmake -S "$ROOT/third_party/libde265" -B "$BUILD_ROOT/libde265" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DBUILD_SHARED_LIBS=OFF -DENABLE_DECODER=ON -DENABLE_ENCODER=OFF \
@@ -33,7 +33,7 @@ cmake -S "$ROOT/third_party/libde265" -B "$BUILD_ROOT/libde265" \
 cmake --build "$BUILD_ROOT/libde265" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/libde265"
 
-echo "[3/5] Kvazaar static"
+echo "[3/6] Kvazaar static"
 KVAZAAR_CMAKE_VERSION="$(cmake --version | awk 'NR==1 {print $3}')"
 if [[ "$(printf '%s\n' "3.25" "$KVAZAAR_CMAKE_VERSION" | sort -V | head -n1)" == "3.25" ]]; then
   echo "Kvazaar: using CMake $KVAZAAR_CMAKE_VERSION"
@@ -60,13 +60,28 @@ else
   )
 fi
 
-echo "[4/5] FDK-AAC static"
+echo "[4/6] FDK-AAC static"
 cmake -S "$ROOT/third_party/fdk-aac" -B "$BUILD_ROOT/fdk-aac" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" -DBUILD_SHARED_LIBS=OFF
 cmake --build "$BUILD_ROOT/fdk-aac" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/fdk-aac"
 
-echo "[5/5] PL_MPEG header"
+echo "[5/6] Ittiam MPEG-2 decoder static"
+cmake -S "$ROOT/third_party/ittiam-libmpeg2" -B "$BUILD_ROOT/ittiam-libmpeg2" \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+cmake --build "$BUILD_ROOT/ittiam-libmpeg2" --target libmpeg2dec --parallel "$JOBS"
+MPEG2_LIB="$(find "$BUILD_ROOT/ittiam-libmpeg2" -type f \
+  \( -name 'libmpeg2dec.a' -o -name 'liblibmpeg2dec.a' \) -print -quit)"
+if [[ -z "$MPEG2_LIB" ]]; then
+  echo "Ittiam MPEG-2 static library was not produced" >&2
+  exit 1
+fi
+install -m 0644 "$MPEG2_LIB" "$PREFIX/lib/libmpeg2dec.a"
+install -d "$PREFIX/include/ittiam-mpeg2"
+find "$ROOT/third_party/ittiam-libmpeg2/common" "$ROOT/third_party/ittiam-libmpeg2/decoder" \
+  -maxdepth 1 -type f -name '*.h' -exec install -m 0644 {} "$PREFIX/include/ittiam-mpeg2/" \;
+
+echo "[6/6] PL_MPEG header"
 install -d "$PREFIX/include/pl_mpeg"
 install -m 0644 "$ROOT/third_party/pl_mpeg/pl_mpeg.h" "$PREFIX/include/pl_mpeg/pl_mpeg.h"
 
@@ -76,6 +91,7 @@ OpenH264: 2.6.0 / 652bdb7719f30b52b08e506645a7322ff1b2cc6f
 libde265: 1.1.3 / ba62bf4cfb3242f3bf0a45617ff09e35236e4d82
 Kvazaar: 2.3.2 / 6040962bed5cc68c5ad01234c38c08b8b2822068
 FDK-AAC: 2.0.3 / 716f4394641d53f0d79c9ddac3fa93b03a49f278
+Ittiam libmpeg2: e2dbb98d7819a8225687d3a0b7f3d818784e451c (Apache-2.0)
 PL_MPEG: c871f2be022ece7ef4f64230b4fb8e1fb9eb6023
 All codec libraries are built as project-local static inputs. No FFmpeg/libav/GStreamer.
 INFO
