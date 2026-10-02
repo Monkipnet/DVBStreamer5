@@ -309,6 +309,54 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     state->activeInputUri = streamConfig.inputUri;
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
+
+    // Browser preview must not depend on the production codec. mpegts.js /
+    // MediaSource playback is reliable with AVC + AAC, while DVB services can
+    // legitimately carry MPEG-2, HEVC, MP2 or AC-3. Keep a dedicated,
+    // low-bitrate CPU pipeline whose output is used only by preview.ts.
+    state->nativePreviewTranscoder =
+        std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
+    {
+        dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
+        previewTc.videoCodec = "h264";
+        previewTc.videoEncoder = "cpu";
+        previewTc.audioCodec = "aac";
+        previewTc.width = 1280;
+        previewTc.height = 720;
+        previewTc.fps = 25.0;
+        previewTc.videoBitrate = 1800000ULL;
+        previewTc.audioBitrate = 128000ULL;
+        previewTc.deinterlace = true;
+        previewTc.serviceId = static_cast<std::uint16_t>(
+            streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff
+                ? streamConfig.serviceId
+                : (streamConfig.inputServiceId > 0 && streamConfig.inputServiceId <= 0xffff
+                    ? streamConfig.inputServiceId : 1));
+        previewTc.videoPid = 0x0100;
+        previewTc.audioPid = 0x0101;
+        previewTc.muxBitrate = 0;
+        previewTc.serviceName =
+            streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+        previewTc.serviceProvider =
+            streamConfig.serviceProvider.empty() ? "DVBStreamer5" : streamConfig.serviceProvider;
+
+        std::string previewError;
+        if (!state->nativePreviewTranscoder->initialize(previewTc, previewError)) {
+            std::cerr << "NATIVE BROWSER PREVIEW disabled stream="
+                      << streamConfig.name
+                      << " error=" << (previewError.empty()
+                          ? "preview transcoder initialization failed" : previewError)
+                      << std::endl;
+            state->nativePreviewTranscoder.reset();
+        } else {
+            std::cerr << "NATIVE BROWSER PREVIEW ready stream="
+                      << streamConfig.name
+                      << " codec=h264/aac max_size=1280x720"
+                      << " video_kbps=1800 audio_kbps=128"
+                      << std::endl;
+        }
+    }
+
     if (streamConfig.transcodeEnabled) {
         state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
         dvbstreamer5::media::transcode::NativeTranscoderConfig tc;
@@ -700,6 +748,40 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         };
     }
+    if (state->nativePreviewTranscoder) {
+        auto previousInputObserver = relay.observeInputTransport;
+        auto* previewTranscoder = state->nativePreviewTranscoder.get();
+        auto previewHubForTranscode = state->nativePreviewHub;
+        StreamState* previewState = state.get();
+        relay.observeInputTransport =
+            [previousInputObserver, previewTranscoder, previewHubForTranscode, previewState](
+                const std::uint8_t* data, std::size_t size) {
+                if (previousInputObserver) previousInputObserver(data, size);
+                if (!previewTranscoder || !previewHubForTranscode || !previewState ||
+                    previewState->previewTranscodeFailed.load(std::memory_order_acquire) ||
+                    previewHubForTranscode->subscriberCount() == 0) {
+                    return;
+                }
+
+                std::vector<std::uint8_t> browserTs;
+                std::string previewError;
+                if (!previewTranscoder->process(data, size, browserTs, previewError)) {
+                    previewState->previewTranscodeFailed.store(
+                        true, std::memory_order_release);
+                    std::cerr << "NATIVE BROWSER PREVIEW ERROR stream="
+                              << previewState->config.name
+                              << " error=" << (previewError.empty()
+                                  ? "H.264/AAC preview transcode failed" : previewError)
+                              << std::endl;
+                    return;
+                }
+                if (!browserTs.empty()) {
+                    previewHubForTranscode->publish(
+                        browserTs.data(), browserTs.size());
+                }
+            };
+    }
+
     if (state->nativeTranscoder) {
         auto* transcoder = state->nativeTranscoder.get();
         relay.transformTransport = [transcoder](const std::uint8_t* data, std::size_t size,
@@ -709,6 +791,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     auto previewHub = state->nativePreviewHub;
+    const bool previewPassthrough = !state->nativePreviewTranscoder;
     auto* hlsSegmenter = state->nativeHlsSegmenter.get();
     auto* cmafSegmenter = state->nativeCmafSegmenter.get();
     auto* mpts = mptsOutputManager.get();
@@ -716,13 +799,13 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::vector<dvbstreamer5::media::rtsp::NativeRtspOutput*> rtspOutputs; for (auto& output : state->nativeRtspOutputs) rtspOutputs.push_back(output.get());
     std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
-    relay.observeTransport = [previewHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {
         if (hlsSegmenter) hlsSegmenter->push(data, size);
         if (cmafSegmenter) cmafSegmenter->push(data, size);
         for (auto* output : srtOutputs) if (output) output->push(data, size);
         for (auto* output : rtspOutputs) if (output) output->push(data, size);
         for (auto* output : rtmpOutputs) if (output) output->push(data, size);
-        previewHub->publish(data, size);
+        if (previewPassthrough && previewHub) previewHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
     };
 
@@ -1127,6 +1210,9 @@ bool StreamManager::stopStream(const std::string& id) {
     // transponder reader. The last subscriber closes dvr0 and the demux filter.
     if (state->nativeRelay) state->nativeRelay->stop();
     sharedDvbInputs.unsubscribe(id);
+    if (state->nativePreviewTranscoder) {
+        state->nativePreviewTranscoder->reset();
+    }
     if (state->nativeTranscoder) {
         state->nativeTranscoder->setDecodedVideoObserver({});
         state->nativeTranscoder->setEncodedAudioObserver({});
