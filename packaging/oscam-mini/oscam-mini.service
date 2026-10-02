@@ -2,14 +2,14 @@
 Description=DVBStreamer5 OSCam-mini Newcamd/PCSC/Phoenix card server
 After=network.target
 Conflicts=oscam.service
-ConditionPathExists=/opt/DVBStreamer5/oscam-mini/config/oscam.conf
+ConditionPathExists=/etc/dvbstreamer5/oscam-mini/oscam.conf
 
 [Service]
 Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/DVBStreamer5/oscam-mini
-ExecStart=/opt/DVBStreamer5/oscam-mini/oscam-mini -c /opt/DVBStreamer5/oscam-mini/config
+ExecStart=/opt/DVBStreamer5/oscam-mini/oscam-mini -c /etc/dvbstreamer5/oscam-mini
 SuccessExitStatus=15 SIGTERM
 Restart=on-failure
 RestartSec=2
