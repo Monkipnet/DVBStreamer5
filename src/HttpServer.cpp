@@ -3467,12 +3467,13 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .button-danger{padding:7px 10px;border:1px solid rgba(239,68,68,.35);border-radius:999px;color:#ffc4c7;background:rgba(239,68,68,.10);cursor:pointer;font-size:.78rem}.button-danger:hover{background:rgba(239,68,68,.20)}
 .container{padding:calc(var(--header-height,58px) + 10px) 12px 12px;max-width:1180px;margin:0 auto;box-sizing:border-box}
 .tile-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(calc(180px * 1.15), 1fr));gap:12px 1ch;justify-content:start}
-.tile{position:relative;background:rgba(22,27,37,.94);padding:8px 10px 8px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:4px;height:252px;min-height:252px;width:100%;max-width:none;box-sizing:border-box;box-shadow:0 18px 42px rgba(0,0,0,.14);transition:transform .2s ease,border-color .2s ease;font-size:11px}
+.tile{position:relative;background:rgba(22,27,37,.94);padding:8px 10px 8px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:4px;height:252px;min-height:252px;width:100%;max-width:none;box-sizing:border-box;box-shadow:0 18px 42px rgba(0,0,0,.14);transition:transform .2s ease,border-color .2s ease;font-size:11px;overflow:hidden}
 .tile:before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:999px;background:linear-gradient(180deg,#3fc8ff,#1d69ff)}
 .tile:hover{transform:translateY(-1px);border-color:rgba(31,136,255,.3)}
 .tile.active{border-color:#17c261}
 .tile.error{border-color:#fb5f5f}
-.tile .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px;padding-right:64px;min-height:27px}
+.tile .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px;padding-right:64px;min-height:27px;min-width:0;overflow:hidden}
+.tile .top>div{min-width:0;max-width:100%;overflow:hidden}
 .tile .tile-actions{position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:5px;z-index:2}
 .tile .delete-button{display:inline-flex;align-items:center;justify-content:center;position:static;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:#d9363e;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 3px 8px rgba(0,0,0,.24)}
 .tile .delete-button:hover{background:#f0444d;transform:scale(1.08)}
@@ -3493,9 +3494,9 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .tile .decode-pill.waiting{background:rgba(255,184,77,.16);color:#ffe0a3;box-shadow:inset 0 0 0 1px rgba(255,184,77,.24)}
 .tile .decode-pill.offline{background:rgba(255,255,255,.07);color:#aeb7c8;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
 .tile .info{display:grid;grid-template-columns:1fr;gap:3px;font-size:11px;color:#b3b8c6}
-.tile .info-row{display:flex;justify-content:space-between;gap:8px;align-items:center}
-.tile .info-row strong{color:#fff;font-size:11px}
-.tile .info-row span{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.tile .info-row{display:flex;justify-content:space-between;gap:8px;align-items:center;min-width:0;overflow:hidden}
+.tile .info-row strong{color:#fff;font-size:11px;flex:0 0 auto;max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .info-row span{flex:1 1 0;min-width:0;max-width:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
 .tile .info-row.placeholder{visibility:hidden}
 .tile .controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:0}
 .tile .controls button{padding:5px 8px;border:none;border-radius:10px;background:rgba(255,255,255,.06);color:#EEE;font-size:9px;cursor:pointer;transition:background .2s ease,transform .08s ease,box-shadow .2s ease}
@@ -4625,13 +4626,18 @@ function updateStreamTile(tile, stream) {
   const activeInput = tile.querySelector('[data-role="active-input"]');
   if (activeInput) {
     activeInput.textContent = `${stream.active_input_label || t('primary')} · ${stream.active_input_uri || stream.input_uri || '—'}`;
+    activeInput.title = activeInput.textContent;
   }
 
   const bitrateIn = tile.querySelector('[data-role="bitrate-in"]');
   if (bitrateIn) bitrateIn.textContent = stream.bitrate_in_kbps ? `${stream.bitrate_in_kbps} kbps` : '—';
 
   const payloadOut = tile.querySelector('[data-role="payload-out"]');
-  if (payloadOut) payloadOut.textContent = stream.payload_out_kbps ? `${stream.payload_out_kbps} kbps` : '—';
+  if (payloadOut) {
+    const payloadKbps = Number(stream.payload_out_kbps || 0);
+    payloadOut.textContent = stream.active ? `${payloadKbps} kbps` : (payloadKbps ? `${payloadKbps} kbps` : '—');
+    payloadOut.title = payloadOut.textContent;
+  }
 
   const bitrateOut = tile.querySelector('[data-role="bitrate-out"]');
   if (bitrateOut) bitrateOut.textContent = stream.bitrate_out_kbps ? `${stream.bitrate_out_kbps} kbps` : '—';
@@ -4711,10 +4717,10 @@ function render(force=false) {
         <div class="dvb-meter"><span data-role="dvb-quality-fill" class="dvb-meter-fill"></span><b data-role="dvb-quality-label" class="dvb-meter-label">Q —</b></div>
       </div>
       <div class="info">
-        <div class="info-row"><strong>${t('output')}</strong><span>${outputs.length > 1 ? outputBadgeText(stream) : outputType.toUpperCase()} · ${primaryLink}</span></div>
-        <div class="info-row"><strong>${t('activeInput')}</strong><span data-role="active-input">${stream.active_input_label || t('primary')} · ${stream.active_input_uri || stream.input_uri || '—'}</span></div>
-        <div class="info-row"><strong>${t('primary')}</strong><span>${stream.input_uri || '—'}</span></div>
-        <div class="info-row"><strong>${t('backup')}</strong><span>${stream.backup_input_uri || '—'}${stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''}</span></div>
+        <div class="info-row"><strong>${t('output')}</strong><span title="${escapeHtmlValue((outputs.length > 1 ? outputBadgeText(stream) : outputType.toUpperCase()) + ' · ' + primaryLink)}">${escapeHtmlValue(outputs.length > 1 ? outputBadgeText(stream) : outputType.toUpperCase())} · ${escapeHtmlValue(primaryLink)}</span></div>
+        <div class="info-row"><strong>${t('activeInput')}</strong><span data-role="active-input" title="${escapeHtmlValue((stream.active_input_label || t('primary')) + ' · ' + (stream.active_input_uri || stream.input_uri || '—'))}">${escapeHtmlValue(stream.active_input_label || t('primary'))} · ${escapeHtmlValue(stream.active_input_uri || stream.input_uri || '—')}</span></div>
+        <div class="info-row"><strong>${t('primary')}</strong><span title="${escapeHtmlValue(stream.input_uri || '—')}">${escapeHtmlValue(stream.input_uri || '—')}</span></div>
+        <div class="info-row"><strong>${t('backup')}</strong><span title="${escapeHtmlValue((stream.backup_input_uri || '—') + (stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''))}">${escapeHtmlValue(stream.backup_input_uri || '—')}${stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''}</span></div>
         <div class="info-row"><strong>${t('sid')}</strong><span>${stream.service_id || '—'}</span></div>
         ${stream.dvb_input ? `<div class="info-row"><strong>Frontend</strong><span data-role="dvb-frontend-details">${escapeHtmlValue(dvbFrontendDetails(stream))}</span></div>
         <div class="info-row"><strong>ISI / DiSEqC</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
