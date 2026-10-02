@@ -76,25 +76,36 @@ std::vector<AbrProfile> makeAbrProfiles(int primaryWidth, int primaryHeight,
         {"360p", 640, 360, 950000ULL},
     };
     std::vector<AbrProfile> out;
+    if (primaryWidth <= 0 || primaryHeight <= 0 || primaryVideoBitrate < 350000ULL)
+        return out;
+
     const std::uint64_t primaryPixels = static_cast<std::uint64_t>(primaryWidth) *
         static_cast<std::uint64_t>(primaryHeight);
+    std::uint64_t previousBitrate = primaryVideoBitrate;
+    constexpr std::uint64_t kMinimumVariantBitrate = 250000ULL;
+
     for (const auto& c : candidates) {
-        if (out.size() >= 3) break;
+        if (out.size() >= 3 || previousBitrate <= kMinimumVariantBitrate + 50000ULL) break;
         const int width = alignAbrDimension8(c.width);
         const int height = alignAbrDimension8(c.height);
         if (width >= primaryWidth || height >= primaryHeight) continue;
         const std::uint64_t pixels = static_cast<std::uint64_t>(width) *
             static_cast<std::uint64_t>(height);
         if (pixels >= primaryPixels) continue;
-        std::uint64_t scaled = primaryVideoBitrate > 0
-            ? (primaryVideoBitrate * pixels * 135ULL) / (primaryPixels * 100ULL)
-            : c.nominal;
+
+        std::uint64_t scaled = (primaryVideoBitrate * pixels * 135ULL) /
+            (primaryPixels * 100ULL);
         scaled = std::min<std::uint64_t>(scaled, c.nominal);
-        scaled = std::max<std::uint64_t>(scaled, 600000ULL);
-        if (primaryVideoBitrate > 800000ULL) {
-            scaled = std::min<std::uint64_t>(scaled, primaryVideoBitrate - 200000ULL);
-        }
+        // Keep a real bitrate step between adjacent renditions.  The old ladder
+        // was calculated from the UI-requested bitrate and could create a
+        // "lower" rendition that was actually more expensive than the effective
+        // CBR-limited primary stream.
+        scaled = std::min<std::uint64_t>(scaled, previousBitrate * 80ULL / 100ULL);
+        scaled = std::max<std::uint64_t>(scaled, kMinimumVariantBitrate);
+        if (scaled + 50000ULL >= previousBitrate) continue;
+
         out.push_back({c.name, width, height, scaled});
+        previousBitrate = scaled;
     }
     return out;
 }
@@ -107,6 +118,7 @@ std::filesystem::path hlsRuntimeDirectory(const StreamConfig& cfg) {
 
 bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int primaryHeight,
                             std::uint64_t primaryVideoBitrate,
+                            std::uint64_t primaryTransportBitrate,
                             const std::vector<std::unique_ptr<StreamState::HlsAbrVariantRuntime>>& variants,
                             std::string& error) {
     const auto dir = hlsRuntimeDirectory(cfg);
@@ -126,19 +138,25 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
         else if (a == "mp3") c += ",mp4a.6B";
         return c;
     }();
-    auto emit = [&](int w, int h, std::uint64_t vb, const std::string& uri) {
-        const std::uint64_t bandwidth = std::max<std::uint64_t>(700000ULL, vb + audio + 180000ULL);
+    auto emit = [&](int w, int h, std::uint64_t vb, std::uint64_t transportBitrate,
+                    const std::string& uri) {
+        const std::uint64_t estimated = std::max<std::uint64_t>(350000ULL, vb + audio + 180000ULL);
+        const std::uint64_t bandwidth = transportBitrate > 0 ? transportBitrate : estimated;
+        const std::uint64_t average = transportBitrate > 0
+            ? transportBitrate
+            : std::max<std::uint64_t>(250000ULL, vb + audio);
         out << "#EXT-X-STREAM-INF:BANDWIDTH=" << bandwidth
-            << ",AVERAGE-BANDWIDTH=" << (vb + audio)
+            << ",AVERAGE-BANDWIDTH=" << std::min(bandwidth, average)
             << ",RESOLUTION=" << w << "x" << h
             << ",FRAME-RATE=25.000,CODECS=\"" << codecs << "\"\n";
         out << uri << "\n";
     };
-    out << "#EXTM3U\n#EXT-X-VERSION:3\n# DVBStreamer5 native ABR\n";
-    emit(primaryWidth, primaryHeight, primaryVideoBitrate, "video.m3u8");
+    out << "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-INDEPENDENT-SEGMENTS\n# DVBStreamer5 native ABR\n";
+    emit(primaryWidth, primaryHeight, primaryVideoBitrate, primaryTransportBitrate, "video.m3u8");
     for (const auto& v : variants) {
-        if (!v) continue;
-        emit(v->width, v->height, v->videoBitrate, "abr/" + v->name + "/video.m3u8");
+        if (!v || v->failed) continue;
+        emit(v->width, v->height, v->videoBitrate, v->muxBitrate,
+             "abr/" + v->name + "/video.m3u8");
     }
     out.flush();
     if (!out) { error = "failed to write HLS ABR master playlist"; return false; }
