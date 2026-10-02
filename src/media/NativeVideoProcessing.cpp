@@ -3,9 +3,286 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iostream>
+
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+#include <fcntl.h>
+#include <unistd.h>
+#include <va/va.h>
+#include <va/va_drm.h>
+#include <va/va_vpp.h>
+#endif
 
 namespace dvbstreamer5::media::codec {
 namespace {
+
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+class VaapiVppScaler {
+public:
+    ~VaapiVppScaler() { close(); }
+
+    bool scale(const RawVideoFrame& input, int width, int height,
+               RawVideoFrame& output) {
+        if (!ensure(input.width, input.height, width, height)) return false;
+        if (!upload(input)) return false;
+
+        VARectangle src{};
+        src.x = 0;
+        src.y = 0;
+        src.width = static_cast<unsigned short>(input.width);
+        src.height = static_cast<unsigned short>(input.height);
+
+        VARectangle dst{};
+        dst.x = 0;
+        dst.y = 0;
+        dst.width = static_cast<unsigned short>(width);
+        dst.height = static_cast<unsigned short>(height);
+
+        VAProcPipelineParameterBuffer param{};
+        param.surface = inputSurface_;
+        param.surface_region = &src;
+        param.output_region = &dst;
+        param.filter_flags = VA_FILTER_SCALING_DEFAULT;
+
+        VABufferID pipeline = VA_INVALID_ID;
+        VAStatus st = vaCreateBuffer(
+            display_, context_, VAProcPipelineParameterBufferType,
+            sizeof(param), 1, &param, &pipeline);
+        if (st != VA_STATUS_SUCCESS) return fail();
+
+        st = vaBeginPicture(display_, context_, outputSurface_);
+        if (st == VA_STATUS_SUCCESS)
+            st = vaRenderPicture(display_, context_, &pipeline, 1);
+        if (st == VA_STATUS_SUCCESS)
+            st = vaEndPicture(display_, context_);
+        vaDestroyBuffer(display_, pipeline);
+        if (st != VA_STATUS_SUCCESS) return fail();
+
+        st = vaSyncSurface(display_, outputSurface_);
+        if (st != VA_STATUS_SUCCESS) return fail();
+
+        if (!download(output)) return false;
+        output.pts90k = input.pts90k;
+        output.dts90k = input.dts90k;
+        output.hasPts = input.hasPts;
+        output.hasDts = input.hasDts;
+        output.keyFrame = input.keyFrame;
+
+        if (!logged_) {
+            std::cerr << "NATIVE VIDEO SCALE backend=vaapi-vpp src="
+                      << input.width << "x" << input.height
+                      << " dst=" << width << "x" << height
+                      << std::endl;
+            logged_ = true;
+        }
+        return true;
+    }
+
+private:
+    bool ensure(int sw, int sh, int dw, int dh) {
+        if (ready_ && sw_ == sw && sh_ == sh && dw_ == dw && dh_ == dh)
+            return true;
+        close();
+
+        for (int i = 128; i < 160 && fd_ < 0; ++i) {
+            const std::string path =
+                "/dev/dri/renderD" + std::to_string(i);
+            fd_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+        }
+        if (fd_ < 0) return false;
+
+        display_ = vaGetDisplayDRM(fd_);
+        if (!display_) return fail();
+
+        int major = 0, minor = 0;
+        if (vaInitialize(display_, &major, &minor) != VA_STATUS_SUCCESS)
+            return fail();
+
+        if (vaCreateConfig(
+                display_, VAProfileNone, VAEntrypointVideoProc,
+                nullptr, 0, &config_) != VA_STATUS_SUCCESS)
+            return fail();
+
+        VASurfaceAttrib attr{};
+        attr.type = VASurfaceAttribPixelFormat;
+        attr.flags = VA_SURFACE_ATTRIB_SETTABLE;
+        attr.value.type = VAGenericValueTypeInteger;
+        attr.value.value.i = VA_FOURCC_NV12;
+
+        if (vaCreateSurfaces(
+                display_, VA_RT_FORMAT_YUV420,
+                static_cast<unsigned>(sw),
+                static_cast<unsigned>(sh),
+                &inputSurface_, 1, &attr, 1) != VA_STATUS_SUCCESS)
+            return fail();
+
+        if (vaCreateSurfaces(
+                display_, VA_RT_FORMAT_YUV420,
+                static_cast<unsigned>(dw),
+                static_cast<unsigned>(dh),
+                &outputSurface_, 1, &attr, 1) != VA_STATUS_SUCCESS)
+            return fail();
+
+        VASurfaceID renderTarget = outputSurface_;
+        if (vaCreateContext(
+                display_, config_, dw, dh, VA_PROGRESSIVE,
+                &renderTarget, 1, &context_) != VA_STATUS_SUCCESS)
+            return fail();
+
+        sw_ = sw;
+        sh_ = sh;
+        dw_ = dw;
+        dh_ = dh;
+        ready_ = true;
+        return true;
+    }
+
+    bool upload(const RawVideoFrame& input) {
+        VAImage image{};
+        if (vaDeriveImage(display_, inputSurface_, &image) != VA_STATUS_SUCCESS)
+            return fail();
+        void* mapped = nullptr;
+        if (vaMapBuffer(display_, image.buf, &mapped) != VA_STATUS_SUCCESS) {
+            vaDestroyImage(display_, image.image_id);
+            return fail();
+        }
+
+        bool ok = image.format.fourcc == VA_FOURCC_NV12;
+        if (ok) {
+            auto* base = static_cast<std::uint8_t*>(mapped);
+            const auto* srcY = input.i420.data();
+            const auto* srcU =
+                srcY + static_cast<std::size_t>(sw_) * sh_;
+            const auto* srcV =
+                srcU + static_cast<std::size_t>(sw_ / 2) * (sh_ / 2);
+
+            for (int y = 0; y < sh_; ++y)
+                std::memcpy(
+                    base + image.offsets[0] +
+                        static_cast<std::size_t>(y) * image.pitches[0],
+                    srcY + static_cast<std::size_t>(y) * sw_,
+                    static_cast<std::size_t>(sw_));
+
+            for (int y = 0; y < sh_ / 2; ++y) {
+                auto* dst =
+                    base + image.offsets[1] +
+                    static_cast<std::size_t>(y) * image.pitches[1];
+                const auto* u =
+                    srcU + static_cast<std::size_t>(y) * (sw_ / 2);
+                const auto* v =
+                    srcV + static_cast<std::size_t>(y) * (sw_ / 2);
+                for (int x = 0; x < sw_ / 2; ++x) {
+                    dst[x * 2] = u[x];
+                    dst[x * 2 + 1] = v[x];
+                }
+            }
+        }
+
+        vaUnmapBuffer(display_, image.buf);
+        vaDestroyImage(display_, image.image_id);
+        return ok;
+    }
+
+    bool download(RawVideoFrame& output) {
+        VAImage image{};
+        if (vaDeriveImage(display_, outputSurface_, &image) != VA_STATUS_SUCCESS)
+            return fail();
+        void* mapped = nullptr;
+        if (vaMapBuffer(display_, image.buf, &mapped) != VA_STATUS_SUCCESS) {
+            vaDestroyImage(display_, image.image_id);
+            return fail();
+        }
+
+        bool ok = image.format.fourcc == VA_FOURCC_NV12;
+        if (ok) {
+            output = {};
+            output.width = dw_;
+            output.height = dh_;
+            output.i420.resize(
+                static_cast<std::size_t>(dw_) * dh_ * 3U / 2U);
+
+            const auto* base = static_cast<const std::uint8_t*>(mapped);
+            auto* dstY = output.i420.data();
+            auto* dstU =
+                dstY + static_cast<std::size_t>(dw_) * dh_;
+            auto* dstV =
+                dstU + static_cast<std::size_t>(dw_ / 2) * (dh_ / 2);
+
+            for (int y = 0; y < dh_; ++y)
+                std::memcpy(
+                    dstY + static_cast<std::size_t>(y) * dw_,
+                    base + image.offsets[0] +
+                        static_cast<std::size_t>(y) * image.pitches[0],
+                    static_cast<std::size_t>(dw_));
+
+            for (int y = 0; y < dh_ / 2; ++y) {
+                const auto* src =
+                    base + image.offsets[1] +
+                    static_cast<std::size_t>(y) * image.pitches[1];
+                auto* u =
+                    dstU + static_cast<std::size_t>(y) * (dw_ / 2);
+                auto* v =
+                    dstV + static_cast<std::size_t>(y) * (dw_ / 2);
+                for (int x = 0; x < dw_ / 2; ++x) {
+                    u[x] = src[x * 2];
+                    v[x] = src[x * 2 + 1];
+                }
+            }
+        }
+
+        vaUnmapBuffer(display_, image.buf);
+        vaDestroyImage(display_, image.image_id);
+        return ok;
+    }
+
+    bool fail() {
+        if (!fallbackLogged_) {
+            std::cerr << "NATIVE VIDEO SCALE vaapi-vpp unavailable; "
+                         "falling back to fixed-point CPU scaler"
+                      << std::endl;
+            fallbackLogged_ = true;
+        }
+        return false;
+    }
+
+    void close() {
+        ready_ = false;
+        if (display_ && context_ != VA_INVALID_ID)
+            vaDestroyContext(display_, context_);
+        context_ = VA_INVALID_ID;
+
+        if (display_ && inputSurface_ != VA_INVALID_SURFACE)
+            vaDestroySurfaces(display_, &inputSurface_, 1);
+        inputSurface_ = VA_INVALID_SURFACE;
+
+        if (display_ && outputSurface_ != VA_INVALID_SURFACE)
+            vaDestroySurfaces(display_, &outputSurface_, 1);
+        outputSurface_ = VA_INVALID_SURFACE;
+
+        if (display_ && config_ != VA_INVALID_ID)
+            vaDestroyConfig(display_, config_);
+        config_ = VA_INVALID_ID;
+
+        if (display_) vaTerminate(display_);
+        display_ = nullptr;
+
+        if (fd_ >= 0) ::close(fd_);
+        fd_ = -1;
+        sw_ = sh_ = dw_ = dh_ = 0;
+    }
+
+    int fd_ = -1;
+    VADisplay display_ = nullptr;
+    VAConfigID config_ = VA_INVALID_ID;
+    VAContextID context_ = VA_INVALID_ID;
+    VASurfaceID inputSurface_ = VA_INVALID_SURFACE;
+    VASurfaceID outputSurface_ = VA_INVALID_SURFACE;
+    int sw_ = 0, sh_ = 0, dw_ = 0, dh_ = 0;
+    bool ready_ = false;
+    bool logged_ = false;
+    bool fallbackLogged_ = false;
+};
+#endif
 
 struct BilinearMap {
     int sw = 0;
@@ -135,6 +412,14 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
     }
     const std::size_t expected = static_cast<std::size_t>(input.width) * input.height * 3U / 2U;
     if (input.i420.size() < expected) { error = "native I420 input frame is truncated"; return false; }
+#if defined(DVBSTREAMER5_HAVE_VAAPI)
+    if (input.width != width || input.height != height) {
+        thread_local VaapiVppScaler vppScaler;
+        if (vppScaler.scale(input, width, height, output))
+            return true;
+    }
+#endif
+
     output = {};
     output.width = width; output.height = height;
     output.pts90k = input.pts90k; output.dts90k = input.dts90k;
