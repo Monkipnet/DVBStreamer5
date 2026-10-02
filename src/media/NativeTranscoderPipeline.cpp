@@ -237,6 +237,41 @@ bool NativeTranscoderPipeline::pushDecodedVideoFrame(
     return true;
 }
 
+void NativeTranscoderPipeline::setExternalAudioInput(bool enabled) {
+    externalAudioInput_.store(enabled, std::memory_order_release);
+}
+
+void NativeTranscoderPipeline::setEncodedAudioObserver(EncodedAudioObserver observer) {
+    std::lock_guard<std::mutex> lock(encodedAudioObserverMutex_);
+    encodedAudioObserver_ = std::move(observer);
+}
+
+bool NativeTranscoderPipeline::pushEncodedAudioFrame(
+    const codec::EncodedAudioFrame& frame, std::uint64_t duration90k) {
+    if (!externalAudioInput_.load(std::memory_order_acquire) ||
+        failed_.load(std::memory_order_acquire)) return false;
+    std::string localError;
+    return emitAudio(frame, duration90k, localError);
+}
+
+bool NativeTranscoderPipeline::pollOutput(
+    std::vector<std::uint8_t>& output, std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    error.clear();
+    output.clear();
+    if (!initialized_) {
+        error = "native transcoder is not initialized";
+        return false;
+    }
+    if (failed_.load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> failLock(failureMutex_);
+        error = failure_;
+        return false;
+    }
+    drainPendingOutput(output);
+    return true;
+}
+
 void NativeTranscoderPipeline::reset() {
     stopWorkers();
     demux_.reset();
