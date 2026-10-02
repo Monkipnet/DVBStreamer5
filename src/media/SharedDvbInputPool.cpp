@@ -320,9 +320,14 @@ struct SharedDvbInputPool::Impl {
             if (existing != buses.end()) {
                 bus = existing->second;
                 if (!bus || !bus->running.load(std::memory_order_acquire)) {
-                    error = bus && !bus->sourceError.empty()
-                        ? bus->sourceError
-                        : "shared DVB source is not running";
+                    if (bus) {
+                        std::lock_guard<std::mutex> busLock(bus->mutex);
+                        error = !bus->sourceError.empty()
+                            ? bus->sourceError
+                            : "shared DVB source is not running";
+                    } else {
+                        error = "shared DVB source is not running";
+                    }
                     return false;
                 }
             } else {
