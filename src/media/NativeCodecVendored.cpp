@@ -541,9 +541,9 @@ private:
 
         codec_ = static_cast<iv_obj_t*>(memoryRecords_[0].pv_base);
         codec_->u4_size = sizeof(iv_obj_t);
-        codec_->pv_fxns =
-            reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(
-                &impeg2d_api_function));
+        // Match the upstream C++ fuzzer/example initialization. The
+        // Ittiam ABI stores its entry point in the generic iv_obj_t::pv_fxns.
+        codec_->pv_fxns = (void*)&impeg2d_api_function;
 
         if (impeg2d_api_function(codec_, &initIp, &initOp) != IV_SUCCESS) {
             error = "Ittiam MPEG-2 init failed: 0x" +
