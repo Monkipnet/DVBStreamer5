@@ -4632,13 +4632,6 @@ function updateStreamTile(tile, stream) {
   const bitrateIn = tile.querySelector('[data-role="bitrate-in"]');
   if (bitrateIn) bitrateIn.textContent = stream.bitrate_in_kbps ? `${stream.bitrate_in_kbps} kbps` : '—';
 
-  const payloadOut = tile.querySelector('[data-role="payload-out"]');
-  if (payloadOut) {
-    const payloadKbps = Number(stream.payload_out_kbps || 0);
-    payloadOut.textContent = stream.active ? `${payloadKbps} kbps` : (payloadKbps ? `${payloadKbps} kbps` : '—');
-    payloadOut.title = payloadOut.textContent;
-  }
-
   const bitrateOut = tile.querySelector('[data-role="bitrate-out"]');
   if (bitrateOut) bitrateOut.textContent = stream.bitrate_out_kbps ? `${stream.bitrate_out_kbps} kbps` : '—';
 
@@ -4728,7 +4721,6 @@ function render(force=false) {
         <div class="info-row decode-row"><strong>Декодирование</strong><span data-role="decode-status" class="decode-pill ${caDecodeInfo(stream).cls}" title="Контроль по A/V PID, scrambling_control и валидному PES">${caDecodeInfo(stream).text}</span></div>` : `<div class="info-row placeholder"><strong>CA</strong><span>—</span></div>
         <div class="info-row placeholder decode-row"><strong>Декодирование</strong><span>—</span></div>`}
         <div class="info-row"><strong>${t('bitrateIn')}</strong><span data-role="bitrate-in">${stream.bitrate_in_kbps ? stream.bitrate_in_kbps + ' kbps' : '—'}</span></div>
-        <div class="info-row"><strong>${t('payloadOut')}</strong><span data-role="payload-out">${stream.payload_out_kbps ? stream.payload_out_kbps + ' kbps' : '—'}</span></div>
         <div class="info-row"><strong>${t('bitrateOut')}</strong><span data-role="bitrate-out">${stream.bitrate_out_kbps ? stream.bitrate_out_kbps + ' kbps' : '—'}</span></div>
       </div>
       <div class="controls">
