@@ -23,6 +23,7 @@ fetch_commit cisco/openh264 652bdb7719f30b52b08e506645a7322ff1b2cc6f openh264
 fetch_commit strukturag/libde265 ba62bf4cfb3242f3bf0a45617ff09e35236e4d82 libde265
 fetch_commit ultravideo/kvazaar 6040962bed5cc68c5ad01234c38c08b8b2822068 kvazaar
 fetch_commit mstorsjo/fdk-aac 716f4394641d53f0d79c9ddac3fa93b03a49f278 fdk-aac
+fetch_commit ittiam-systems/libmpeg2 e2dbb98d7819a8225687d3a0b7f3d818784e451c ittiam-libmpeg2
 fetch_commit phoboslab/pl_mpeg c871f2be022ece7ef4f64230b4fb8e1fb9eb6023 pl_mpeg
 
 echo "Vendored native codec sources into $DEST"
