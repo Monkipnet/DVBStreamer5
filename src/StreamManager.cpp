@@ -292,6 +292,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     auto state = std::make_unique<StreamState>();
+    std::uint64_t effectivePrimaryVideoBitrate = streamConfig.transcodeVideoBitrate;
     state->config = streamConfig;
     state->activeInputUri = streamConfig.inputUri;
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
@@ -335,6 +336,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
             tc.videoBitrate = effectiveVideo;
         }
+        effectivePrimaryVideoBitrate = tc.videoBitrate;
         tc.serviceId = static_cast<std::uint16_t>(streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff ? streamConfig.serviceId : 1);
         tc.videoPid = static_cast<std::uint16_t>(streamConfig.videoPid > 0 && streamConfig.videoPid <= 0x1ffe ? streamConfig.videoPid : 0x0100);
         tc.audioPid = static_cast<std::uint16_t>(streamConfig.audioPid > 0 && streamConfig.audioPid <= 0x1ffe ? streamConfig.audioPid : 0x0101);
@@ -359,7 +361,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 if (error) *error = "native multibitrate HLS currently requires MPEG-TS container";
                 return false;
             }
-            const auto profiles = makeAbrProfiles(tc.width, tc.height, streamConfig.transcodeVideoBitrate);
+            const auto profiles = makeAbrProfiles(tc.width, tc.height, effectivePrimaryVideoBitrate);
             for (const auto& profile : profiles) {
                 auto variant = std::make_unique<StreamState::HlsAbrVariantRuntime>();
                 variant->name = profile.name;
@@ -635,8 +637,13 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 primaryW = 1920; primaryH = 1080;
             }
             std::string masterError;
+            const std::uint64_t primaryTransportBitrate =
+                streamConfig.cbr && streamConfig.targetBitrate > 0
+                    ? streamConfig.targetBitrate
+                    : effectivePrimaryVideoBitrate + streamConfig.transcodeAudioBitrate + 180000ULL;
             if (!writeAbrMasterPlaylist(streamConfig, primaryW, primaryH,
-                                        streamConfig.transcodeVideoBitrate,
+                                        effectivePrimaryVideoBitrate,
+                                        primaryTransportBitrate,
                                         state->hlsAbrVariants, masterError)) {
                 for (auto& started : state->hlsAbrVariants) {
                     if (started && started->segmenter) started->segmenter->stop();
@@ -648,6 +655,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
             std::cerr << "NATIVE HLS ABR MASTER ready variants="
                       << (state->hlsAbrVariants.size() + 1)
+                      << " primary_video_kbps=" << (effectivePrimaryVideoBitrate / 1000ULL)
+                      << " primary_transport_kbps=" << (primaryTransportBitrate / 1000ULL)
                       << " path=" << (baseDir / "master.m3u8").string() << std::endl;
         }
     }
