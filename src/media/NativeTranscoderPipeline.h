@@ -150,6 +150,9 @@ private:
     std::uint64_t droppedVideoSamples_ = 0;
     std::uint64_t droppedExternalVideoFrames_ = 0;
     std::uint64_t decodedVideoQueueDrops_ = 0;
+    bool videoRateClockValid_ = false;
+    std::uint64_t videoRateNextPts90k_ = 0;
+    std::uint64_t videoRateDroppedFrames_ = 0;
     DecodedVideoObserver decodedVideoObserver_;
     EncodedAudioObserver encodedAudioObserver_;
     std::uint64_t droppedAudioSamples_ = 0;
