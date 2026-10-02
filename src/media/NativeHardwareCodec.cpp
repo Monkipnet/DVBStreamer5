@@ -24,6 +24,7 @@
 #include <va/va.h>
 #include <va/va_drm.h>
 #include <va/va_enc_h264.h>
+#include <va/va_vpp.h>
 #endif
 
 #if defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)
@@ -324,6 +325,7 @@ bool hasH264NalType(
 
 class VaapiH264Encoder final : public VideoEncoder {
 public:
+    bool supportsNativeScaling() const noexcept override { return true; }
     explicit VaapiH264Encoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
     ~VaapiH264Encoder() override { close(); }
 
@@ -463,10 +465,8 @@ public:
             error = "VAAPI encoder not configured";
             return false;
         }
-        if (input.width != width_ || input.height != height_) {
-            error = "VAAPI geometry mismatch";
-            return false;
-        }
+        const bool needsScale =
+            input.width != width_ || input.height != height_;
 
         const bool idr = frameIndex_ == 0 || (frameIndex_ % gop_) == 0;
         const int currentIndex = static_cast<int>(frameIndex_ & 1U);
@@ -475,8 +475,13 @@ public:
         const VASurfaceID reference =
             frameIndex_ == 0 ? VA_INVALID_SURFACE : surfaces_[referenceIndex];
 
-        if (!uploadNv12(current, input, error))
-            return false;
+        if (needsScale) {
+            if (!scaleToEncodeSurface(current, input, error))
+                return false;
+        } else {
+            if (!uploadNv12(current, input, error))
+                return false;
+        }
 
         VABufferID coded = VA_INVALID_ID;
         const unsigned codedSize = static_cast<unsigned>(
@@ -741,31 +746,33 @@ private:
 
         bool ok = image.format.fourcc == VA_FOURCC_NV12;
         if (ok) {
+            const int srcWidth = input.width;
+            const int srcHeight = input.height;
             auto* base = static_cast<std::uint8_t*>(mapped);
             const auto* srcY = input.i420.data();
             const auto* srcU =
-                srcY + static_cast<std::size_t>(width_) * height_;
+                srcY + static_cast<std::size_t>(srcWidth) * srcHeight;
             const auto* srcV =
-                srcU + static_cast<std::size_t>(width_ / 2) *
-                    (height_ / 2);
+                srcU + static_cast<std::size_t>(srcWidth / 2) *
+                    (srcHeight / 2);
 
-            for (int row = 0; row < height_; ++row) {
+            for (int row = 0; row < srcHeight; ++row) {
                 std::memcpy(
                     base + image.offsets[0] +
                         static_cast<std::size_t>(row) * image.pitches[0],
-                    srcY + static_cast<std::size_t>(row) * width_,
-                    static_cast<std::size_t>(width_));
+                    srcY + static_cast<std::size_t>(row) * srcWidth,
+                    static_cast<std::size_t>(srcWidth));
             }
 
-            for (int row = 0; row < height_ / 2; ++row) {
+            for (int row = 0; row < srcHeight / 2; ++row) {
                 auto* dst =
                     base + image.offsets[1] +
                     static_cast<std::size_t>(row) * image.pitches[1];
                 const auto* u =
-                    srcU + static_cast<std::size_t>(row) * (width_ / 2);
+                    srcU + static_cast<std::size_t>(row) * (srcWidth / 2);
                 const auto* v =
-                    srcV + static_cast<std::size_t>(row) * (width_ / 2);
-                for (int x = 0; x < width_ / 2; ++x) {
+                    srcV + static_cast<std::size_t>(row) * (srcWidth / 2);
+                for (int x = 0; x < srcWidth / 2; ++x) {
                     dst[2 * x] = u[x];
                     dst[2 * x + 1] = v[x];
                 }
@@ -782,6 +789,141 @@ private:
         return true;
     }
 
+    bool ensureVppInput(int srcWidth, int srcHeight, std::string& error) {
+        if (vppReady_ && vppInputWidth_ == srcWidth &&
+            vppInputHeight_ == srcHeight)
+            return true;
+
+        destroyVpp();
+
+        VAStatus st = vaCreateConfig(
+            display_, VAProfileNone, VAEntrypointVideoProc,
+            nullptr, 0, &vppConfig_);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateConfig(VPP) failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        VASurfaceAttrib attr{};
+        attr.type = VASurfaceAttribPixelFormat;
+        attr.flags = VA_SURFACE_ATTRIB_SETTABLE;
+        attr.value.type = VAGenericValueTypeInteger;
+        attr.value.value.i = VA_FOURCC_NV12;
+
+        st = vaCreateSurfaces(
+            display_, VA_RT_FORMAT_YUV420,
+            static_cast<unsigned>(srcWidth),
+            static_cast<unsigned>(srcHeight),
+            &vppInputSurface_, 1, &attr, 1);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateSurfaces(VPP input) failed: " +
+                std::string(vaErrorStr(st));
+            destroyVpp();
+            return false;
+        }
+
+        st = vaCreateContext(
+            display_, vppConfig_, alignedWidth_, alignedHeight_,
+            VA_PROGRESSIVE, surfaces_, 2, &vppContext_);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateContext(VPP) failed: " +
+                std::string(vaErrorStr(st));
+            destroyVpp();
+            return false;
+        }
+
+        vppInputWidth_ = srcWidth;
+        vppInputHeight_ = srcHeight;
+        vppReady_ = true;
+        return true;
+    }
+
+    bool scaleToEncodeSurface(VASurfaceID target,
+                              const RawVideoFrame& input,
+                              std::string& error) {
+        if (!ensureVppInput(input.width, input.height, error))
+            return false;
+        if (!uploadNv12(vppInputSurface_, input, error))
+            return false;
+
+        VARectangle src{};
+        src.x = 0;
+        src.y = 0;
+        src.width = static_cast<unsigned short>(input.width);
+        src.height = static_cast<unsigned short>(input.height);
+
+        VARectangle dst{};
+        dst.x = 0;
+        dst.y = 0;
+        dst.width = static_cast<unsigned short>(width_);
+        dst.height = static_cast<unsigned short>(height_);
+
+        VAProcPipelineParameterBuffer param{};
+        param.surface = vppInputSurface_;
+        param.surface_region = &src;
+        param.output_region = &dst;
+        param.filter_flags = VA_FILTER_SCALING_DEFAULT;
+
+        VABufferID pipeline = VA_INVALID_ID;
+        VAStatus st = vaCreateBuffer(
+            display_, vppContext_, VAProcPipelineParameterBufferType,
+            sizeof(param), 1, &param, &pipeline);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaCreateBuffer(VPP) failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        st = vaBeginPicture(display_, vppContext_, target);
+        if (st == VA_STATUS_SUCCESS)
+            st = vaRenderPicture(display_, vppContext_, &pipeline, 1);
+        if (st == VA_STATUS_SUCCESS)
+            st = vaEndPicture(display_, vppContext_);
+        vaDestroyBuffer(display_, pipeline);
+
+        if (st != VA_STATUS_SUCCESS) {
+            error = "VAAPI VPP scale failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        st = vaSyncSurface(display_, target);
+        if (st != VA_STATUS_SUCCESS) {
+            error = "vaSyncSurface(VPP target) failed: " +
+                std::string(vaErrorStr(st));
+            return false;
+        }
+
+        if (!vppLogged_) {
+            std::cerr
+                << "NATIVE HW ENCODER internal_scale=vaapi-vpp-direct-surface"
+                << " src=" << input.width << "x" << input.height
+                << " dst=" << width_ << "x" << height_
+                << std::endl;
+            vppLogged_ = true;
+        }
+        return true;
+    }
+
+    void destroyVpp() {
+        vppReady_ = false;
+        if (display_ && vppContext_ != VA_INVALID_ID)
+            vaDestroyContext(display_, vppContext_);
+        vppContext_ = VA_INVALID_ID;
+
+        if (display_ && vppInputSurface_ != VA_INVALID_SURFACE)
+            vaDestroySurfaces(display_, &vppInputSurface_, 1);
+        vppInputSurface_ = VA_INVALID_SURFACE;
+
+        if (display_ && vppConfig_ != VA_INVALID_ID)
+            vaDestroyConfig(display_, vppConfig_);
+        vppConfig_ = VA_INVALID_ID;
+
+        vppInputWidth_ = 0;
+        vppInputHeight_ = 0;
+    }
+
     void destroyBuffers(const std::vector<VABufferID>& buffers) {
         for (VABufferID id : buffers)
             if (id != VA_INVALID_ID)
@@ -790,6 +932,7 @@ private:
 
     void close() {
         configured_ = false;
+        destroyVpp();
         if (display_ && context_ != VA_INVALID_ID)
             vaDestroyContext(display_, context_);
         context_ = VA_INVALID_ID;
@@ -840,6 +983,13 @@ private:
     bool startupLogged_ = false;
     std::vector<std::uint8_t> spsAnnexB_;
     std::vector<std::uint8_t> ppsAnnexB_;
+    VAConfigID vppConfig_ = VA_INVALID_ID;
+    VAContextID vppContext_ = VA_INVALID_ID;
+    VASurfaceID vppInputSurface_ = VA_INVALID_SURFACE;
+    int vppInputWidth_ = 0;
+    int vppInputHeight_ = 0;
+    bool vppReady_ = false;
+    bool vppLogged_ = false;
 };
 #endif
 
