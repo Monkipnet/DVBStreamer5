@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=/opt/DVBStreamer5/oscam-mini
-CFG="$ROOT/config"
+CFG="/etc/dvbstreamer5/oscam-mini"
 DEFAULT="$ROOT/default-config"
 UNIT_SRC="$ROOT/oscam-mini.service"
 UNIT_DST=/etc/systemd/system/oscam-mini.service
@@ -10,7 +10,7 @@ UNIT_DST=/etc/systemd/system/oscam-mini.service
 [[ $EUID -eq 0 ]] || { echo "Run with sudo" >&2; exit 1; }
 [[ -x "$ROOT/oscam-mini" ]] || { echo "Missing $ROOT/oscam-mini. Run: sudo cmake --install build" >&2; exit 2; }
 
-mkdir -p "$CFG"
+install -d -m0700 /etc/dvbstreamer5 "$CFG"
 for f in oscam.conf oscam.server oscam.user; do
   if [[ ! -e "$CFG/$f" && -e "$DEFAULT/$f" ]]; then
     install -m0600 "$DEFAULT/$f" "$CFG/$f"
