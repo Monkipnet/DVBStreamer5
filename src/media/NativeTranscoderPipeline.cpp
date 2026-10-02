@@ -237,6 +237,25 @@ bool NativeTranscoderPipeline::pushDecodedVideoFrame(
     return true;
 }
 
+bool NativeTranscoderPipeline::setOutputGeometryIfUnconfigured(
+    int width, int height) {
+    if (width <= 0 || height <= 0 || (width & 1) || (height & 1))
+        return false;
+    std::lock_guard<std::mutex> lock(videoEncoderMutex_);
+    if (videoEncoderConfigured_) return false;
+    if (config_.width == width && config_.height == height) return true;
+    config_.width = width;
+    config_.height = height;
+    std::cerr << "NATIVE VIDEO OUTPUT GEOMETRY runtime="
+              << width << "x" << height << std::endl;
+    return true;
+}
+
+std::pair<int,int> NativeTranscoderPipeline::configuredOutputGeometry() const {
+    std::lock_guard<std::mutex> lock(videoEncoderMutex_);
+    return {config_.width, config_.height};
+}
+
 void NativeTranscoderPipeline::setExternalAudioInput(bool enabled) {
     externalAudioInput_.store(enabled, std::memory_order_release);
 }
@@ -332,6 +351,12 @@ void NativeTranscoderPipeline::reset() {
     droppedVideoSamples_ = 0;
     droppedExternalVideoFrames_ = 0;
     decodedVideoQueueDrops_ = 0;
+    videoRateClockValid_ = false;
+    videoRateNextPts90k_ = 0;
+    videoRateDroppedFrames_ = 0;
+    sourceGeometryResolved_ = false;
+    sourceWidth_ = 0;
+    sourceHeight_ = 0;
     droppedAudioSamples_ = 0;
     muxedVideoSamples_.store(0, std::memory_order_release);
     muxedAudioSamples_.store(0, std::memory_order_release);
@@ -928,6 +953,59 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
 
     decodedVideoFrames_ += decoded.size();
     for (auto& raw : decoded) {
+        if (!sourceGeometryResolved_ && raw.width > 0 && raw.height > 0) {
+            sourceGeometryResolved_ = true;
+            sourceWidth_ = raw.width;
+            sourceHeight_ = raw.height;
+            const std::uint64_t sourcePixels =
+                static_cast<std::uint64_t>(raw.width) *
+                static_cast<std::uint64_t>(raw.height);
+            const std::uint64_t requestedPixels =
+                static_cast<std::uint64_t>(std::max(0, config_.width)) *
+                static_cast<std::uint64_t>(std::max(0, config_.height));
+            if (requestedPixels > sourcePixels) {
+                (void)setOutputGeometryIfUnconfigured(raw.width, raw.height);
+            }
+            std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
+                      << raw.width << "x" << raw.height
+                      << " output=" << config_.width << "x" << config_.height
+                      << std::endl;
+        }
+
+        // All ABR renditions share this post-decode frame. Gate once here so
+        // a 29.97/30 fps source does not feed ~30 frames/s into encoders that
+        // are configured for 25 fps. Dropping before deinterlace/VPP/queues
+        // keeps every rendition frame-aligned and avoids queue-overflow drops.
+        if (raw.hasPts && config_.fps > 0.0) {
+            constexpr std::uint64_t kPtsMask = (1ULL << 33U) - 1ULL;
+            constexpr std::uint64_t kPtsHalf = 1ULL << 32U;
+            const std::uint64_t interval =
+                std::max<std::uint64_t>(1ULL, videoDuration90k(config_.fps));
+            const std::uint64_t pts = raw.pts90k & kPtsMask;
+            if (!videoRateClockValid_) {
+                videoRateClockValid_ = true;
+                videoRateNextPts90k_ = pts;
+            }
+            const auto atOrAfter = [&](std::uint64_t a, std::uint64_t b) {
+                return ((a - b) & kPtsMask) < kPtsHalf;
+            };
+            if (!atOrAfter(pts, videoRateNextPts90k_)) {
+                ++videoRateDroppedFrames_;
+                if (videoRateDroppedFrames_ <= 4 ||
+                    (videoRateDroppedFrames_ % 250U) == 0U) {
+                    std::cerr << "NATIVE VIDEO FPS GATE dropped="
+                              << videoRateDroppedFrames_
+                              << " target_fps=" << config_.fps
+                              << " pts=" << pts << std::endl;
+                }
+                continue;
+            }
+            do {
+                videoRateNextPts90k_ =
+                    (videoRateNextPts90k_ + interval) & kPtsMask;
+            } while (atOrAfter(pts, videoRateNextPts90k_));
+        }
+
         if (config_.deinterlace) codec::deinterlaceBlendI420(raw);
 
         auto sharedRaw =
