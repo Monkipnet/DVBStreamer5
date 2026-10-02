@@ -277,12 +277,24 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                           extra.srtLatencyMs, extra.srtPassphrase, extra.srtStreamId, extra.srtPbKeyLen)) return false;
     }
 
+    bool staleStreamState = false;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
-        if (streams.count(streamConfig.id)) {
-            if (error) *error = "stream is already active";
-            return false;
+        const auto existing = streams.find(streamConfig.id);
+        if (existing != streams.end()) {
+            if (existing->second && existing->second->active.load()) {
+                if (error) *error = "stream is already active";
+                return false;
+            }
+            // monitorNativeStream marks a failed/stopped relay inactive but the
+            // StreamState remains in the map until stopStream() owns teardown.
+            // Treat such an OFFLINE entry as stale so the UI Start button can
+            // actually start it again instead of returning "already active".
+            staleStreamState = true;
         }
+    }
+    if (staleStreamState) {
+        (void)stopStream(streamConfig.id);
     }
 
     std::string caError;
