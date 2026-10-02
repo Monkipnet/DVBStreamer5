@@ -1,5 +1,6 @@
 #include "DvbSatellite.h"
 #include "media/LinuxDvbInput.h"
+#include "media/DvbText.h"
 
 #include <linux/dvb/frontend.h>
 
@@ -363,60 +364,10 @@ Json::Value statsToJson(const FrontendStats& stats) {
     return root;
 }
 
-bool validUtf8(const uint8_t* data, size_t size) {
-    size_t i = 0;
-    while (i < size) {
-        const uint8_t c = data[i++];
-        if (c < 0x80) continue;
-        unsigned continuation = 0;
-        uint32_t codepoint = 0;
-        if ((c & 0xE0) == 0xC0) { continuation = 1; codepoint = c & 0x1F; if (codepoint < 2) return false; }
-        else if ((c & 0xF0) == 0xE0) { continuation = 2; codepoint = c & 0x0F; }
-        else if ((c & 0xF8) == 0xF0) { continuation = 3; codepoint = c & 0x07; }
-        else return false;
-        if (i + continuation > size) return false;
-        for (unsigned j = 0; j < continuation; ++j) {
-            const uint8_t cc = data[i++];
-            if ((cc & 0xC0) != 0x80) return false;
-            codepoint = (codepoint << 6) | (cc & 0x3F);
-        }
-        if ((continuation == 2 && codepoint < 0x800) ||
-            (continuation == 3 && codepoint < 0x10000) ||
-            (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) return false;
-    }
-    return true;
-}
-
-void appendUtf8(std::string& out, uint32_t cp) {
-    if (cp < 0x80) out.push_back(static_cast<char>(cp));
-    else if (cp < 0x800) {
-        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
-        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-    } else {
-        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
-        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
-        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
-    }
-}
-
 std::string decodeDvbText(const uint8_t* data, size_t size) {
-    if (!data || size == 0) return {};
-    while (size > 0 && *data < 0x20) { ++data; --size; }
-    if (!size) return {};
-    if (validUtf8(data, size)) return std::string(reinterpret_cast<const char*>(data), size);
-
-    // Dependency-free fallback for legacy single-byte DVB service names.
-    // Full ISO-6937 diacritic composition can be added later without pulling
-    // a general-purpose media/runtime framework back into the project.
-    std::string result;
-    result.reserve(size * 2);
-    for (size_t i = 0; i < size; ++i) {
-        const uint8_t c = data[i];
-        if (c < 0x20) continue;
-        appendUtf8(result, c);
-    }
-    return result;
+    return dvbstreamer5::media::dvbtext::decode(data, size);
 }
+
 
 class PsiScanner {
 public:
