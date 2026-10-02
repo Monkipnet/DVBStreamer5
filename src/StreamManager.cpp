@@ -353,7 +353,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // V10.8.2: a multibitrate checkbox must create real independent
         // renditions, not merely point the UI at a non-existent master.m3u8.
         // Every lower HLS rendition receives the same post-remap/post-CA TS
-        // and owns its own native decode/scale/encode/mux pipeline.
+        // for audio/demux state, while video decode/deinterlace is shared from
+        // the primary pipeline. Each rendition owns only scale/encode/mux.
         if (hasHlsOutput && streamConfig.transcodeMultibitrateEnabled &&
             tc.videoCodec != "copy") {
             if (toLower(streamConfig.hlsContainer) != "mpegts") {
@@ -383,11 +384,25 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     if (error) *error = "HLS ABR " + variant->name + " transcoder failed: " + abrError;
                     return false;
                 }
+                variant->transcoder->setExternalVideoInput(true);
                 std::cerr << "NATIVE HLS ABR RENDITION init name=" << variant->name
                           << " size=" << variant->width << "x" << variant->height
                           << " video_kbps=" << (variant->videoBitrate / 1000ULL)
                           << " mux_kbps=" << (variant->muxBitrate / 1000ULL) << std::endl;
                 state->hlsAbrVariants.push_back(std::move(variant));
+            }
+            if (!state->hlsAbrVariants.empty() && state->nativeTranscoder) {
+                StreamState* statePtr = state.get();
+                state->nativeTranscoder->setDecodedVideoObserver(
+                    [statePtr](std::shared_ptr<const dvbstreamer5::media::codec::RawVideoFrame> frame) {
+                        if (!statePtr || !frame) return;
+                        for (auto& variant : statePtr->hlsAbrVariants) {
+                            if (!variant || !variant->transcoder) continue;
+                            (void)variant->transcoder->pushDecodedVideoFrame(frame);
+                        }
+                    });
+                std::cerr << "NATIVE HLS ABR shared_decode=1 source_decoders=1 renditions="
+                          << (state->hlsAbrVariants.size() + 1) << std::endl;
             }
         }
     }
@@ -940,6 +955,13 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->nativeRtspInput) state->nativeRtspInput->stop();
     if (state->nativeRtmpInput) state->nativeRtmpInput->stop();
     if (state->nativeRelay) state->nativeRelay->stop();
+    if (state->nativeTranscoder) {
+        state->nativeTranscoder->setDecodedVideoObserver({});
+        state->nativeTranscoder->reset();
+    }
+    for (auto& variant : state->hlsAbrVariants) {
+        if (variant && variant->transcoder) variant->transcoder->reset();
+    }
     if (state->testPatternThread.joinable()) state->testPatternThread.join();
     for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtspOutputs) if (output) output->stop();
