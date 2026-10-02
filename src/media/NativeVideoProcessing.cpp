@@ -7,27 +7,106 @@
 namespace dvbstreamer5::media::codec {
 namespace {
 
+struct BilinearMap {
+    int sw = 0;
+    int sh = 0;
+    int dw = 0;
+    int dh = 0;
+    std::vector<int> x0;
+    std::vector<int> x1;
+    std::vector<std::uint16_t> wx;
+    std::vector<int> y0;
+    std::vector<int> y1;
+    std::vector<std::uint16_t> wy;
+
+    void prepare(int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
+        if (sw == srcWidth && sh == srcHeight &&
+            dw == dstWidth && dh == dstHeight)
+            return;
+
+        sw = srcWidth;
+        sh = srcHeight;
+        dw = dstWidth;
+        dh = dstHeight;
+
+        x0.resize(static_cast<std::size_t>(dw));
+        x1.resize(static_cast<std::size_t>(dw));
+        wx.resize(static_cast<std::size_t>(dw));
+        y0.resize(static_cast<std::size_t>(dh));
+        y1.resize(static_cast<std::size_t>(dh));
+        wy.resize(static_cast<std::size_t>(dh));
+
+        // 8-bit fractional fixed point.  The old scaler recomputed floating
+        // point coordinates, divisions and interpolation factors for every
+        // pixel of every frame.  ABR at 1080/720/480/360 therefore spent most
+        // CPU time in software resize even when encoding itself was VAAPI.
+        for (int x = 0; x < dw; ++x) {
+            const std::uint64_t fp = dw > 1
+                ? (static_cast<std::uint64_t>(x) *
+                   static_cast<std::uint64_t>(sw - 1) * 256ULL) /
+                      static_cast<std::uint64_t>(dw - 1)
+                : 0ULL;
+            const int base = static_cast<int>(fp >> 8U);
+            x0[static_cast<std::size_t>(x)] = base;
+            x1[static_cast<std::size_t>(x)] = std::min(base + 1, sw - 1);
+            wx[static_cast<std::size_t>(x)] =
+                static_cast<std::uint16_t>(fp & 0xffU);
+        }
+        for (int y = 0; y < dh; ++y) {
+            const std::uint64_t fp = dh > 1
+                ? (static_cast<std::uint64_t>(y) *
+                   static_cast<std::uint64_t>(sh - 1) * 256ULL) /
+                      static_cast<std::uint64_t>(dh - 1)
+                : 0ULL;
+            const int base = static_cast<int>(fp >> 8U);
+            y0[static_cast<std::size_t>(y)] = base;
+            y1[static_cast<std::size_t>(y)] = std::min(base + 1, sh - 1);
+            wy[static_cast<std::size_t>(y)] =
+                static_cast<std::uint16_t>(fp & 0xffU);
+        }
+    }
+};
+
 void scalePlane(const std::uint8_t* src, int sw, int sh, int sstride,
                 std::uint8_t* dst, int dw, int dh, int dstride) {
     if (sw == dw && sh == dh) {
-        for (int y = 0; y < sh; ++y) std::memcpy(dst + y * dstride, src + y * sstride, static_cast<std::size_t>(sw));
+        for (int y = 0; y < sh; ++y)
+            std::memcpy(dst + y * dstride, src + y * sstride,
+                        static_cast<std::size_t>(sw));
         return;
     }
-    // Bilinear scaler with integer fixed-point coordinates. It is deliberately
-    // small and dependency-free; SIMD specializations can replace this later.
+
+    // Each transcoder worker keeps one geometry for long periods, so this
+    // thread-local map removes all coordinate divisions from the hot frame
+    // loop without requiring any global locks.
+    thread_local BilinearMap map;
+    map.prepare(sw, sh, dw, dh);
+
     for (int y = 0; y < dh; ++y) {
-        const double sy = dh > 1 ? (static_cast<double>(y) * (sh - 1)) / (dh - 1) : 0.0;
-        const int y0 = static_cast<int>(sy);
-        const int y1 = std::min(y0 + 1, sh - 1);
-        const double fy = sy - y0;
+        const int y0 = map.y0[static_cast<std::size_t>(y)];
+        const int y1 = map.y1[static_cast<std::size_t>(y)];
+        const unsigned fy = map.wy[static_cast<std::size_t>(y)];
+        const unsigned ify = 256U - fy;
+        const auto* row0 = src + static_cast<std::size_t>(y0) * sstride;
+        const auto* row1 = src + static_cast<std::size_t>(y1) * sstride;
+        auto* out = dst + static_cast<std::size_t>(y) * dstride;
+
         for (int x = 0; x < dw; ++x) {
-            const double sx = dw > 1 ? (static_cast<double>(x) * (sw - 1)) / (dw - 1) : 0.0;
-            const int x0 = static_cast<int>(sx);
-            const int x1 = std::min(x0 + 1, sw - 1);
-            const double fx = sx - x0;
-            const double a = src[y0 * sstride + x0] * (1.0 - fx) + src[y0 * sstride + x1] * fx;
-            const double b = src[y1 * sstride + x0] * (1.0 - fx) + src[y1 * sstride + x1] * fx;
-            dst[y * dstride + x] = static_cast<std::uint8_t>(std::clamp(a * (1.0 - fy) + b * fy, 0.0, 255.0) + 0.5);
+            const std::size_t ix = static_cast<std::size_t>(x);
+            const int x0 = map.x0[ix];
+            const int x1 = map.x1[ix];
+            const unsigned fx = map.wx[ix];
+            const unsigned ifx = 256U - fx;
+
+            const unsigned top =
+                static_cast<unsigned>(row0[x0]) * ifx +
+                static_cast<unsigned>(row0[x1]) * fx;
+            const unsigned bottom =
+                static_cast<unsigned>(row1[x0]) * ifx +
+                static_cast<unsigned>(row1[x1]) * fx;
+
+            out[x] = static_cast<std::uint8_t>(
+                (top * ify + bottom * fy + 32768U) >> 16U);
         }
     }
 }
