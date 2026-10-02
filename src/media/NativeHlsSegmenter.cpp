@@ -116,6 +116,7 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     completedSegments_ = 0;
     haveFirstPcr_ = false;
     segmentHasPackets_ = false;
+    waitingForIndependentStart_ = config_.independentSegments;
     lastError_.clear();
     programTime_ = std::chrono::system_clock::now();
     running_ = true;
@@ -136,12 +137,26 @@ bool NativeHlsSegmenter::push(const std::uint8_t* data, std::size_t size) {
 bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
     mpegts::PacketInfo info;
     if (!mpegts::inspectPacket(packet.data(), packet.size(), info)) return true;
+
+    if (waitingForIndependentStart_) {
+        // For ABR, do not publish a first segment that begins between IDRs.
+        // The native mux marks the first TS packet of every random-access video
+        // PES with both PCR and random_access_indicator.
+        if (!(info.hasPcr && info.randomAccess)) return true;
+        waitingForIndependentStart_ = false;
+        firstPcr_ = info.pcrBase90k;
+        lastPcr_ = info.pcrBase90k;
+        haveFirstPcr_ = true;
+        programTime_ = std::chrono::system_clock::now();
+    }
+
     if (info.hasPcr) {
         lastPcr_ = info.pcrBase90k;
         if (!haveFirstPcr_) { firstPcr_ = lastPcr_; haveFirstPcr_ = true; }
         const double elapsed = pcrDeltaSeconds(firstPcr_, lastPcr_);
         const bool targetReached = segmentHasPackets_ && elapsed >= config_.targetDurationSeconds;
-        const bool hardLimit = segmentHasPackets_ && elapsed >= config_.targetDurationSeconds * 3.0;
+        const bool hardLimit = !config_.independentSegments &&
+            segmentHasPackets_ && elapsed >= config_.targetDurationSeconds * 3.0;
         if (targetReached && (info.randomAccess || hardLimit)) {
             if (!rotate(std::max(0.001, elapsed))) return false;
             firstPcr_ = lastPcr_;
@@ -202,6 +217,7 @@ bool NativeHlsSegmenter::writePlaylist(bool endList) {
     for (const auto& item : liveSegments_) maxDuration = std::max(maxDuration, item.duration);
     const std::uint64_t mediaSequence = liveSegments_.empty() ? nextSequence_ : liveSegments_.front().sequence;
     out << "#EXTM3U\n#EXT-X-VERSION:3\n";
+    if (config_.independentSegments) out << "#EXT-X-INDEPENDENT-SEGMENTS\n";
     out << "#EXT-X-TARGETDURATION:" << static_cast<unsigned>(std::ceil(maxDuration)) << "\n";
     out << "#EXT-X-MEDIA-SEQUENCE:" << mediaSequence << "\n";
     if (config_.encryption != "none") {
