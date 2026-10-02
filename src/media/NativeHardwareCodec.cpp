@@ -162,6 +162,166 @@ void i420ToNv12(const RawVideoFrame& in, std::uint8_t* y, std::uint8_t* uv, int 
 }
 
 #if defined(DVBSTREAMER5_HAVE_VAAPI)
+class H264VaapiBitWriter {
+public:
+    void bit(bool value) {
+        if (bitOffset_ == 0) data_.push_back(0);
+        if (value)
+            data_.back() |= static_cast<std::uint8_t>(
+                1U << (7U - bitOffset_));
+        bitOffset_ = (bitOffset_ + 1U) & 7U;
+    }
+
+    void bits(std::uint32_t value, unsigned count) {
+        for (unsigned i = 0; i < count; ++i)
+            bit(((value >> (count - 1U - i)) & 1U) != 0);
+    }
+
+    void ue(std::uint32_t value) {
+        const std::uint32_t n = value + 1U;
+        unsigned count = 0;
+        for (std::uint32_t v = n; v; v >>= 1U) ++count;
+        for (unsigned i = 1; i < count; ++i) bit(false);
+        bits(n, count);
+    }
+
+    void se(std::int32_t value) {
+        ue(value <= 0
+            ? static_cast<std::uint32_t>(-value) * 2U
+            : static_cast<std::uint32_t>(value) * 2U - 1U);
+    }
+
+    std::vector<std::uint8_t> finish() {
+        bit(true);
+        while (bitOffset_ != 0) bit(false);
+        return data_;
+    }
+
+private:
+    std::vector<std::uint8_t> data_;
+    unsigned bitOffset_ = 0;
+};
+
+std::vector<std::uint8_t> makeH264AnnexBNal(
+    std::uint8_t header,
+    const std::vector<std::uint8_t>& rbsp) {
+    std::vector<std::uint8_t> out{0, 0, 0, 1, header};
+    unsigned zeros = 0;
+    for (std::uint8_t b : rbsp) {
+        if (zeros >= 2U && b <= 0x03U) {
+            out.push_back(0x03);
+            zeros = 0;
+        }
+        out.push_back(b);
+        zeros = b == 0 ? zeros + 1U : 0U;
+    }
+    return out;
+}
+
+std::uint8_t vaapiH264ProfileIdc(VAProfile profile) {
+    if (profile == VAProfileH264High) return 100;
+    if (profile == VAProfileH264Main) return 77;
+    return 66;
+}
+
+std::vector<std::uint8_t> makeVaapiH264Sps(
+    VAProfile profile,
+    int width,
+    int height,
+    int alignedWidth,
+    int alignedHeight) {
+    H264VaapiBitWriter w;
+    const auto profileIdc = vaapiH264ProfileIdc(profile);
+
+    w.bits(profileIdc, 8);
+    w.bits(0, 8);
+    w.bits(40, 8);
+    w.ue(0);
+
+    if (profileIdc >= 100) {
+        w.ue(1);
+        w.ue(0);
+        w.ue(0);
+        w.bit(false);
+        w.bit(false);
+    }
+
+    w.ue(0);
+    w.ue(0);
+    w.ue(0);
+    w.ue(1);
+    w.bit(false);
+    w.ue(static_cast<std::uint32_t>(alignedWidth / 16 - 1));
+    w.ue(static_cast<std::uint32_t>(alignedHeight / 16 - 1));
+    w.bit(true);
+    w.bit(true);
+
+    const bool crop =
+        alignedWidth != width || alignedHeight != height;
+    w.bit(crop);
+    if (crop) {
+        w.ue(0);
+        w.ue(static_cast<std::uint32_t>(
+            (alignedWidth - width) / 2));
+        w.ue(0);
+        w.ue(static_cast<std::uint32_t>(
+            (alignedHeight - height) / 2));
+    }
+
+    w.bit(false);
+    return makeH264AnnexBNal(0x67, w.finish());
+}
+
+std::vector<std::uint8_t> makeVaapiH264Pps() {
+    H264VaapiBitWriter w;
+    w.ue(0);
+    w.ue(0);
+    w.bit(false);
+    w.bit(false);
+    w.ue(0);
+    w.ue(0);
+    w.ue(0);
+    w.bit(false);
+    w.bits(0, 2);
+    w.se(0);
+    w.se(0);
+    w.se(0);
+    w.bit(true);
+    w.bit(false);
+    w.bit(false);
+    return makeH264AnnexBNal(0x68, w.finish());
+}
+
+bool isAnnexB(const std::vector<std::uint8_t>& data) {
+    return (data.size() >= 4 &&
+            data[0] == 0 && data[1] == 0 &&
+            data[2] == 0 && data[3] == 1) ||
+           (data.size() >= 3 &&
+            data[0] == 0 && data[1] == 0 &&
+            data[2] == 1);
+}
+
+bool hasH264NalType(
+    const std::vector<std::uint8_t>& data,
+    unsigned wanted) {
+    for (std::size_t i = 0; i + 3 <= data.size(); ++i) {
+        std::size_t sc = 0;
+        if (i + 4 <= data.size() &&
+            data[i] == 0 && data[i + 1] == 0 &&
+            data[i + 2] == 0 && data[i + 3] == 1) {
+            sc = 4;
+        } else if (data[i] == 0 &&
+                   data[i + 1] == 0 &&
+                   data[i + 2] == 1) {
+            sc = 3;
+        }
+        if (sc && i + sc < data.size() &&
+            (data[i + sc] & 0x1fU) == wanted)
+            return true;
+    }
+    return false;
+}
+
 class VaapiH264Encoder final : public VideoEncoder {
 public:
     explicit VaapiH264Encoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
@@ -253,6 +413,9 @@ public:
         bitrate_ = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(bitrate, 0xffffffffULL));
         gop_ = std::max(1, static_cast<int>(std::lround(fps_ * 2.0)));
+        spsAnnexB_ = makeVaapiH264Sps(
+            profile_, width_, height_, alignedWidth_, alignedHeight_);
+        ppsAnnexB_ = makeVaapiH264Pps();
 
         VASurfaceAttrib surfaceAttr{};
         surfaceAttr.type = VASurfaceAttribPixelFormat;
@@ -497,11 +660,47 @@ public:
         frame.dts90k = input.hasDts ? input.dts90k : input.pts90k;
         frame.keyFrame = idr;
 
-        for (auto* p = segment; p; p = p->next) {
+        for (auto* p = segment; p;
+             p = static_cast<VACodedBufferSegment*>(p->next)) {
             if (!p->buf || p->size == 0) continue;
             const auto* bytes =
                 static_cast<const std::uint8_t*>(p->buf);
             frame.data.insert(frame.data.end(), bytes, bytes + p->size);
+        }
+
+        if (!frame.data.empty() && !isAnnexB(frame.data))
+            frame.data.insert(frame.data.begin(), {0, 0, 0, 1});
+
+        if (idr && !frame.data.empty()) {
+            std::vector<std::uint8_t> au;
+            au.reserve(
+                spsAnnexB_.size() +
+                ppsAnnexB_.size() +
+                frame.data.size());
+            au.insert(
+                au.end(),
+                spsAnnexB_.begin(),
+                spsAnnexB_.end());
+            au.insert(
+                au.end(),
+                ppsAnnexB_.begin(),
+                ppsAnnexB_.end());
+            au.insert(
+                au.end(),
+                frame.data.begin(),
+                frame.data.end());
+            frame.data.swap(au);
+
+            if (!startupLogged_) {
+                std::cerr
+                    << "NATIVE VAAPI H264 startup"
+                    << " bytes=" << frame.data.size()
+                    << " sps=" << (hasH264NalType(frame.data, 7) ? 1 : 0)
+                    << " pps=" << (hasH264NalType(frame.data, 8) ? 1 : 0)
+                    << " idr=" << (hasH264NalType(frame.data, 5) ? 1 : 0)
+                    << std::endl;
+                startupLogged_ = true;
+            }
         }
 
         vaUnmapBuffer(display_, coded);
@@ -614,6 +813,9 @@ private:
             ::close(drmFd_);
         drmFd_ = -1;
         frameIndex_ = 0;
+        startupLogged_ = false;
+        spsAnnexB_.clear();
+        ppsAnnexB_.clear();
     }
 
     mpegts::ElementaryCodec codec_ = mpegts::ElementaryCodec::Unknown;
@@ -635,6 +837,9 @@ private:
     std::uint32_t bitrate_ = 0;
     int gop_ = 50;
     std::uint64_t frameIndex_ = 0;
+    bool startupLogged_ = false;
+    std::vector<std::uint8_t> spsAnnexB_;
+    std::vector<std::uint8_t> ppsAnnexB_;
 };
 #endif
 
