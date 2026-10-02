@@ -154,7 +154,7 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
     out << "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-INDEPENDENT-SEGMENTS\n# DVBStreamer5 native ABR\n";
     emit(primaryWidth, primaryHeight, primaryVideoBitrate, primaryTransportBitrate, "video.m3u8");
     for (const auto& v : variants) {
-        if (!v || v->failed) continue;
+        if (!v || !v->enabled || v->failed) continue;
         emit(v->width, v->height, v->videoBitrate, v->muxBitrate,
              "abr/" + v->name + "/video.m3u8");
     }
@@ -394,21 +394,116 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
             if (!state->hlsAbrVariants.empty() && state->nativeTranscoder) {
                 StreamState* statePtr = state.get();
+                const StreamConfig abrMasterConfig = streamConfig;
+                const std::uint64_t abrPrimaryVideoBitrate =
+                    effectivePrimaryVideoBitrate;
                 state->nativeTranscoder->setDecodedVideoObserver(
-                    [statePtr](std::shared_ptr<const dvbstreamer5::media::codec::RawVideoFrame> frame) {
+                    [statePtr, abrMasterConfig, abrPrimaryVideoBitrate](
+                        std::shared_ptr<const dvbstreamer5::media::codec::RawVideoFrame> frame) {
                         if (!statePtr || !frame) return;
-                        for (auto& variant : statePtr->hlsAbrVariants) {
-                            if (!variant || !variant->transcoder) continue;
-                            (void)variant->transcoder->pushDecodedVideoFrame(frame);
+
+                        {
+                            std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+                            if (!statePtr->hlsAbrSourceResolved) {
+                                statePtr->hlsAbrSourceResolved = true;
+
+                                auto primaryGeometry =
+                                    statePtr->nativeTranscoder->configuredOutputGeometry();
+                                const std::uint64_t sourcePixels =
+                                    static_cast<std::uint64_t>(frame->width) *
+                                    static_cast<std::uint64_t>(frame->height);
+                                const std::uint64_t primaryPixelsRequested =
+                                    static_cast<std::uint64_t>(
+                                        std::max(0, primaryGeometry.first)) *
+                                    static_cast<std::uint64_t>(
+                                        std::max(0, primaryGeometry.second));
+
+                                if (sourcePixels > 0 &&
+                                    primaryPixelsRequested > sourcePixels) {
+                                    (void)statePtr->nativeTranscoder
+                                        ->setOutputGeometryIfUnconfigured(
+                                            frame->width, frame->height);
+                                    primaryGeometry =
+                                        statePtr->nativeTranscoder
+                                            ->configuredOutputGeometry();
+                                }
+
+                                statePtr->hlsAbrPrimaryWidth =
+                                    primaryGeometry.first;
+                                statePtr->hlsAbrPrimaryHeight =
+                                    primaryGeometry.second;
+
+                                const std::uint64_t primaryPixels =
+                                    static_cast<std::uint64_t>(
+                                        std::max(0, primaryGeometry.first)) *
+                                    static_cast<std::uint64_t>(
+                                        std::max(0, primaryGeometry.second));
+
+                                std::size_t enabledVariants = 0;
+                                for (auto& variant : statePtr->hlsAbrVariants) {
+                                    if (!variant) continue;
+                                    const std::uint64_t variantPixels =
+                                        static_cast<std::uint64_t>(
+                                            std::max(0, variant->width)) *
+                                        static_cast<std::uint64_t>(
+                                            std::max(0, variant->height));
+                                    variant->enabled =
+                                        variantPixels > 0 &&
+                                        variantPixels < primaryPixels;
+                                    if (variant->enabled) ++enabledVariants;
+                                }
+
+                                std::string masterError;
+                                const std::uint64_t primaryTransportBitrate =
+                                    abrMasterConfig.cbr &&
+                                    abrMasterConfig.targetBitrate > 0
+                                        ? abrMasterConfig.targetBitrate
+                                        : abrPrimaryVideoBitrate +
+                                            abrMasterConfig.transcodeAudioBitrate +
+                                            180000ULL;
+                                if (!writeAbrMasterPlaylist(
+                                        abrMasterConfig,
+                                        primaryGeometry.first,
+                                        primaryGeometry.second,
+                                        abrPrimaryVideoBitrate,
+                                        primaryTransportBitrate,
+                                        statePtr->hlsAbrVariants,
+                                        masterError)) {
+                                    std::cerr
+                                        << "NATIVE HLS ABR runtime master error="
+                                        << masterError << std::endl;
+                                } else {
+                                    std::cerr
+                                        << "NATIVE HLS ABR SOURCE source="
+                                        << frame->width << "x" << frame->height
+                                        << " primary="
+                                        << primaryGeometry.first << "x"
+                                        << primaryGeometry.second
+                                        << " lower_variants="
+                                        << enabledVariants << std::endl;
+                                }
+                            }
+
+                            for (auto& variant : statePtr->hlsAbrVariants) {
+                                if (!variant || !variant->enabled ||
+                                    !variant->transcoder)
+                                    continue;
+                                (void)variant->transcoder
+                                    ->pushDecodedVideoFrame(frame);
+                            }
                         }
                     });
                 state->nativeTranscoder->setEncodedAudioObserver(
                     [statePtr](const dvbstreamer5::media::codec::EncodedAudioFrame& frame,
                                std::uint64_t duration90k) {
                         if (!statePtr) return;
+                        std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
                         for (auto& variant : statePtr->hlsAbrVariants) {
-                            if (!variant || !variant->transcoder) continue;
-                            (void)variant->transcoder->pushEncodedAudioFrame(frame, duration90k);
+                            if (!variant || !variant->enabled ||
+                                !variant->transcoder)
+                                continue;
+                            (void)variant->transcoder
+                                ->pushEncodedAudioFrame(frame, duration90k);
                         }
                     });
                 std::cerr << "NATIVE HLS ABR shared_decode=1 shared_audio=1 source_demuxers=1 renditions="
@@ -569,8 +664,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             // V10.8.12: ABR renditions no longer demux/decode the input TS
             // independently. Their video and audio are supplied by the primary
             // pipeline, so this callback only drains each rendition's mux output.
+            std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
             for (auto& variant : statePtr->hlsAbrVariants) {
-                if (!variant || variant->failed || !variant->transcoder || !variant->segmenter) continue;
+                if (!variant || !variant->enabled || variant->failed ||
+                    !variant->transcoder || !variant->segmenter) continue;
                 std::vector<std::uint8_t> encoded;
                 std::string abrError;
                 if (!variant->transcoder->pollOutput(encoded, abrError)) {
