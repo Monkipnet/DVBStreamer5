@@ -52,10 +52,10 @@ public:
     bool flush(std::vector<std::uint8_t>& output, std::string& error);
     void reset();
 
-    // ABR shared-decode mode: the primary pipeline decodes/deinterlaces once
-    // and fans the same raw frame out to rendition encoders. Rendition
-    // pipelines still demux/process audio from the source TS, but ignore the
-    // duplicated compressed-video samples.
+    // ABR shared-media mode: the primary pipeline decodes/deinterlaces video
+    // and encodes audio once. Raw video frames and encoded audio are then
+    // fanned out to rendition muxers/encoders without duplicate source demux,
+    // video decode or audio transcode work.
     using DecodedVideoObserver =
         std::function<void(std::shared_ptr<const codec::RawVideoFrame>)>;
     using EncodedAudioObserver =
