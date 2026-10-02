@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -51,6 +52,16 @@ public:
     bool flush(std::vector<std::uint8_t>& output, std::string& error);
     void reset();
 
+    // ABR shared-decode mode: the primary pipeline decodes/deinterlaces once
+    // and fans the same raw frame out to rendition encoders. Rendition
+    // pipelines still demux/process audio from the source TS, but ignore the
+    // duplicated compressed-video samples.
+    using DecodedVideoObserver =
+        std::function<void(std::shared_ptr<const codec::RawVideoFrame>)>;
+    void setExternalVideoInput(bool enabled);
+    void setDecodedVideoObserver(DecodedVideoObserver observer);
+    bool pushDecodedVideoFrame(std::shared_ptr<const codec::RawVideoFrame> frame);
+
     std::string status() const;
 
 private:
@@ -69,6 +80,7 @@ private:
     bool ensureAudioDecoder(mpegts::ElementaryCodec codec, std::string& error);
     bool ensureAudioEncoder(const codec::PcmAudioFrame& input, std::string& error);
     bool handleVideo(mpegts::DemuxSample&& sample, std::string& error);
+    bool handleDecodedVideoFrame(const codec::RawVideoFrame& raw, std::string& error);
     bool handleAudio(mpegts::DemuxSample&& sample, std::string& error);
     bool emitVideo(const codec::EncodedVideoFrame& frame, std::string& error);
     bool emitAudio(const codec::EncodedAudioFrame& frame, std::uint64_t duration90k,
@@ -100,6 +112,7 @@ private:
     mutable std::mutex videoQueueMutex_;
     mutable std::mutex audioQueueMutex_;
     mutable std::mutex muxQueueMutex_;
+    mutable std::mutex decodedVideoObserverMutex_;
     std::condition_variable videoQueueCv_;
     std::condition_variable audioQueueCv_;
     std::condition_variable idleCv_;
@@ -108,6 +121,7 @@ private:
     std::thread audioWorker_;
     std::thread muxWorker_;
     std::deque<mpegts::DemuxSample> videoQueue_;
+    std::deque<std::shared_ptr<const codec::RawVideoFrame>> externalVideoQueue_;
     std::deque<mpegts::DemuxSample> audioQueue_;
     std::deque<MuxQueuedSample> muxVideoQueue_;
     std::deque<MuxQueuedSample> muxAudioQueue_;
@@ -117,8 +131,11 @@ private:
     std::atomic<bool> audioWorkerActive_{false};
     std::atomic<bool> muxWorkerActive_{false};
     std::atomic<bool> videoResetRequested_{false};
+    std::atomic<bool> externalVideoInput_{false};
     bool videoDropUntilRandomAccess_ = false;
     std::uint64_t droppedVideoSamples_ = 0;
+    std::uint64_t droppedExternalVideoFrames_ = 0;
+    DecodedVideoObserver decodedVideoObserver_;
     std::uint64_t droppedAudioSamples_ = 0;
     std::atomic<std::uint64_t> muxedVideoSamples_{0};
     std::atomic<std::uint64_t> muxedAudioSamples_{0};
@@ -129,16 +146,17 @@ private:
     std::atomic<std::uint64_t> lastMuxVideoClock90k_{0};
     std::atomic<std::uint64_t> lastMuxAudioClock90k_{0};
     static constexpr std::size_t kMaxVideoQueue = 128;
+    static constexpr std::size_t kMaxExternalVideoQueue = 12;
     static constexpr std::size_t kMaxAudioQueue = 512;
     static constexpr std::size_t kMaxMuxVideoQueue = 64;
     static constexpr std::size_t kMaxMuxAudioQueue = 512;
-    static constexpr std::uint64_t kMaxAvLead90k = 13500; // 150 ms
+    static constexpr std::uint64_t kMaxAvLead90k = 13500; // 150 ms preferred
+    static constexpr std::uint64_t kMaxAvHardLead90k = 45000; // 500 ms absolute
     static constexpr auto kMuxSingleStreamWait = std::chrono::milliseconds(120);
-    // A temporary stall of one encoder must not freeze all real TS payload.
-    // After this bounded hold the healthy peer is allowed to advance; the CBR
-    // pacer still smooths transport delivery and the lagging peer can catch up.
     static constexpr auto kMuxSingleStreamMaxHold = std::chrono::milliseconds(350);
-    static constexpr auto kMuxStartupPeerWait = std::chrono::milliseconds(500);
+    // Joining an arbitrary live GOP can take up to roughly one GOP before the
+    // decoder emits a usable IDR. Do not release seconds of audio first.
+    static constexpr auto kMuxStartupPeerWait = std::chrono::milliseconds(2500);
     NativeTranscoderConfig config_;
     mpegts::NativeTsDemux demux_;
     mpegts::NativeMpegTsMux mux_;
