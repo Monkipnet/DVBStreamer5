@@ -2318,12 +2318,53 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
     }
 
     std::string outputType = toLower(request.get("output_type", "udp-vbr").asString());
-    if (outputType != "udp-vbr" && outputType != "udp-cbr") outputType = "udp-vbr";
-    std::string outputHost = request.get("output_host", "239.255.10.1").asString();
-    if (outputHost.empty()) outputHost = "239.255.10.1";
-    int basePort = std::clamp(request.get("base_port", 5000).asInt(), 1, 65535);
+    static const std::set<std::string> kSatelliteOutputTypes = {
+        "udp-vbr", "udp-cbr", "rtp", "srt", "http", "hls", "rtsp", "rtmp", "youtube"
+    };
+    if (!kSatelliteOutputTypes.count(outputType)) {
+        response["error"] = "Unsupported satellite output protocol: " + outputType;
+        Json::StreamWriterBuilder writer;
+        return Json::writeString(writer, response);
+    }
+
+    std::string outputMode = toLower(request.get("output_mode", "listener").asString());
+    if (outputMode != "listener" && outputMode != "caller") outputMode = "listener";
+    if (outputType != "srt") outputMode = "listener";
+
+    std::string outputHost = request.get("output_host", "").asString();
+    if (outputHost.empty()) {
+        if (outputType == "udp-vbr" || outputType == "udp-cbr" || outputType == "rtp") {
+            outputHost = "239.255.10.1";
+        } else if (outputType == "srt" && outputMode == "listener") {
+            outputHost = "0.0.0.0";
+        } else {
+            outputHost = "127.0.0.1";
+        }
+    }
+
+    const int defaultPort =
+        (outputType == "srt" ? 7001 :
+         (outputType == "rtsp" ? 8554 :
+          ((outputType == "rtmp" || outputType == "youtube") ? 1935 :
+           ((outputType == "http" || outputType == "hls") ? configManager.config.httpPort : 5000))));
+    int basePort = std::clamp(request.get("base_port", defaultPort).asInt(), 1, 65535);
     const std::string interfaceAddress = request.get("interface_address", "").asString();
     const bool autoStart = request.get("auto_start", false).asBool();
+
+    bool cbr = request.get("cbr", outputType == "udp-cbr").asBool();
+    if (outputType == "udp-cbr") cbr = true;
+    if (outputType == "udp-vbr" || outputType == "rtp" || outputType == "rtsp" ||
+        outputType == "rtmp" || outputType == "youtube") {
+        cbr = false;
+    }
+
+    const int srtLatencyMs = std::clamp(request.get("srt_latency_ms", 120).asInt(), 20, 60000);
+    const std::string srtPassphrase = request.get("srt_passphrase", "").asString();
+    const std::string srtStreamId = request.get("srt_streamid", "").asString();
+    int srtPbKeyLen = request.get("srt_pbkeylen", 16).asInt();
+    if (srtPbKeyLen != 16 && srtPbKeyLen != 24 && srtPbKeyLen != 32) srtPbKeyLen = 16;
+
+    const bool sharedHttpPort = outputType == "http" || outputType == "hls";
     const std::string conditionalAccessClient = request.get("conditional_access_client", "").asString();
     bool hasScrambledSelection = false;
     for (const auto& selected : request["channels"]) {
@@ -2386,19 +2427,29 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
         config.testPattern = false;
         config.autoStart = autoStart;
         config.outputType = outputType;
-        config.outputMode = "listener";
+        config.outputMode = outputMode;
         config.outputHost = outputHost;
-        while (nextPort <= 65535 && occupiedPorts.count(nextPort)) ++nextPort;
-        if (nextPort > 65535) {
-            ++skipped;
-            continue;
+        if (sharedHttpPort) {
+            // HTTP/HLS channels are separated by URL path, so every selected
+            // service may share the same listener port.
+            config.outputPort = basePort;
+        } else {
+            while (nextPort <= 65535 && occupiedPorts.count(nextPort)) ++nextPort;
+            if (nextPort > 65535) {
+                ++skipped;
+                continue;
+            }
+            config.outputPort = nextPort;
+            occupiedPorts.insert(nextPort);
+            ++nextPort;
         }
-        config.outputPort = nextPort;
-        occupiedPorts.insert(nextPort);
-        ++nextPort;
         config.interfaceAddress = interfaceAddress;
-        config.cbr = outputType == "udp-cbr";
+        config.cbr = cbr;
         config.targetBitrate = targetBitrate;
+        config.srtOutputLatencyMs = srtLatencyMs;
+        config.srtOutputPassphrase = srtPassphrase;
+        config.srtOutputStreamId = srtStreamId;
+        config.srtOutputPbKeyLen = srtPbKeyLen;
         config.remapEnabled = false;
         config.transcodeEnabled = false;
         config.inputServiceId = sid;
@@ -5966,6 +6017,61 @@ async function startSatelliteScan() {
     satelliteSignalTimer = null;
   }
 }
+function updateSatelliteOutputHints(resetDefaults=false) {
+  const type = document.getElementById('satOutputType')?.value || 'udp-vbr';
+  const mode = document.getElementById('satOutputMode')?.value || 'listener';
+  const host = document.getElementById('satOutputHost');
+  const port = document.getElementById('satBasePort');
+  const hostLabel = document.getElementById('satOutputHostLabel');
+  const portLabel = document.getElementById('satOutputPortLabel');
+  const modeRow = document.getElementById('satOutputModeRow');
+  const srtRows = document.getElementById('satSrtOptions');
+  const cbr = document.getElementById('satCbr');
+  const bitrate = document.getElementById('satTargetBitrate');
+
+  if (modeRow) modeRow.style.display = type === 'srt' ? '' : 'none';
+  if (srtRows) srtRows.style.display = type === 'srt' ? 'contents' : 'none';
+
+  const cbrSupported = type === 'udp-cbr' || type === 'udp-vbr' ||
+    type === 'http' || type === 'hls' || type === 'srt';
+  if (cbr) {
+    if (type === 'udp-cbr') cbr.checked = true;
+    if (type === 'udp-vbr') cbr.checked = false;
+    if (!cbrSupported) cbr.checked = false;
+    cbr.disabled = type === 'udp-cbr' || type === 'udp-vbr' || !cbrSupported;
+  }
+  if (bitrate) bitrate.disabled = !cbrSupported || !cbr?.checked;
+
+  const defaults = {
+    'udp-vbr':['239.255.10.1',5000,'Multicast / IP','Первый UDP порт'],
+    'udp-cbr':['239.255.10.1',5000,'Multicast / IP','Первый UDP порт'],
+    'rtp':['239.255.10.1',5000,'RTP IP / multicast','Первый RTP порт'],
+    'srt':[mode === 'caller' ? '127.0.0.1' : '0.0.0.0',7001,
+           mode === 'caller' ? 'SRT сервер' : 'SRT host / bind','Первый SRT порт'],
+    'http':['127.0.0.1',Number(state.http_port||9000),'Адрес для ссылки','HTTP порт'],
+    'hls':['127.0.0.1',Number(state.http_port||9000),'Адрес для ссылки','HLS порт'],
+    'rtsp':['127.0.0.1',8554,'RTSP сервер','Первый RTSP порт'],
+    'rtmp':['127.0.0.1',1935,'RTMP URL / host','RTMP порт'],
+    'youtube':['',1935,'YouTube key / URL','Порт']
+  };
+  const d = defaults[type] || defaults['udp-vbr'];
+  if (hostLabel) hostLabel.textContent = d[2];
+  if (portLabel) portLabel.textContent = d[3];
+
+  if (resetDefaults) {
+    if (host) host.value = d[0];
+    if (port) port.value = String(d[1]);
+  }
+  if (port) port.disabled = type === 'youtube';
+  if (host) {
+    host.placeholder =
+      type === 'youtube' ? 'xxxx-xxxx-xxxx-xxxx или RTMP URL' :
+      type === 'rtmp' ? 'rtmp://server/app/key или server.example.com' :
+      type === 'rtsp' ? 'rtsp://server/app/name или IP сервера' :
+      type === 'srt' && mode === 'caller' ? 'server.example.com или IP' :
+      d[0];
+  }
+}
 async function saveSelectedSatelliteChannels() {
   // Stop and abort modal probing before saving. The server-side stream startup
   // uses the same frontend gate, so even an already-dispatched probe must finish
@@ -5983,10 +6089,16 @@ async function saveSelectedSatelliteChannels() {
   const payload = {
     channels:selected,
     output_type:document.getElementById('satOutputType')?.value || 'udp-vbr',
-    output_host:document.getElementById('satOutputHost')?.value || '239.255.10.1',
+    output_mode:document.getElementById('satOutputMode')?.value || 'listener',
+    output_host:document.getElementById('satOutputHost')?.value || '',
     base_port:Number(document.getElementById('satBasePort')?.value || 5000),
+    cbr:document.getElementById('satCbr')?.checked === true,
     target_bitrate_kbps:Number(document.getElementById('satTargetBitrate')?.value || 12000),
     interface_address:document.getElementById('satOutputInterface')?.value || '',
+    srt_latency_ms:Number(document.getElementById('satSrtLatency')?.value || 120),
+    srt_passphrase:document.getElementById('satSrtPassphrase')?.value || '',
+    srt_streamid:document.getElementById('satSrtStreamId')?.value || '',
+    srt_pbkeylen:Number(document.getElementById('satSrtPbKeyLen')?.value || 16),
     conditional_access_client:document.getElementById('satCamClientSelect')?.value || '',
     auto_start:document.getElementById('satAutoStart')?.checked === true
   };
@@ -6042,10 +6154,18 @@ function openAddChannelModal() {
     </div>
     <div id="satServices" class="sat-services"><div class="sat-empty">Нажмите «Сканировать каналы».</div></div>
     <div class="sat-output">
-      <div class="sat-field"><label>Выход</label><select id="satOutputType"><option value="udp-vbr">UDP VBR</option><option value="udp-cbr">UDP CBR</option></select></div>
-      <div class="sat-field"><label>Multicast / IP</label><input id="satOutputHost" value="239.255.10.1" /></div>
-      <div class="sat-field"><label>Первый UDP порт</label><input id="satBasePort" type="number" min="1" max="65535" value="5000" /></div>
-      <div class="sat-field"><label>CBR bitrate, кбит/с</label><input id="satTargetBitrate" type="number" min="500" max="100000" value="12000" /></div>
+      <div class="sat-field"><label>Выходной протокол</label><select id="satOutputType" onchange="updateSatelliteOutputHints(true)">${outputTypeOptions('udp-vbr')}</select></div>
+      <div id="satOutputModeRow" class="sat-field" style="display:none"><label>SRT режим</label><select id="satOutputMode" onchange="updateSatelliteOutputHints(true)"><option value="listener">Listener</option><option value="caller">Caller</option></select></div>
+      <div class="sat-field"><label id="satOutputHostLabel">Multicast / IP</label><input id="satOutputHost" value="239.255.10.1" /></div>
+      <div class="sat-field"><label id="satOutputPortLabel">Первый UDP порт</label><input id="satBasePort" type="number" min="1" max="65535" value="5000" /></div>
+      <div class="sat-field"><label>CBR</label><div class="checkbox-inline"><input id="satCbr" type="checkbox" onchange="updateSatelliteOutputHints(false)" /><span>Формировать CBR MPEG-TS</span></div></div>
+      <div class="sat-field"><label>CBR bitrate, кбит/с</label><input id="satTargetBitrate" type="number" min="500" max="100000" value="12000" disabled /></div>
+      <div id="satSrtOptions" style="display:none">
+        <div class="sat-field"><label>SRT latency, ms</label><input id="satSrtLatency" type="number" min="20" max="60000" value="120" /></div>
+        <div class="sat-field"><label>SRT AES key</label><select id="satSrtPbKeyLen"><option value="16">AES-128</option><option value="24">AES-192</option><option value="32">AES-256</option></select></div>
+        <div class="sat-field"><label>SRT Stream ID</label><input id="satSrtStreamId" placeholder="optional" /></div>
+        <div class="sat-field"><label>SRT Passphrase</label><input id="satSrtPassphrase" type="password" autocomplete="new-password" placeholder="10–79 chars, optional" /></div>
+      </div>
       <div class="sat-field"><label>Выходной интерфейс</label><select id="satOutputInterface"><option value="">Авто (системный маршрут)</option>${(state.interfaces||[]).map(i=>`<option value="${satEscape(i.address)}">${satEscape(i.name)} (${satEscape(i.address)})</option>`).join('')}</select></div>
       <div class="sat-field wide"><label>Автозапуск</label><div class="checkbox-inline"><input id="satAutoStart" type="checkbox" /><span>Запускать созданные каналы после перезапуска</span></div></div>
     </div>
@@ -6058,6 +6178,7 @@ function openAddChannelModal() {
   updateHeaderHeight();
   document.getElementById('modal').classList.add('satellite-open');
   loadSatelliteAdapters();
+  updateSatelliteOutputHints(false);
   scheduleSatelliteSignalPolling();
 }
 
