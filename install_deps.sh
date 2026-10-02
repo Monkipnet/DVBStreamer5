@@ -22,11 +22,11 @@ DEPS=(build-essential cmake nodejs pkg-config
 "${APT_GET[@]}" clean
 
 # Detect GPU vendors and install native hardware codec dependencies/drivers.
-"$ROOT_DIR/scripts/install_native_hw_backends.sh"
+bash "$ROOT_DIR/scripts/install_native_hw_backends.sh"
 
-"$ROOT_DIR/scripts/vendor_srt_source.sh"
-"$ROOT_DIR/scripts/vendor_native_codecs.sh"
-"$ROOT_DIR/scripts/build_native_codecs.sh"
+bash "$ROOT_DIR/scripts/vendor_srt_source.sh"
+bash "$ROOT_DIR/scripts/vendor_native_codecs.sh"
+bash "$ROOT_DIR/scripts/build_native_codecs.sh"
 if [[ ${EUID} -eq 0 && -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]]; then
   chown -R "$SUDO_USER":"$(id -gn "$SUDO_USER")" "$ROOT_DIR/third_party/srt" 2>/dev/null || true
   chown -R "$SUDO_USER":"$(id -gn "$SUDO_USER")"     "$ROOT_DIR/third_party/openh264" "$ROOT_DIR/third_party/libde265" "$ROOT_DIR/third_party/kvazaar"     "$ROOT_DIR/third_party/fdk-aac" "$ROOT_DIR/third_party/pl_mpeg" "$ROOT_DIR/third_party/native-codecs-prefix" 2>/dev/null || true
