@@ -592,9 +592,10 @@ Json::Value OscamMiniManager::statusLocked() {
     }
     result["devices"] = devices;
 
-    const std::string process = trim(run("ps -C oscam-mini -o pid=,rss=,vsz=,%cpu=,cmd="));
-    result["process"] = process;
-
+    // In the portable bundle systemd starts OSCam through the bundled ELF
+    // loader, so the kernel comm/name is ld-linux-x86-64 rather than
+    // oscam-mini.  Resolve the process through systemd MainPID instead of
+    // relying on "ps -C oscam-mini".
     std::string pid;
     if (serviceActive) {
         pid = trim(run("systemctl show -p MainPID --value " + std::string(kService)));
@@ -602,6 +603,10 @@ Json::Value OscamMiniManager::statusLocked() {
             pid.clear();
         }
     }
+    const std::string process = pid.empty()
+        ? std::string()
+        : trim(run("ps -p " + pid + " -o pid=,rss=,vsz=,%cpu=,cmd="));
+    result["process"] = process;
 
     std::string logCommand = "journalctl -u " + std::string(kService) + " -n 120 --no-pager -o cat";
     if (!pid.empty()) {
