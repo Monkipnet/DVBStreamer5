@@ -58,7 +58,7 @@ struct SharedDvbInputPool::Impl {
 
         std::mutex mutex;
         std::condition_variable condition;
-        std::deque<std::vector<std::uint8_t>> queue;
+        std::deque<std::shared_ptr<const std::vector<std::uint8_t>>> queue;
         std::size_t queuedBytes = 0;
         std::atomic<bool> stop{false};
         bool sourceFinished = false;
@@ -88,7 +88,7 @@ struct SharedDvbInputPool::Impl {
 
     static void runSubscriber(const std::shared_ptr<Subscriber>& subscriber) {
         for (;;) {
-            std::vector<std::uint8_t> chunk;
+            std::shared_ptr<const std::vector<std::uint8_t>> chunk;
             bool finished = false;
             std::string finishError;
             {
@@ -104,18 +104,18 @@ struct SharedDvbInputPool::Impl {
                 if (!subscriber->queue.empty()) {
                     chunk = std::move(subscriber->queue.front());
                     subscriber->queue.pop_front();
-                    subscriber->queuedBytes -= chunk.size();
+                    subscriber->queuedBytes -= chunk ? chunk->size() : 0;
                 } else if (subscriber->sourceFinished) {
                     finished = true;
                     finishError = subscriber->finishError;
                 }
             }
 
-            if (!chunk.empty()) {
+            if (chunk && !chunk->empty()) {
                 bool accepted = false;
                 try {
                     accepted = subscriber->onData &&
-                        subscriber->onData(chunk.data(), chunk.size());
+                        subscriber->onData(chunk->data(), chunk->size());
                 } catch (const std::exception& ex) {
                     std::cerr << "SHARED DVB subscriber callback failed stream="
                               << subscriber->streamId
@@ -145,14 +145,12 @@ struct SharedDvbInputPool::Impl {
 
     static void enqueue(
         const std::shared_ptr<Subscriber>& subscriber,
-        const std::uint8_t* data,
-        std::size_t size) {
-        if (!subscriber || !data || size == 0 ||
+        const std::shared_ptr<const std::vector<std::uint8_t>>& chunk) {
+        if (!subscriber || !chunk || chunk->empty() ||
             subscriber->stop.load(std::memory_order_acquire)) {
             return;
         }
 
-        std::vector<std::uint8_t> chunk(data, data + size);
         bool dropped = false;
         std::uint64_t droppedCount = 0;
         {
@@ -163,19 +161,20 @@ struct SharedDvbInputPool::Impl {
             }
 
             while (!subscriber->queue.empty() &&
-                   subscriber->queuedBytes + chunk.size() > kSubscriberQueueBytes) {
-                subscriber->queuedBytes -= subscriber->queue.front().size();
+                   subscriber->queuedBytes + chunk->size() > kSubscriberQueueBytes) {
+                const auto& oldest = subscriber->queue.front();
+                subscriber->queuedBytes -= oldest ? oldest->size() : 0;
                 subscriber->queue.pop_front();
                 ++subscriber->droppedChunks;
                 dropped = true;
             }
 
-            if (chunk.size() > kSubscriberQueueBytes) {
+            if (chunk->size() > kSubscriberQueueBytes) {
                 ++subscriber->droppedChunks;
                 dropped = true;
             } else {
-                subscriber->queuedBytes += chunk.size();
-                subscriber->queue.push_back(std::move(chunk));
+                subscriber->queuedBytes += chunk->size();
+                subscriber->queue.push_back(chunk);
             }
             droppedCount = subscriber->droppedChunks;
         }
@@ -244,8 +243,15 @@ struct SharedDvbInputPool::Impl {
                     subscribers.push_back(subscriber);
                 }
             }
+            // Allocate/copy the tuner chunk once. Every service subscriber
+            // references the same immutable buffer; only the downstream relay
+            // performs its own queue copy. This keeps a 20-30 channel
+            // transponder from multiplying the source-copy cost.
+            auto chunk = std::make_shared<std::vector<std::uint8_t>>(
+                buffer.begin(),
+                buffer.begin() + static_cast<std::ptrdiff_t>(received));
             for (const auto& subscriber : subscribers) {
-                enqueue(subscriber, buffer.data(), received);
+                enqueue(subscriber, chunk);
             }
         }
 
