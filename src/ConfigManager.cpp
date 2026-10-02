@@ -788,6 +788,84 @@ bool ConfigManager::loadSubscribers() {
     return true;
 }
 
+namespace {
+
+bool writeJsonAtomic(const std::filesystem::path& path,
+                     const Json::Value& value,
+                     std::string& error) {
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "  ";
+    const std::string payload = Json::writeString(writer, value);
+
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) {
+        error = "cannot create config directory: " + ec.message();
+        return false;
+    }
+
+    std::string tempTemplate = path.string() + ".tmp.XXXXXX";
+    std::vector<char> tempName(tempTemplate.begin(), tempTemplate.end());
+    tempName.push_back('\0');
+
+    const int fd = ::mkstemp(tempName.data());
+    if (fd < 0) {
+        error = "cannot create temporary config file: " + std::string(std::strerror(errno));
+        return false;
+    }
+
+    const std::string tempPath(tempName.data());
+    bool ok = true;
+    std::size_t offset = 0;
+    while (offset < payload.size()) {
+        const ssize_t written = ::write(fd, payload.data() + offset, payload.size() - offset);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            error = "cannot write temporary config file: " + std::string(std::strerror(errno));
+            ok = false;
+            break;
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+
+    if (ok && ::fsync(fd) != 0) {
+        error = "cannot fsync temporary config file: " + std::string(std::strerror(errno));
+        ok = false;
+    }
+    if (ok && ::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+        error = "cannot chmod temporary config file: " + std::string(std::strerror(errno));
+        ok = false;
+    }
+    if (::close(fd) != 0 && ok) {
+        error = "cannot close temporary config file: " + std::string(std::strerror(errno));
+        ok = false;
+    }
+
+    if (!ok) {
+        ::unlink(tempPath.c_str());
+        return false;
+    }
+
+    if (::rename(tempPath.c_str(), path.c_str()) != 0) {
+        error = "cannot replace config file atomically: " + std::string(std::strerror(errno));
+        ::unlink(tempPath.c_str());
+        return false;
+    }
+
+    const int dirfd = ::open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
+    if (dirfd >= 0) {
+        if (::fsync(dirfd) != 0) {
+            error = "cannot fsync config directory: " + std::string(std::strerror(errno));
+            ::close(dirfd);
+            return false;
+        }
+        ::close(dirfd);
+    }
+    return true;
+}
+
+} // namespace
+
 bool ConfigManager::save() {
     std::lock_guard<std::mutex> lock(fileMutex);
 
@@ -799,31 +877,21 @@ bool ConfigManager::save() {
     }
     root["password"] = encryptedPassword;
 
-    std::ofstream output(configPath, std::ios::trunc);
-    if (!output.is_open()) {
-        std::cerr << "Unable to open config file for writing: " << configPath << std::endl;
+    std::string error;
+    if (!writeJsonAtomic(configPath, root, error)) {
+        std::cerr << "Unable to write config file " << configPath << ": "
+                  << error << std::endl;
         return false;
     }
-    Json::StreamWriterBuilder writer;
-    writer["indentation"] = "  ";
-    output << Json::writeString(writer, root);
-    output.flush();
-    if (!output.good()) {
-        std::cerr << "Unable to write config file: " << configPath << std::endl;
-        return false;
-    }
-    output.close();
-    ::chmod(configPath.c_str(), S_IRUSR | S_IWUSR);
     return true;
 }
 
 bool ConfigManager::saveSubscribers() {
     std::lock_guard<std::mutex> lock(fileMutex);
-    const auto path = subscriberConfigPath(configPath);
-    std::ofstream output(path);
-    if (!output.is_open()) return false;
-    Json::StreamWriterBuilder writer;
-    writer["indentation"] = "  ";
-    output << Json::writeString(writer, subscribers.toJson());
+    std::string error;
+    if (!writeJsonAtomic(subscriberConfigPath(configPath), subscribers.toJson(), error)) {
+        std::cerr << "Unable to write subscribers config: " << error << std::endl;
+        return false;
+    }
     return true;
 }
