@@ -7342,12 +7342,33 @@ window.addEventListener('beforeunload', () => {
           video.src = url;
         } else if (window.Hls && typeof window.Hls.isSupported === 'function' &&
                    window.Hls.isSupported()) {
-          var player = new window.Hls({enableWorker: false, lowLatencyMode: true});
+          var player = new window.Hls({
+            enableWorker: false,
+            lowLatencyMode: false,
+            startLevel: -1,
+            abrBandWidthFactor: 0.90,
+            abrBandWidthUpFactor: 0.80,
+            maxBufferLength: 20,
+            maxMaxBufferLength: 30,
+            backBufferLength: 30,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 6
+          });
           activeHls = player;
           player.on(window.Hls.Events.ERROR, function (_event, data) {
             if (activeHls === player && data && data.fatal) {
               message('Ошибка HLS: ' + String(data.details || data.type || 'нет данных'), true);
             }
+          });
+          player.on(window.Hls.Events.LEVEL_SWITCHED, function (_event, data) {
+            if (activeHls !== player || !data) return;
+            var level = player.levels && player.levels[data.level];
+            if (!level) return;
+            var quality = level.height ? (level.height + 'p') :
+              (level.width && level.height ? (level.width + 'x' + level.height) : ('уровень ' + data.level));
+            var kbps = level.bitrate ? Math.round(level.bitrate / 1000) : 0;
+            message('HLS · ' + source.label + ' · ' + quality +
+              (kbps ? ' · ' + kbps + ' kbps' : '') + ' · Auto ABR');
           });
           player.attachMedia(video);
           player.loadSource(url);
