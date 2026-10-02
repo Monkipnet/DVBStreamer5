@@ -564,15 +564,18 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
     if (!state->hlsAbrVariants.empty()) {
         StreamState* statePtr = state.get();
-        relay.observeInputTransport = [statePtr](const std::uint8_t* data, std::size_t size) {
-            if (!statePtr || !data || size == 0) return;
+        relay.observeInputTransport = [statePtr](const std::uint8_t*, std::size_t) {
+            if (!statePtr) return;
+            // V10.8.12: ABR renditions no longer demux/decode the input TS
+            // independently. Their video and audio are supplied by the primary
+            // pipeline, so this callback only drains each rendition's mux output.
             for (auto& variant : statePtr->hlsAbrVariants) {
                 if (!variant || variant->failed || !variant->transcoder || !variant->segmenter) continue;
                 std::vector<std::uint8_t> encoded;
                 std::string abrError;
-                if (!variant->transcoder->process(data, size, encoded, abrError)) {
+                if (!variant->transcoder->pollOutput(encoded, abrError)) {
                     variant->failed = true;
-                    variant->lastError = abrError.empty() ? "native ABR transcoder failed" : abrError;
+                    variant->lastError = abrError.empty() ? "native ABR output poll failed" : abrError;
                     std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
                               << " error=" << variant->lastError << std::endl;
                     continue;
@@ -967,6 +970,7 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->nativeRelay) state->nativeRelay->stop();
     if (state->nativeTranscoder) {
         state->nativeTranscoder->setDecodedVideoObserver({});
+        state->nativeTranscoder->setEncodedAudioObserver({});
         state->nativeTranscoder->reset();
     }
     for (auto& variant : state->hlsAbrVariants) {
