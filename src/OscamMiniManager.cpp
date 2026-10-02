@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -201,6 +202,18 @@ OscamMiniManager& OscamMiniManager::instance() {
     return instance;
 }
 
+std::string OscamMiniManager::configDir() {
+    const char* value = std::getenv("DVBSTREAMER5_OSCAM_CONFIG_DIR");
+    if (value && *value && fs::path(value).is_absolute()) return value;
+    return "/etc/dvbstreamer5/oscam-mini";
+}
+
+std::string OscamMiniManager::binaryPath() {
+    const char* value = std::getenv("DVBSTREAMER5_OSCAM_BINARY");
+    if (value && *value && fs::path(value).is_absolute()) return value;
+    return "/opt/DVBStreamer5/oscam-mini/oscam-mini";
+}
+
 std::string OscamMiniManager::trim(std::string value) {
     return trimLocal(std::move(value));
 }
@@ -300,13 +313,13 @@ Json::Value OscamMiniManager::parse(const std::string& body, std::string& error)
 OscamMiniManager::Settings OscamMiniManager::loadLocked() {
     Settings settings;
 
-    const auto newcamd = parseFirstSection(readFile(std::string(kConfigDir) + "/oscam.conf"), "newcamd");
+    const auto newcamd = parseFirstSection(readFile(configDir() + "/oscam.conf"), "newcamd");
     settings.bindIp = getValue(newcamd, "serverip", "127.0.0.1");
     settings.key = getValue(newcamd, "key", settings.key);
     settings.keepalive = isTrue(getValue(newcamd, "keepalive", "1"));
 
     auto ports = parsePortDefs(getValue(newcamd, "port", ""));
-    auto accounts = parseIniSections(readFile(std::string(kConfigDir) + "/oscam.user"), "account");
+    auto accounts = parseIniSections(readFile(configDir() + "/oscam.user"), "account");
     std::vector<bool> usedPorts(ports.size(), false);
 
     for (std::size_t i = 0; i < accounts.size(); ++i) {
@@ -372,7 +385,7 @@ OscamMiniManager::Settings OscamMiniManager::loadLocked() {
         settings.users.push_back(NewcamdUser{});
     }
 
-    for (const auto& entry : parseIniSections(readFile(std::string(kConfigDir) + "/oscam.server"), "reader")) {
+    for (const auto& entry : parseIniSections(readFile(configDir() + "/oscam.server"), "reader")) {
         Reader reader;
         reader.label = getValue(entry, "label", "Reader");
         reader.protocol = getValue(entry, "protocol", "mouse");
@@ -557,15 +570,15 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
         server << '\n';
     }
 
-    return writeAtomic(std::string(kConfigDir) + "/oscam.conf", conf.str(), error)
-        && writeAtomic(std::string(kConfigDir) + "/oscam.user", users.str(), error)
-        && writeAtomic(std::string(kConfigDir) + "/oscam.server", server.str(), error);
+    return writeAtomic(configDir() + "/oscam.conf", conf.str(), error)
+        && writeAtomic(configDir() + "/oscam.user", users.str(), error)
+        && writeAtomic(configDir() + "/oscam.server", server.str(), error);
 }
 
 Json::Value OscamMiniManager::statusLocked() {
     Json::Value result;
-    result["config_dir"] = kConfigDir;
-    result["binary_exists"] = fs::exists(kBinary);
+    result["config_dir"] = configDir();
+    result["binary_exists"] = fs::exists(binaryPath());
 
     int rc = 0;
     const std::string active = trim(run("systemctl is-active " + std::string(kService), &rc));
@@ -832,7 +845,7 @@ body{font-family:Arial,sans-serif;background:#0f1218;color:#eee;margin:0}.w{max-
 </head>
 <body><div class="w">
 <div class="row"><a class="btn alt" href="/">← DVBStreamer5</a><h2 style="margin:0">OSCam-mini</h2><span id="state"></span></div>
-<div class="c"><div class="row"><button onclick="act('start')">Старт</button><button class="alt" onclick="act('restart')">Перезапуск</button><button class="alt" onclick="act('stop')">Стоп</button><button class="alt" onclick="loadAll()">Обновить</button></div><p>Конфиги: /opt/DVBStreamer5/oscam-mini/config</p></div>
+<div class="c"><div class="row"><button onclick="act('start')">Старт</button><button class="alt" onclick="act('restart')">Перезапуск</button><button class="alt" onclick="act('stop')">Стоп</button><button class="alt" onclick="loadAll()">Обновить</button></div><p>Конфиги: /etc/dvbstreamer5/oscam-mini</p></div>
 
 <div class="c">
   <h3>Newcamd</h3>
