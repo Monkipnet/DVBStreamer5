@@ -968,7 +968,8 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
 
     codec::RawVideoFrame scaled;
     const codec::RawVideoFrame* source = &raw;
-    if (raw.width != config_.width || raw.height != config_.height) {
+    if ((raw.width != config_.width || raw.height != config_.height) &&
+        !videoEncoder_->supportsNativeScaling()) {
         if (!codec::scaleI420(raw, config_.width, config_.height, scaled, error))
             return false;
         source = &scaled;
