@@ -100,6 +100,7 @@ set(_codec_headers
     "${DVBSTREAMER5_CODEC_PREFIX}/include/kvazaar.h"
     "${DVBSTREAMER5_CODEC_PREFIX}/include/fdk-aac/aacdecoder_lib.h"
     "${DVBSTREAMER5_CODEC_PREFIX}/include/fdk-aac/aacenc_lib.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/ittiam-mpeg2/impeg2d.h"
     "${DVBSTREAMER5_CODEC_PREFIX}/include/pl_mpeg/pl_mpeg.h")
 foreach(_h IN LISTS _codec_headers)
     if(NOT EXISTS "${_h}")
@@ -118,9 +119,11 @@ dvbstreamer5_import_static_codec(dvbstreamer5_openh264 libopenh264.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_de265 libde265.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_kvazaar libkvazaar.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_fdkaac libfdk-aac.a)
+dvbstreamer5_import_static_codec(dvbstreamer5_mpeg2dec libmpeg2dec.a)
 set(DVBSTREAMER5_CODEC_SOURCE src/media/NativeCodecVendored.cpp)
 set(DVBSTREAMER5_CODEC_LIBRARIES
-    dvbstreamer5_openh264 dvbstreamer5_de265 dvbstreamer5_kvazaar dvbstreamer5_fdkaac)
+    dvbstreamer5_openh264 dvbstreamer5_de265 dvbstreamer5_kvazaar
+    dvbstreamer5_fdkaac dvbstreamer5_mpeg2dec)
 
 add_library(dvbstreamer5_media_core
     src/media/CbrTsPacer.cpp
@@ -150,7 +153,9 @@ add_library(dvbstreamer5_media_core
 )
 target_include_directories(dvbstreamer5_media_core
     PUBLIC ${CMAKE_SOURCE_DIR}/src
-    PRIVATE ${DVBSTREAMER5_CODEC_PREFIX}/include
+    PRIVATE
+        ${DVBSTREAMER5_CODEC_PREFIX}/include
+        ${DVBSTREAMER5_CODEC_PREFIX}/include/ittiam-mpeg2
 )
 target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
