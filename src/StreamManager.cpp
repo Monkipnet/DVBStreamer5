@@ -385,6 +385,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     return false;
                 }
                 variant->transcoder->setExternalVideoInput(true);
+                variant->transcoder->setExternalAudioInput(true);
                 std::cerr << "NATIVE HLS ABR RENDITION init name=" << variant->name
                           << " size=" << variant->width << "x" << variant->height
                           << " video_kbps=" << (variant->videoBitrate / 1000ULL)
@@ -401,7 +402,16 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                             (void)variant->transcoder->pushDecodedVideoFrame(frame);
                         }
                     });
-                std::cerr << "NATIVE HLS ABR shared_decode=1 source_decoders=1 renditions="
+                state->nativeTranscoder->setEncodedAudioObserver(
+                    [statePtr](const dvbstreamer5::media::codec::EncodedAudioFrame& frame,
+                               std::uint64_t duration90k) {
+                        if (!statePtr) return;
+                        for (auto& variant : statePtr->hlsAbrVariants) {
+                            if (!variant || !variant->transcoder) continue;
+                            (void)variant->transcoder->pushEncodedAudioFrame(frame, duration90k);
+                        }
+                    });
+                std::cerr << "NATIVE HLS ABR shared_decode=1 shared_audio=1 source_demuxers=1 renditions="
                           << (state->hlsAbrVariants.size() + 1) << std::endl;
             }
         }
