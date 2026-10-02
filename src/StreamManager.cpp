@@ -620,6 +620,12 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return false;
         }
         relay.dvbInputSource = true;
+        // DVB frontends deliver a real-time transport stream and must be drained
+        // at the incoming multiplex rate.  Throttling observeTransport to the
+        // configured output target can back up /dev/dvb/.../dvr0 and make the
+        // kernel return EOVERFLOW ("Value too large for defined data type").
+        // UDP-CBR has its own packet pacer, so no source-side pacing is needed.
+        relay.paceObservedTransport = false;
         relay.dvbTuneConfig.adapter = dvbParams.adapter;
         relay.dvbTuneConfig.frontend = dvbParams.frontend;
         relay.dvbTuneConfig.frequencyKHz = dvbParams.frequencyKHz;
