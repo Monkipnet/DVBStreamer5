@@ -7551,8 +7551,8 @@ window.addEventListener('beforeunload', () => {
         });
         player.attachMediaElement(video);
         player.load();
-        message('HTTP MPEG-TS · ' + source.label + ' · звук включается в плеере. ' +
-          'Для спутникового MPEG-2/AC3 браузеру может потребоваться H.264/AAC-превью.');
+        message('HTTP MPEG-TS · ' + source.label +
+          ' · приватный browser preview: H.264/AAC · звук включается в плеере.');
         Promise.resolve(player.play()).catch(function () {
           if (activeTs === player) message('Нажмите ▶ для запуска видео.');
         });
