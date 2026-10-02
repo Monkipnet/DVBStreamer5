@@ -325,7 +325,7 @@ cat > /etc/systemd/system/$UNIT <<EOF_MAIN
 [Unit]
 Description=DVBStreamer5 streaming service
 Wants=network-online.target
-After=network-online.target
+After=network-online.target oscam-mini.service
 
 [Service]
 Type=simple
