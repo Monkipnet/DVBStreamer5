@@ -199,6 +199,44 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     return true;
 }
 
+void NativeTranscoderPipeline::setExternalVideoInput(bool enabled) {
+    externalVideoInput_.store(enabled, std::memory_order_release);
+    videoQueueCv_.notify_all();
+}
+
+void NativeTranscoderPipeline::setDecodedVideoObserver(DecodedVideoObserver observer) {
+    std::lock_guard<std::mutex> lock(decodedVideoObserverMutex_);
+    decodedVideoObserver_ = std::move(observer);
+}
+
+bool NativeTranscoderPipeline::pushDecodedVideoFrame(
+    std::shared_ptr<const codec::RawVideoFrame> frame) {
+    if (!frame || !externalVideoInput_.load(std::memory_order_acquire) ||
+        failed_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(videoQueueMutex_);
+        if (externalVideoQueue_.size() >= kMaxExternalVideoQueue) {
+            // Raw frames have no inter-frame decode dependency at this point.
+            // Drop the oldest frame only; keeping latency bounded is more
+            // important for live ABR than preserving a stale frame.
+            externalVideoQueue_.pop_front();
+            ++droppedExternalVideoFrames_;
+            if (droppedExternalVideoFrames_ <= 4 ||
+                (droppedExternalVideoFrames_ % 100U) == 0U) {
+                std::cerr << "NATIVE ABR RAW DROP dropped="
+                          << droppedExternalVideoFrames_
+                          << " queue=" << externalVideoQueue_.size()
+                          << std::endl;
+            }
+        }
+        externalVideoQueue_.push_back(std::move(frame));
+    }
+    videoQueueCv_.notify_one();
+    return true;
+}
+
 void NativeTranscoderPipeline::reset() {
     stopWorkers();
     demux_.reset();
@@ -210,6 +248,14 @@ void NativeTranscoderPipeline::reset() {
         std::lock_guard<std::mutex> lock(videoCodecMutex_);
         videoDecoder_.reset();
         videoEncoder_.reset();
+    }
+    {
+        std::lock_guard<std::mutex> lock(videoQueueMutex_);
+        externalVideoQueue_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(decodedVideoObserverMutex_);
+        decodedVideoObserver_ = {};
     }
     {
         std::lock_guard<std::mutex> lock(audioCodecMutex_);
@@ -242,6 +288,7 @@ void NativeTranscoderPipeline::reset() {
         pendingOutput_.clear();
     }
     droppedVideoSamples_ = 0;
+    droppedExternalVideoFrames_ = 0;
     droppedAudioSamples_ = 0;
     muxedVideoSamples_.store(0, std::memory_order_release);
     muxedAudioSamples_.store(0, std::memory_order_release);
@@ -253,6 +300,7 @@ void NativeTranscoderPipeline::reset() {
     lastMuxAudioClock90k_.store(0, std::memory_order_release);
     videoDropUntilRandomAccess_ = false;
     videoResetRequested_.store(false, std::memory_order_release);
+    externalVideoInput_.store(false, std::memory_order_release);
 }
 
 void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamInfo>& streams) {
@@ -311,6 +359,16 @@ void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamIn
 void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
     if (failed_.load(std::memory_order_acquire)) return;
     if (sample.stream.kind == mpegts::ElementaryKind::Video) {
+        if (externalVideoInput_.load(std::memory_order_acquire)) {
+            // ABR rendition receives the decoded/deinterlaced frame from the
+            // primary pipeline. Still learn the source PID/codec from PMT but
+            // never enqueue the same compressed picture for a second decode.
+            if (inputVideoPid_ == 0xffff) {
+                inputVideoPid_ = sample.stream.pid;
+                inputVideoCodec_ = sample.stream.codec;
+            }
+            return;
+        }
         if (inputVideoPid_ == 0xffff) {
             inputVideoPid_ = sample.stream.pid;
             inputVideoCodec_ = sample.stream.codec;
@@ -381,7 +439,11 @@ void NativeTranscoderPipeline::stopWorkers() {
     workersStop_.store(true, std::memory_order_release);
     // First stop decoder/encoder workers. They are allowed to finish their
     // currently active sample and may enqueue one last encoded AU.
-    { std::lock_guard<std::mutex> lock(videoQueueMutex_); videoQueue_.clear(); }
+    {
+        std::lock_guard<std::mutex> lock(videoQueueMutex_);
+        videoQueue_.clear();
+        externalVideoQueue_.clear();
+    }
     { std::lock_guard<std::mutex> lock(audioQueueMutex_); audioQueue_.clear(); }
     videoQueueCv_.notify_all();
     audioQueueCv_.notify_all();
@@ -412,24 +474,43 @@ void NativeTranscoderPipeline::setFailure(std::string error) {
 void NativeTranscoderPipeline::videoWorkerLoop() {
     for (;;) {
         mpegts::DemuxSample sample;
+        std::shared_ptr<const codec::RawVideoFrame> externalFrame;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
             videoQueueCv_.wait(lock, [this] {
-                return workersStop_.load(std::memory_order_acquire) || !videoQueue_.empty();
+                return workersStop_.load(std::memory_order_acquire) ||
+                       !videoQueue_.empty() || !externalVideoQueue_.empty();
             });
-            if (workersStop_.load(std::memory_order_acquire) && videoQueue_.empty()) break;
-            sample = std::move(videoQueue_.front());
-            videoQueue_.pop_front();
+            if (workersStop_.load(std::memory_order_acquire) &&
+                videoQueue_.empty() && externalVideoQueue_.empty()) break;
+
+            if (externalVideoInput_.load(std::memory_order_acquire) &&
+                !externalVideoQueue_.empty()) {
+                externalFrame = std::move(externalVideoQueue_.front());
+                externalVideoQueue_.pop_front();
+            } else if (!videoQueue_.empty()) {
+                sample = std::move(videoQueue_.front());
+                videoQueue_.pop_front();
+            } else {
+                continue;
+            }
             videoWorkerActive_.store(true, std::memory_order_release);
         }
+
         std::string error;
         {
             std::lock_guard<std::mutex> codecLock(videoCodecMutex_);
-            if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
-                videoDecoder_.reset();
-                videoStartupReady_ = false;
+            if (externalFrame) {
+                if (!handleDecodedVideoFrame(*externalFrame, error))
+                    setFailure(error);
+            } else {
+                if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
+                    videoDecoder_.reset();
+                    videoStartupReady_ = false;
+                }
+                if (!handleVideo(std::move(sample), error))
+                    setFailure(error);
             }
-            if (!handleVideo(std::move(sample), error)) setFailure(error);
         }
         videoWorkerActive_.store(false, std::memory_order_release);
         idleCv_.notify_all();
@@ -578,9 +659,15 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // Payload Out fell to zero and viewers saw a freeze.
                         const bool withinLead =
                             clock <= otherClock + kMaxAvLead90k;
+                        const bool withinHardLead =
+                            clock <= otherClock + kMaxAvHardLead90k;
                         const bool holdExpired =
                             waited >= kMuxSingleStreamMaxHold;
-                        ready = withinLead || holdExpired;
+                        // Never let bounded-hold recovery accumulate seconds
+                        // (or minutes) of A/V skew. The 350 ms escape hatch may
+                        // advance the healthy stream only within a 500 ms hard
+                        // envelope; the lagging stream then catches up.
+                        ready = withinLead || (holdExpired && withinHardLead);
                     }
                     chooseVideo = haveVideo;
                     if (!ready) {
@@ -759,16 +846,44 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     decodedVideoFrames_ += decoded.size();
     for (auto& raw : decoded) {
         if (config_.deinterlace) codec::deinterlaceBlendI420(raw);
-        codec::RawVideoFrame scaled;
-        const codec::RawVideoFrame* source = &raw;
-        if (raw.width != config_.width || raw.height != config_.height) {
-            if (!codec::scaleI420(raw, config_.width, config_.height, scaled, error)) return false;
-            source = &scaled;
+
+        DecodedVideoObserver observer;
+        {
+            std::lock_guard<std::mutex> lock(decodedVideoObserverMutex_);
+            observer = decodedVideoObserver_;
         }
-        std::vector<codec::EncodedVideoFrame> encoded;
-        if (!videoEncoder_->encode(*source, encoded, error)) return false;
-        for (const auto& frame : encoded) if (!emitVideo(frame, error)) return false;
+
+        std::shared_ptr<const codec::RawVideoFrame> sharedRaw;
+        const codec::RawVideoFrame* sourceRaw = &raw;
+        if (observer) {
+            auto owned = std::make_shared<codec::RawVideoFrame>(std::move(raw));
+            sharedRaw = owned;
+            sourceRaw = owned.get();
+            observer(sharedRaw);
+        }
+
+        if (!handleDecodedVideoFrame(*sourceRaw, error)) return false;
     }
+    return true;
+}
+
+bool NativeTranscoderPipeline::handleDecodedVideoFrame(
+    const codec::RawVideoFrame& raw,
+    std::string& error) {
+    if (!ensureVideoEncoder(error)) return false;
+
+    codec::RawVideoFrame scaled;
+    const codec::RawVideoFrame* source = &raw;
+    if (raw.width != config_.width || raw.height != config_.height) {
+        if (!codec::scaleI420(raw, config_.width, config_.height, scaled, error))
+            return false;
+        source = &scaled;
+    }
+
+    std::vector<codec::EncodedVideoFrame> encoded;
+    if (!videoEncoder_->encode(*source, encoded, error)) return false;
+    for (const auto& frame : encoded)
+        if (!emitVideo(frame, error)) return false;
     return true;
 }
 
@@ -958,12 +1073,14 @@ std::string NativeTranscoderPipeline::status() const {
         return failure_;
     }
     if (!initialized_) return "not initialized";
-    std::size_t vq = 0, aq = 0, mvq = 0, maq = 0;
-    std::uint64_t vdrop = 0, adrop = 0;
+    std::size_t vq = 0, rawVq = 0, aq = 0, mvq = 0, maq = 0;
+    std::uint64_t vdrop = 0, rawVdrop = 0, adrop = 0;
     {
         std::lock_guard<std::mutex> qlock(videoQueueMutex_);
         vq = videoQueue_.size();
+        rawVq = externalVideoQueue_.size();
         vdrop = droppedVideoSamples_;
+        rawVdrop = droppedExternalVideoFrames_;
     }
     {
         std::lock_guard<std::mutex> qlock(audioQueueMutex_);
@@ -983,6 +1100,7 @@ std::string NativeTranscoderPipeline::status() const {
                      static_cast<long long>(statusAudioClock)) / 90;
     }
     return "running async vq=" + std::to_string(vq) +
+           " raw_vq=" + std::to_string(rawVq) +
            " aq=" + std::to_string(aq) +
            " mux_vq=" + std::to_string(mvq) +
            " mux_aq=" + std::to_string(maq) +
@@ -990,6 +1108,7 @@ std::string NativeTranscoderPipeline::status() const {
            " late_video=" + std::to_string(muxLateVideo_.load(std::memory_order_acquire)) +
            " late_audio=" + std::to_string(muxLateAudio_.load(std::memory_order_acquire)) +
            " vdrop=" + std::to_string(vdrop) +
+           " raw_vdrop=" + std::to_string(rawVdrop) +
            " adrop=" + std::to_string(adrop);
 }
 
