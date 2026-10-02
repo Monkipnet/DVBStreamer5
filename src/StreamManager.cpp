@@ -613,18 +613,21 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
     DvbSatelliteParams dvbParams;
     std::string dvbError;
+    bool sharedDvbInputSource = false;
     if (DvbSatellite::isDvbUri(streamConfig.inputUri)) {
         if (!DvbSatellite::parseUri(streamConfig.inputUri, dvbParams, dvbError)) {
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = dvbError.empty() ? "invalid DVB input" : dvbError;
             return false;
         }
-        relay.dvbInputSource = true;
-        // DVB frontends deliver a real-time transport stream and must be drained
-        // at the incoming multiplex rate.  Throttling observeTransport to the
-        // configured output target can back up /dev/dvb/.../dvr0 and make the
-        // kernel return EOVERFLOW ("Value too large for defined data type").
-        // UDP-CBR has its own packet pacer, so no source-side pacing is needed.
+
+        // A physical DVB frontend/dvr tap belongs to the transponder, not to an
+        // individual service.  Feed every service relay from one shared full-TS
+        // reader so channels on the same transponder do not fight over dvr0.
+        sharedDvbInputSource = true;
+        relay.inputUri = "external://dvb-shared";
+        relay.externallyFedInput = true;
+        relay.dvbInputSource = false;
         relay.paceObservedTransport = false;
         relay.dvbTuneConfig.adapter = dvbParams.adapter;
         relay.dvbTuneConfig.frontend = dvbParams.frontend;
@@ -639,20 +642,13 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.dvbTuneConfig.lnbLof2KHz = dvbParams.lnbLof2KHz;
         relay.dvbTuneConfig.lnbSlofKHz = dvbParams.lnbSlofKHz;
         relay.dvbTuneConfig.streamId = dvbParams.streamId;
-        relay.dvbTuneConfig.pids = dvbParams.pids;
-        if (streamConfig.inputServiceId > 0 && streamConfig.conditionalAccessClient.empty()) {
-            std::string selectedPids;
-            bool scrambled = false;
-            if (DvbSatellite::resolveServicePids(dvbParams, streamConfig.inputServiceId,
-                                                 selectedPids, scrambled, dvbError)) {
-                relay.dvbTuneConfig.pids = selectedPids;
-            }
-        }
-        if (!streamConfig.conditionalAccessClient.empty()) relay.dvbTuneConfig.pids = "8192";
+        // The shared reader always takes the complete multiplex.  Per-channel
+        // PAT/PMT/remap/CA filtering remains independent in each NativeUdpRelay.
+        relay.dvbTuneConfig.pids = "8192";
     }
 
     relay.remapEnabled = streamConfig.remapEnabled ||
-        (relay.dvbInputSource && streamConfig.inputServiceId > 0);
+        (sharedDvbInputSource && streamConfig.inputServiceId > 0);
     if (relay.remapEnabled) {
         const uint32_t outSid = streamConfig.remapEnabled ? streamConfig.serviceId : streamConfig.inputServiceId;
         if (streamConfig.inputServiceId > 0xffff || outSid == 0 || outSid > 0xffff ||
@@ -833,16 +829,47 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     std::string relayError;
-    {
-        auto guard = relay.dvbInputSource ? DvbSatellite::acquireFrontendTuneGuard(dvbParams)
-                                         : std::unique_lock<std::mutex>();
-        if (!state->nativeRelay->start(relay, relayError)) {
-            for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
-            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
-            if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
-            CardManager::instance().releaseService(streamConfig.id);
-            if (error) *error = relayError.empty() ? "native relay failed" : relayError;
-            return false;
+    if (!state->nativeRelay->start(relay, relayError)) {
+        for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
+        if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+        if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
+        CardManager::instance().releaseService(streamConfig.id);
+        if (error) *error = relayError.empty() ? "native relay failed" : relayError;
+        return false;
+    }
+
+    if (sharedDvbInputSource) {
+        auto* relayPtr = state->nativeRelay.get();
+        std::string sharedDvbError;
+        {
+            // Serialize the first tune/open with DVB scan/signal probes.  Joining
+            // an already-running transponder is cheap and does not retune it.
+            auto guard = DvbSatellite::acquireFrontendTuneGuard(dvbParams);
+            if (!sharedDvbInputs.subscribe(
+                    streamConfig.id,
+                    relay.dvbTuneConfig,
+                    [relayPtr](const std::uint8_t* data, std::size_t size) {
+                        return relayPtr->pushInput(data, size);
+                    },
+                    [relayPtr](const std::string& finishError) {
+                        relayPtr->finishInput(
+                            finishError.empty()
+                                ? "shared DVB source stopped"
+                                : finishError);
+                    },
+                    sharedDvbError)) {
+                state->nativeRelay->stop();
+                for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
+                if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+                if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
+                CardManager::instance().releaseService(streamConfig.id);
+                if (error) {
+                    *error = sharedDvbError.empty()
+                        ? "shared DVB input setup failed"
+                        : sharedDvbError;
+                }
+                return false;
+            }
         }
     }
 
@@ -1082,7 +1109,11 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->nativeSrtInput) state->nativeSrtInput->stop();
     if (state->nativeRtspInput) state->nativeRtspInput->stop();
     if (state->nativeRtmpInput) state->nativeRtmpInput->stop();
+    // Stop the per-service relay first so a subscriber callback blocked on its
+    // external-input queue wakes immediately; then detach it from the shared
+    // transponder reader. The last subscriber closes dvr0 and the demux filter.
     if (state->nativeRelay) state->nativeRelay->stop();
+    sharedDvbInputs.unsubscribe(id);
     if (state->nativeTranscoder) {
         state->nativeTranscoder->setDecodedVideoObserver({});
         state->nativeTranscoder->setEncodedAudioObserver({});
@@ -1116,6 +1147,7 @@ void StreamManager::stopAll() {
         for (const auto& item : streams) ids.push_back(item.first);
     }
     for (const auto& id : ids) stopStream(id);
+    sharedDvbInputs.stopAll();
     if (mptsOutputManager) mptsOutputManager->stopAll();
     CardManager::instance().releaseAll();
 }
