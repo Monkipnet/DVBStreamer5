@@ -150,7 +150,13 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     inputAudioPid_ = 0;
     transportStreamId_ = 1;
     originalNetworkId_ = 1;
-    patContinuity_ = 0;
+    patOutputContinuity_ = 0;
+    pmtOutputContinuity_ = 0;
+    sdtOutputContinuity_ = 0;
+    patSection_ = {};
+    catSection_ = {};
+    pmtSection_ = {};
+    sdtSection_ = {};
     allowedPids_.fill(false);
     caPids_.fill(false);
     remapReady_ = false;
@@ -158,25 +164,155 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     return true;
 }
 
-bool Remapper::processCat(const Packet& input, std::string& error) {
-    auto packet = input;
-    std::uint8_t* section = nullptr;
-    std::size_t size = 0;
-    if (!sectionView(packet, 0x01, section, size, error) || !section) {
-        return error.empty();
-    }
-    if (size < 12) return true;
-    if (section[6] != 0 || section[7] != 0) {
-        error = "native remap does not support multi-section CAT tables";
+bool Remapper::collectSections(
+    const Packet& input,
+    PsiSectionState& state,
+    std::vector<std::vector<std::uint8_t>>& sections,
+    std::string& error) {
+    PacketInfo info;
+    if (!inspectPacket(input.data(), input.size(), info)) {
+        error = "native remap received an invalid PSI MPEG-TS packet";
         return false;
     }
+    if (info.transportError) {
+        state = {};
+        return true;
+    }
+    if (!info.hasPayload || info.payloadOffset >= kPacketSize) {
+        return true;
+    }
 
-    std::array<bool, 8192> caPids {};
-    if (!addCaPids(section + 8, size - 12, caPids)) {
+    if (state.continuityValid && !info.discontinuity) {
+        const std::uint8_t expected =
+            static_cast<std::uint8_t>((state.continuity + 1U) & 0x0fU);
+        if (info.continuityCounter == state.continuity) {
+            // Duplicate PSI packet. Keep the existing partial section and do
+            // not append the same bytes twice.
+            return true;
+        }
+        if (info.continuityCounter != expected) {
+            // A lost PSI packet invalidates only the partial table. The next
+            // payload-unit start will rebuild it; the live channel must stay up.
+            state.bytes.clear();
+            state.expected = 0;
+        }
+    }
+    state.continuity = info.continuityCounter;
+    state.continuityValid = true;
+
+    const std::uint8_t* payload = input.data() + info.payloadOffset;
+    std::size_t size = kPacketSize - info.payloadOffset;
+
+    auto appendPartial = [&](const std::uint8_t* data, std::size_t count) {
+        if (state.bytes.empty() || count == 0) return std::size_t{0};
+
+        std::size_t consumed = 0;
+        if (state.expected == 0) {
+            const std::size_t needHeader =
+                state.bytes.size() < 3 ? 3 - state.bytes.size() : 0;
+            const std::size_t take = std::min(needHeader, count);
+            state.bytes.insert(state.bytes.end(), data, data + take);
+            consumed += take;
+            if (state.bytes.size() < 3) return consumed;
+
+            const std::size_t sectionLength = static_cast<std::size_t>(
+                ((state.bytes[1] & 0x0fU) << 8) | state.bytes[2]);
+            state.expected = 3 + sectionLength;
+            if (state.expected < 3 || state.expected > 4096) {
+                state.bytes.clear();
+                state.expected = 0;
+                return consumed;
+            }
+        }
+
+        if (consumed < count && state.expected > state.bytes.size()) {
+            const std::size_t take = std::min(
+                state.expected - state.bytes.size(), count - consumed);
+            state.bytes.insert(
+                state.bytes.end(), data + consumed, data + consumed + take);
+            consumed += take;
+        }
+
+        if (state.expected != 0 && state.bytes.size() == state.expected) {
+            sections.push_back(state.bytes);
+            state.bytes.clear();
+            state.expected = 0;
+        }
+        return consumed;
+    };
+
+    std::size_t offset = 0;
+    if (info.payloadUnitStart) {
+        if (size == 0) return true;
+        const std::size_t pointer = payload[0];
+        offset = 1;
+        if (offset + pointer > size) {
+            state.bytes.clear();
+            state.expected = 0;
+            return true;
+        }
+
+        if (!state.bytes.empty() && pointer > 0) {
+            appendPartial(payload + offset, pointer);
+        }
+        offset += pointer;
+
+        // pointer_field ends the previous section. If it did not become
+        // complete, discard it rather than joining it with a new section.
+        if (!state.bytes.empty()) {
+            state.bytes.clear();
+            state.expected = 0;
+        }
+    } else {
+        if (state.bytes.empty()) return true;
+        appendPartial(payload, size);
+        return true;
+    }
+
+    while (offset < size) {
+        if (payload[offset] == 0xffU) break;
+        if (size - offset < 3) {
+            state.bytes.assign(payload + offset, payload + size);
+            state.expected = 0;
+            break;
+        }
+
+        const std::size_t sectionLength = static_cast<std::size_t>(
+            ((payload[offset + 1] & 0x0fU) << 8) | payload[offset + 2]);
+        const std::size_t total = 3 + sectionLength;
+        if (total < 3 || total > 4096) {
+            // Invalid/stuffing-like bytes: abandon this payload and wait for
+            // the next payload-unit start instead of stopping the stream.
+            state.bytes.clear();
+            state.expected = 0;
+            break;
+        }
+        if (size - offset >= total) {
+            sections.emplace_back(payload + offset, payload + offset + total);
+            offset += total;
+            continue;
+        }
+
+        state.bytes.assign(payload + offset, payload + size);
+        state.expected = total;
+        break;
+    }
+    return true;
+}
+
+bool Remapper::processCatSection(
+    const std::vector<std::uint8_t>& section,
+    std::string& error) {
+    if (section.size() < 12 || section[0] != 0x01) return true;
+
+    std::array<bool, 8192> found {};
+    if (!addCaPids(section.data() + 8, section.size() - 12, found)) {
         error = "native remap encountered malformed CAT descriptors";
         return false;
     }
-    caPids_ = caPids;
+    for (std::size_t pid = 0; pid < found.size(); ++pid) {
+        if (found[pid]) caPids_[pid] = true;
+    }
     if (remapReady_) {
         allowedPids_[0x01] = true;
         for (std::size_t pid = 0; pid < caPids_.size(); ++pid) {
@@ -186,26 +322,21 @@ bool Remapper::processCat(const Packet& input, std::string& error) {
     return true;
 }
 
-bool Remapper::processPat(const Packet& input, std::string& error) {
-    auto packet = input;
-    std::uint8_t* section = nullptr;
-    std::size_t size = 0;
-    if (!sectionView(packet, 0x00, section, size, error) || !section) return error.empty();
-    if (size < 12) return true;
-    if (section[6] != 0 || section[7] != 0) {
-        error = "native remap does not support multi-section PAT tables";
-        return false;
-    }
+bool Remapper::processPatSection(
+    const std::vector<std::uint8_t>& section,
+    std::string& error) {
+    (void)error;
+    if (section.size() < 12 || section[0] != 0x00) return true;
 
-    transportStreamId_ = static_cast<std::uint16_t>((section[3] << 8) | section[4]);
-    patContinuity_ = static_cast<std::uint8_t>(input[3] & 0x0fU);
-    const std::size_t entriesEnd = size - 4;
+    transportStreamId_ = static_cast<std::uint16_t>(
+        (section[3] << 8) | section[4]);
+    const std::size_t entriesEnd = section.size() - 4;
     std::uint16_t selectedService = 0;
     std::uint16_t selectedPmtPid = 0x1fff;
     for (std::size_t offset = 8; offset + 4 <= entriesEnd; offset += 4) {
         const std::uint16_t service = static_cast<std::uint16_t>(
             (section[offset] << 8) | section[offset + 1]);
-        const std::uint16_t pid = readPid(section + offset + 2);
+        const std::uint16_t pid = readPid(section.data() + offset + 2);
         if (service == 0 || pid == 0 || pid >= 0x1fff) continue;
         if (inputServiceId_ == 0 || inputServiceId_ == service) {
             selectedService = service;
@@ -213,38 +344,68 @@ bool Remapper::processPat(const Packet& input, std::string& error) {
             break;
         }
     }
-    if (selectedService != 0 && (inputServiceId_ != selectedService || pmtPid_ != selectedPmtPid)) {
+
+    // PAT itself may span multiple packets or sections. Do not fail just
+    // because the selected service is not in this particular section.
+    if (selectedService != 0 &&
+        (inputServiceId_ != selectedService || pmtPid_ != selectedPmtPid)) {
         inputServiceId_ = selectedService;
         pmtPid_ = selectedPmtPid;
         inputVideoPid_ = 0;
         inputAudioPid_ = 0;
+        pmtSection_ = {};
+        pmtOutputContinuity_ = 0;
         allowedPids_.fill(false);
         remapReady_ = false;
-    } else if (selectedService == 0 && inputServiceId_ != 0) {
-        error = "native remap input service was not found in the PAT";
-        return false;
     }
     return true;
 }
 
-bool Remapper::processPmt(const Packet& input,
-                          std::vector<Packet>& output,
-                          std::string& error) {
-    const bool wasReady = remapReady_;
-    Packet packet = input;
-    std::uint8_t* section = nullptr;
-    std::size_t size = 0;
-    if (!sectionView(packet, 0x02, section, size, error) || !section) return error.empty();
-    if (size < 16 ||
-        packetPid(packet) != pmtPid_ ||
+void Remapper::packetizeSection(
+    std::uint16_t pid,
+    const std::vector<std::uint8_t>& section,
+    std::uint8_t& continuity,
+    std::vector<Packet>& output) {
+    if (section.empty() || pid >= 0x1fff) return;
+
+    std::size_t offset = 0;
+    bool first = true;
+    while (offset < section.size()) {
+        Packet packet;
+        packet.fill(0xff);
+        packet[0] = kSyncByte;
+        packet[1] = static_cast<std::uint8_t>((pid >> 8) & 0x1fU);
+        if (first) packet[1] |= 0x40U;
+        packet[2] = static_cast<std::uint8_t>(pid);
+        packet[3] = static_cast<std::uint8_t>(0x10U | (continuity & 0x0fU));
+        continuity = static_cast<std::uint8_t>((continuity + 1U) & 0x0fU);
+
+        std::size_t payloadOffset = 4;
+        if (first) {
+            packet[payloadOffset++] = 0; // pointer_field
+        }
+        const std::size_t take = std::min(
+            kPacketSize - payloadOffset, section.size() - offset);
+        std::copy(
+            section.begin() + static_cast<std::ptrdiff_t>(offset),
+            section.begin() + static_cast<std::ptrdiff_t>(offset + take),
+            packet.begin() + static_cast<std::ptrdiff_t>(payloadOffset));
+        offset += take;
+        output.push_back(std::move(packet));
+        first = false;
+    }
+}
+
+bool Remapper::processPmtSection(
+    std::vector<std::uint8_t> section,
+    std::vector<Packet>& output,
+    std::string& error) {
+    if (section.size() < 16 || section[0] != 0x02 ||
         static_cast<std::uint16_t>((section[3] << 8) | section[4]) != inputServiceId_) {
         return true;
     }
-    if (section[6] != 0 || section[7] != 0) {
-        error = "native remap does not support multi-section PMT tables";
-        return false;
-    }
 
+    const bool wasReady = remapReady_;
     std::array<bool, 8192> allowed {};
     allowed[0] = true;
     allowed[0x01] = true;
@@ -254,17 +415,18 @@ bool Remapper::processPmt(const Packet& input,
     for (std::size_t pid = 0; pid < caPids_.size(); ++pid) {
         if (caPids_[pid]) allowed[pid] = true;
     }
+
     std::uint16_t inputVideo = 0;
     std::uint16_t inputAudio = 0;
-
-    const std::size_t end = size - 4;
-    std::uint16_t pcrPid = readPid(section + 8);
+    const std::size_t end = section.size() - 4;
+    std::uint16_t pcrPid = readPid(section.data() + 8);
     if (pcrPid < 0x1fff) allowed[pcrPid] = true;
+
     const std::size_t programInfoLength = static_cast<std::size_t>(
         ((section[10] & 0x0fU) << 8) | section[11]);
     std::size_t offset = 12;
     if (offset + programInfoLength > end ||
-        !addCaPids(section + offset, programInfoLength, allowed)) {
+        !addCaPids(section.data() + offset, programInfoLength, allowed)) {
         error = "native remap encountered malformed PMT program descriptors";
         return false;
     }
@@ -272,17 +434,17 @@ bool Remapper::processPmt(const Packet& input,
 
     while (offset + 5 <= end) {
         const std::uint8_t streamType = section[offset];
-        std::uint16_t pid = readPid(section + offset + 1);
+        std::uint16_t pid = readPid(section.data() + offset + 1);
         const std::size_t infoLength = static_cast<std::size_t>(
             ((section[offset + 3] & 0x0fU) << 8) | section[offset + 4]);
         if (offset + 5 + infoLength > end) {
             error = "native remap encountered malformed PMT elementary stream data";
             return false;
         }
-        allowed[pid] = true;
+        if (pid < allowed.size()) allowed[pid] = true;
         if (inputVideo == 0 && isVideo(streamType)) inputVideo = pid;
         if (inputAudio == 0 && isAudio(streamType)) inputAudio = pid;
-        if (!addCaPids(section + offset + 5, infoLength, allowed)) {
+        if (!addCaPids(section.data() + offset + 5, infoLength, allowed)) {
             error = "native remap encountered malformed elementary stream descriptors";
             return false;
         }
@@ -292,6 +454,7 @@ bool Remapper::processPmt(const Packet& input,
         error = "native remap encountered trailing bytes in PMT";
         return false;
     }
+
     if ((config_.outputVideoPid != 0 && inputVideo == 0) ||
         (config_.outputAudioPid != 0 && inputAudio == 0)) {
         error = "native remap requested an audio or video PID absent from the selected PMT";
@@ -314,19 +477,29 @@ bool Remapper::processPmt(const Packet& input,
     inputAudioPid_ = inputAudio;
     section[3] = static_cast<std::uint8_t>(config_.outputServiceId >> 8);
     section[4] = static_cast<std::uint8_t>(config_.outputServiceId);
-    if (pcrPid == inputVideo && config_.outputVideoPid != 0) pcrPid = config_.outputVideoPid;
-    if (pcrPid == inputAudio && config_.outputAudioPid != 0) pcrPid = config_.outputAudioPid;
-    writePid(section + 8, pcrPid);
+
+    if (pcrPid == inputVideo && config_.outputVideoPid != 0) {
+        pcrPid = config_.outputVideoPid;
+    }
+    if (pcrPid == inputAudio && config_.outputAudioPid != 0) {
+        pcrPid = config_.outputAudioPid;
+    }
+    writePid(section.data() + 8, pcrPid);
+
     offset = 12 + programInfoLength;
     while (offset + 5 <= end) {
-        std::uint16_t pid = readPid(section + offset + 1);
-        if (pid == inputVideo && config_.outputVideoPid != 0) pid = config_.outputVideoPid;
-        if (pid == inputAudio && config_.outputAudioPid != 0) pid = config_.outputAudioPid;
-        writePid(section + offset + 1, pid);
+        std::uint16_t pid = readPid(section.data() + offset + 1);
+        if (pid == inputVideo && config_.outputVideoPid != 0) {
+            pid = config_.outputVideoPid;
+        }
+        if (pid == inputAudio && config_.outputAudioPid != 0) {
+            pid = config_.outputAudioPid;
+        }
+        writePid(section.data() + offset + 1, pid);
         offset += 5 + static_cast<std::size_t>(
             ((section[offset + 3] & 0x0fU) << 8) | section[offset + 4]);
     }
-    writeCrc(section, size);
+    writeCrc(section.data(), section.size());
 
     if (config_.outputVideoPid != 0 && config_.outputVideoPid != inputVideo) {
         allowed[config_.outputVideoPid] = true;
@@ -336,28 +509,30 @@ bool Remapper::processPmt(const Packet& input,
         allowed[config_.outputAudioPid] = true;
         allowed[inputAudio] = false;
     }
+
     allowedPids_ = allowed;
     remapReady_ = true;
-    if (!wasReady) output.push_back(makePat(patContinuity_));
-    output.push_back(packet);
+    if (!wasReady) {
+        output.push_back(makePat(patOutputContinuity_));
+        patOutputContinuity_ =
+            static_cast<std::uint8_t>((patOutputContinuity_ + 1U) & 0x0fU);
+    }
+    packetizeSection(pmtPid_, section, pmtOutputContinuity_, output);
     return true;
 }
 
-bool Remapper::processSdt(const Packet& input, Packet& output, std::string& error) {
-    auto packet = input;
-    std::uint8_t* section = nullptr;
-    std::size_t size = 0;
-    if (!sectionView(packet, 0x42, section, size, error)) return false;
-    if (!section) {
-        output = packet;
-        return true;
-    }
-    if (size < 15) {
-        output = packet;
-        return true;
-    }
-    originalNetworkId_ = static_cast<std::uint16_t>((section[8] << 8) | section[9]);
-    output = makeSdt(static_cast<std::uint8_t>(input[3] & 0x0fU));
+bool Remapper::processSdtSection(
+    const std::vector<std::uint8_t>& section,
+    std::vector<Packet>& output,
+    std::string& error) {
+    (void)error;
+    if (section.size() < 15 || section[0] != 0x42) return true;
+
+    originalNetworkId_ = static_cast<std::uint16_t>(
+        (section[8] << 8) | section[9]);
+    output.push_back(makeSdt(sdtOutputContinuity_));
+    sdtOutputContinuity_ =
+        static_cast<std::uint8_t>((sdtOutputContinuity_ + 1U) & 0x0fU);
     return true;
 }
 
@@ -449,42 +624,77 @@ bool Remapper::process(const Packet& input, std::vector<Packet>& output, std::st
         error = "native remapper is not initialized";
         return false;
     }
+
     PacketInfo info;
     if (!inspectPacket(input.data(), input.size(), info)) {
         error = "native remapper received an invalid MPEG-TS packet";
         return false;
     }
 
-    if (info.pid == 0) {
-        if (!processPat(input, error)) return false;
-        if (remapReady_) output.push_back(makePat(info.continuityCounter));
+    std::vector<std::vector<std::uint8_t>> sections;
+    if (info.pid == 0x0000) {
+        if (!collectSections(input, patSection_, sections, error)) return false;
+        bool sawPat = false;
+        for (const auto& section : sections) {
+            if (!section.empty() && section[0] == 0x00) {
+                sawPat = true;
+                if (!processPatSection(section, error)) return false;
+            }
+        }
+        if (remapReady_ && sawPat) {
+            output.push_back(makePat(patOutputContinuity_));
+            patOutputContinuity_ =
+                static_cast<std::uint8_t>((patOutputContinuity_ + 1U) & 0x0fU);
+        }
         return true;
     }
-    if (info.pid == 0x01) {
-        if (!processCat(input, error)) return false;
+
+    if (info.pid == 0x0001) {
+        if (!collectSections(input, catSection_, sections, error)) return false;
+        for (const auto& section : sections) {
+            if (!processCatSection(section, error)) return false;
+        }
+        // Keep the broadcaster's complete CAT packets. This preserves EMM
+        // descriptors while the assembled copy above learns their PIDs.
         if (remapReady_) output.push_back(input);
         return true;
     }
+
     if (info.pid == pmtPid_ && pmtPid_ != 0x1fff) {
-        return processPmt(input, output, error);
-    }
-    if (!remapReady_) return true;
-    const bool mappedMediaPid = info.pid == inputVideoPid_ || info.pid == inputAudioPid_;
-    if (!isAllowed(info.pid) && !mappedMediaPid) return true;
-    if (info.pid == 0x11) {
-        Packet rewritten;
-        if (!processSdt(input, rewritten, error)) return false;
-        if (rewritten[0] == kSyncByte) output.push_back(std::move(rewritten));
+        if (!collectSections(input, pmtSection_, sections, error)) return false;
+        for (auto& section : sections) {
+            if (!processPmtSection(std::move(section), output, error)) return false;
+        }
         return true;
     }
+
+    if (!remapReady_) return true;
+
+    if (info.pid == 0x0011) {
+        if (!collectSections(input, sdtSection_, sections, error)) return false;
+        for (const auto& section : sections) {
+            if (!processSdtSection(section, output, error)) return false;
+        }
+        return true;
+    }
+
+    const bool mappedMediaPid =
+        info.pid == inputVideoPid_ || info.pid == inputAudioPid_;
+    if (!isAllowed(info.pid) && !mappedMediaPid) return true;
 
     Packet packet = input;
     std::uint16_t mappedPid = info.pid;
     if (info.pid != 0x1fff && config_.outputVideoPid != 0 &&
-        info.pid == inputVideoPid_) mappedPid = config_.outputVideoPid;
+        info.pid == inputVideoPid_) {
+        mappedPid = config_.outputVideoPid;
+    }
     if (info.pid != 0x1fff && config_.outputAudioPid != 0 &&
-        info.pid == inputAudioPid_) mappedPid = config_.outputAudioPid;
-    if (info.pid != mappedPid) rewritePid(packet.data(), packet.size(), mappedPid);
+        info.pid == inputAudioPid_) {
+        mappedPid = config_.outputAudioPid;
+    }
+    if (info.pid != mappedPid) {
+        rewritePid(packet.data(), packet.size(), mappedPid);
+    }
     output.push_back(std::move(packet));
     return true;
 }
