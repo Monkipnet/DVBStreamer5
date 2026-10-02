@@ -10,9 +10,10 @@
 
 namespace dvbstreamer5::media::mpegts {
 
-// WISI Chameleon compatibility: send one 188-byte MPEG-TS packet per
-// UDP datagram. RTP keeps its own packetizer and is unaffected.
-inline constexpr std::size_t kPacketsPerCbrDatagram = 1;
+// WISI Chameleon exposes TS packets/datagram separately from the 188-byte
+// MPEG-TS packet size. Seven 188-byte TS packets (1316-byte UDP payload) is
+// the interoperable MPEG-over-UDP default; receivers may configure lower.
+inline constexpr std::size_t kPacketsPerCbrDatagram = 7;
 using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
 
 class CbrTsPacer {
