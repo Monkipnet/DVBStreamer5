@@ -596,6 +596,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         hlsConfig.liveWindowSegments = 6;
         hlsConfig.archiveEnabled = streamConfig.hlsArchiveEnabled;
         hlsConfig.archiveHours = streamConfig.hlsArchiveHours;
+        hlsConfig.independentSegments =
+            streamConfig.transcodeEnabled &&
+            toLower(streamConfig.transcodeVideoCodec) != "copy";
         hlsConfig.encryption = toLower(streamConfig.hlsEncryption);
         hlsConfig.keyUri = streamConfig.hlsEncryptionKeyUri;
         hlsConfig.hasKey = dvbstreamer5::media::hls::parseHexKey16(streamConfig.hlsEncryptionKeyHex, hlsConfig.key);
