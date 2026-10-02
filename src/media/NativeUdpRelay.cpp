@@ -238,6 +238,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     }
     inputBytes_.store(0, std::memory_order_relaxed);
     httpReceivedBytes_.store(0, std::memory_order_relaxed);
+    selectedInputBytes_.store(0, std::memory_order_relaxed);
     outputBytes_.store(0, std::memory_order_relaxed);
     payloadOutputBytes_.store(0, std::memory_order_relaxed);
     continuityErrors_.store(0, std::memory_order_relaxed);
@@ -418,6 +419,10 @@ std::uint64_t NativeUdpRelay::sourceInputBytes() const noexcept {
         return httpReceivedBytes_.load(std::memory_order_relaxed);
     }
     return inputBytes_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t NativeUdpRelay::selectedInputBytes() const noexcept {
+    return selectedInputBytes_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t NativeUdpRelay::outputBytes() const noexcept {
@@ -1019,6 +1024,22 @@ void NativeUdpRelay::run() {
                 }
             }
             if (!running_.load(std::memory_order_acquire)) break;
+        }
+
+        if (!packets.empty()) {
+            // This counter represents the selected service entering the output
+            // pipeline. Shared DVB receives the complete transponder, but after
+            // PAT/PMT remap only this service's non-null packets count here.
+            // Count before transcoding so "Bitrate In" remains an input metric.
+            std::size_t selectedNonNullPackets = 0;
+            for (const auto& packet : packets) {
+                const std::uint16_t pid = static_cast<std::uint16_t>(
+                    ((packet[1] & 0x1fU) << 8) | packet[2]);
+                if (pid != 0x1fffU) ++selectedNonNullPackets;
+            }
+            selectedInputBytes_.fetch_add(
+                selectedNonNullPackets * dvbstreamer5::media::mpegts::kPacketSize,
+                std::memory_order_relaxed);
         }
 
         if (!packets.empty() && (config_.transformTransport || config_.observeInputTransport)) {
