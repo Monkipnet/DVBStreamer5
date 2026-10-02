@@ -58,9 +58,16 @@ public:
     // duplicated compressed-video samples.
     using DecodedVideoObserver =
         std::function<void(std::shared_ptr<const codec::RawVideoFrame>)>;
+    using EncodedAudioObserver =
+        std::function<void(const codec::EncodedAudioFrame&, std::uint64_t)>;
     void setExternalVideoInput(bool enabled);
     void setDecodedVideoObserver(DecodedVideoObserver observer);
     bool pushDecodedVideoFrame(std::shared_ptr<const codec::RawVideoFrame> frame);
+    void setExternalAudioInput(bool enabled);
+    void setEncodedAudioObserver(EncodedAudioObserver observer);
+    bool pushEncodedAudioFrame(const codec::EncodedAudioFrame& frame,
+                               std::uint64_t duration90k);
+    bool pollOutput(std::vector<std::uint8_t>& output, std::string& error);
 
     std::string status() const;
 
@@ -113,6 +120,7 @@ private:
     mutable std::mutex audioQueueMutex_;
     mutable std::mutex muxQueueMutex_;
     mutable std::mutex decodedVideoObserverMutex_;
+    mutable std::mutex encodedAudioObserverMutex_;
     std::condition_variable videoQueueCv_;
     std::condition_variable audioQueueCv_;
     std::condition_variable idleCv_;
@@ -132,10 +140,12 @@ private:
     std::atomic<bool> muxWorkerActive_{false};
     std::atomic<bool> videoResetRequested_{false};
     std::atomic<bool> externalVideoInput_{false};
+    std::atomic<bool> externalAudioInput_{false};
     bool videoDropUntilRandomAccess_ = false;
     std::uint64_t droppedVideoSamples_ = 0;
     std::uint64_t droppedExternalVideoFrames_ = 0;
     DecodedVideoObserver decodedVideoObserver_;
+    EncodedAudioObserver encodedAudioObserver_;
     std::uint64_t droppedAudioSamples_ = 0;
     std::atomic<std::uint64_t> muxedVideoSamples_{0};
     std::atomic<std::uint64_t> muxedAudioSamples_{0};
