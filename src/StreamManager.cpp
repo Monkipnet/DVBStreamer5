@@ -996,6 +996,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
 void StreamManager::monitorNativeStream(StreamState* state) {
     uint64_t lastIn = 0, lastOut = 0, lastPayloadOut = 0, lastCc = 0;
+    const bool selectedDvbService =
+        DvbSatellite::isDvbUri(state->config.inputUri) &&
+        state->config.inputServiceId > 0;
     std::array<std::uint64_t, 5> inputRateWindow{};
     std::array<std::uint64_t, 5> payloadRateWindow{};
     std::size_t rateWindowIndex = 0;
@@ -1006,7 +1009,12 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         if (state->monitorStop.load()) break;
         auto* relay = state->nativeRelay.get();
         if (!relay) break;
-        const uint64_t in = relay->sourceInputBytes();
+        // A shared DVB relay is fed with the complete multiplex. For a
+        // configured service the tile must show that service's post-remap,
+        // non-null bitrate rather than the 40-80 Mbit/s transponder rate.
+        const uint64_t in = selectedDvbService
+            ? relay->selectedInputBytes()
+            : relay->sourceInputBytes();
         const uint64_t payloadOut = relay->payloadOutputBytes();
         uint64_t out = relay->outputBytes();
         for (const auto& output : state->nativeSrtOutputs) if (output) out += output->sentBytes();
@@ -1027,10 +1035,15 @@ void StreamManager::monitorNativeStream(StreamState* state) {
             inputWindowBytes += inputRateWindow[i];
             payloadWindowBytes += payloadRateWindow[i];
         }
-        state->inputBitrate.store((inputWindowBytes * 8U) / rateWindowSamples);
+        const uint64_t inputRate = (inputWindowBytes * 8U) / rateWindowSamples;
+        const uint64_t payloadRate = (payloadWindowBytes * 8U) / rateWindowSamples;
+        state->inputBitrate.store(inputRate);
         const uint64_t outRate = (out - lastOut) * 8;
-        state->outputBitrate.store(outRate ? outRate : state->inputBitrate.load());
-        state->outputPayloadBitrate.store((payloadWindowBytes * 8U) / rateWindowSamples);
+        // Outputs such as an SRT listener can have zero sentBytes until a
+        // receiver connects. Never fall back to the raw DVB multiplex rate;
+        // use the channel pipeline bitrate instead.
+        state->outputBitrate.store(outRate ? outRate : payloadRate);
+        state->outputPayloadBitrate.store(payloadRate);
         ++monitorTicks;
         if (state->config.transcodeEnabled && (monitorTicks % 5U) == 0U) {
             std::cerr << "NATIVE RATE stream=" << state->config.name
