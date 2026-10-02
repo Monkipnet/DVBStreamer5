@@ -90,6 +90,9 @@ public:
                         std::vector<EncodedVideoFrame>& output,
                         std::string& error) = 0;
     virtual bool flush(std::vector<EncodedVideoFrame>& output, std::string& error) = 0;
+    // Hardware encoders may accept a source geometry that differs from the
+    // configured output geometry and perform scaling on-device.
+    virtual bool supportsNativeScaling() const noexcept { return false; }
 };
 
 class AudioDecoder {
