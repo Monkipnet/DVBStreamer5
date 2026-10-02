@@ -22,6 +22,7 @@ public:
     int subscribe(std::string& error);
     void unsubscribe(int readFd);
     void publish(const std::uint8_t* data, std::size_t size);
+    std::size_t subscriberCount();
     void close();
 
 private:
