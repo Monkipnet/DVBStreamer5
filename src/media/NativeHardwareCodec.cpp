@@ -10,6 +10,9 @@
 #include <dlfcn.h>
 #include <cctype>
 #include <unistd.h>
+#if defined(__linux__)
+#include <fcntl.h>
+#endif
 #include <iostream>
 #include <memory>
 #include <string>
@@ -21,7 +24,6 @@
 #endif
 
 #if defined(DVBSTREAMER5_HAVE_VAAPI)
-#include <fcntl.h>
 #include <va/va.h>
 #include <va/va_drm.h>
 #include <va/va_enc_h264.h>
@@ -1194,7 +1196,7 @@ public:
         if (const char* gpu = std::getenv("DVBSTREAMER5_NVENC_GPU")) {
             char* end = nullptr;
             const long value = std::strtol(gpu, &end, 10);
-            if (!end || *end != '\0' || value < 0 || value > 1024) {
+            if (!end || end == gpu || *end != '\0' || value < 0 || value > 1024) {
                 error = "DVBSTREAMER5_NVENC_GPU must be a non-negative GPU ordinal";
                 return false;
             }
@@ -1227,8 +1229,13 @@ public:
         NV_ENC_CONFIG cfg{}; cfg.version = NV_ENC_CONFIG_VER;
         NV_ENC_PRESET_CONFIG preset{}; preset.version = NV_ENC_PRESET_CONFIG_VER;
         preset.presetCfg.version = NV_ENC_CONFIG_VER;
+#if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+        GUID presetGuid = NV_ENC_PRESET_P3_GUID;
+        const char* presetName = "p3";
+#else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
+#endif
         bool modernLowLatency = false;
         bool presetLoaded = false;
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
