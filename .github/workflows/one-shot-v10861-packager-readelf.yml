@@ -1,0 +1,38 @@
+name: V10.8.61 packager readelf fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-v10861-packager-readelf.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply V10.8.61
+        shell: bash
+        run: |
+          python3 -c 'from pathlib import Path; p=Path("scripts/make_portable_linux_bundle.sh"); s=p.read_text(); old="readelf -Ws \"$NEWCAMD_PLUGIN\" | grep -q '\''dvbstreamer5_ca_backend_get_api_v1'\'' || fail \"Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point\""; new="readelf -Ws \"$NEWCAMD_PLUGIN\" | grep -F '\''dvbstreamer5_ca_backend_get_api_v1'\'' >/dev/null || fail \"Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point\""; assert s.count(old)==1, s.count(old); p.write_text(s.replace(old,new,1))'
+          python3 -c 'from pathlib import Path; p=Path("src/AppVersion.h"); s=p.read_text(); old="kProgramVersion = \"10.8.60\""; new="kProgramVersion = \"10.8.61\""; assert s.count(old)==1, s.count(old); p.write_text(s.replace(old,new,1))'
+
+          bash -n scripts/make_portable_linux_bundle.sh
+          grep -F "grep -F 'dvbstreamer5_ca_backend_get_api_v1' >/dev/null" scripts/make_portable_linux_bundle.sh
+          grep -F 'kProgramVersion = "10.8.61"' src/AppVersion.h
+          git diff --check
+
+          rm -f .github/workflows/one-shot-v10861-packager-readelf.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name Monkipnet
+          git config user.email monkipnet@yandex.ru
+          git add -A
+          git commit -m 'V10.8.61 fix Newcamd packager symbol check under pipefail'
+          git push origin HEAD:main
