@@ -118,7 +118,7 @@ for plugin in "${PLUGINS[@]}"; do
     install -m 0644 "$plugin" "$STAGE/ca-plugins/$(basename -- "$plugin")"
 done
 [[ -n "$NEWCAMD_PLUGIN" ]] || fail "mandatory Newcamd plugin was not built: $BUILD_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
-readelf -Ws "$NEWCAMD_PLUGIN" | grep -q 'dvbstreamer5_ca_backend_get_api_v1' || fail "Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point"
+readelf -Ws "$NEWCAMD_PLUGIN" | grep -F 'dvbstreamer5_ca_backend_get_api_v1' >/dev/null || fail "Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point"
 
 OSCAM_SOURCE=""
 if [[ "$INCLUDE_OSCAM" != no ]]; then
