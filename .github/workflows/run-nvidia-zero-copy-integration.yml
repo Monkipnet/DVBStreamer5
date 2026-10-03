@@ -1,6 +1,5 @@
 name: V10.8.40 Intel zero-copy source integration
 
-# retry after real oneVPL enum/type diagnostics
 on:
   push:
     branches:
@@ -28,35 +27,7 @@ jobs:
       - name: Integrate V10.8.40
         run: |
           python3 .github/scripts/v10_8_40_patch.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/media/NativeIntelZeroCopy.cpp')
-          s = p.read_text()
-          s = s.replace(
-              '''        outputPicStruct_ = config_.deinterlace
-            ? MFX_PICSTRUCT_PROGRESSIVE
-            : (info.PicStruct ? info.PicStruct : MFX_PICSTRUCT_PROGRESSIVE);
-''',
-              '''        outputPicStruct_ = config_.deinterlace
-            ? static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE)
-            : (info.PicStruct != 0
-                ? info.PicStruct
-                : static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE));
-''')
-          s = s.replace(
-              '''        bitstream.TimeStamp = hasPts
-            ? static_cast<mfxU64>(pts90k)
-            : MFX_TIMESTAMP_UNKNOWN;
-''',
-              '''        bitstream.TimeStamp = hasPts
-            ? static_cast<mfxU64>(pts90k)
-            : std::numeric_limits<mfxU64>::max();
-''')
-          s = s.replace(
-              '        encoded.hasPts = bitstream.TimeStamp != MFX_TIMESTAMP_UNKNOWN;\n',
-              '        encoded.hasPts = bitstream.TimeStamp != std::numeric_limits<mfxU64>::max();\n')
-          p.write_text(s)
-          PY
+          python3 -c 'from pathlib import Path; p=Path("src/media/NativeIntelZeroCopy.cpp"); s=p.read_text(); s=s.replace("        outputPicStruct_ = config_.deinterlace\n            ? MFX_PICSTRUCT_PROGRESSIVE\n            : (info.PicStruct ? info.PicStruct : MFX_PICSTRUCT_PROGRESSIVE);\n", "        outputPicStruct_ = config_.deinterlace\n            ? static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE)\n            : (info.PicStruct != 0\n                ? info.PicStruct\n                : static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE));\n"); s=s.replace("        bitstream.TimeStamp = hasPts\n            ? static_cast<mfxU64>(pts90k)\n            : MFX_TIMESTAMP_UNKNOWN;\n", "        bitstream.TimeStamp = hasPts\n            ? static_cast<mfxU64>(pts90k)\n            : std::numeric_limits<mfxU64>::max();\n"); s=s.replace("        encoded.hasPts = bitstream.TimeStamp != MFX_TIMESTAMP_UNKNOWN;\n", "        encoded.hasPts = bitstream.TimeStamp != std::numeric_limits<mfxU64>::max();\n"); p.write_text(s)'
           git diff --check
 
       - name: Syntax compile Intel zero-copy
