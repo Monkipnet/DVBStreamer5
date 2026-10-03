@@ -1,0 +1,26 @@
+name: Check NVENC syntax
+
+on:
+  push:
+    paths:
+      - .github/workflows/check-nvenc-syntax.yml
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Syntax check against NVENC SDK 11.1 and current headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/nv11 /tmp/nvcurrent
+          curl -fsSL https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/n11.1.5.2/include/ffnvcodec/nvEncodeAPI.h -o /tmp/nv11/nvEncodeAPI.h
+          curl -fsSL https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/master/include/ffnvcodec/nvEncodeAPI.h -o /tmp/nvcurrent/nvEncodeAPI.h
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 -Isrc -I/tmp/nv11 -fsyntax-only src/media/NativeHardwareCodec.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 -Isrc -I/tmp/nvcurrent -fsyntax-only src/media/NativeHardwareCodec.cpp
