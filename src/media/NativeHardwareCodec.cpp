@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <cctype>
@@ -1188,9 +1189,25 @@ public:
         if (width <= 0 || height <= 0 || (width & 1) || (height & 1)) {
             error = "NVENC requires positive even dimensions"; return false;
         }
+
+        gpuOrdinal_ = 0;
+        if (const char* gpu = std::getenv("DVBSTREAMER5_NVENC_GPU")) {
+            char* end = nullptr;
+            const long value = std::strtol(gpu, &end, 10);
+            if (!end || *end != '\0' || value < 0 || value > 1024) {
+                error = "DVBSTREAMER5_NVENC_GPU must be a non-negative GPU ordinal";
+                return false;
+            }
+            gpuOrdinal_ = static_cast<int>(value);
+        }
+
         if (!loadCuda(error) || !loadNvenc(error)) { close(); return false; }
-        if (cuInit_(0) != 0 || cuDeviceGet_(&device_, 0) != 0 || cuCtxCreate_(&cudaContext_, 0, device_) != 0) {
-            error = "CUDA context creation failed"; close(); return false;
+        if (cuInit_(0) != 0 ||
+            cuDeviceGet_(&device_, gpuOrdinal_) != 0 ||
+            cuCtxCreate_(&cudaContext_, 0, device_) != 0) {
+            error = "CUDA context creation failed for GPU ordinal " +
+                std::to_string(gpuOrdinal_);
+            close(); return false;
         }
         NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS open{};
         open.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
@@ -1201,29 +1218,87 @@ public:
             error = "NVENC open session failed"; close(); return false;
         }
 
+        const GUID codecGuid = codec_ == mpegts::ElementaryCodec::H264
+            ? NV_ENC_CODEC_H264_GUID : NV_ENC_CODEC_HEVC_GUID;
+        if (!validateCapabilities(codecGuid, error)) {
+            close(); return false;
+        }
+
         NV_ENC_CONFIG cfg{}; cfg.version = NV_ENC_CONFIG_VER;
         NV_ENC_PRESET_CONFIG preset{}; preset.version = NV_ENC_PRESET_CONFIG_VER;
         preset.presetCfg.version = NV_ENC_CONFIG_VER;
-        const GUID codecGuid = codec_ == mpegts::ElementaryCodec::H264 ? NV_ENC_CODEC_H264_GUID : NV_ENC_CODEC_HEVC_GUID;
-#if defined(NV_ENC_PRESET_P1_GUID)
-        const GUID presetGuid = NV_ENC_PRESET_P1_GUID;
-#else
-        const GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
+        GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
+        const char* presetName = "legacy-low-latency-hp";
+        bool modernLowLatency = false;
+        bool presetLoaded = false;
+#if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+        if (api_.nvEncGetEncodePresetConfigEx) {
+            const GUID p3 = NV_ENC_PRESET_P3_GUID;
+            if (api_.nvEncGetEncodePresetConfigEx(
+                    encoder_, codecGuid, p3,
+                    NV_ENC_TUNING_INFO_LOW_LATENCY,
+                    &preset) == NV_ENC_SUCCESS) {
+                presetGuid = p3;
+                presetName = "p3";
+                modernLowLatency = true;
+                presetLoaded = true;
+            }
+        }
 #endif
-        if (api_.nvEncGetEncodePresetConfig(encoder_, codecGuid, presetGuid, &preset) == NV_ENC_SUCCESS)
-            cfg = preset.presetCfg;
+        if (!presetLoaded) {
+            preset = {};
+            preset.version = NV_ENC_PRESET_CONFIG_VER;
+            preset.presetCfg.version = NV_ENC_CONFIG_VER;
+            if (!api_.nvEncGetEncodePresetConfig ||
+                api_.nvEncGetEncodePresetConfig(
+                    encoder_, codecGuid, presetGuid,
+                    &preset) != NV_ENC_SUCCESS) {
+                error = "NVENC low-latency preset configuration unavailable";
+                close(); return false;
+            }
+        }
+        cfg = preset.presetCfg;
         cfg.version = NV_ENC_CONFIG_VER;
         cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
-        cfg.rcParams.averageBitRate = static_cast<std::uint32_t>(std::min<std::uint64_t>(bitrate, 0xffffffffULL));
+        cfg.rcParams.averageBitRate = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(bitrate, 0xffffffffULL));
         cfg.rcParams.maxBitRate = cfg.rcParams.averageBitRate;
         fps_ = fps > 0.0 ? fps : 25.0;
         gopFrames_ = std::max<std::uint64_t>(
             1ULL, static_cast<std::uint64_t>(std::llround(fps_ * 2.0)));
         cfg.gopLength = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(gopFrames_, 0xffffffffULL));
-        // Live profile: no B-frames/reorder delay. Every GOP boundary is
-        // also explicitly forced to IDR below, with codec parameter sets.
+
+        // Live contribution profile: no B frames, no lookahead and no
+        // reorder delay. A two-frame VBV keeps latency bounded without
+        // starving forced IDR frames at normal broadcast bitrates.
         cfg.frameIntervalP = 1;
+        cfg.rcParams.enableLookahead = 0;
+        cfg.rcParams.zeroReorderDelay = 1;
+        cfg.rcParams.enableAQ = 1;
+        cfg.rcParams.aqStrength = 8;
+#if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+        cfg.rcParams.multiPass = NV_ENC_MULTI_PASS_DISABLED;
+#endif
+        const std::uint64_t roundedFps = std::max<std::uint64_t>(
+            1ULL, static_cast<std::uint64_t>(std::llround(fps_)));
+        const std::uint64_t frameBudgetBits = std::max<std::uint64_t>(
+            1ULL, static_cast<std::uint64_t>(cfg.rcParams.averageBitRate) /
+                roundedFps);
+        const std::uint64_t vbvBits = std::min<std::uint64_t>(
+            0xffffffffULL, frameBudgetBits * 2ULL);
+        cfg.rcParams.vbvBufferSize = static_cast<std::uint32_t>(vbvBits);
+        cfg.rcParams.vbvInitialDelay = cfg.rcParams.vbvBufferSize;
+
+        if (codec_ == mpegts::ElementaryCodec::H264) {
+            cfg.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
+            cfg.encodeCodecConfig.h264Config.outputAUD = 1;
+            cfg.encodeCodecConfig.h264Config.idrPeriod = cfg.gopLength;
+        } else {
+            cfg.encodeCodecConfig.hevcConfig.repeatSPSPPS = 1;
+            cfg.encodeCodecConfig.hevcConfig.outputAUD = 1;
+            cfg.encodeCodecConfig.hevcConfig.idrPeriod = cfg.gopLength;
+        }
 
         NV_ENC_INITIALIZE_PARAMS init{};
         init.version = NV_ENC_INITIALIZE_PARAMS_VER;
@@ -1237,6 +1312,10 @@ public:
             std::max(1.0, std::round(fps_)));
         init.frameRateDen = 1;
         init.enablePTD = 1;
+#if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+        if (modernLowLatency)
+            init.tuningInfo = NV_ENC_TUNING_INFO_LOW_LATENCY;
+#endif
         init.maxEncodeWidth = width;
         init.maxEncodeHeight = height;
         init.encodeConfig = &cfg;
@@ -1264,6 +1343,12 @@ public:
                   << " size=" << width_ << "x" << height_
                   << " fps=" << fps_
                   << " bitrate_kbps=" << (bitrate / 1000ULL)
+                  << " gpu=" << gpuOrdinal_
+                  << " preset=" << presetName
+                  << " tuning=" << (modernLowLatency ? "low-latency" : "legacy-low-latency")
+                  << " rc=cbr"
+                  << " bframes=0 lookahead=0 reorder_delay=0"
+                  << " vbv_frames=2 spatial_aq=1 aq_strength=8"
                   << " gop_frames=" << gopFrames_
                   << " live_random_access=force-idr+spspps"
                   << std::endl;
@@ -1333,6 +1418,86 @@ private:
     using CuDeviceGet = CUresult (*)(CUdevice*, int);
     using CuCtxCreate = CUresult (*)(CUcontext*, unsigned int, CUdevice);
     using CuCtxDestroy = CUresult (*)(CUcontext);
+
+    static bool sameGuid(const GUID& a, const GUID& b) noexcept {
+        return a.Data1 == b.Data1 && a.Data2 == b.Data2 &&
+            a.Data3 == b.Data3 &&
+            std::memcmp(a.Data4, b.Data4, sizeof(a.Data4)) == 0;
+    }
+
+    bool validateCapabilities(const GUID& codecGuid, std::string& error) {
+        if (!api_.nvEncGetEncodeGUIDCount || !api_.nvEncGetEncodeGUIDs ||
+            !api_.nvEncGetInputFormatCount || !api_.nvEncGetInputFormats) {
+            error = "NVENC capability query functions missing";
+            return false;
+        }
+
+        std::uint32_t guidCount = 0;
+        if (api_.nvEncGetEncodeGUIDCount(encoder_, &guidCount) != NV_ENC_SUCCESS ||
+            guidCount == 0) {
+            error = "NVENC did not report any encode codecs";
+            return false;
+        }
+        std::vector<GUID> guids(guidCount);
+        std::uint32_t actualGuidCount = 0;
+        if (api_.nvEncGetEncodeGUIDs(
+                encoder_, guids.data(), guidCount,
+                &actualGuidCount) != NV_ENC_SUCCESS) {
+            error = "NVENC encode codec capability query failed";
+            return false;
+        }
+        bool codecSupported = false;
+        for (std::uint32_t i = 0;
+             i < std::min(guidCount, actualGuidCount); ++i) {
+            if (sameGuid(guids[i], codecGuid)) {
+                codecSupported = true;
+                break;
+            }
+        }
+        if (!codecSupported) {
+            error = std::string("NVENC GPU does not support requested ") +
+                (codec_ == mpegts::ElementaryCodec::H264 ? "H.264" : "HEVC") +
+                " encoder";
+            return false;
+        }
+
+        std::uint32_t formatCount = 0;
+        if (api_.nvEncGetInputFormatCount(
+                encoder_, codecGuid, &formatCount) != NV_ENC_SUCCESS ||
+            formatCount == 0) {
+            error = "NVENC input format capability query failed";
+            return false;
+        }
+        std::vector<NV_ENC_BUFFER_FORMAT> formats(formatCount);
+        std::uint32_t actualFormatCount = 0;
+        if (api_.nvEncGetInputFormats(
+                encoder_, codecGuid, formats.data(), formatCount,
+                &actualFormatCount) != NV_ENC_SUCCESS) {
+            error = "NVENC input format list query failed";
+            return false;
+        }
+        bool nv12 = false;
+        for (std::uint32_t i = 0;
+             i < std::min(formatCount, actualFormatCount); ++i) {
+            if (formats[i] == NV_ENC_BUFFER_FORMAT_NV12) {
+                nv12 = true;
+                break;
+            }
+        }
+        if (!nv12) {
+            error = "NVENC GPU does not support NV12 input for requested codec";
+            return false;
+        }
+
+        std::cerr << "NATIVE NVENC CAPABILITIES gpu=" << gpuOrdinal_
+                  << " codec="
+                  << (codec_ == mpegts::ElementaryCodec::H264 ? "h264" : "hevc")
+                  << " nv12=1"
+                  << " codec_guids=" << actualGuidCount
+                  << " input_formats=" << actualFormatCount
+                  << std::endl;
+        return true;
+    }
 
     bool loadCuda(std::string& error) {
         cudaLib_ = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
@@ -1412,6 +1577,7 @@ private:
         frameIndex_ = 0;
         forcedIdrCount_ = 0;
         gopFrames_ = 50;
+        gpuOrdinal_ = 0;
     }
 
     mpegts::ElementaryCodec codec_;
@@ -1428,6 +1594,7 @@ private:
     std::uint64_t gopFrames_ = 50;
     std::uint64_t frameIndex_ = 0;
     std::uint64_t forcedIdrCount_ = 0;
+    int gpuOrdinal_ = 0;
 };
 #endif
 
