@@ -1216,7 +1216,13 @@ public:
         cfg.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
         cfg.rcParams.averageBitRate = static_cast<std::uint32_t>(std::min<std::uint64_t>(bitrate, 0xffffffffULL));
         cfg.rcParams.maxBitRate = cfg.rcParams.averageBitRate;
-        cfg.gopLength = static_cast<std::uint32_t>(std::max(1.0, std::round((fps > 0 ? fps : 25.0) * 2.0)));
+        fps_ = fps > 0.0 ? fps : 25.0;
+        gopFrames_ = std::max<std::uint64_t>(
+            1ULL, static_cast<std::uint64_t>(std::llround(fps_ * 2.0)));
+        cfg.gopLength = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(gopFrames_, 0xffffffffULL));
+        // Live profile: no B-frames/reorder delay. Every GOP boundary is
+        // also explicitly forced to IDR below, with codec parameter sets.
         cfg.frameIntervalP = 1;
 
         NV_ENC_INITIALIZE_PARAMS init{};
@@ -1227,7 +1233,8 @@ public:
         init.encodeHeight = height;
         init.darWidth = width;
         init.darHeight = height;
-        init.frameRateNum = static_cast<std::uint32_t>(std::max(1.0, std::round(fps > 0 ? fps : 25.0)));
+        init.frameRateNum = static_cast<std::uint32_t>(
+            std::max(1.0, std::round(fps_)));
         init.frameRateDen = 1;
         init.enablePTD = 1;
         init.maxEncodeWidth = width;
@@ -1248,11 +1255,18 @@ public:
             error = "NVENC create bitstream buffer failed"; close(); return false;
         }
         bitstream_ = out.bitstreamBuffer;
-        width_ = width; height_ = height; fps_ = fps > 0 ? fps : 25.0;
+        width_ = width;
+        height_ = height;
+        frameIndex_ = 0;
+        forcedIdrCount_ = 0;
         std::cerr << "NATIVE HW ENCODER backend=nvenc codec="
                   << (codec_ == mpegts::ElementaryCodec::H264 ? "h264" : "hevc")
                   << " size=" << width_ << "x" << height_
-                  << " fps=" << fps_ << " bitrate_kbps=" << (bitrate / 1000ULL) << std::endl;
+                  << " fps=" << fps_
+                  << " bitrate_kbps=" << (bitrate / 1000ULL)
+                  << " gop_frames=" << gopFrames_
+                  << " live_random_access=force-idr+spspps"
+                  << std::endl;
         return true;
     }
 
@@ -1270,6 +1284,10 @@ public:
         i420ToNv12(input, base, uv, static_cast<int>(lock.pitch));
         api_.nvEncUnlockInputBuffer(encoder_, input_);
 
+        const std::uint64_t frameNumber = frameIndex_++;
+        const bool forceRandomAccess =
+            frameNumber == 0 || (gopFrames_ != 0 && (frameNumber % gopFrames_) == 0);
+
         NV_ENC_PIC_PARAMS pic{}; pic.version = NV_ENC_PIC_PARAMS_VER;
         pic.inputWidth = width_; pic.inputHeight = height_;
         pic.inputPitch = 0;
@@ -1277,13 +1295,23 @@ public:
         pic.bufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
         pic.outputBitstream = bitstream_;
         pic.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
-        pic.inputTimeStamp = input.hasPts ? input.pts90k : frameIndex_++;
+        pic.inputTimeStamp = input.hasPts ? input.pts90k : frameNumber;
+        if (forceRandomAccess) {
+            // Late-joining SRT/RTSP/HTTP/HLS clients must be able to
+            // start without restarting the encoder. FORCEIDR creates a
+            // true random-access picture; OUTPUT_SPSPPS emits SPS/PPS
+            // for AVC and VPS/SPS/PPS for HEVC with that access point.
+            pic.encodePicFlags |=
+                NV_ENC_PIC_FLAG_FORCEIDR |
+                NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
+        }
         const NVENCSTATUS st = api_.nvEncEncodePicture(encoder_, &pic);
         if (st != NV_ENC_SUCCESS && st != NV_ENC_ERR_NEED_MORE_INPUT) {
             error = "NVENC encode failed: " + std::to_string(static_cast<int>(st)); return false;
         }
         if (st == NV_ENC_ERR_NEED_MORE_INPUT) return true;
-        return collect(input, output, error);
+        return collect(
+            input, output, error, forceRandomAccess, frameNumber);
     }
 
     bool flush(std::vector<EncodedVideoFrame>& output, std::string& error) override {
@@ -1332,7 +1360,11 @@ private:
         return true;
     }
 
-    bool collect(const RawVideoFrame& input, std::vector<EncodedVideoFrame>& output, std::string& error) {
+    bool collect(const RawVideoFrame& input,
+               std::vector<EncodedVideoFrame>& output,
+               std::string& error,
+               bool forcedRandomAccess,
+               std::uint64_t frameNumber) {
         NV_ENC_LOCK_BITSTREAM lock{}; lock.version = NV_ENC_LOCK_BITSTREAM_VER;
         lock.outputBitstream = bitstream_; lock.doNotWait = 0;
         const NVENCSTATUS st = api_.nvEncLockBitstream(encoder_, &lock);
@@ -1342,8 +1374,24 @@ private:
         frame.data.assign(p, p + lock.bitstreamSizeInBytes);
         frame.hasPts = input.hasPts; frame.hasDts = input.hasDts;
         frame.pts90k = input.pts90k; frame.dts90k = input.hasDts ? input.dts90k : input.pts90k;
-        frame.keyFrame = lock.pictureType == NV_ENC_PIC_TYPE_IDR || lock.pictureType == NV_ENC_PIC_TYPE_I;
+        frame.keyFrame = forcedRandomAccess ||
+            lock.pictureType == NV_ENC_PIC_TYPE_IDR ||
+            lock.pictureType == NV_ENC_PIC_TYPE_I;
         api_.nvEncUnlockBitstream(encoder_, bitstream_);
+
+        if (forcedRandomAccess) {
+            ++forcedIdrCount_;
+            if (forcedIdrCount_ <= 3 || (forcedIdrCount_ % 30ULL) == 0ULL) {
+                std::cerr << "NATIVE NVENC RANDOM ACCESS codec="
+                          << (codec_ == mpegts::ElementaryCodec::H264 ? "h264" : "hevc")
+                          << " frame=" << frameNumber
+                          << " count=" << forcedIdrCount_
+                          << " bytes=" << frame.data.size()
+                          << " force_idr=1 parameter_sets=1"
+                          << std::endl;
+            }
+        }
+
         if (!frame.data.empty()) output.push_back(std::move(frame));
         return true;
     }
@@ -1361,6 +1409,9 @@ private:
         if (cudaLib_) dlclose(cudaLib_);
         nvencLib_ = cudaLib_ = nullptr;
         std::memset(&api_, 0, sizeof(api_));
+        frameIndex_ = 0;
+        forcedIdrCount_ = 0;
+        gopFrames_ = 50;
     }
 
     mpegts::ElementaryCodec codec_;
@@ -1372,7 +1423,11 @@ private:
     void* encoder_ = nullptr;
     NV_ENC_INPUT_PTR input_ = nullptr;
     NV_ENC_OUTPUT_PTR bitstream_ = nullptr;
-    int width_ = 0, height_ = 0; double fps_ = 25.0; std::uint64_t frameIndex_ = 0;
+    int width_ = 0, height_ = 0;
+    double fps_ = 25.0;
+    std::uint64_t gopFrames_ = 50;
+    std::uint64_t frameIndex_ = 0;
+    std::uint64_t forcedIdrCount_ = 0;
 };
 #endif
 
