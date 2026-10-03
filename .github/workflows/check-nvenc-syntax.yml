@@ -6,7 +6,7 @@ on:
       - .github/workflows/check-nvenc-syntax.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   syntax:
@@ -15,6 +15,66 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
+
+      - name: Apply Linux include and GPU ordinal validation fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/media/NativeHardwareCodec.cpp')
+          s = path.read_text()
+
+          old = '''#include <dlfcn.h>
+          #include <cctype>
+          #include <unistd.h>
+          #include <iostream>
+          '''
+          new = '''#include <dlfcn.h>
+          #include <cctype>
+          #include <unistd.h>
+          #if defined(__linux__)
+          #include <fcntl.h>
+          #endif
+          #include <iostream>
+          '''
+          if s.count(old) != 1:
+              raise SystemExit(f'linux fcntl insertion matches={s.count(old)}')
+          s = s.replace(old, new)
+
+          old = '''#if defined(DVBSTREAMER5_HAVE_VAAPI)
+          #include <fcntl.h>
+          #include <va/va.h>
+          '''
+          new = '''#if defined(DVBSTREAMER5_HAVE_VAAPI)
+          #include <va/va.h>
+          '''
+          if s.count(old) != 1:
+              raise SystemExit(f'VAAPI fcntl removal matches={s.count(old)}')
+          s = s.replace(old, new)
+
+          old = '''            if (!end || *end != '\\0' || value < 0 || value > 1024) {
+          '''
+          new = '''            if (!end || end == gpu || *end != '\\0' || value < 0 || value > 1024) {
+          '''
+          if s.count(old) != 1:
+              raise SystemExit(f'GPU ordinal validation matches={s.count(old)}')
+          s = s.replace(old, new)
+          path.write_text(s)
+
+          version = Path('src/AppVersion.h')
+          v = version.read_text()
+          oldv = 'inline constexpr const char* kProgramVersion = "10.8.37";'
+          newv = 'inline constexpr const char* kProgramVersion = "10.8.38";'
+          if v.count(oldv) != 1:
+              raise SystemExit(f'version marker matches={v.count(oldv)}')
+          version.write_text(v.replace(oldv, newv))
+          PY
+
+          git diff --check
+
       - name: Syntax check against NVENC SDK 11.1 and current headers
         shell: bash
         run: |
@@ -24,3 +84,13 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/master/include/ffnvcodec/nvEncodeAPI.h -o /tmp/nvcurrent/nvEncodeAPI.h
           g++ -std=c++17 -Wall -Wextra -Werror=return-type -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 -Isrc -I/tmp/nv11 -fsyntax-only src/media/NativeHardwareCodec.cpp
           g++ -std=c++17 -Wall -Wextra -Werror=return-type -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 -Isrc -I/tmp/nvcurrent -fsyntax-only src/media/NativeHardwareCodec.cpp
+
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "DVBStreamer5 automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/media/NativeHardwareCodec.cpp src/AppVersion.h
+          git commit -m "Stage 9 V10.8.38 fix NVENC-only Linux build validation"
+          git push origin HEAD:main
