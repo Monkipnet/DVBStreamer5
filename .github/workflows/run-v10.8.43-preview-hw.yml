@@ -1,0 +1,85 @@
+name: V10.8.43 hardware preview check
+
+on:
+  push:
+    paths:
+      - .github/workflows/run-v10.8.43-preview-hw.yml
+      - .github/v10.8.43_apply.py
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage-v10.8.43-preview-hw
+          fetch-depth: 0
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm libvpl-dev curl
+
+      - name: Apply production patch
+        run: |
+          set -euo pipefail
+          python3 .github/v10.8.43_apply.py
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.43"' src/AppVersion.h
+          grep -q 'previewTc.videoEncoder = "auto"' src/StreamManager.cpp
+          grep -q 'NATIVE AVC SAMPLE DIAG' src/media/NativeCodecVendored.cpp
+          grep -q 'lockOutputGeometry = config_.lockOutputGeometry' src/media/NativeTranscoderPipeline.cpp
+
+      - name: Prepare native codecs
+        run: |
+          set -euo pipefail
+          ./scripts/vendor_native_codecs.sh
+          DVBSTREAMER5_CODEC_JOBS=2 ./scripts/build_native_codecs.sh
+
+      - name: Prepare NVIDIA headers
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/nv-codec-headers /tmp/nv.tar.gz
+          curl -fsSL -o /tmp/nv.tar.gz https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n11.1.5.2.tar.gz
+          mkdir -p /tmp/nv-codec-headers
+          tar -xzf /tmp/nv.tar.gz -C /tmp/nv-codec-headers --strip-components=1
+          test -f /tmp/nv-codec-headers/include/ffnvcodec/nvEncodeAPI.h
+          test -f /tmp/nv-codec-headers/include/ffnvcodec/dynlink_nvcuvid.h
+
+      - name: Syntax check changed media paths
+        run: |
+          set -euo pipefail
+          PREFIX="$PWD/third_party/native-codecs-prefix"
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -I"$PREFIX/include" -I"$PREFIX/include/ittiam-mpeg2" \
+            -fsyntax-only src/media/NativeCodecVendored.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -DDVBSTREAMER5_HAVE_VPL=1 \
+            -fsyntax-only src/media/NativeIntelZeroCopy.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -I/tmp/nv-codec-headers/include/ffnvcodec \
+            -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 \
+            -DDVBSTREAMER5_HAVE_NVDEC_HEADERS=1 \
+            -fsyntax-only src/media/NativeNvidiaZeroCopy.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -fsyntax-only src/media/NativeTranscoderPipeline.cpp
+
+      - name: Commit production patch
+        run: |
+          set -euo pipefail
+          git config user.name "DVBStreamer5 automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            src/AppVersion.h \
+            src/StreamManager.cpp \
+            src/media/NativeCodecVendored.cpp \
+            src/media/NativeTranscoderPipeline.cpp \
+            src/media/NativeIntelZeroCopy.h \
+            src/media/NativeIntelZeroCopy.cpp \
+            src/media/NativeNvidiaZeroCopy.h \
+            src/media/NativeNvidiaZeroCopy.cpp
+          git commit -m "V10.8.43 use hardware decode for browser preview"
+          git push origin HEAD:stage-v10.8.43-preview-hw
