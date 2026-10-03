@@ -4,21 +4,22 @@ on:
   push:
     branches:
       - repair/openh264-param-prime-v10846
+    paths:
+      - .github/workflows/v10846-openh264-patch.yml
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, '[v10846-applied]') }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: repair/openh264-param-prime-v10846
       - name: Apply V10.8.46 source patch
-        shell: python
         run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           codec = Path('src/media/NativeCodecVendored.cpp')
@@ -38,7 +39,7 @@ jobs:
               return decodePictureBytes(
                   primed.data(), primed.size(), pts90k, hasPts, output, error);
           }
-  '''
+          '''
           new = '''        if (!synchronized_) {
               if (!h264.hasIdr || sps_.empty() || pps_.empty()) return true;
 
@@ -75,7 +76,7 @@ jobs:
               return decodePictureBytes(
                   picture.data(), picture.size(), pts90k, hasPts, output, error);
           }
-  '''
+          '''
           if text.count(old) != 1:
               raise SystemExit(f'expected one recovery block, found {text.count(old)}')
           text = text.replace(old, new)
@@ -83,33 +84,33 @@ jobs:
           old_diag = '''                      << " noParam=" << noParamSeen_
                         << " bitErr=" << bitstreamErrorSeen_
                         << " out=" << outputFrames_ << '\\n';
-  '''
+          '''
           new_diag = '''                      << " noParam=" << noParamSeen_
                         << " bitErr=" << bitstreamErrorSeen_
                         << " prime=" << parameterPrimeCalls_
                         << " primeErr=" << parameterPrimeErrors_
                         << " out=" << outputFrames_ << '\\n';
-  '''
+          '''
           if text.count(old_diag) != 1:
               raise SystemExit(f'expected one diagnostic block, found {text.count(old_diag)}')
           text = text.replace(old_diag, new_diag)
 
           old_reset = '''        refLostSeen_ = noParamSeen_ = bitstreamErrorSeen_ = outputFrames_ = 0;
-  '''
+          '''
           new_reset = '''        refLostSeen_ = noParamSeen_ = bitstreamErrorSeen_ = outputFrames_ = 0;
           parameterPrimeCalls_ = parameterPrimeErrors_ = 0;
-  '''
+          '''
           if text.count(old_reset) != 1:
               raise SystemExit(f'expected one reset counter line, found {text.count(old_reset)}')
           text = text.replace(old_reset, new_reset)
 
           old_members = '''    std::uint64_t refLostSeen_ = 0, noParamSeen_ = 0;
       std::uint64_t bitstreamErrorSeen_ = 0, outputFrames_ = 0;
-  '''
+          '''
           new_members = '''    std::uint64_t refLostSeen_ = 0, noParamSeen_ = 0;
       std::uint64_t bitstreamErrorSeen_ = 0, outputFrames_ = 0;
       std::uint64_t parameterPrimeCalls_ = 0, parameterPrimeErrors_ = 0;
-  '''
+          '''
           if text.count(old_members) != 1:
               raise SystemExit(f'expected one member counter block, found {text.count(old_members)}')
           text = text.replace(old_members, new_members)
@@ -121,6 +122,7 @@ jobs:
               raise SystemExit('unexpected input version')
           version.write_text(v.replace('kProgramVersion = "10.8.45"',
                                        'kProgramVersion = "10.8.46"'))
+          PY
       - name: Validate patch shape
         run: |
           git diff --check
