@@ -38,8 +38,11 @@ jobs:
         run: |
           set -euo pipefail
           PREFIX="$PWD/third_party/native-codecs-prefix"
-          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -I"$PREFIX/include" -fsyntax-only src/media/NativeCodecVendored.cpp
-          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -fsyntax-only src/media/NativeTranscoderPipeline.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -I"$PREFIX/include" -I"$PREFIX/include/ittiam-mpeg2" \
+            -fsyntax-only src/media/NativeCodecVendored.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -fsyntax-only src/media/NativeTranscoderPipeline.cpp
 
       - name: Commit production patch
         run: |
