@@ -7,6 +7,7 @@
 #include "media/NativeMpegTsMux.h"
 #include "media/NativeTsDemux.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <atomic>
 #include <condition_variable>
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -44,6 +46,281 @@ struct NativeTranscoderConfig {
     std::uint64_t muxBitrate = 0;
     std::string serviceName = "DVBStreamer5";
     std::string serviceProvider = "DVBStreamer5";
+};
+
+// Live AAC timing guard used by the production transcoder.  The vendored FDK
+// decoder/encoder deliberately keep their own continuous sample clocks, which
+// is useful for raw elementary streams but becomes wrong after a live HLS/PES
+// timing discontinuity or when container PTS cadence differs slightly from the
+// decoded sample cadence.  The mux scheduler then sees audio hundreds of
+// milliseconds behind video and repeatedly enters its 150/500 ms hold window.
+//
+// Keep the codec objects untouched and correct timing at the pipeline boundary:
+//  * decoder output is re-anchored only when a PES PTS differs by >= 50 ms;
+//  * AAC encoder output PTS follows the exact 1024-sample PCM chunks submitted
+//    to FDK, including encoder delay, instead of a free-running first-PTS clock.
+class PtsCorrectingAudioDecoderHandle {
+public:
+    PtsCorrectingAudioDecoderHandle() = default;
+
+    PtsCorrectingAudioDecoderHandle& operator=(
+        std::unique_ptr<codec::AudioDecoder> decoder) {
+        decoder_ = std::move(decoder);
+        resyncCount_ = 0;
+        return *this;
+    }
+
+    explicit operator bool() const noexcept {
+        return static_cast<bool>(decoder_);
+    }
+
+    void reset() {
+        decoder_.reset();
+        resyncCount_ = 0;
+    }
+
+    PtsCorrectingAudioDecoderHandle* operator->() noexcept { return this; }
+    const PtsCorrectingAudioDecoderHandle* operator->() const noexcept { return this; }
+
+    bool decode(const std::uint8_t* data, std::size_t size,
+                std::uint64_t pts90k, bool hasPts,
+                std::vector<codec::PcmAudioFrame>& output,
+                std::string& error) {
+        if (!decoder_) {
+            error = "native audio decoder is not configured";
+            return false;
+        }
+
+        const std::size_t firstOutput = output.size();
+        if (!decoder_->decode(data, size, pts90k, hasPts, output, error))
+            return false;
+        if (!hasPts || output.size() == firstOutput)
+            return true;
+
+        auto& first = output[firstOutput];
+        const std::uint64_t anchor = pts90k & kPtsMask;
+        if (!first.hasPts) {
+            std::uint64_t current = anchor;
+            for (std::size_t i = firstOutput; i < output.size(); ++i) {
+                auto& frame = output[i];
+                frame.pts90k = current;
+                frame.hasPts = true;
+                if (frame.sampleRate > 0 && frame.channels > 0) {
+                    const std::size_t frames = frame.samples.size() /
+                        static_cast<std::size_t>(frame.channels);
+                    current = (current +
+                        static_cast<std::uint64_t>(frames) * 90000ULL /
+                        static_cast<unsigned>(frame.sampleRate)) & kPtsMask;
+                }
+            }
+            return true;
+        }
+
+        const std::int64_t delta = signedPtsDelta(anchor, first.pts90k);
+        const std::int64_t magnitude = delta < 0 ? -delta : delta;
+        if (magnitude < static_cast<std::int64_t>(kResyncThreshold90k))
+            return true;
+
+        for (std::size_t i = firstOutput; i < output.size(); ++i) {
+            auto& frame = output[i];
+            if (frame.hasPts)
+                frame.pts90k = shiftPts(frame.pts90k, delta);
+        }
+
+        ++resyncCount_;
+        if (resyncCount_ <= 4 || (resyncCount_ % 100U) == 0U) {
+            std::cerr << "NATIVE AUDIO PTS RESYNC stage=decode count="
+                      << resyncCount_
+                      << " delta_ms=" << (delta / 90)
+                      << " anchor=" << anchor
+                      << std::endl;
+        }
+        return true;
+    }
+
+private:
+    static constexpr std::uint64_t kPtsMask = (1ULL << 33U) - 1ULL;
+    static constexpr std::uint64_t kPtsHalf = 1ULL << 32U;
+    static constexpr std::uint64_t kResyncThreshold90k = 4500ULL; // 50 ms
+
+    static std::int64_t signedPtsDelta(std::uint64_t target,
+                                       std::uint64_t current) noexcept {
+        target &= kPtsMask;
+        current &= kPtsMask;
+        const std::uint64_t forward = (target - current) & kPtsMask;
+        if (forward < kPtsHalf)
+            return static_cast<std::int64_t>(forward);
+        return -static_cast<std::int64_t>((current - target) & kPtsMask);
+    }
+
+    static std::uint64_t shiftPts(std::uint64_t value,
+                                  std::int64_t delta) noexcept {
+        value &= kPtsMask;
+        if (delta >= 0)
+            return (value + static_cast<std::uint64_t>(delta)) & kPtsMask;
+        return (value - static_cast<std::uint64_t>(-delta)) & kPtsMask;
+    }
+
+    std::unique_ptr<codec::AudioDecoder> decoder_;
+    std::uint64_t resyncCount_ = 0;
+};
+
+class PtsCorrectingAudioEncoderHandle {
+public:
+    PtsCorrectingAudioEncoderHandle() = default;
+
+    PtsCorrectingAudioEncoderHandle& operator=(
+        std::unique_ptr<codec::AudioEncoder> encoder) {
+        encoder_ = std::move(encoder);
+        resetTiming();
+        return *this;
+    }
+
+    explicit operator bool() const noexcept {
+        return static_cast<bool>(encoder_);
+    }
+
+    void reset() {
+        encoder_.reset();
+        resetTiming();
+    }
+
+    PtsCorrectingAudioEncoderHandle* operator->() noexcept { return this; }
+    const PtsCorrectingAudioEncoderHandle* operator->() const noexcept { return this; }
+
+    bool configure(int sampleRate, int channels, std::uint64_t bitrate,
+                   std::string& error) {
+        resetTiming();
+        if (!encoder_) {
+            error = "native AAC encoder is not configured";
+            return false;
+        }
+        if (!encoder_->configure(sampleRate, channels, bitrate, error))
+            return false;
+        sampleRate_ = sampleRate;
+        channels_ = channels;
+        return true;
+    }
+
+    bool encode(const codec::PcmAudioFrame& input,
+                std::vector<codec::EncodedAudioFrame>& output,
+                std::string& error) {
+        if (!encoder_) {
+            error = "native AAC encoder is not configured";
+            return false;
+        }
+
+        queueInputTiming(input);
+        const std::size_t firstOutput = output.size();
+        if (!encoder_->encode(input, output, error)) {
+            resetTiming();
+            return false;
+        }
+        applyOutputTiming(output, firstOutput);
+        return true;
+    }
+
+    bool flush(std::vector<codec::EncodedAudioFrame>& output,
+               std::string& error) {
+        if (!encoder_) return true;
+
+        // FDK's wrapper pads one final partial 1024-sample frame on flush.
+        // Queue its start timestamp before asking the underlying encoder to
+        // emit it so delayed encoder output still receives the correct tag.
+        if (queuedPcmFrames_ != 0 && !pcmSpans_.empty()) {
+            submittedPts_.push_back({pcmSpans_.front().pts90k,
+                                     pcmSpans_.front().hasPts});
+            pcmSpans_.clear();
+            queuedPcmFrames_ = 0;
+        }
+
+        const std::size_t firstOutput = output.size();
+        if (!encoder_->flush(output, error))
+            return false;
+        applyOutputTiming(output, firstOutput);
+        return true;
+    }
+
+private:
+    static constexpr std::size_t kAacFrameSamples = 1024;
+    static constexpr std::uint64_t kPtsMask = (1ULL << 33U) - 1ULL;
+
+    struct PcmSpan {
+        std::size_t frames = 0;
+        std::uint64_t pts90k = 0;
+        bool hasPts = false;
+    };
+
+    struct PtsTag {
+        std::uint64_t pts90k = 0;
+        bool hasPts = false;
+    };
+
+    void resetTiming() {
+        sampleRate_ = 0;
+        channels_ = 0;
+        queuedPcmFrames_ = 0;
+        pcmSpans_.clear();
+        submittedPts_.clear();
+    }
+
+    void queueInputTiming(const codec::PcmAudioFrame& input) {
+        if (sampleRate_ <= 0 || channels_ <= 0 ||
+            input.channels != channels_ || input.sampleRate != sampleRate_ ||
+            input.samples.empty()) {
+            return;
+        }
+
+        const std::size_t frames = input.samples.size() /
+            static_cast<std::size_t>(channels_);
+        if (frames == 0) return;
+
+        pcmSpans_.push_back({frames, input.pts90k & kPtsMask, input.hasPts});
+        queuedPcmFrames_ += frames;
+
+        while (queuedPcmFrames_ >= kAacFrameSamples && !pcmSpans_.empty()) {
+            submittedPts_.push_back({pcmSpans_.front().pts90k,
+                                     pcmSpans_.front().hasPts});
+            consumePcmFrames(kAacFrameSamples);
+            queuedPcmFrames_ -= kAacFrameSamples;
+        }
+    }
+
+    void consumePcmFrames(std::size_t count) {
+        std::size_t remaining = count;
+        while (remaining != 0 && !pcmSpans_.empty()) {
+            auto& span = pcmSpans_.front();
+            const std::size_t take = std::min(remaining, span.frames);
+            if (span.hasPts && sampleRate_ > 0) {
+                span.pts90k = (span.pts90k +
+                    static_cast<std::uint64_t>(take) * 90000ULL /
+                    static_cast<unsigned>(sampleRate_)) & kPtsMask;
+            }
+            span.frames -= take;
+            remaining -= take;
+            if (span.frames == 0)
+                pcmSpans_.pop_front();
+        }
+    }
+
+    void applyOutputTiming(std::vector<codec::EncodedAudioFrame>& output,
+                           std::size_t firstOutput) {
+        for (std::size_t i = firstOutput;
+             i < output.size() && !submittedPts_.empty(); ++i) {
+            const PtsTag tag = submittedPts_.front();
+            submittedPts_.pop_front();
+            if (!tag.hasPts) continue;
+            output[i].pts90k = tag.pts90k;
+            output[i].hasPts = true;
+        }
+    }
+
+    std::unique_ptr<codec::AudioEncoder> encoder_;
+    int sampleRate_ = 0;
+    int channels_ = 0;
+    std::size_t queuedPcmFrames_ = 0;
+    std::deque<PcmSpan> pcmSpans_;
+    std::deque<PtsTag> submittedPts_;
 };
 
 class NativeTranscoderPipeline {
@@ -202,8 +479,8 @@ private:
     bool nvidiaZeroCopyFallbackLogged_ = false;
     std::atomic<bool> nvidiaZeroCopyActive_{false};
     std::unique_ptr<codec::VideoEncoder> videoEncoder_;
-    std::unique_ptr<codec::AudioDecoder> audioDecoder_;
-    std::unique_ptr<codec::AudioEncoder> aacEncoder_;
+    PtsCorrectingAudioDecoderHandle audioDecoder_;
+    PtsCorrectingAudioEncoderHandle aacEncoder_;
     std::unique_ptr<Mp2Encoder> mp2Encoder_;
     mpegts::ElementaryCodec inputVideoCodec_ = mpegts::ElementaryCodec::Unknown;
     mpegts::ElementaryCodec inputAudioCodec_ = mpegts::ElementaryCodec::Unknown;
