@@ -1,0 +1,18 @@
+name: LVM AVC syntax check
+
+on:
+  push:
+    branches:
+      - repair/lvm-avc-au-v10845
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile NativeTsDemux
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -fsyntax-only src/media/NativeTsDemux.cpp
+      - name: Verify version
+        run: grep -F 'kProgramVersion = "10.8.45"' src/AppVersion.h
