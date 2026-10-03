@@ -1,0 +1,104 @@
+name: V10.8.47 Ittiam AVC validation
+
+on:
+  push:
+    branches:
+      - repair/ittiam-avc-v10847
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: repair/ittiam-avc-v10847
+          fetch-depth: 0
+
+      - name: Apply production factory/version patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/media/NativeCodecVendored.cpp')
+          s = p.read_text()
+          anchor = '#include "media/NativeHardwareCodec.h"\n'
+          repl = anchor + '#include "media/NativeIttiamAvc.h"\n'
+          if '#include "media/NativeIttiamAvc.h"' not in s:
+              if anchor not in s:
+                  raise SystemExit('include anchor missing')
+              s = s.replace(anchor, repl, 1)
+
+          old_lib = 'c.h264Library="built-in OpenH264 2.6.0 static";'
+          new_lib = 'c.h264Library="built-in Ittiam libavc static (OpenH264 fallback)";'
+          if old_lib in s:
+              s = s.replace(old_lib, new_lib, 1)
+          elif new_lib not in s:
+              raise SystemExit('runtime capability anchor missing')
+
+          old_factory = 'if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Decoder>();if(p->valid())return p;}'
+          new_factory = '''if(c==mpegts::ElementaryCodec::H264){std::string ittiamError;auto p=createIttiamAvcDecoder(ittiamError);if(p){std::cerr<<"NATIVE AVC DECODER selected=ittiam-libavc\\n";return p;}std::cerr<<"NATIVE AVC DECODER Ittiam unavailable reason="<<ittiamError<<" fallback=openh264\\n";auto fallback=std::make_unique<OpenH264Decoder>();if(fallback->valid())return fallback;}'''
+          if old_factory in s:
+              s = s.replace(old_factory, new_factory, 1)
+          elif 'NATIVE AVC DECODER selected=ittiam-libavc' not in s:
+              raise SystemExit('H264 factory anchor missing')
+          p.write_text(s)
+
+          v = Path('src/AppVersion.h')
+          t = v.read_text()
+          if '10.8.46' in t:
+              t = t.replace('10.8.46', '10.8.47', 1)
+          elif '10.8.47' not in t:
+              raise SystemExit('version anchor missing')
+          v.write_text(t)
+          PY
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config curl git nasm libssl-dev libva-dev libvpl-dev
+
+      - name: Vendor and build native codecs
+        run: |
+          chmod +x scripts/vendor_native_codecs.sh scripts/build_native_codecs.sh
+          ./scripts/vendor_native_codecs.sh
+          DVBSTREAMER5_CODEC_JOBS=2 ./scripts/build_native_codecs.sh
+          test -f third_party/native-codecs-prefix/lib/libavcdec.a
+          test -f third_party/native-codecs-prefix/include/ittiam-avc/ih264d.h
+
+      - name: Syntax check Ittiam wrapper and codec factory
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc \
+            -Ithird_party/native-codecs-prefix/include \
+            -Ithird_party/native-codecs-prefix/include/ittiam-mpeg2 \
+            -fsyntax-only src/media/NativeIttiamAvc.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc \
+            -Ithird_party/native-codecs-prefix/include \
+            -Ithird_party/native-codecs-prefix/include/ittiam-mpeg2 \
+            -fsyntax-only src/media/NativeCodecVendored.cpp
+
+      - name: Configure production CMake
+        run: |
+          cmake -S . -B build-check -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build media core
+        run: |
+          cmake --build build-check --target dvbstreamer5_media_core --parallel 2
+
+      - name: Verify production diff and commit
+        run: |
+          grep -F 'kProgramVersion = "10.8.47"' src/AppVersion.h
+          git status --short
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add CMakeLists.txt scripts/vendor_native_codecs.sh scripts/build_native_codecs.sh \
+            src/AppVersion.h src/media/NativeCodecVendored.cpp \
+            src/media/NativeIttiamAvc.cpp src/media/NativeIttiamAvc.h
+          git commit -m 'V10.8.47 use Ittiam libavc for broadcast H264 [v10847-applied]'
+          git push origin HEAD:repair/ittiam-avc-v10847
