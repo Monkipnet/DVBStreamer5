@@ -1,5 +1,6 @@
 name: V10.8.40 Intel zero-copy source integration
 
+# retry after fixing exact reset-site patching
 on:
   push:
     branches:
