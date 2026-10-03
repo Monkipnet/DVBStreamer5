@@ -723,74 +723,22 @@ public:
         if (!decoder_) { error = "OpenH264 decoder unavailable"; return false; }
         if (!data || !size) return true;
 
-        // V10.8.42: PES boundaries are transport boundaries, not AVC
-        // access-unit boundaries. Some HLS MPEG-TS inputs split the final NAL
-        // of a picture across PES packets. Feeding each PES directly made
-        // OpenH264 see SPS/PPS/IDR but return dsNoParamSets+dsBitstreamError
-        // forever. Keep the Annex-B stream byte-exact across PES calls and
-        // release one picture only after the start of the following picture
-        // is visible. That guarantees the last NAL of the current picture is
-        // complete and preserves multi-slice/B-picture reference ordering.
+        // V10.8.43: the live demux sample cadence is one AVC picture per
+        // source frame (~25 fps for the LVM service). V10.8.42 incorrectly
+        // split a single already-framed sample into roughly four synthetic
+        // pictures. Keep each demux sample byte-exact. Broadcast AVC Main/CABAC
+        // is handled by the hardware zero-copy paths when available; this CPU
+        // OpenH264 path remains the compatible fallback.
         ++decodeCalls_;
-        appendPending(data, size, pts90k, hasPts);
+        ++pictureCalls_;
 
-        constexpr std::size_t kMaxPendingBytes = 8U * 1024U * 1024U;
-
-        // A live join may begin in the middle of a NAL. Discard only bytes
-        // before the first Annex-B start code; never rewrite bytes between
-        // NAL units.
-        if (!pending_.empty()) {
-            std::size_t startCodeLength = 0;
-            const std::size_t first = findAnnexBStartCode(
-                pending_.data(), pending_.size(), 0, startCodeLength);
-            if (first < pending_.size() && first != 0) {
-                consumePending(first);
-            } else if (first == pending_.size()) {
-                if (pending_.size() > kMaxPendingBytes) {
-                    const std::size_t dropped = pending_.size();
-                    clearPending();
-                    synchronized_ = false;
-                    std::cerr << "NATIVE AVC AU RESYNC reason=no_start_code bytes="
-                              << dropped << '\n';
-                }
-                return true;
-            }
-        }
-
-        if (pending_.size() > kMaxPendingBytes) {
-            const std::size_t dropped = pending_.size();
-            clearPending();
-            synchronized_ = false;
-            std::cerr << "NATIVE AVC AU RESYNC reason=pending_overflow bytes="
-                      << dropped << '\n';
-            return true;
-        }
-
-        bool ok = true;
-        for (unsigned guard = 0; guard < 256U; ++guard) {
-            const std::size_t pictureLength = openH264ReadPictureLength(
-                pending_.data(), pending_.size());
-            if (pictureLength == 0) break;
-
-            const std::uint64_t picturePts90k = pendingPts();
-            const bool pictureHasPts = pendingHasPts();
-            std::vector<std::uint8_t> picture(
-                pending_.begin(),
-                pending_.begin() + static_cast<std::ptrdiff_t>(pictureLength));
-            consumePending(pictureLength);
-            ++pictureCalls_;
-
-            if (!decodePicture(std::move(picture), picturePts90k,
-                               pictureHasPts, output, error)) {
-                ok = false;
-                break;
-            }
-        }
+        std::vector<std::uint8_t> picture(data, data + size);
+        const bool ok = decodePicture(
+            std::move(picture), pts90k, hasPts, output, error);
 
         if ((decodeCalls_ % 100U) == 0U) {
-            std::cerr << "NATIVE AVC AU DIAG decodeCalls=" << decodeCalls_
-                      << " pictures=" << pictureCalls_
-                      << " pending=" << pending_.size()
+            std::cerr << "NATIVE AVC SAMPLE DIAG decodeCalls=" << decodeCalls_
+                      << " samples=" << pictureCalls_
                       << " sps=" << spsSeen_ << " pps=" << ppsSeen_
                       << " idr=" << idrSeen_
                       << " synced=" << (synchronized_ ? 1 : 0)

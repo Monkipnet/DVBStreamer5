@@ -399,7 +399,7 @@ private:
             static_cast<std::uint64_t>(sourceWidth_) * sourceHeight_;
         const std::uint64_t requestedPixels =
             static_cast<std::uint64_t>(outputWidth_) * outputHeight_;
-        if (requestedPixels > sourcePixels) {
+        if (!config_.lockOutputGeometry && requestedPixels > sourcePixels) {
             outputWidth_ = sourceWidth_;
             outputHeight_ = sourceHeight_;
         }
