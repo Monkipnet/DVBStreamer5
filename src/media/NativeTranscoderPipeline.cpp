@@ -994,6 +994,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     }
 
     const bool zeroCopyCodec =
+        sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ||
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
         sample.stream.codec == mpegts::ElementaryCodec::H265;
     const bool zeroCopyBackend =
@@ -1018,9 +1019,11 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             }
             if (nvidiaZeroCopy_) {
                 nvidiaZeroCopyActive_.store(true, std::memory_order_release);
+                const char* inputName =
+                    sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ? "mpeg2" :
+                    sample.stream.codec == mpegts::ElementaryCodec::H264 ? "h264" : "hevc";
                 std::cerr << "NATIVE NVIDIA ZERO-COPY selected input="
-                          << (sample.stream.codec == mpegts::ElementaryCodec::H264
-                                  ? "h264" : "hevc")
+                          << inputName
                           << " output=" << config_.videoCodec
                           << " backend=" << config_.videoEncoder
                           << std::endl;
@@ -1035,33 +1038,44 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         }
 
         if (nvidiaZeroCopy_) {
-            std::vector<codec::EncodedVideoFrame> encoded;
-            if (!nvidiaZeroCopy_->process(
-                    sample.data.data(), sample.data.size(),
-                    sample.pts90k, sample.hasPts, encoded, error))
-                return false;
-            decodedVideoFrames_ += encoded.size();
-            if (!sourceGeometryResolved_ &&
-                nvidiaZeroCopy_->sourceWidth() > 0 &&
-                nvidiaZeroCopy_->sourceHeight() > 0) {
-                sourceGeometryResolved_ = true;
-                sourceWidth_ = nvidiaZeroCopy_->sourceWidth();
-                sourceHeight_ = nvidiaZeroCopy_->sourceHeight();
-                const int outWidth = nvidiaZeroCopy_->outputWidth();
-                const int outHeight = nvidiaZeroCopy_->outputHeight();
-                if (outWidth > 0 && outHeight > 0 &&
-                    (outWidth != config_.width || outHeight != config_.height))
-                    (void)setOutputGeometryIfUnconfigured(outWidth, outHeight);
-                std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
-                          << sourceWidth_ << "x" << sourceHeight_
-                          << " output=" << config_.width << "x" << config_.height
-                          << " path=nvidia-zero-copy" << std::endl;
-            }
-            for (const auto& frame : encoded)
-                if (!emitVideo(frame, error)) return false;
-            return true;
+    std::vector<codec::EncodedVideoFrame> encoded;
+    std::string nvidiaProcessError;
+    if (!nvidiaZeroCopy_->process(
+            sample.data.data(), sample.data.size(),
+            sample.pts90k, sample.hasPts, encoded, nvidiaProcessError)) {
+        std::cerr << "NATIVE NVIDIA ZERO-COPY runtime fallback reason="
+                  << nvidiaProcessError << " fallback="
+                  << (config_.videoEncoder == "nvenc"
+                          ? "cpu-decode+nvenc" : "standard-auto-path")
+                  << std::endl;
+        nvidiaZeroCopy_.reset();
+        nvidiaZeroCopyActive_.store(false, std::memory_order_release);
+        nvidiaZeroCopyFallbackLogged_ = true;
+        error.clear();
+    } else {
+        decodedVideoFrames_ += encoded.size();
+        if (!sourceGeometryResolved_ &&
+            nvidiaZeroCopy_->sourceWidth() > 0 &&
+            nvidiaZeroCopy_->sourceHeight() > 0) {
+            sourceGeometryResolved_ = true;
+            sourceWidth_ = nvidiaZeroCopy_->sourceWidth();
+            sourceHeight_ = nvidiaZeroCopy_->sourceHeight();
+            const int outWidth = nvidiaZeroCopy_->outputWidth();
+            const int outHeight = nvidiaZeroCopy_->outputHeight();
+            if (outWidth > 0 && outHeight > 0 &&
+                (outWidth != config_.width || outHeight != config_.height))
+                (void)setOutputGeometryIfUnconfigured(outWidth, outHeight);
+            std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
+                      << sourceWidth_ << "x" << sourceHeight_
+                      << " output=" << config_.width << "x" << config_.height
+                      << " path=nvidia-zero-copy" << std::endl;
         }
+        for (const auto& frame : encoded)
+            if (!emitVideo(frame, error)) return false;
+        return true;
     }
+}
+}
 
     const bool intelZeroCopyCodec =
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
@@ -1168,7 +1182,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             const std::uint64_t requestedPixels =
                 static_cast<std::uint64_t>(std::max(0, config_.width)) *
                 static_cast<std::uint64_t>(std::max(0, config_.height));
-            if (requestedPixels > sourcePixels) {
+            if (!config_.lockOutputGeometry && requestedPixels > sourcePixels) {
                 (void)setOutputGeometryIfUnconfigured(raw.width, raw.height);
             }
             std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "

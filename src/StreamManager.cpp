@@ -327,6 +327,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         previewTc.videoBitrate = 1800000ULL;
         previewTc.audioBitrate = 128000ULL;
         previewTc.deinterlace = true;
+        // Browser preview is square-pixel AVC. Keep 1280x720 for
+        // anamorphic DVB MPEG-2 instead of reverting to 720x576.
+        previewTc.lockOutputGeometry = true;
         previewTc.serviceId = static_cast<std::uint16_t>(
             streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff
                 ? streamConfig.serviceId
@@ -351,7 +354,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         } else {
             std::cerr << "NATIVE BROWSER PREVIEW ready stream="
                       << streamConfig.name
-                      << " codec=h264/aac max_size=1280x720"
+                      << " codec=h264/aac size=1280x720 dar=16:9"
                       << " video_kbps=1800 audio_kbps=128"
                       << std::endl;
         }
