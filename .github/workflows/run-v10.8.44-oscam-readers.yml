@@ -5,6 +5,9 @@ on:
     branches:
       - stage-v10.8.44-oscam-readers
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-24.04
