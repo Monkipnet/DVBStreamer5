@@ -21,204 +21,86 @@ jobs:
         run: |
           cat > /tmp/apply_v10860.py <<'PY'
           from pathlib import Path
-          import re
 
-          def rep(text, old, new, label, count=1):
+          def rep(text, old, new, label, expected=1):
               got = text.count(old)
-              if got != count:
-                  raise SystemExit(f"{label}: expected {count} matches, got {got}")
+              if got != expected:
+                  raise SystemExit(f"{label}: expected {expected} matches, got {got}")
               return text.replace(old, new)
 
-          # 1) Newcamd must always be built together with the application.
           p = Path('CMakeLists.txt')
           s = p.read_text()
-          anchor = '''target_link_libraries(DVBStreamer5
-    dvbstreamer5_boost_headers
-    dvbstreamer5_media_core
-    dvbstreamer5_jsoncpp
-    dvbstreamer5_dvbcsa
-    OpenSSL::Crypto
-    pthread
-    dl
-)
-'''
-          replacement = anchor + '''# The production Newcamd backend is mandatory runtime content. Building the
-# application target must also build the loadable plugin so portable bundles
-# cannot silently contain an executable without Newcamd.
-add_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)
-
-'''
-          s = rep(s, anchor, replacement, 'DVBStreamer5 Newcamd dependency')
-          s = rep(s,
-                  'install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)\n',
-                  'install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)\ninstall(TARGETS dvbstreamer5_ca_newcamd LIBRARY DESTINATION ca-plugins)\n',
-                  'Newcamd install target')
+          anchor = "target_link_libraries(DVBStreamer5\n    dvbstreamer5_boost_headers\n    dvbstreamer5_media_core\n    dvbstreamer5_jsoncpp\n    dvbstreamer5_dvbcsa\n    OpenSSL::Crypto\n    pthread\n    dl\n)\n"
+          s = rep(s, anchor, anchor + "# Newcamd is mandatory runtime content; building DVBStreamer5 also builds the plugin.\nadd_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)\n\n", 'CMake dependency')
+          s = rep(s, "install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)\n", "install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)\ninstall(TARGETS dvbstreamer5_ca_newcamd LIBRARY DESTINATION ca-plugins)\n", 'CMake plugin install')
           p.write_text(s)
 
-          # 2) Packaging must fail instead of producing a bundle without Newcamd.
           p = Path('scripts/make_portable_linux_bundle.sh')
           s = p.read_text()
-          anchor = '''mapfile -t PLUGINS < <(find "$BUILD_DIR" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)
-for plugin in "${PLUGINS[@]}"; do
-    install -m 0644 "$plugin" "$STAGE/ca-plugins/$(basename -- "$plugin")"
-done
-'''
-          replacement = '''mapfile -t PLUGINS < <(find "$BUILD_DIR" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)
-NEWCAMD_PLUGIN=""
-for plugin in "${PLUGINS[@]}"; do
-    if [[ "$(basename -- "$plugin")" == "dvbstreamer5-ca-newcamd.so" ]]; then
-        NEWCAMD_PLUGIN="$plugin"
-    fi
-    install -m 0644 "$plugin" "$STAGE/ca-plugins/$(basename -- "$plugin")"
-done
-[[ -n "$NEWCAMD_PLUGIN" ]] || fail "mandatory Newcamd plugin was not built: $BUILD_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
-readelf -Ws "$NEWCAMD_PLUGIN" | grep -q 'dvbstreamer5_ca_backend_get_api_v1' || \
-    fail "Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point"
-'''
-          s = rep(s, anchor, replacement, 'bundle Newcamd requirement')
+          old = "mapfile -t PLUGINS < <(find \"$BUILD_DIR\" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)\nfor plugin in \"${PLUGINS[@]}\"; do\n    install -m 0644 \"$plugin\" \"$STAGE/ca-plugins/$(basename -- \"$plugin\")\"\ndone\n"
+          new = "mapfile -t PLUGINS < <(find \"$BUILD_DIR\" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)\nNEWCAMD_PLUGIN=\"\"\nfor plugin in \"${PLUGINS[@]}\"; do\n    if [[ \"$(basename -- \"$plugin\")\" == \"dvbstreamer5-ca-newcamd.so\" ]]; then NEWCAMD_PLUGIN=\"$plugin\"; fi\n    install -m 0644 \"$plugin\" \"$STAGE/ca-plugins/$(basename -- \"$plugin\")\"\ndone\n[[ -n \"$NEWCAMD_PLUGIN\" ]] || fail \"mandatory Newcamd plugin was not built: $BUILD_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so\"\nreadelf -Ws \"$NEWCAMD_PLUGIN\" | grep -q 'dvbstreamer5_ca_backend_get_api_v1' || fail \"Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point\"\n"
+          s = rep(s, old, new, 'bundle plugin requirement')
           p.write_text(s)
 
-          # 3) Load plugins immediately at CA manager construction, so the backend
-          # is visible even before CAM client configuration is refreshed.
           p = Path('src/CaBackend.cpp')
           s = p.read_text()
-          anchor = '''    passthrough.builtin = true;
-    passthrough.usable = true;
-    backends_.emplace(passthrough.id, std::move(passthrough));
-}
-'''
-          replacement = '''    passthrough.builtin = true;
-    passthrough.usable = true;
-    backends_.emplace(passthrough.id, std::move(passthrough));
-
-    // Discover external CA backends at process startup. CardManager::configure()
-    // may refresh them later, but Newcamd must already be visible in /api/state.
-    loadPluginsLocked();
-}
-'''
-          s = rep(s, anchor, replacement, 'startup plugin discovery')
+          old = "    passthrough.builtin = true;\n    passthrough.usable = true;\n    backends_.emplace(passthrough.id, std::move(passthrough));\n}\n"
+          new = "    passthrough.builtin = true;\n    passthrough.usable = true;\n    backends_.emplace(passthrough.id, std::move(passthrough));\n\n    // Discover external CA backends immediately so Newcamd is visible before client refresh.\n    loadPluginsLocked();\n}\n"
+          s = rep(s, old, new, 'startup plugin discovery')
           p.write_text(s)
 
-          # 4) Remove application-side decoded-service limits. max_services=0 is
-          # the stable on-disk/API spelling for unlimited.
           p = Path('src/ConfigManager.h')
-          s = p.read_text()
-          s = rep(s, '    unsigned maxServices = 10;\n', '    unsigned maxServices = 0; // 0 = unlimited\n', 'CAM default unlimited')
+          s = rep(p.read_text(), "    unsigned maxServices = 10;\n", "    unsigned maxServices = 0; // 0 = unlimited\n", 'config default')
           p.write_text(s)
 
           p = Path('src/ConfigManager.cpp')
           s = p.read_text()
-          s = rep(s,
-                  '    config.maxServices = std::clamp(root.get("max_services", 10).asUInt(), 1u, 64u);\n',
-                  '    config.maxServices = 0; // decoded services are not software-limited\n',
-                  'CAM config unlimited')
-          s = rep(s,
-                  '    root["max_services"] = std::clamp(maxServices, 1u, 64u);\n',
-                  '    root["max_services"] = 0;\n',
-                  'CAM JSON unlimited')
+          s = rep(s, "    config.maxServices = std::clamp(root.get(\"max_services\", 10).asUInt(), 1u, 64u);\n", "    config.maxServices = 0; // no software decoded-service cap\n", 'config load cap')
+          s = rep(s, "    root[\"max_services\"] = std::clamp(maxServices, 1u, 64u);\n", "    root[\"max_services\"] = 0;\n", 'config save cap')
           p.write_text(s)
 
           p = Path('src/CardManager.h')
           s = p.read_text()
-          s = rep(s,
-                  '    static constexpr unsigned kDefaultMaxServices = 10;\n    static constexpr unsigned kMaxConfigurableServices = 64;\n',
-                  '    static constexpr unsigned kDefaultMaxServices = 0; // unlimited\n    static constexpr unsigned kMaxConfigurableServices = 0; // no software cap\n',
-                  'CardManager constants')
+          s = rep(s, "    static constexpr unsigned kDefaultMaxServices = 10;\n    static constexpr unsigned kMaxConfigurableServices = 64;\n", "    static constexpr unsigned kDefaultMaxServices = 0; // unlimited\n    static constexpr unsigned kMaxConfigurableServices = 0; // no software cap\n", 'manager constants')
           p.write_text(s)
 
           p = Path('src/CardManager.cpp')
           s = p.read_text()
-          s = rep(s,
-                  '        client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);\n',
-                  '        client.maxServices = 0;\n',
-                  'configure unlimited', count=1)
-          s = rep(s,
-                  '    item["max_services"] = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);\n',
-                  '    item["max_services"] = 0;\n    item["unlimited_services"] = true;\n',
-                  'status unlimited')
-          s = rep(s,
-                  '    client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);\n',
-                  '    client.maxServices = 0;\n',
-                  'reserve unlimited', count=1)
-          s = rep(s,
-                  '    if (used >= client.maxServices) {\n',
-                  '    if (client.maxServices != 0 && used >= client.maxServices) {\n',
-                  'guard optional limit')
-          s = rep(s,
-                  '    root["max_configurable_services"] = kMaxConfigurableServices;\n',
-                  '    root["max_configurable_services"] = 0;\n    root["service_limit_enabled"] = false;\n',
-                  'snapshot unlimited')
-          old = '''        const unsigned maxServices = item.get("max_services", kDefaultMaxServices).asUInt();
-        const unsigned used = services.size();
-        item["services"] = services;
-        item["services_used"] = used;
-        item["services_active"] = active;
-        item["services_free"] = maxServices > used ? maxServices - used : 0;
-'''
-          new = '''        const unsigned used = services.size();
-        item["services"] = services;
-        item["services_used"] = used;
-        item["services_active"] = active;
-        item["services_free"] = 0;
-        item["unlimited_services"] = true;
-'''
-          s = rep(s, old, new, 'services free unlimited')
-          # Keep useful reservation telemetry, but do not print a fake denominator.
-          s = s.replace('              << " slots=" << (used + 1) << "/" << client.maxServices\n',
-                        '              << " slots=" << (used + 1) << " unlimited"\n')
+          s = rep(s, "        client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);\n", "        client.maxServices = 0;\n", 'configure cap')
+          s = rep(s, "    item[\"max_services\"] = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);\n", "    item[\"max_services\"] = 0;\n    item[\"unlimited_services\"] = true;\n", 'status cap')
+          s = rep(s, "    client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);\n", "    client.maxServices = 0;\n", 'reserve cap')
+          s = rep(s, "    if (used >= client.maxServices) {\n", "    if (client.maxServices != 0 && used >= client.maxServices) {\n", 'reserve guard')
+          s = rep(s, "    root[\"max_configurable_services\"] = kMaxConfigurableServices;\n", "    root[\"max_configurable_services\"] = 0;\n    root[\"service_limit_enabled\"] = false;\n", 'snapshot cap')
+          old = "        const unsigned maxServices = item.get(\"max_services\", kDefaultMaxServices).asUInt();\n        const unsigned used = services.size();\n        item[\"services\"] = services;\n        item[\"services_used\"] = used;\n        item[\"services_active\"] = active;\n        item[\"services_free\"] = maxServices > used ? maxServices - used : 0;\n"
+          new = "        const unsigned used = services.size();\n        item[\"services\"] = services;\n        item[\"services_used\"] = used;\n        item[\"services_active\"] = active;\n        item[\"services_free\"] = 0;\n        item[\"unlimited_services\"] = true;\n"
+          s = rep(s, old, new, 'services free')
+          s = s.replace('              << " slots=" << (used + 1) << "/" << client.maxServices\n', '              << " slots=" << (used + 1) << " unlimited"\n')
           p.write_text(s)
 
-          # 5) Remove the independent Newcamd per-reader cap as well.
           p = Path('src/ca/backends/newcamd/NewcamdPlugin.cpp')
           s = p.read_text()
-          s = rep(s,
-                  'constexpr size_t kMaxSessionsPerReader = 10;\n',
-                  'constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited\n',
-                  'Newcamd cap value')
-          s = rep(s,
-                  'if (activeForReader >= kMaxSessionsPerReader) {',
-                  'if (kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader) {',
-                  'Newcamd cap guards', count=2)
-          s = s.replace('Newcamd per-reader service session limit reached (10)',
-                        'Newcamd per-reader service session limit reached')
-          s = s.replace('<< " session_mode=per-service max_sessions=" << kMaxSessionsPerReader',
-                        '<< " session_mode=per-service max_sessions=unlimited"')
-          s = s.replace('              << "/" << kMaxSessionsPerReader\n',
-                        '              << " max_sessions=unlimited"\n')
-          status_old = ''',\"max_sessions_per_reader\":" + std::to_string(kMaxSessionsPerReader) +
-             ",\"session_mode\":\"per-service-tcp\"" +'''
-          status_new = ''',\"max_sessions_per_reader\":0" +
-             ",\"unlimited_sessions\":true" +
-             ",\"session_mode\":\"per-service-tcp\"" +'''
-          if status_old in s:
-              s = s.replace(status_old, status_new, 1)
+          s = rep(s, "constexpr size_t kMaxSessionsPerReader = 10;\n", "constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited\n", 'newcamd cap')
+          s = rep(s, "if (activeForReader >= kMaxSessionsPerReader) {", "if (kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader) {", 'newcamd guards', expected=2)
+          s = s.replace('Newcamd per-reader service session limit reached (10)', 'Newcamd per-reader service session limit reached')
+          s = s.replace('<< " session_mode=per-service max_sessions=" << kMaxSessionsPerReader', '<< " session_mode=per-service max_sessions=unlimited"')
+          s = s.replace('              << "/" << kMaxSessionsPerReader\n', '              << " max_sessions=unlimited"\n')
           p.write_text(s)
 
-          # 6) Version.
           p = Path('src/AppVersion.h')
-          s = p.read_text()
-          s = rep(s, 'kProgramVersion = "10.8.59"', 'kProgramVersion = "10.8.60"', 'version')
+          s = rep(p.read_text(), 'kProgramVersion = "10.8.59"', 'kProgramVersion = "10.8.60"', 'version')
           p.write_text(s)
 
-          # Assertions guard against a partial integration.
           assert 'add_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)' in Path('CMakeLists.txt').read_text()
           assert 'mandatory Newcamd plugin was not built' in Path('scripts/make_portable_linux_bundle.sh').read_text()
-          assert 'loadPluginsLocked();' in Path('src/CaBackend.cpp').read_text()
-          assert 'maxServices = 0' in Path('src/ConfigManager.h').read_text()
-          np = Path('src/ca/backends/newcamd/NewcamdPlugin.cpp').read_text()
-          assert 'kMaxSessionsPerReader = 0' in np
-          assert np.count('kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader') == 2
+          assert 'kMaxSessionsPerReader = 0' in Path('src/ca/backends/newcamd/NewcamdPlugin.cpp').read_text()
           assert 'kProgramVersion = "10.8.60"' in Path('src/AppVersion.h').read_text()
           PY
-
           python3 /tmp/apply_v10860.py
           git diff --check
           bash -n scripts/make_portable_linux_bundle.sh
-
           rm -f .github/workflows/one-shot-v10860-newcamd-unlimited.yml
           rmdir .github/workflows 2>/dev/null || true
           rmdir .github 2>/dev/null || true
-
           git config user.name Monkipnet
           git config user.email monkipnet@yandex.ru
           git add -A
