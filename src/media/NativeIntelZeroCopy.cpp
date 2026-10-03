@@ -326,8 +326,10 @@ private:
             outputHeight_ = sourceHeight_ & ~1;
         }
         outputPicStruct_ = config_.deinterlace
-            ? MFX_PICSTRUCT_PROGRESSIVE
-            : (info.PicStruct ? info.PicStruct : MFX_PICSTRUCT_PROGRESSIVE);
+            ? static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE)
+            : (info.PicStruct != 0
+                ? info.PicStruct
+                : static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE));
 
         // The first encoder Init above validates that the selected hardware
         // can encode the requested codec. Reinitialize it now that decode has
@@ -423,7 +425,7 @@ private:
         bitstream.DataLength = bitstream.MaxLength;
         bitstream.TimeStamp = hasPts
             ? static_cast<mfxU64>(pts90k)
-            : MFX_TIMESTAMP_UNKNOWN;
+            : std::numeric_limits<mfxU64>::max();
 
         int safety = 0;
         while ((bitstream.DataLength != 0 || safety == 0) && safety++ < 256) {
@@ -553,7 +555,7 @@ private:
         encoded.data.assign(
             bitstream.Data + bitstream.DataOffset,
             bitstream.Data + bitstream.DataOffset + bitstream.DataLength);
-        encoded.hasPts = bitstream.TimeStamp != MFX_TIMESTAMP_UNKNOWN;
+        encoded.hasPts = bitstream.TimeStamp != std::numeric_limits<mfxU64>::max();
         encoded.hasDts = encoded.hasPts;
         encoded.pts90k = encoded.hasPts ? bitstream.TimeStamp : 0;
         encoded.dts90k = encoded.pts90k;

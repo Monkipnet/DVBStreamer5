@@ -131,6 +131,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeMpegTsMux.cpp
     ${DVBSTREAMER5_CODEC_SOURCE}
     src/media/NativeHardwareCodec.cpp
+    src/media/NativeIntelZeroCopy.cpp
     src/media/NativeNvidiaZeroCopy.cpp
     src/media/NativeVideoProcessing.cpp
     src/media/NativeTranscoderPipeline.cpp
