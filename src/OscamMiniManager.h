@@ -63,8 +63,18 @@ private:
 
     static std::string readFile(const std::string& path);
     static bool writeAtomic(const std::string& path, const std::string& content, std::string& error);
+    struct DetectedReader {
+        std::string kind;
+        std::string name;
+        std::string protocol;
+        std::string device;
+        std::string detail;
+        bool stable = false;
+    };
+
     static std::string run(const std::string& command, int* rc = nullptr);
     static std::vector<std::string> ttyDevices();
+    static std::vector<DetectedReader> detectedReaders();
     static std::string json(const Json::Value& value);
     static Json::Value parse(const std::string& body, std::string& error);
     static std::string trim(std::string value);
