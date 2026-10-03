@@ -890,13 +890,10 @@ private:
                 std::string(vaErrorStr(st));
             return false;
         }
-
-        st = vaSyncSurface(display_, target);
-        if (st != VA_STATUS_SUCCESS) {
-            error = "vaSyncSurface(VPP target) failed: " +
-                std::string(vaErrorStr(st));
-            return false;
-        }
+        // Submit VPP and H.264 encode as one VAAPI dependency chain.
+        // The final encode vaSyncSurface() waits for both operations; an
+        // intermediate VPP sync serialized every scaled frame and could make
+        // legacy Intel/i965 fall below realtime during PAL-to-HD upscaling.
 
         if (!vppLogged_) {
             std::cerr

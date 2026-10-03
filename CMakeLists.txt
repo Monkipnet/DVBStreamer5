@@ -68,6 +68,7 @@ add_library(dvbstreamer5_jsoncpp STATIC
 target_include_directories(dvbstreamer5_jsoncpp PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party
 )
+set_target_properties(dvbstreamer5_jsoncpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(dvbstreamer5_http_client STATIC
     src/NativeHttpClient.cpp
@@ -247,6 +248,28 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src
 )
 
+# Newcamd is a loadable CA backend, not part of the main executable.
+add_library(dvbstreamer5_ca_newcamd SHARED
+    src/ca/backends/newcamd/NewcamdPlugin.cpp
+    src/ca/backends/newcamd/NewcamdClient.cpp
+)
+target_include_directories(dvbstreamer5_ca_newcamd PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_link_libraries(dvbstreamer5_ca_newcamd PRIVATE
+    dvbstreamer5_boost_headers
+    dvbstreamer5_jsoncpp
+    dvbstreamer5_dvbcsa
+    OpenSSL::Crypto
+    Threads::Threads
+)
+set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "dvbstreamer5-ca-newcamd"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
+)
+
 add_executable(DVBStreamer5
     src/main.cpp
     src/utils.cpp
@@ -254,8 +277,6 @@ add_executable(DVBStreamer5
     src/DvbSatellite.cpp
     src/CardManager.cpp
     src/CaBackend.cpp
-    src/ca/backends/newcamd/NewcamdPlugin.cpp
-    src/ca/backends/newcamd/NewcamdClient.cpp
     src/TelegramNotifier.cpp
     src/StableUdpOutput.cpp
     src/mpts/MptsOutputManager.cpp

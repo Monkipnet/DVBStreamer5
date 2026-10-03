@@ -1,5 +1,4 @@
 #include "CaBackend.h"
-#include "ca/backends/newcamd/NewcamdBuiltin.h"
 
 #include <algorithm>
 #include <chrono>
@@ -67,11 +66,6 @@ CaBackendManager::CaBackendManager() {
     passthrough.builtin = true;
     passthrough.usable = true;
     backends_.emplace(passthrough.id, std::move(passthrough));
-
-    if (!registerBuiltinBackendLocked(
-            dvbstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
-        std::cerr << "Built-in Newcamd CA backend registration failed" << std::endl;
-    }
 }
 
 CaBackendManager::~CaBackendManager() {
@@ -668,24 +662,6 @@ Json::Value CaBackendManager::snapshot() const {
         passthrough["backend_kind"] = "passthrough";
         busyBackends.append(passthrough);
 
-        if (const auto* api = dvbstreamer5_ca_backend_get_api_v1()) {
-            Json::Value newcamd;
-            newcamd["id"] = safeString(api->backend_id);
-            newcamd["display_name"] = safeString(api->display_name);
-            newcamd["vendor"] = safeString(api->vendor);
-            newcamd["path"] = "builtin:newcamd";
-            newcamd["builtin"] = true;
-            newcamd["usable"] = true;
-            newcamd["capabilities"] = Json::UInt(api->capabilities);
-            newcamd["ts_inplace"] =
-                (api->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE) != 0;
-            newcamd["multi_service"] =
-                (api->capabilities & DVBSTREAMER5_CA_CAP_MULTI_SERVICE) != 0;
-            newcamd["emm_managed"] =
-                (api->capabilities & DVBSTREAMER5_CA_CAP_EMM_MANAGED) != 0;
-            newcamd["backend_kind"] = "builtin";
-            busyBackends.append(newcamd);
-        }
         root["backends"] = busyBackends;
         return root;
     }
