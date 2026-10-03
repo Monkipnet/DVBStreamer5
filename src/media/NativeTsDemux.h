@@ -98,6 +98,7 @@ private:
         bool randomAccess = false;
         std::map<std::uint32_t, H264SpsState> h264Sps;
         std::map<std::uint32_t, H264PpsState> h264Pps;
+        std::uint64_t h264FieldPairs = 0;
     };
 
     void consumePacket(const Packet& packet, std::string& error);

@@ -24,7 +24,6 @@ bool validSectionCrc(const std::vector<std::uint8_t>& section) {
     return crc == 0;
 }
 
-
 struct NalSpan {
     std::size_t startCode = 0;
     std::size_t nal = 0;
@@ -49,39 +48,75 @@ std::vector<NalSpan> annexBStarts(const std::vector<std::uint8_t>& data) {
     return out;
 }
 
+class H264RbspReader {
+public:
+    H264RbspReader(const std::uint8_t* nal, std::size_t size) {
+        if (!nal || size <= 1) return;
+        rbsp_.reserve(size - 1);
+        unsigned zeros = 0;
+        for (std::size_t i = 1; i < size; ++i) {
+            const std::uint8_t b = nal[i];
+            if (zeros >= 2 && b == 0x03) {
+                zeros = 0;
+                continue;
+            }
+            rbsp_.push_back(b);
+            zeros = b == 0 ? zeros + 1U : 0U;
+        }
+    }
+
+    bool readBit(bool& value) {
+        if (bit_ >= rbsp_.size() * 8U) return false;
+        value = (rbsp_[bit_ / 8U] & (0x80U >> (bit_ % 8U))) != 0;
+        ++bit_;
+        return true;
+    }
+
+    bool readBits(unsigned count, std::uint32_t& value) {
+        if (count > 32U) return false;
+        value = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            bool bit = false;
+            if (!readBit(bit)) return false;
+            value = (value << 1U) | (bit ? 1U : 0U);
+        }
+        return true;
+    }
+
+    bool readUe(std::uint32_t& value) {
+        unsigned leading = 0;
+        bool bit = false;
+        while (true) {
+            if (!readBit(bit)) return false;
+            if (bit) break;
+            if (++leading > 31U) return false;
+        }
+        std::uint32_t suffix = 0;
+        if (leading != 0 && !readBits(leading, suffix)) return false;
+        value = ((1U << leading) - 1U) + suffix;
+        return true;
+    }
+
+    bool readSe(std::int32_t& value) {
+        std::uint32_t codeNum = 0;
+        if (!readUe(codeNum)) return false;
+        if (codeNum & 1U)
+            value = static_cast<std::int32_t>((codeNum + 1U) / 2U);
+        else
+            value = -static_cast<std::int32_t>(codeNum / 2U);
+        return true;
+    }
+
+private:
+    std::vector<std::uint8_t> rbsp_;
+    std::size_t bit_ = 0;
+};
+
 bool h264FirstMbInSliceZero(const std::uint8_t* nal, std::size_t size) {
     if (!nal || size < 2) return false;
-    std::vector<std::uint8_t> rbsp;
-    rbsp.reserve(size - 1);
-    int zeros = 0;
-    for (std::size_t i = 1; i < size; ++i) {
-        const std::uint8_t b = nal[i];
-        if (zeros >= 2 && b == 0x03) {
-            zeros = 0;
-            continue;
-        }
-        rbsp.push_back(b);
-        zeros = (b == 0) ? zeros + 1 : 0;
-    }
-    std::size_t bit = 0;
-    std::size_t leading = 0;
-    while (bit < rbsp.size() * 8U) {
-        const bool one = (rbsp[bit / 8U] & (0x80U >> (bit % 8U))) != 0;
-        ++bit;
-        if (one) break;
-        ++leading;
-        if (leading > 31) return false;
-    }
-    if (bit > rbsp.size() * 8U) return false;
-    std::uint32_t suffix = 0;
-    for (std::size_t i = 0; i < leading; ++i) {
-        if (bit >= rbsp.size() * 8U) return false;
-        suffix = (suffix << 1) |
-            ((rbsp[bit / 8U] & (0x80U >> (bit % 8U))) ? 1U : 0U);
-        ++bit;
-    }
-    const std::uint32_t value = ((1U << leading) - 1U) + suffix;
-    return value == 0;
+    H264RbspReader bits(nal, size);
+    std::uint32_t firstMb = 1;
+    return bits.readUe(firstMb) && firstMb == 0;
 }
 
 bool isVideoAuBoundary(ElementaryCodec codec,
@@ -506,15 +541,128 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
     state.bytes.insert(state.bytes.end(), sample.data.begin(), sample.data.end());
     state.randomAccess = state.randomAccess || sample.randomAccess;
 
-    // V9.3: follow the picture grouping used by OpenH264's own h264dec
-    // console application.  The LVM input is AVC Main with B pictures.  The
-    // previous SPS/PPS/POC parser was more ambitious than OpenH264 itself and
-    // could split a broadcast access unit incorrectly.  Here we keep the
-    // elementary stream byte-exact across PES boundaries and cut only at the
-    // same robust markers used by OpenH264: a second picture whose first
-    // slice has first_mb_in_slice == 0, repeated SPS/PPS after VCL, or a
-    // second AUD.  This preserves multi-slice pictures and B-picture decode
-    // order without inventing or rewriting NAL bytes.
+    const auto parseSps = [&](const std::uint8_t* nal, std::size_t nalSize) {
+        H264RbspReader bits(nal, nalSize);
+        std::uint32_t profile = 0, constraints = 0, level = 0, spsId = 0;
+        if (!bits.readBits(8, profile) || !bits.readBits(8, constraints) ||
+            !bits.readBits(8, level) || !bits.readUe(spsId)) return;
+        (void)constraints;
+        (void)level;
+
+        std::uint32_t chromaFormatIdc = 1;
+        const bool highProfile =
+            profile == 100 || profile == 110 || profile == 122 ||
+            profile == 244 || profile == 44 || profile == 83 ||
+            profile == 86 || profile == 118 || profile == 128 ||
+            profile == 138 || profile == 139 || profile == 134 ||
+            profile == 135;
+        if (highProfile) {
+            if (!bits.readUe(chromaFormatIdc) || chromaFormatIdc > 3) return;
+            if (chromaFormatIdc == 3) {
+                bool separateColourPlane = false;
+                if (!bits.readBit(separateColourPlane)) return;
+            }
+            std::uint32_t ignoredUe = 0;
+            bool ignoredBit = false;
+            if (!bits.readUe(ignoredUe) || !bits.readUe(ignoredUe) ||
+                !bits.readBit(ignoredBit) || !bits.readBit(ignoredBit)) return;
+            if (ignoredBit) {
+                const unsigned listCount = chromaFormatIdc != 3 ? 8U : 12U;
+                for (unsigned list = 0; list < listCount; ++list) {
+                    bool present = false;
+                    if (!bits.readBit(present)) return;
+                    if (!present) continue;
+                    int lastScale = 8;
+                    int nextScale = 8;
+                    const unsigned count = list < 6 ? 16U : 64U;
+                    for (unsigned j = 0; j < count; ++j) {
+                        if (nextScale != 0) {
+                            std::int32_t deltaScale = 0;
+                            if (!bits.readSe(deltaScale)) return;
+                            nextScale = (lastScale + deltaScale + 256) % 256;
+                        }
+                        if (nextScale != 0) lastScale = nextScale;
+                    }
+                }
+            }
+        }
+
+        H264SpsState parsed;
+        parsed.id = spsId;
+        std::uint32_t value = 0;
+        if (!bits.readUe(value) || value > 12U) return;
+        parsed.log2MaxFrameNum = value + 4U;
+        if (!bits.readUe(parsed.picOrderCntType) || parsed.picOrderCntType > 2U) return;
+        if (parsed.picOrderCntType == 0) {
+            if (!bits.readUe(value) || value > 12U) return;
+            parsed.log2MaxPicOrderCntLsb = value + 4U;
+        } else if (parsed.picOrderCntType == 1) {
+            bool deltaAlwaysZero = false;
+            if (!bits.readBit(deltaAlwaysZero)) return;
+            parsed.deltaPicOrderAlwaysZero = deltaAlwaysZero;
+            std::int32_t ignoredSe = 0;
+            if (!bits.readSe(ignoredSe) || !bits.readSe(ignoredSe)) return;
+            std::uint32_t cycle = 0;
+            if (!bits.readUe(cycle) || cycle > 255U) return;
+            for (std::uint32_t i = 0; i < cycle; ++i)
+                if (!bits.readSe(ignoredSe)) return;
+        }
+        if (!bits.readUe(value)) return; // max_num_ref_frames
+        bool ignoredBit = false;
+        if (!bits.readBit(ignoredBit) || // gaps_in_frame_num_value_allowed_flag
+            !bits.readUe(value) ||       // pic_width_in_mbs_minus1
+            !bits.readUe(value) ||       // pic_height_in_map_units_minus1
+            !bits.readBit(parsed.frameMbsOnly)) return;
+        parsed.valid = true;
+        state.h264Sps[parsed.id] = parsed;
+    };
+
+    const auto parsePps = [&](const std::uint8_t* nal, std::size_t nalSize) {
+        H264RbspReader bits(nal, nalSize);
+        H264PpsState parsed;
+        if (!bits.readUe(parsed.id) || !bits.readUe(parsed.spsId)) return;
+        bool entropyCodingMode = false;
+        if (!bits.readBit(entropyCodingMode) ||
+            !bits.readBit(parsed.bottomFieldPicOrderInFramePresent)) return;
+        (void)entropyCodingMode;
+        parsed.valid = true;
+        state.h264Pps[parsed.id] = parsed;
+    };
+
+    const auto parseSlice = [&](const std::uint8_t* nal, std::size_t nalSize,
+                                H264SliceState& parsed) -> bool {
+        if (!nal || nalSize < 2) return false;
+        H264RbspReader bits(nal, nalSize);
+        std::uint32_t sliceType = 0;
+        if (!bits.readUe(parsed.firstMb) || !bits.readUe(sliceType) ||
+            !bits.readUe(parsed.ppsId)) return false;
+        const auto ppsIt = state.h264Pps.find(parsed.ppsId);
+        if (ppsIt == state.h264Pps.end() || !ppsIt->second.valid) return false;
+        const auto spsIt = state.h264Sps.find(ppsIt->second.spsId);
+        if (spsIt == state.h264Sps.end() || !spsIt->second.valid) return false;
+        const auto& sps = spsIt->second;
+        if (sps.log2MaxFrameNum == 0 || sps.log2MaxFrameNum > 32U ||
+            !bits.readBits(sps.log2MaxFrameNum, parsed.frameNum)) return false;
+        if (!sps.frameMbsOnly) {
+            if (!bits.readBit(parsed.fieldPic)) return false;
+            if (parsed.fieldPic && !bits.readBit(parsed.bottomField)) return false;
+        }
+        parsed.idr = (nal[0] & 0x1fU) == 5U;
+        parsed.nalRefIdc = static_cast<std::uint8_t>((nal[0] >> 5U) & 0x03U);
+        if (parsed.idr && !bits.readUe(parsed.idrPicId)) return false;
+        parsed.valid = true;
+        (void)sliceType;
+        return true;
+    };
+
+    // V10.8.51: keep complementary H.264 field pictures in one decoder AU.
+    // The LVM Main-profile PAL service carries interlaced top/bottom field
+    // pictures. V10.8.45 cut on every second first_mb_in_slice==0, which made
+    // each field look like a 40 ms frame. Ittiam correctly emitted one frame
+    // only after both fields, so output timestamps advanced at 12.5 fps and
+    // audio ran seconds ahead. Parse the minimal SPS/PPS/slice syntax needed
+    // for field_pic_flag/bottom_field_flag and only cut after a complete field
+    // pair. Progressive/frame-coded AVC keeps the previous picture boundary.
     for (;;) {
         auto starts = annexBStarts(state.bytes);
         if (starts.empty()) return;
@@ -532,9 +680,12 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
 
         unsigned spsCount = 0;
         unsigned ppsCount = 0;
-        unsigned nonIdrPictureCount = 0;
-        unsigned idrPictureCount = 0;
         unsigned audCount = 0;
+        bool seenVcl = false;
+        bool seenPictureStart = false;
+        bool haveParsedFirstPicture = false;
+        bool complementaryPairComplete = false;
+        H264SliceState firstPicture;
         std::size_t boundary = 0;
 
         // Only NAL units with a following start code are known complete.
@@ -546,44 +697,78 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
             const std::size_t nalSize = nalEnd - cur.nal;
             const std::uint8_t type = static_cast<std::uint8_t>(nal[0] & 0x1fU);
 
-            if (type == 1) {
-                const bool firstMbZero = h264FirstMbInSliceZero(nal, nalSize);
-                ++nonIdrPictureCount;
-                if (firstMbZero &&
-                    ((nonIdrPictureCount >= 1 && idrPictureCount >= 1) ||
-                     nonIdrPictureCount >= 2)) {
-                    boundary = cur.startCode;
-                    break;
-                }
-            } else if (type == 5) {
-                const bool firstMbZero = h264FirstMbInSliceZero(nal, nalSize);
-                ++idrPictureCount;
-                if (firstMbZero &&
-                    ((idrPictureCount >= 1 && nonIdrPictureCount >= 1) ||
-                     idrPictureCount >= 2)) {
-                    boundary = cur.startCode;
-                    break;
-                }
-            } else if (type == 7) {
+            if (type == 7) {
                 ++spsCount;
-                if ((spsCount >= 1 && (nonIdrPictureCount >= 1 || idrPictureCount >= 1)) ||
-                    spsCount >= 2) {
+                if (seenVcl || spsCount >= 2U) {
                     boundary = cur.startCode;
                     break;
                 }
-            } else if (type == 8) {
-                ++ppsCount;
-                if (ppsCount >= 1 && (nonIdrPictureCount >= 1 || idrPictureCount >= 1)) {
-                    boundary = cur.startCode;
-                    break;
-                }
-            } else if (type == 9) {
-                ++audCount;
-                if (audCount >= 2) {
-                    boundary = cur.startCode;
-                    break;
-                }
+                parseSps(nal, nalSize);
+                continue;
             }
+            if (type == 8) {
+                ++ppsCount;
+                if (seenVcl || ppsCount >= 2U) {
+                    boundary = cur.startCode;
+                    break;
+                }
+                parsePps(nal, nalSize);
+                continue;
+            }
+            if (type == 9) {
+                ++audCount;
+                if (audCount >= 2U) {
+                    boundary = cur.startCode;
+                    break;
+                }
+                continue;
+            }
+            if (type != 1 && type != 5) continue;
+
+            const bool firstMbZero = h264FirstMbInSliceZero(nal, nalSize);
+            H264SliceState currentPicture;
+            const bool parsed = parseSlice(nal, nalSize, currentPicture);
+            seenVcl = true;
+            if (!firstMbZero) continue;
+
+            if (!seenPictureStart) {
+                seenPictureStart = true;
+                if (parsed) {
+                    firstPicture = currentPicture;
+                    haveParsedFirstPicture = true;
+                }
+                continue;
+            }
+
+            bool complementaryField = false;
+            if (!complementaryPairComplete && haveParsedFirstPicture && parsed &&
+                firstPicture.fieldPic && currentPicture.fieldPic &&
+                firstPicture.ppsId == currentPicture.ppsId &&
+                firstPicture.frameNum == currentPicture.frameNum &&
+                firstPicture.idr == currentPicture.idr &&
+                firstPicture.bottomField != currentPicture.bottomField &&
+                (!firstPicture.idr ||
+                 firstPicture.idrPicId == currentPicture.idrPicId)) {
+                complementaryField = true;
+            }
+
+            if (complementaryField) {
+                complementaryPairComplete = true;
+                ++state.h264FieldPairs;
+                if (state.h264FieldPairs <= 4U ||
+                    (state.h264FieldPairs % 250U) == 0U) {
+                    std::cerr << "NATIVE AVC AU FIELD_PAIR pid="
+                              << sample.stream.pid
+                              << " frame_num=" << firstPicture.frameNum
+                              << " first_bottom=" << (firstPicture.bottomField ? 1 : 0)
+                              << " pairs=" << state.h264FieldPairs
+                              << std::endl;
+                }
+                continue;
+            }
+
+            boundary = cur.startCode;
+            break;
         }
 
         if (boundary == 0) return;
