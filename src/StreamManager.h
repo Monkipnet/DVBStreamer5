@@ -303,6 +303,12 @@ private:
         std::string previewSession;
     };
 
+    // V10.8.54 build wrapper keeps the previous implementation available under
+    // this private name while addHttpClient() cleanly separates public HTTP TS
+    // subscribers from browser-preview subscribers.
+    bool addHttpClientOriginal(const std::string& id, int fd, const std::string& clientIp,
+                               const std::string& previewSession);
+
     bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
     void pruneExpiredAdHocSessionsLocked(std::chrono::steady_clock::time_point now);
     static std::string normalizedOutputType(const StreamConfig& cfg, const StreamOutputConfig* extra = nullptr);
