@@ -315,13 +315,14 @@ private:
             return false;
         }
 
-        // Do not upscale beyond source geometry. This mirrors the NVIDIA
-        // zero-copy path and avoids wasting GPU bandwidth on live television.
+        // Production transcodes avoid accidental upscaling. Browser preview
+        // explicitly locks 1280x720 so anamorphic SD input becomes square-pixel
+        // 16:9 in the GPU VPP path as well.
         const std::uint64_t sourcePixels =
             static_cast<std::uint64_t>(sourceWidth_) * sourceHeight_;
         const std::uint64_t requestedPixels =
             static_cast<std::uint64_t>(outputWidth_) * outputHeight_;
-        if (requestedPixels > sourcePixels) {
+        if (!config_.lockOutputGeometry && requestedPixels > sourcePixels) {
             outputWidth_ = sourceWidth_ & ~1;
             outputHeight_ = sourceHeight_ & ~1;
         }

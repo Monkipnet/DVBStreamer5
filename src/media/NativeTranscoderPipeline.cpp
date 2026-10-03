@@ -1012,6 +1012,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.fps = config_.fps;
                 zeroCopyConfig.bitrate = config_.videoBitrate;
                 zeroCopyConfig.deinterlace = config_.deinterlace;
+                zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 nvidiaZeroCopy_ = codec::createNvidiaZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);
             } else {
@@ -1097,6 +1098,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.fps = config_.fps;
                 zeroCopyConfig.bitrate = config_.videoBitrate;
                 zeroCopyConfig.deinterlace = config_.deinterlace;
+                zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 intelZeroCopy_ = codec::createIntelZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);
             } else {

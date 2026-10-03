@@ -313,13 +313,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     // Browser preview must not depend on the production codec. mpegts.js /
     // MediaSource playback is reliable with AVC + AAC, while DVB services can
     // legitimately carry MPEG-2, HEVC, MP2 or AC-3. Keep a dedicated,
-    // low-bitrate CPU pipeline whose output is used only by preview.ts.
+    // low-bitrate hardware-auto pipeline whose output is used only by preview.ts.
+    // NVDEC/NVENC or QSV decode/VPP/encode is preferred for broadcast Main/HEVC;
+    // compatible streams can still fall back to the native CPU codecs.
     state->nativePreviewTranscoder =
         std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
     {
         dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
         previewTc.videoCodec = "h264";
-        previewTc.videoEncoder = "cpu";
+        previewTc.videoEncoder = "auto";
         previewTc.audioCodec = "aac";
         previewTc.width = 1280;
         previewTc.height = 720;
@@ -355,7 +357,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             std::cerr << "NATIVE BROWSER PREVIEW ready stream="
                       << streamConfig.name
                       << " codec=h264/aac size=1280x720 dar=16:9"
-                      << " video_kbps=1800 audio_kbps=128"
+                      << " encoder=auto video_kbps=1800 audio_kbps=128"
                       << std::endl;
         }
     }

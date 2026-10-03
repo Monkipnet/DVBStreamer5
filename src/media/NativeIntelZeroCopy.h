@@ -18,6 +18,10 @@ struct IntelZeroCopyConfig {
     double fps = 25.0;
     std::uint64_t bitrate = 6000000;
     bool deinterlace = true;
+    // Preserve an explicitly requested output raster even when it is larger
+    // than the decoded raster. Browser preview uses 1280x720 square pixels
+    // for anamorphic SD television sources.
+    bool lockOutputGeometry = false;
 };
 
 class IntelZeroCopyTranscoder {
