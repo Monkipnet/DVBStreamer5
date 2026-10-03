@@ -309,7 +309,7 @@ const CaBackendManager::LoadedBackend* CaBackendManager::findBackendLocked(const
 bool CaBackendManager::ensureReaderOpenLocked(LoadedBackend& backend,
                                                const CaBackendReaderBinding& reader,
                                                std::string& error) {
-    if (backend.builtin) {
+    if (backend.id == "passthrough") {
         ++backend.readerRefs[reader.key];
         return true;
     }
@@ -347,7 +347,7 @@ void CaBackendManager::releaseReaderLocked(LoadedBackend& backend, const std::st
         --found->second;
         return;
     }
-    if (!backend.builtin && backend.api && backend.api->close_reader) {
+    if (backend.id != "passthrough" && backend.api && backend.api->close_reader) {
         backend.api->close_reader(backend.instance, readerKey.c_str());
     }
     backend.readerRefs.erase(found);
@@ -384,10 +384,11 @@ bool CaBackendManager::startService(const StreamConfig& stream,
     session.streamName = stream.name;
     session.readerKey = reader.key;
     session.backendId = backend->id;
-    session.passthrough = backend->builtin || !(backend->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE);
+    const bool passthroughBackend = backend->id == "passthrough";
+    session.passthrough = passthroughBackend || !(backend->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE);
     session.status = session.passthrough ? "PASSTHROUGH_NO_DECODE" : "BACKEND_RESERVED";
 
-    if (!backend->builtin) {
+    if (!passthroughBackend) {
         const std::string pids = extractDvbPids(stream.inputUri);
         dvbstreamer5_ca_service_info_v1 info{};
         info.stream_id = stream.id.c_str();
@@ -415,7 +416,8 @@ bool CaBackendManager::startService(const StreamConfig& stream,
     std::cerr << "CA backend service reserved: stream=" << stream.id
               << " client=" << reader.key
               << " backend=" << backend->id
-              << " mode=" << (backend->builtin ? "passthrough" : "plugin") << std::endl;
+              << " mode=" << (passthroughBackend ? "passthrough" :
+                              (backend->builtin ? "builtin" : "plugin")) << std::endl;
     return true;
 }
 
@@ -431,7 +433,7 @@ void CaBackendManager::stopService(const std::string& streamId) {
     ServiceSession session;
     const dvbstreamer5_ca_backend_api_v1* api = nullptr;
     void* instance = nullptr;
-    bool builtin = true;
+    bool passthroughBackend = true;
     bool closeReader = false;
 
     {
@@ -453,7 +455,7 @@ void CaBackendManager::stopService(const std::string& streamId) {
             sessions_.erase(found);
             return;
         }
-        builtin = backend->builtin;
+        passthroughBackend = backend->id == "passthrough";
         api = backend->api;
         instance = backend->instance;
 
@@ -474,10 +476,10 @@ void CaBackendManager::stopService(const std::string& streamId) {
     // External plugin code is deliberately called with mutex_ released.  A
     // broken or slow backend may delay this stop thread, but /api/state and
     // other manager snapshots remain responsive and report STOPPING.
-    if (!builtin && api && api->stop_service) {
+    if (!passthroughBackend && api && api->stop_service) {
         api->stop_service(instance, streamId.c_str());
     }
-    if (closeReader && !builtin && api && api->close_reader) {
+    if (closeReader && !passthroughBackend && api && api->close_reader) {
         api->close_reader(instance, session.readerKey.c_str());
     }
 
@@ -526,7 +528,7 @@ bool CaBackendManager::processTransport(const std::string& streamId, uint8_t* da
     }
 
     LoadedBackend* backend = findBackendLocked(session.backendId);
-    if (!backend || backend->builtin || !backend->api || !backend->api->process_ts) {
+    if (!backend || backend->id == "passthrough" || !backend->api || !backend->api->process_ts) {
         session.status = "PASSTHROUGH_NO_DECODE";
         return true;
     }
@@ -582,7 +584,9 @@ Json::Value CaBackendManager::backendToJsonLocked(const LoadedBackend& backend) 
     // Do not call backend->status_json() from the HTTP snapshot path. Plugin
     // callbacks may wait on network/worker locks; dashboard state must remain
     // available even when a backend is unhealthy.
-    item["plugin_status_deferred"] = !backend.builtin && backend.api && backend.api->status_json;
+    item["plugin_status_deferred"] = backend.id != "passthrough" && backend.api && backend.api->status_json;
+    item["backend_kind"] = backend.id == "passthrough" ? "passthrough" :
+                           (backend.builtin ? "builtin" : "plugin");
     return item;
 }
 
@@ -620,9 +624,10 @@ Json::Value CaBackendManager::streamState(const std::string& streamId) const {
     result["packets_scrambled"] = Json::UInt64(session.packetsScrambled);
     result["last_error"] = session.lastError;
     const LoadedBackend* backend = findBackendLocked(session.backendId);
-    result["native_plugin"] = backend && !backend->builtin &&
+    result["native_plugin"] = backend && backend->id != "passthrough" &&
                               (backend->capabilities & DVBSTREAMER5_CA_CAP_TS_INPLACE) != 0 &&
                               !session.passthrough;
+    result["builtin"] = backend && backend->builtin;
     if (backend) {
         result["display_name"] = backend->displayName;
         result["capabilities"] = Json::UInt(backend->capabilities);
