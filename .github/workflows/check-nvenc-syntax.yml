@@ -17,7 +17,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Apply Linux include and GPU ordinal validation fix
+      - name: Apply V10.8.38 portability fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -27,41 +27,66 @@ jobs:
           path = Path('src/media/NativeHardwareCodec.cpp')
           s = path.read_text()
 
-          old = '''#include <dlfcn.h>
+          def replace_once(old, new, label):
+              global s
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label} matches={count}')
+              s = s.replace(old, new)
+
+          replace_once(
+          '''#include <dlfcn.h>
           #include <cctype>
           #include <unistd.h>
           #include <iostream>
-          '''
-          new = '''#include <dlfcn.h>
+          ''',
+          '''#include <dlfcn.h>
           #include <cctype>
           #include <unistd.h>
           #if defined(__linux__)
           #include <fcntl.h>
           #endif
           #include <iostream>
-          '''
-          if s.count(old) != 1:
-              raise SystemExit(f'linux fcntl insertion matches={s.count(old)}')
-          s = s.replace(old, new)
+          ''',
+          'linux fcntl insertion')
 
-          old = '''#if defined(DVBSTREAMER5_HAVE_VAAPI)
+          replace_once(
+          '''#if defined(DVBSTREAMER5_HAVE_VAAPI)
           #include <fcntl.h>
           #include <va/va.h>
-          '''
-          new = '''#if defined(DVBSTREAMER5_HAVE_VAAPI)
+          ''',
+          '''#if defined(DVBSTREAMER5_HAVE_VAAPI)
           #include <va/va.h>
-          '''
-          if s.count(old) != 1:
-              raise SystemExit(f'VAAPI fcntl removal matches={s.count(old)}')
-          s = s.replace(old, new)
+          ''',
+          'VAAPI fcntl removal')
 
-          old = '''            if (!end || *end != '\\0' || value < 0 || value > 1024) {
-          '''
-          new = '''            if (!end || end == gpu || *end != '\\0' || value < 0 || value > 1024) {
-          '''
-          if s.count(old) != 1:
-              raise SystemExit(f'GPU ordinal validation matches={s.count(old)}')
-          s = s.replace(old, new)
+          replace_once(
+          '''            if (!end || *end != '\\0' || value < 0 || value > 1024) {
+          ''',
+          '''            if (!end || end == gpu || *end != '\\0' || value < 0 || value > 1024) {
+          ''',
+          'GPU ordinal validation')
+
+          replace_once(
+          '''        GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
+                  const char* presetName = "legacy-low-latency-hp";
+                  bool modernLowLatency = false;
+                  bool presetLoaded = false;
+          #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+          ''',
+          '''#if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+                  GUID presetGuid = NV_ENC_PRESET_P3_GUID;
+                  const char* presetName = "p3";
+          #else
+                  GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
+                  const char* presetName = "legacy-low-latency-hp";
+          #endif
+                  bool modernLowLatency = false;
+                  bool presetLoaded = false;
+          #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
+          ''',
+          'modern preset fallback')
+
           path.write_text(s)
 
           version = Path('src/AppVersion.h')
@@ -92,5 +117,5 @@ jobs:
           git config user.name "DVBStreamer5 automation"
           git config user.email "actions@users.noreply.github.com"
           git add src/media/NativeHardwareCodec.cpp src/AppVersion.h
-          git commit -m "Stage 9 V10.8.38 fix NVENC-only Linux build validation"
+          git commit -m "Stage 9 V10.8.38 validate NVENC low-latency across SDK versions"
           git push origin HEAD:main
