@@ -31,7 +31,7 @@ jobs:
 
           hw_path = Path("src/media/NativeHardwareCodec.cpp")
           hw = hw_path.read_text()
-          pattern = re.compile(r"\n\s*st = vaSyncSurface\(display_, target\);\n\s*if \(st != VA_STATUS_SUCCESS\) \{\n\s*error = \"VAAPI VPP output sync failed: \" \+ std::string\(vaErrorStr\(st\)\);\n\s*return false;\n\s*\}\n")
+          pattern = re.compile(r"\n\s*st = vaSyncSurface\(display_, target\);\n\s*if \(st != VA_STATUS_SUCCESS\) \{\n\s*error = \"vaSyncSurface\(VPP target\) failed: \" \+\n\s*std::string\(vaErrorStr\(st\)\);\n\s*return false;\n\s*\}\n")
           matches = list(pattern.finditer(hw))
           if len(matches) != 1:
               raise SystemExit(f"VAAPI VPP sync block: expected one match, got {len(matches)}")
@@ -127,7 +127,7 @@ jobs:
           exe = cm.split("add_executable(DVBStreamer5", 1)[1].split(")", 1)[0]
           assert "NewcamdPlugin.cpp" not in exe and "NewcamdClient.cpp" not in exe
           assert "NewcamdBuiltin.h" not in ca and "builtin:newcamd" not in ca
-          assert "VAAPI VPP output sync failed" not in hw
+          assert "vaSyncSurface(VPP target) failed" not in hw
           assert 'kProgramVersion = "10.8.58"' in ver_path.read_text()
           PY
           python3 /tmp/apply_v10858.py
