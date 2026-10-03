@@ -300,8 +300,12 @@ void NativeTranscoderPipeline::reset() {
     }
     {
         std::lock_guard<std::mutex> lock(videoDecoderMutex_);
+        intelZeroCopy_.reset();
         nvidiaZeroCopy_.reset();
         videoDecoder_.reset();
+        intelZeroCopyAttempted_ = false;
+        intelZeroCopyFallbackLogged_ = false;
+        intelZeroCopyActive_.store(false, std::memory_order_release);
         nvidiaZeroCopyAttempted_ = false;
         nvidiaZeroCopyFallbackLogged_ = false;
         nvidiaZeroCopyActive_.store(false, std::memory_order_release);
@@ -403,8 +407,12 @@ void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamIn
     if (videoChanged) {
         {
             std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
+            intelZeroCopy_.reset();
             nvidiaZeroCopy_.reset();
             videoDecoder_.reset();
+            intelZeroCopyAttempted_ = false;
+            intelZeroCopyFallbackLogged_ = false;
+            intelZeroCopyActive_.store(false, std::memory_order_release);
             nvidiaZeroCopyAttempted_ = false;
             nvidiaZeroCopyFallbackLogged_ = false;
             nvidiaZeroCopyActive_.store(false, std::memory_order_release);
@@ -584,8 +592,12 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
         {
             std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
             if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
+                intelZeroCopy_.reset();
                 nvidiaZeroCopy_.reset();
                 videoDecoder_.reset();
+                intelZeroCopyAttempted_ = false;
+                intelZeroCopyFallbackLogged_ = false;
+                intelZeroCopyActive_.store(false, std::memory_order_release);
                 nvidiaZeroCopyAttempted_ = false;
                 nvidiaZeroCopyFallbackLogged_ = false;
                 nvidiaZeroCopyActive_.store(false, std::memory_order_release);
@@ -972,6 +984,14 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                      "fallback=shared_cpu_decode"
                   << std::endl;
     }
+    if (abrRawFanout && intelZeroCopy_) {
+        intelZeroCopy_.reset();
+        intelZeroCopyActive_.store(false, std::memory_order_release);
+        intelZeroCopyAttempted_ = true;
+        std::cerr << "NATIVE INTEL ZERO-COPY disabled reason=abr_shared_raw "
+                     "fallback=shared_cpu_decode"
+                  << std::endl;
+    }
 
     const bool zeroCopyCodec =
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
@@ -1040,6 +1060,91 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             for (const auto& frame : encoded)
                 if (!emitVideo(frame, error)) return false;
             return true;
+        }
+    }
+
+    const bool intelZeroCopyCodec =
+        sample.stream.codec == mpegts::ElementaryCodec::H264 ||
+        sample.stream.codec == mpegts::ElementaryCodec::H265 ||
+        sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video;
+    const bool intelZeroCopyBackend =
+        config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
+    if (!abrRawFanout && !nvidiaZeroCopy_ &&
+        intelZeroCopyCodec && intelZeroCopyBackend) {
+        if (!intelZeroCopyAttempted_) {
+            intelZeroCopyAttempted_ = true;
+            std::string zeroCopyError;
+            if (codec::intelZeroCopyRuntimeAvailable()) {
+                codec::IntelZeroCopyConfig zeroCopyConfig;
+                zeroCopyConfig.inputCodec = sample.stream.codec;
+                zeroCopyConfig.outputCodec = videoCodecFromName(config_.videoCodec);
+                zeroCopyConfig.width = config_.width;
+                zeroCopyConfig.height = config_.height;
+                zeroCopyConfig.fps = config_.fps;
+                zeroCopyConfig.bitrate = config_.videoBitrate;
+                zeroCopyConfig.deinterlace = config_.deinterlace;
+                intelZeroCopy_ = codec::createIntelZeroCopyTranscoder(
+                    zeroCopyConfig, zeroCopyError);
+            } else {
+                zeroCopyError = "oneVPL hardware runtime API 2.1+ not available";
+            }
+            if (intelZeroCopy_) {
+                intelZeroCopyActive_.store(true, std::memory_order_release);
+                const char* inputName =
+                    sample.stream.codec == mpegts::ElementaryCodec::H264 ? "h264" :
+                    sample.stream.codec == mpegts::ElementaryCodec::H265 ? "hevc" : "mpeg2";
+                std::cerr << "NATIVE INTEL ZERO-COPY selected input="
+                          << inputName
+                          << " output=" << config_.videoCodec
+                          << " backend=" << config_.videoEncoder
+                          << std::endl;
+            } else if (!intelZeroCopyFallbackLogged_) {
+                intelZeroCopyFallbackLogged_ = true;
+                std::cerr << "NATIVE INTEL ZERO-COPY unavailable reason="
+                          << zeroCopyError << " fallback="
+                          << (config_.videoEncoder == "qsv"
+                                  ? "cpu-decode+qsv" : "standard-auto-path")
+                          << std::endl;
+            }
+        }
+
+        if (intelZeroCopy_) {
+            std::vector<codec::EncodedVideoFrame> encoded;
+            std::string intelProcessError;
+            if (!intelZeroCopy_->process(
+                    sample.data.data(), sample.data.size(),
+                    sample.pts90k, sample.hasPts, encoded, intelProcessError)) {
+                std::cerr << "NATIVE INTEL ZERO-COPY runtime fallback reason="
+                          << intelProcessError << " fallback="
+                          << (config_.videoEncoder == "qsv"
+                                  ? "cpu-decode+qsv" : "standard-auto-path")
+                          << std::endl;
+                intelZeroCopy_.reset();
+                intelZeroCopyActive_.store(false, std::memory_order_release);
+                intelZeroCopyFallbackLogged_ = true;
+                error.clear();
+            } else {
+                decodedVideoFrames_ += encoded.size();
+                if (!sourceGeometryResolved_ &&
+                    intelZeroCopy_->sourceWidth() > 0 &&
+                    intelZeroCopy_->sourceHeight() > 0) {
+                    sourceGeometryResolved_ = true;
+                    sourceWidth_ = intelZeroCopy_->sourceWidth();
+                    sourceHeight_ = intelZeroCopy_->sourceHeight();
+                    const int outWidth = intelZeroCopy_->outputWidth();
+                    const int outHeight = intelZeroCopy_->outputHeight();
+                    if (outWidth > 0 && outHeight > 0 &&
+                        (outWidth != config_.width || outHeight != config_.height))
+                        (void)setOutputGeometryIfUnconfigured(outWidth, outHeight);
+                    std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
+                              << sourceWidth_ << "x" << sourceHeight_
+                              << " output=" << config_.width << "x" << config_.height
+                              << " path=intel-zero-copy" << std::endl;
+                }
+                for (const auto& frame : encoded)
+                    if (!emitVideo(frame, error)) return false;
+                return true;
+            }
         }
     }
 
@@ -1320,6 +1425,12 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
             for (const auto& frame : encoded)
                 if (!emitVideo(frame, error)) return false;
         }
+        if (intelZeroCopy_) {
+            std::vector<codec::EncodedVideoFrame> encoded;
+            if (!intelZeroCopy_->flush(encoded, error)) return false;
+            for (const auto& frame : encoded)
+                if (!emitVideo(frame, error)) return false;
+        }
     }
     {
         std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
@@ -1403,6 +1514,8 @@ std::string NativeTranscoderPipeline::status() const {
            " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +
            " nvidia_zero_copy=" + std::to_string(
                nvidiaZeroCopyActive_.load(std::memory_order_acquire) ? 1 : 0) +
+           " intel_zero_copy=" + std::to_string(
+               intelZeroCopyActive_.load(std::memory_order_acquire) ? 1 : 0) +
            " adrop=" + std::to_string(adrop);
 }
 

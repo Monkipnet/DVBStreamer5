@@ -2,6 +2,7 @@
 
 #include "media/Mp2Encoder.h"
 #include "media/NativeCodecRuntime.h"
+#include "media/NativeIntelZeroCopy.h"
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeMpegTsMux.h"
 #include "media/NativeTsDemux.h"
@@ -187,6 +188,10 @@ private:
     mpegts::NativeTsDemux demux_;
     mpegts::NativeMpegTsMux mux_;
     std::unique_ptr<codec::VideoDecoder> videoDecoder_;
+    std::unique_ptr<codec::IntelZeroCopyTranscoder> intelZeroCopy_;
+    bool intelZeroCopyAttempted_ = false;
+    bool intelZeroCopyFallbackLogged_ = false;
+    std::atomic<bool> intelZeroCopyActive_{false};
     std::unique_ptr<codec::NvidiaZeroCopyTranscoder> nvidiaZeroCopy_;
     bool nvidiaZeroCopyAttempted_ = false;
     bool nvidiaZeroCopyFallbackLogged_ = false;
