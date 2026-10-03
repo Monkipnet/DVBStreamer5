@@ -745,6 +745,8 @@ public:
                       << " refLost=" << refLostSeen_
                       << " noParam=" << noParamSeen_
                       << " bitErr=" << bitstreamErrorSeen_
+                      << " prime=" << parameterPrimeCalls_
+                      << " primeErr=" << parameterPrimeErrors_
                       << " out=" << outputFrames_ << '\n';
         }
         return ok;
@@ -757,6 +759,7 @@ public:
         synchronized_ = false;
         decodeCalls_ = pictureCalls_ = spsSeen_ = ppsSeen_ = idrSeen_ = 0;
         refLostSeen_ = noParamSeen_ = bitstreamErrorSeen_ = outputFrames_ = 0;
+        parameterPrimeCalls_ = parameterPrimeErrors_ = 0;
         if (decoder_) {
             decoder_->Uninitialize();
             initializeDecoder();
@@ -820,17 +823,39 @@ private:
 
         if (!synchronized_) {
             if (!h264.hasIdr || sps_.empty() || pps_.empty()) return true;
-            if (!reinitializeDecoderState()) {
-                error = "OpenH264 decoder reinitialize failed at IDR picture";
-                return false;
+
+            // V10.8.46: keep the decoder instance continuous. The previous
+            // fallback uninitialized and initialized OpenH264 immediately
+            // before every recovery IDR. Prime the cached parameter sets
+            // first, matching OpenH264's GMP integration, then decode the
+            // complete picture through the normal no-delay path.
+            std::vector<std::uint8_t> parameterSets;
+            parameterSets.reserve(sps_.size() + pps_.size());
+            parameterSets.insert(parameterSets.end(), sps_.begin(), sps_.end());
+            parameterSets.insert(parameterSets.end(), pps_.begin(), pps_.end());
+
+            unsigned char* primePlanes[3]{};
+            SBufferInfo primeInfo{};
+            const DECODING_STATE primeRc = decoder_->DecodeFrame2(
+                parameterSets.data(), static_cast<int>(parameterSets.size()),
+                primePlanes, &primeInfo);
+            const int primeState = static_cast<int>(primeRc);
+            ++parameterPrimeCalls_;
+            if (primeState != 0) {
+                ++parameterPrimeErrors_;
+                if (parameterPrimeErrors_ <= 8U ||
+                    (parameterPrimeErrors_ % 100U) == 0U) {
+                    std::cerr << "NATIVE AVC PARAM PRIME state=" << primeState
+                              << " sps_bytes=" << sps_.size()
+                              << " pps_bytes=" << pps_.size()
+                              << " calls=" << parameterPrimeCalls_
+                              << " errors=" << parameterPrimeErrors_ << '\n';
+                }
             }
-            std::vector<std::uint8_t> primed;
-            if (!h264.hasSps) primed.insert(primed.end(), sps_.begin(), sps_.end());
-            if (!h264.hasPps) primed.insert(primed.end(), pps_.begin(), pps_.end());
-            primed.insert(primed.end(), picture.begin(), picture.end());
+
             synchronized_ = true;
             return decodePictureBytes(
-                primed.data(), primed.size(), pts90k, hasPts, output, error);
+                picture.data(), picture.size(), pts90k, hasPts, output, error);
         }
 
         return decodePictureBytes(
@@ -937,6 +962,7 @@ private:
     std::uint64_t spsSeen_ = 0, ppsSeen_ = 0, idrSeen_ = 0;
     std::uint64_t refLostSeen_ = 0, noParamSeen_ = 0;
     std::uint64_t bitstreamErrorSeen_ = 0, outputFrames_ = 0;
+    std::uint64_t parameterPrimeCalls_ = 0, parameterPrimeErrors_ = 0;
 };
 
 class OpenH264Encoder final : public VideoEncoder {
