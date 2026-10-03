@@ -287,7 +287,7 @@ struct NewcamdInstance {
     std::map<std::string, std::shared_ptr<ServiceBinding>> servicesByStream;
 };
 
-constexpr size_t kMaxSessionsPerReader = 10;
+constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited
 constexpr uint64_t kEmmDuplicateTtlMs = 30000;
 constexpr size_t kMaxRecentEmms = 512;
 constexpr size_t kMaxQueuedEmms = 64;
@@ -1026,7 +1026,7 @@ static int newcamd_open_reader(void* instance, const struct dvbstreamer5_ca_read
     replacedAuSession.reset();
 
     std::cerr << "NEWCAMD READER READY: client=" << clientKey
-              << " session_mode=per-service max_sessions=" << kMaxSessionsPerReader
+              << " session_mode=per-service max_sessions=unlimited"
               << " reader_caid=0x" << std::hex << readerConfig.caid << std::dec
               << std::endl;
     std::cerr << "NEWCAMD AU SESSION: client=" << clientKey
@@ -1102,8 +1102,8 @@ static int newcamd_start_service(void* instance, const char* reader_key,
         for (const auto& entry : inst->servicesByStream) {
             if (entry.second && entry.second->clientKey == clientKey) ++activeForReader;
         }
-        if (activeForReader >= kMaxSessionsPerReader) {
-            write_error(error, error_size, "Newcamd per-reader service session limit reached (10)");
+        if (kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader) {
+            write_error(error, error_size, "Newcamd per-reader service session limit reached");
             return DVBSTREAMER5_CA_RESULT_ERROR;
         }
     }
@@ -1139,10 +1139,10 @@ static int newcamd_start_service(void* instance, const char* reader_key,
         for (const auto& entry : inst->servicesByStream) {
             if (entry.second && entry.second->clientKey == clientKey) ++activeForReader;
         }
-        if (activeForReader >= kMaxSessionsPerReader) {
+        if (kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader) {
             session->connected = false;
             session.reset();
-            write_error(error, error_size, "Newcamd per-reader service session limit reached (10)");
+            write_error(error, error_size, "Newcamd per-reader service session limit reached");
             return DVBSTREAMER5_CA_RESULT_ERROR;
         }
         inst->servicesByStream[streamId] = binding;
@@ -1154,7 +1154,7 @@ static int newcamd_start_service(void* instance, const char* reader_key,
               << " sid=" << binding->serviceId
               << " caid=0x" << std::hex << binding->defaultCaid << std::dec
               << " mode=independent-tcp session=" << (activeForReader + 1)
-              << "/" << kMaxSessionsPerReader
+              << " max_sessions=unlimited"
               << " csa=native-bitslice-chunked"
               << " bs_batch_size=" << dvbcsa_bs_batch_size()
               << " full_native_batch=on"

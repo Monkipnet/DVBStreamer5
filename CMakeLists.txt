@@ -314,6 +314,9 @@ target_link_libraries(DVBStreamer5
     pthread
     dl
 )
+# Newcamd is mandatory runtime content; building DVBStreamer5 also builds the plugin.
+add_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)
+
 option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
 if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
@@ -350,5 +353,6 @@ if(DVBSTREAMER5_BUILD_CA_PLUGIN_EXAMPLE)
 endif()
 
 install(TARGETS DVBStreamer5 RUNTIME DESTINATION bin)
+install(TARGETS dvbstreamer5_ca_newcamd LIBRARY DESTINATION ca-plugins)
 
 include(${CMAKE_SOURCE_DIR}/cmake/OscamMini.cmake)

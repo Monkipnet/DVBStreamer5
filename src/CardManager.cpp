@@ -39,7 +39,7 @@ void CardManager::configure(const std::vector<CamClientConfig>& clients) {
     normalized.reserve(clients.size());
     for (auto client : clients) {
         if (client.id.empty()) continue;
-        client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);
+        client.maxServices = 0;
         if (client.name.empty()) client.name = client.id;
         if (client.backendId.empty() || client.backendId == "passthrough") client.backendId = "newcamd";
         if (client.backendConfig.empty()) client.backendConfig = "{}";
@@ -85,7 +85,8 @@ Json::Value CardManager::clientStatusJson(const CamClientConfig& client) {
     Json::Value item;
     item["id"] = client.id;
     item["name"] = displayName(client);
-    item["max_services"] = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);
+    item["max_services"] = 0;
+    item["unlimited_services"] = true;
     item["backend_id"] = client.backendId.empty() ? "newcamd" : client.backendId;
     const Json::Value backendConfig = parseBackendConfig(client.backendConfig);
     item["configured"] = !client.id.empty();
@@ -111,7 +112,7 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
         if (error) *error = "CAM client is not configured: " + config.conditionalAccessClient;
         return false;
     }
-    client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);
+    client.maxServices = 0;
     if (client.backendId.empty()) client.backendId = "newcamd";
     if (client.backendConfig.empty()) client.backendConfig = "{}";
 
@@ -122,7 +123,7 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
         slotsByStream_.begin(), slotsByStream_.end(), [&](const auto& entry) {
             return entry.second.clientId == client.id;
         }));
-    if (used >= client.maxServices) {
+    if (client.maxServices != 0 && used >= client.maxServices) {
         if (error) {
             *error = "CAM client service limit reached for " + client.id + ": " +
                      std::to_string(used) + "/" + std::to_string(client.maxServices);
@@ -162,7 +163,7 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
     std::cerr << "CAM manager: reserved client=" << client.id
               << " stream=" << config.id
               << " sid=" << (config.inputServiceId ? config.inputServiceId : config.serviceId)
-              << " slots=" << (used + 1) << "/" << client.maxServices
+              << " slots=" << (used + 1) << " unlimited"
               << " backend=" << client.backendId << std::endl;
     return true;
 }
@@ -277,7 +278,8 @@ Json::Value CardManager::snapshot() const {
     root["network_ca_server"] = false;
     root["external_key_export"] = false;
     root["default_max_services"] = kDefaultMaxServices;
-    root["max_configurable_services"] = kMaxConfigurableServices;
+    root["max_configurable_services"] = 0;
+    root["service_limit_enabled"] = false;
     root["reserved_services"] = Json::UInt(slots.size());
     root["busy"] = cardManagerBusy;
     if (cardManagerBusy) root["status"] = "CARD_MANAGER_BUSY";
@@ -294,12 +296,12 @@ Json::Value CardManager::snapshot() const {
             services.append(service);
             if (slot.active) ++active;
         }
-        const unsigned maxServices = item.get("max_services", kDefaultMaxServices).asUInt();
         const unsigned used = services.size();
         item["services"] = services;
         item["services_used"] = used;
         item["services_active"] = active;
-        item["services_free"] = maxServices > used ? maxServices - used : 0;
+        item["services_free"] = 0;
+        item["unlimited_services"] = true;
         clientList.append(item);
     }
     root["clients"] = clientList;

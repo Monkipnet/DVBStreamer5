@@ -128,7 +128,7 @@ struct StreamConfig {
 struct CamClientConfig {
     std::string id;
     std::string name;
-    unsigned maxServices = 10;
+    unsigned maxServices = 0; // 0 = unlimited
     std::string backendId = "newcamd";
     std::string backendConfig = "{}";
 

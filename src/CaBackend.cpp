@@ -66,6 +66,9 @@ CaBackendManager::CaBackendManager() {
     passthrough.builtin = true;
     passthrough.usable = true;
     backends_.emplace(passthrough.id, std::move(passthrough));
+
+    // Discover external CA backends immediately so Newcamd is visible before client refresh.
+    loadPluginsLocked();
 }
 
 CaBackendManager::~CaBackendManager() {

@@ -112,9 +112,13 @@ install -m 0755 "$BINARY" "$STAGE/bin/$APP"
 cp -a -- "$WEB_DIR/." "$STAGE/web/"
 
 mapfile -t PLUGINS < <(find "$BUILD_DIR" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)
+NEWCAMD_PLUGIN=""
 for plugin in "${PLUGINS[@]}"; do
+    if [[ "$(basename -- "$plugin")" == "dvbstreamer5-ca-newcamd.so" ]]; then NEWCAMD_PLUGIN="$plugin"; fi
     install -m 0644 "$plugin" "$STAGE/ca-plugins/$(basename -- "$plugin")"
 done
+[[ -n "$NEWCAMD_PLUGIN" ]] || fail "mandatory Newcamd plugin was not built: $BUILD_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
+readelf -Ws "$NEWCAMD_PLUGIN" | grep -q 'dvbstreamer5_ca_backend_get_api_v1' || fail "Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point"
 
 OSCAM_SOURCE=""
 if [[ "$INCLUDE_OSCAM" != no ]]; then
