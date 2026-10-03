@@ -251,6 +251,9 @@ struct StreamState {
     std::vector<std::unique_ptr<dvbstreamer5::media::rtmp::NativeRtmpOutput>> nativeRtmpOutputs;
     std::unique_ptr<dvbstreamer5::media::srt::NativeSrtInput> nativeSrtInput;
     std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>> nativeSrtOutputs;
+    // Production HTTP MPEG-TS and private browser preview are deliberately separate.
+    // HTTP clients receive post-remap/post-CA/post-transcode TS without waking preview codecs.
+    std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativeHttpHub;
     std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;
     std::atomic<bool> monitorStop{false};
     std::thread monitorThread;

@@ -307,6 +307,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::uint64_t effectivePrimaryVideoBitrate = streamConfig.transcodeVideoBitrate;
     state->config = streamConfig;
     state->activeInputUri = streamConfig.inputUri;
+    state->nativeHttpHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
 
@@ -795,6 +796,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         };
     }
 
+    auto httpHub = state->nativeHttpHub;
     auto previewHub = state->nativePreviewHub;
     const bool previewPassthrough = !state->nativePreviewTranscoder;
     auto* hlsSegmenter = state->nativeHlsSegmenter.get();
@@ -804,12 +806,16 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::vector<dvbstreamer5::media::rtsp::NativeRtspOutput*> rtspOutputs; for (auto& output : state->nativeRtspOutputs) rtspOutputs.push_back(output.get());
     std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
-    relay.observeTransport = [previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {
         if (hlsSegmenter) hlsSegmenter->push(data, size);
         if (cmafSegmenter) cmafSegmenter->push(data, size);
         for (auto* output : srtOutputs) if (output) output->push(data, size);
         for (auto* output : rtspOutputs) if (output) output->push(data, size);
         for (auto* output : rtmpOutputs) if (output) output->push(data, size);
+        // Normal HTTP MPEG-TS clients consume the finished production transport.
+        // They must never subscribe to the browser-preview hub because doing so
+        // would wake the dedicated H.264/AAC preview transcoder.
+        if (httpHub) httpHub->publish(data, size);
         if (previewPassthrough && previewHub) previewHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
     };
@@ -1205,6 +1211,7 @@ bool StreamManager::stopStream(const std::string& id) {
     }
     state->monitorStop.store(true);
     state->testPatternStop.store(true);
+    if (state->nativeHttpHub) state->nativeHttpHub->close();
     if (state->nativePreviewHub) state->nativePreviewHub->close();
     if (state->nativeHlsInput) state->nativeHlsInput->stop();
     if (state->nativeSrtInput) state->nativeSrtInput->stop();
@@ -1282,11 +1289,18 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         const auto it = streams.find(id);
-        if (it == streams.end() || !it->second->active.load() || !it->second->nativePreviewHub) {
+        if (it == streams.end() || !it->second->active.load()) {
             ::close(fd);
             return false;
         }
-        hub = it->second->nativePreviewHub;
+        // previewSession is set only for the private browser preview endpoint.
+        // Ordinary HTTP MPEG-TS must consume the production-output hub.
+        hub = previewSession.empty() ? it->second->nativeHttpHub
+                                     : it->second->nativePreviewHub;
+        if (!hub) {
+            ::close(fd);
+            return false;
+        }
     }
     std::string subscribeError;
     const int upstreamFd = hub->subscribe(subscribeError);
