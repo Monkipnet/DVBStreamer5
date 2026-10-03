@@ -17,6 +17,9 @@ jobs:
           ref: stage-v10.8.42-h264-au
           fetch-depth: 0
 
+      - name: Install build prerequisite
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
       - name: Apply source patch
         run: |
           set -euo pipefail
