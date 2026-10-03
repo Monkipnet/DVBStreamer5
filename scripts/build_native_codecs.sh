@@ -7,6 +7,7 @@ BUILD_ROOT="${DVBSTREAMER5_CODEC_BUILD_ROOT:-${TMPDIR:-/tmp}/dvbstreamer5-native
 JOBS="${DVBSTREAMER5_CODEC_JOBS:-2}"
 
 need_dir() { [[ -d "$1" ]] || { echo "Missing vendored codec source: $1" >&2; echo "Run ./scripts/vendor_native_codecs.sh first." >&2; exit 1; }; }
+need_file() { [[ -f "$1" ]] || { echo "Native codec artifact missing: $1" >&2; exit 1; }; }
 for d in openh264 ittiam-libavc libde265 kvazaar fdk-aac ittiam-libmpeg2 pl_mpeg; do need_dir "$ROOT/third_party/$d"; done
 
 rm -rf "$BUILD_ROOT" "$PREFIX"
@@ -46,13 +47,16 @@ install -m 0644 "$AVC_LIB" "$PREFIX/lib/libavcdec.a"
 install -d "$PREFIX/include/ittiam-avc"
 find "$ROOT/third_party/ittiam-libavc/common" "$ROOT/third_party/ittiam-libavc/decoder" \
   -maxdepth 1 -type f -name '*.h' -exec install -m 0644 {} "$PREFIX/include/ittiam-avc/" \;
-if nm -g --defined-only "$PREFIX/lib/libavcdec.a" 2>/dev/null | \
-     grep -Eq '[[:space:]]check_app_out_buf_size$'; then
+
+# Do not use grep -q on the producer side of a pipe while pipefail is enabled:
+# grep may exit as soon as it finds a match, nm then receives SIGPIPE and the
+# otherwise successful test becomes status 141. Read nm completely instead.
+AVC_SYMBOLS="$(nm -g --defined-only "$PREFIX/lib/libavcdec.a" 2>/dev/null)"
+if grep -E '[[:space:]]check_app_out_buf_size$' <<<"$AVC_SYMBOLS" >/dev/null; then
   echo "Ittiam AVC symbol isolation failed: check_app_out_buf_size is still exported" >&2
   exit 1
 fi
-if ! nm -g --defined-only "$PREFIX/lib/libavcdec.a" 2>/dev/null | \
-     grep -Eq '[[:space:]]ih264d_check_app_out_buf_size$'; then
+if ! grep -E '[[:space:]]ih264d_check_app_out_buf_size$' <<<"$AVC_SYMBOLS" >/dev/null; then
   echo "Ittiam AVC symbol isolation failed: renamed helper is missing" >&2
   exit 1
 fi
@@ -67,7 +71,8 @@ cmake --install "$BUILD_ROOT/libde265"
 
 echo "[4/7] Kvazaar static"
 KVAZAAR_CMAKE_VERSION="$(cmake --version | awk 'NR==1 {print $3}')"
-if [[ "$(printf '%s\n' "3.25" "$KVAZAAR_CMAKE_VERSION" | sort -V | head -n1)" == "3.25" ]]; then
+KVAZAAR_MIN_VERSION="$(printf '%s\n' "3.25" "$KVAZAAR_CMAKE_VERSION" | sort -V | sed -n '1p')"
+if [[ "$KVAZAAR_MIN_VERSION" == "3.25" ]]; then
   echo "Kvazaar: using CMake $KVAZAAR_CMAKE_VERSION"
   cmake -S "$ROOT/third_party/kvazaar" -B "$BUILD_ROOT/kvazaar" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
@@ -116,6 +121,25 @@ find "$ROOT/third_party/ittiam-libmpeg2/common" "$ROOT/third_party/ittiam-libmpe
 echo "[7/7] PL_MPEG header"
 install -d "$PREFIX/include/pl_mpeg"
 install -m 0644 "$ROOT/third_party/pl_mpeg/pl_mpeg.h" "$PREFIX/include/pl_mpeg/pl_mpeg.h"
+
+echo "Validating native codec prefix"
+for artifact in \
+  "$PREFIX/include/wels/codec_api.h" \
+  "$PREFIX/include/ittiam-avc/ih264d.h" \
+  "$PREFIX/include/libde265/de265.h" \
+  "$PREFIX/include/kvazaar.h" \
+  "$PREFIX/include/fdk-aac/aacdecoder_lib.h" \
+  "$PREFIX/include/fdk-aac/aacenc_lib.h" \
+  "$PREFIX/include/ittiam-mpeg2/impeg2d.h" \
+  "$PREFIX/include/pl_mpeg/pl_mpeg.h" \
+  "$PREFIX/lib/libopenh264.a" \
+  "$PREFIX/lib/libavcdec.a" \
+  "$PREFIX/lib/libde265.a" \
+  "$PREFIX/lib/libkvazaar.a" \
+  "$PREFIX/lib/libfdk-aac.a" \
+  "$PREFIX/lib/libmpeg2dec.a"; do
+  need_file "$artifact"
+done
 
 cat > "$PREFIX/DVBSTREAMER5_NATIVE_CODECS.txt" <<INFO
 DVBStreamer5 native codec prefix
