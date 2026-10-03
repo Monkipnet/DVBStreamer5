@@ -20,6 +20,7 @@ fetch_commit() {
 }
 
 fetch_commit cisco/openh264 652bdb7719f30b52b08e506645a7322ff1b2cc6f openh264
+fetch_commit ittiam-systems/libavc 6d5853425d1697d6241a3e60ca6fd6c6c064cde6 ittiam-libavc
 fetch_commit strukturag/libde265 ba62bf4cfb3242f3bf0a45617ff09e35236e4d82 libde265
 fetch_commit ultravideo/kvazaar 6040962bed5cc68c5ad01234c38c08b8b2822068 kvazaar
 fetch_commit mstorsjo/fdk-aac 716f4394641d53f0d79c9ddac3fa93b03a49f278 fdk-aac
