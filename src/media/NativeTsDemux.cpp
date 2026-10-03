@@ -469,22 +469,31 @@ void NativeTsDemux::flushPes(std::uint16_t pid) {
     DemuxSample sample;
     if (!parsePes(current, sample)) return;
 
-    // V8.9: the live LVM source is AVC Main 720x576p25 with B pictures.  Its
-    // PES boundaries are not guaranteed to be AVC access-unit boundaries.
-    // OpenH264 DecodeFrameNoDelay expects a complete input picture.  Assemble
-    // H.264 access units using the AVC primary-coded-picture boundary rules
-    // (frame_num/PPS/field/POC/IDR identity), rather than the V8.6
-    // first_mb_in_slice-only heuristic.  Other elementary streams keep their
-    // original PES packetization.
-    // V9.5: keep H.264 PES payload byte-exact and let the OpenH264 wrapper
-    // perform Annex-B NAL framing. DecodeFrame2 is slice-level and reports
-    // output only when a complete picture has been reconstructed. This avoids
-    // guessing access-unit boundaries in the MPEG-TS demuxer.
+    // V10.8.45: an MPEG-TS PES boundary is not an AVC access-unit or NAL
+    // boundary. The live LVM AVC Main service can split SPS/PPS and slices
+    // across adjacent PES packets. Passing each PES directly to OpenH264 made
+    // the decoder cache truncated parameter sets and then report
+    // dsNoParamSets/dsBitstreamError forever. Reassemble H.264 Annex-B across
+    // PES boundaries and emit only complete access units. Keep all other
+    // elementary codecs on their existing PES path.
+    if (sample.stream.kind == ElementaryKind::Video &&
+        sample.stream.codec == ElementaryCodec::H264) {
+        queueVideoSample(std::move(sample));
+        return;
+    }
     if (sampleCallback_) sampleCallback_(std::move(sample));
 }
 
 void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
     auto& state = videoAu_[sample.stream.pid];
+
+    // A damaged live source must not let an incomplete AVC access unit grow
+    // without bound. Reset only the assembler; the next Annex-B start code
+    // below will establish a clean byte-stream boundary again.
+    constexpr std::size_t kMaxVideoAuBytes = 16U * 1024U * 1024U;
+    if (state.bytes.size() + sample.data.size() > kMaxVideoAuBytes) {
+        state = {};
+    }
     state.stream = sample.stream;
 
     if (state.bytes.empty()) {
