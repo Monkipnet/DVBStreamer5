@@ -1,0 +1,40 @@
+name: Stage V10.8.50 build
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  linux-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config \
+            libssl-dev ca-certificates curl binutils nasm \
+            autoconf automake libtool
+
+      - name: Vendor SRT and native codecs
+        run: |
+          ./scripts/vendor_srt_source.sh
+          ./scripts/vendor_native_codecs.sh
+
+      - name: Build native codecs
+        run: |
+          DVBSTREAMER5_CODEC_JOBS=2 ./scripts/build_native_codecs.sh
+
+      - name: Configure release build
+        run: |
+          cmake -S . -B build-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDVBSTREAMER5_ENABLE_VAAPI=OFF \
+            -DDVBSTREAMER5_ENABLE_INTEL_QSV=OFF \
+            -DDVBSTREAMER5_ENABLE_NVENC=OFF
+
+      - name: Build DVBStreamer5
+        run: cmake --build build-ci --parallel 2 --target DVBStreamer5
