@@ -54,6 +54,7 @@ int configuredGpuOrdinal(std::string& error) {
 }
 
 cudaVideoCodec nvdecCodec(mpegts::ElementaryCodec codec) {
+    if (codec == mpegts::ElementaryCodec::Mpeg2Video) return cudaVideoCodec_MPEG2;
     if (codec == mpegts::ElementaryCodec::H264) return cudaVideoCodec_H264;
     if (codec == mpegts::ElementaryCodec::H265) return cudaVideoCodec_HEVC;
     return cudaVideoCodec_NumCodecs;
@@ -65,6 +66,7 @@ const GUID& nvencCodecGuid(mpegts::ElementaryCodec codec) {
 }
 
 const char* codecName(mpegts::ElementaryCodec codec) {
+    if (codec == mpegts::ElementaryCodec::Mpeg2Video) return "mpeg2";
     if (codec == mpegts::ElementaryCodec::H264) return "h264";
     if (codec == mpegts::ElementaryCodec::H265) return "hevc";
     return "unknown";
@@ -87,11 +89,12 @@ public:
 
     bool initialize(std::string& error) {
         error.clear();
-        if ((config_.inputCodec != mpegts::ElementaryCodec::H264 &&
+        if ((config_.inputCodec != mpegts::ElementaryCodec::Mpeg2Video &&
+             config_.inputCodec != mpegts::ElementaryCodec::H264 &&
              config_.inputCodec != mpegts::ElementaryCodec::H265) ||
             (config_.outputCodec != mpegts::ElementaryCodec::H264 &&
              config_.outputCodec != mpegts::ElementaryCodec::H265)) {
-            error = "NVIDIA zero-copy supports H.264/HEVC input and output only";
+            error = "NVIDIA zero-copy supports MPEG-2/H.264/HEVC input and H.264/HEVC output";
             return false;
         }
         if (config_.width <= 0 || config_.height <= 0 ||

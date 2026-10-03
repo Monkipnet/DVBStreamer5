@@ -33,6 +33,10 @@ struct NativeTranscoderConfig {
     std::uint64_t videoBitrate = 6000000;
     std::uint64_t audioBitrate = 192000;
     bool deinterlace = true;
+    // Preserve an explicitly requested square-pixel output raster.
+    // Browser preview uses this for anamorphic DVB MPEG-2 such as
+    // 720x576 SAR 64:45 / DAR 16:9 -> 1280x720 square pixels.
+    bool lockOutputGeometry = false;
     std::uint16_t serviceId = 1;
     std::uint16_t videoPid = 0x0100;
     std::uint16_t audioPid = 0x0101;
