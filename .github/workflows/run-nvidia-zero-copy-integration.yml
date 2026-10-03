@@ -1,6 +1,6 @@
 name: V10.8.40 Intel zero-copy source integration
 
-# retry after fixing exact reset-site patching
+# retry after real oneVPL enum/type diagnostics
 on:
   push:
     branches:
@@ -28,6 +28,35 @@ jobs:
       - name: Integrate V10.8.40
         run: |
           python3 .github/scripts/v10_8_40_patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/media/NativeIntelZeroCopy.cpp')
+          s = p.read_text()
+          s = s.replace(
+              '''        outputPicStruct_ = config_.deinterlace
+            ? MFX_PICSTRUCT_PROGRESSIVE
+            : (info.PicStruct ? info.PicStruct : MFX_PICSTRUCT_PROGRESSIVE);
+''',
+              '''        outputPicStruct_ = config_.deinterlace
+            ? static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE)
+            : (info.PicStruct != 0
+                ? info.PicStruct
+                : static_cast<mfxU16>(MFX_PICSTRUCT_PROGRESSIVE));
+''')
+          s = s.replace(
+              '''        bitstream.TimeStamp = hasPts
+            ? static_cast<mfxU64>(pts90k)
+            : MFX_TIMESTAMP_UNKNOWN;
+''',
+              '''        bitstream.TimeStamp = hasPts
+            ? static_cast<mfxU64>(pts90k)
+            : std::numeric_limits<mfxU64>::max();
+''')
+          s = s.replace(
+              '        encoded.hasPts = bitstream.TimeStamp != MFX_TIMESTAMP_UNKNOWN;\n',
+              '        encoded.hasPts = bitstream.TimeStamp != std::numeric_limits<mfxU64>::max();\n')
+          p.write_text(s)
+          PY
           git diff --check
 
       - name: Syntax compile Intel zero-copy
@@ -50,6 +79,7 @@ jobs:
           git config user.name "Monkipnet CI"
           git config user.email "actions@users.noreply.github.com"
           git add CMakeLists.txt src/AppVersion.h \
+                  src/media/NativeIntelZeroCopy.cpp \
                   src/media/NativeTranscoderPipeline.h \
                   src/media/NativeTranscoderPipeline.cpp
           git commit -m "Stage 9 V10.8.40 integrate Intel QSV zero-copy pipeline"
