@@ -24,28 +24,30 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(path, old, new, label):
+          def exact(path, old, new, label):
               p = Path(path)
               s = p.read_text()
-              count = s.count(old)
-              if count != 1:
-                  raise SystemExit(f'{label}: matches={count}')
+              if s.count(old) != 1:
+                  raise SystemExit(f'{label}: matches={s.count(old)}')
               p.write_text(s.replace(old, new))
 
-          replace_once(
-              'CMakeLists.txt',
-              '''    src/media/NativeHardwareCodec.cpp
-              src/media/NativeVideoProcessing.cpp
-          ''',
-              '''    src/media/NativeHardwareCodec.cpp
-              src/media/NativeNvidiaZeroCopy.cpp
-              src/media/NativeVideoProcessing.cpp
-          ''',
-              'CMake media source')
+          def patch_section(path, start, end, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              a = s.index(start)
+              b = s.index(end, a)
+              section = s[a:b]
+              if section.count(old) != 1:
+                  raise SystemExit(f'{label}: matches={section.count(old)}')
+              p.write_text(s[:a] + section.replace(old, new) + s[b:])
 
-          replace_once(
-              'CMakeLists.txt',
-              '''if(DVBSTREAMER5_ENABLE_NVENC)
+          exact('CMakeLists.txt',
+                '    src/media/NativeHardwareCodec.cpp\n    src/media/NativeVideoProcessing.cpp\n',
+                '    src/media/NativeHardwareCodec.cpp\n    src/media/NativeNvidiaZeroCopy.cpp\n    src/media/NativeVideoProcessing.cpp\n',
+                'CMake media source')
+
+          exact('CMakeLists.txt',
+          '''if(DVBSTREAMER5_ENABLE_NVENC)
               find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
           endif()
           if(DVBSTREAMER5_ENABLE_NVENC AND DVBSTREAMER5_NVENC_INCLUDE_DIR)
@@ -56,7 +58,7 @@ jobs:
               message(STATUS "Native NVIDIA NVENC backend: disabled (nvEncodeAPI.h not found)")
           endif()
           ''',
-              '''if(DVBSTREAMER5_ENABLE_NVENC)
+          '''if(DVBSTREAMER5_ENABLE_NVENC)
               find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
               find_path(DVBSTREAMER5_NVDEC_INCLUDE_DIR NAMES dynlink_nvcuvid.h PATH_SUFFIXES ffnvcodec nvcodec)
           endif()
@@ -78,99 +80,58 @@ jobs:
           else()
               message(STATUS "Native NVIDIA NVDEC->CUDA->NVENC zero-copy backend: disabled (NVDEC dynlink headers not found)")
           endif()
-          ''',
-              'CMake NVIDIA detection')
+          ''', 'CMake NVIDIA detection')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.h',
-              '''#include "media/NativeCodecRuntime.h"
-          #include "media/NativeMpegTsMux.h"
-          ''',
-              '''#include "media/NativeCodecRuntime.h"
-          #include "media/NativeNvidiaZeroCopy.h"
-          #include "media/NativeMpegTsMux.h"
-          ''',
-              'pipeline zero-copy include')
+          exact('src/media/NativeTranscoderPipeline.h',
+                '#include "media/NativeCodecRuntime.h"\n#include "media/NativeMpegTsMux.h"\n',
+                '#include "media/NativeCodecRuntime.h"\n#include "media/NativeNvidiaZeroCopy.h"\n#include "media/NativeMpegTsMux.h"\n',
+                'pipeline include')
+          exact('src/media/NativeTranscoderPipeline.h',
+                '    std::unique_ptr<codec::VideoDecoder> videoDecoder_;\n    std::unique_ptr<codec::VideoEncoder> videoEncoder_;\n',
+                '    std::unique_ptr<codec::VideoDecoder> videoDecoder_;\n'
+                '    std::unique_ptr<codec::NvidiaZeroCopyTranscoder> nvidiaZeroCopy_;\n'
+                '    bool nvidiaZeroCopyAttempted_ = false;\n'
+                '    bool nvidiaZeroCopyFallbackLogged_ = false;\n'
+                '    std::atomic<bool> nvidiaZeroCopyActive_{false};\n'
+                '    std::unique_ptr<codec::VideoEncoder> videoEncoder_;\n',
+                'pipeline members')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.h',
-              '''    std::unique_ptr<codec::VideoDecoder> videoDecoder_;
-              std::unique_ptr<codec::VideoEncoder> videoEncoder_;
-          ''',
-              '''    std::unique_ptr<codec::VideoDecoder> videoDecoder_;
-              std::unique_ptr<codec::NvidiaZeroCopyTranscoder> nvidiaZeroCopy_;
-              bool nvidiaZeroCopyAttempted_ = false;
-              bool nvidiaZeroCopyFallbackLogged_ = false;
-              std::atomic<bool> nvidiaZeroCopyActive_{false};
-              std::unique_ptr<codec::VideoEncoder> videoEncoder_;
-          ''',
-              'pipeline zero-copy members')
+          cpp = 'src/media/NativeTranscoderPipeline.cpp'
+          patch_section(cpp, 'void NativeTranscoderPipeline::reset()',
+                        'void NativeTranscoderPipeline::onProgram',
+                        '        videoDecoder_.reset();\n',
+                        '        nvidiaZeroCopy_.reset();\n'
+                        '        videoDecoder_.reset();\n'
+                        '        nvidiaZeroCopyAttempted_ = false;\n'
+                        '        nvidiaZeroCopyFallbackLogged_ = false;\n'
+                        '        nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n',
+                        'reset zero-copy')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.cpp',
-              '''    {
-              std::lock_guard<std::mutex> lock(videoDecoderMutex_);
-              videoDecoder_.reset();
-          }
-          {
-              std::lock_guard<std::mutex> lock(videoEncoderMutex_);
-          ''',
-              '''    {
-              std::lock_guard<std::mutex> lock(videoDecoderMutex_);
-              nvidiaZeroCopy_.reset();
-              videoDecoder_.reset();
-              nvidiaZeroCopyAttempted_ = false;
-              nvidiaZeroCopyFallbackLogged_ = false;
-              nvidiaZeroCopyActive_.store(false, std::memory_order_release);
-          }
-          {
-              std::lock_guard<std::mutex> lock(videoEncoderMutex_);
-          ''',
-              'pipeline reset zero-copy')
+          patch_section(cpp, 'void NativeTranscoderPipeline::onProgram',
+                        'void NativeTranscoderPipeline::onSample',
+                        '        { std::lock_guard<std::mutex> codecLock(videoDecoderMutex_); videoDecoder_.reset(); }\n',
+                        '        {\n'
+                        '            std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);\n'
+                        '            nvidiaZeroCopy_.reset();\n'
+                        '            videoDecoder_.reset();\n'
+                        '            nvidiaZeroCopyAttempted_ = false;\n'
+                        '            nvidiaZeroCopyFallbackLogged_ = false;\n'
+                        '            nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n'
+                        '        }\n',
+                        'program-change zero-copy')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.cpp',
-              '''    if (videoChanged) {
-              { std::lock_guard<std::mutex> codecLock(videoDecoderMutex_); videoDecoder_.reset(); }
-              inputVideoPid_ = newVideoPid;
-          ''',
-              '''    if (videoChanged) {
-              {
-                  std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
-                  nvidiaZeroCopy_.reset();
-                  videoDecoder_.reset();
-                  nvidiaZeroCopyAttempted_ = false;
-                  nvidiaZeroCopyFallbackLogged_ = false;
-                  nvidiaZeroCopyActive_.store(false, std::memory_order_release);
-              }
-              inputVideoPid_ = newVideoPid;
-          ''',
-              'program-change zero-copy reset')
+          patch_section(cpp, 'void NativeTranscoderPipeline::videoWorkerLoop()',
+                        'void NativeTranscoderPipeline::videoEncodeWorkerLoop()',
+                        '                videoDecoder_.reset();\n                videoStartupReady_ = false;\n',
+                        '                nvidiaZeroCopy_.reset();\n'
+                        '                videoDecoder_.reset();\n'
+                        '                nvidiaZeroCopyAttempted_ = false;\n'
+                        '                nvidiaZeroCopyFallbackLogged_ = false;\n'
+                        '                nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n'
+                        '                videoStartupReady_ = false;\n',
+                        'resync zero-copy')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.cpp',
-              '''            if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
-                  videoDecoder_.reset();
-                  videoStartupReady_ = false;
-              }
-          ''',
-              '''            if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
-                  nvidiaZeroCopy_.reset();
-                  videoDecoder_.reset();
-                  nvidiaZeroCopyAttempted_ = false;
-                  nvidiaZeroCopyFallbackLogged_ = false;
-                  nvidiaZeroCopyActive_.store(false, std::memory_order_release);
-                  videoStartupReady_ = false;
-              }
-          ''',
-              'queue-resync zero-copy reset')
-
-          replace_once(
-              'src/media/NativeTranscoderPipeline.cpp',
-              '''    if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);
-              if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
-          ''',
-              '''    if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);
+          zero_copy_branch = r'''    if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);
 
               bool abrRawFanout = false;
               {
@@ -190,8 +151,7 @@ jobs:
                   sample.stream.codec == mpegts::ElementaryCodec::H264 ||
                   sample.stream.codec == mpegts::ElementaryCodec::H265;
               const bool zeroCopyBackend =
-                  config_.videoEncoder == "nvenc" ||
-                  config_.videoEncoder == "auto";
+                  config_.videoEncoder == "nvenc" || config_.videoEncoder == "auto";
               if (!abrRawFanout && zeroCopyCodec && zeroCopyBackend) {
                   if (!nvidiaZeroCopyAttempted_) {
                       nvidiaZeroCopyAttempted_ = true;
@@ -221,8 +181,7 @@ jobs:
                       } else if (!nvidiaZeroCopyFallbackLogged_) {
                           nvidiaZeroCopyFallbackLogged_ = true;
                           std::cerr << "NATIVE NVIDIA ZERO-COPY unavailable reason="
-                                    << zeroCopyError
-                                    << " fallback="
+                                    << zeroCopyError << " fallback="
                                     << (config_.videoEncoder == "nvenc"
                                             ? "cpu-decode+nvenc" : "standard-auto-path")
                                     << std::endl;
@@ -233,10 +192,8 @@ jobs:
                       std::vector<codec::EncodedVideoFrame> encoded;
                       if (!nvidiaZeroCopy_->process(
                               sample.data.data(), sample.data.size(),
-                              sample.pts90k, sample.hasPts,
-                              encoded, error)) {
+                              sample.pts90k, sample.hasPts, encoded, error))
                           return false;
-                      }
                       decodedVideoFrames_ += encoded.size();
                       if (!sourceGeometryResolved_ &&
                           nvidiaZeroCopy_->sourceWidth() > 0 &&
@@ -247,95 +204,70 @@ jobs:
                           const int outWidth = nvidiaZeroCopy_->outputWidth();
                           const int outHeight = nvidiaZeroCopy_->outputHeight();
                           if (outWidth > 0 && outHeight > 0 &&
-                              (outWidth != config_.width || outHeight != config_.height)) {
+                              (outWidth != config_.width || outHeight != config_.height))
                               (void)setOutputGeometryIfUnconfigured(outWidth, outHeight);
-                          }
                           std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
                                     << sourceWidth_ << "x" << sourceHeight_
                                     << " output=" << config_.width << "x" << config_.height
-                                    << " path=nvidia-zero-copy"
-                                    << std::endl;
+                                    << " path=nvidia-zero-copy" << std::endl;
                       }
-                      for (const auto& frame : encoded) {
+                      for (const auto& frame : encoded)
                           if (!emitVideo(frame, error)) return false;
-                      }
                       return true;
                   }
               }
 
-              if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
-          ''',
-              'handleVideo zero-copy branch')
+          '''.replace('\\"', '"')
+          patch_section(cpp, 'bool NativeTranscoderPipeline::handleVideo(',
+                        'bool NativeTranscoderPipeline::handleDecodedVideoFrame(',
+                        '    if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);\n    if (!ensureVideoDecoder(sample.stream.codec, error)) return false;\n',
+                        zero_copy_branch + '    if (!ensureVideoDecoder(sample.stream.codec, error)) return false;\n',
+                        'handleVideo zero-copy')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.cpp',
-              '''    {
-              std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
-              if (videoEncoder_) {
-                  std::vector<codec::EncodedVideoFrame> encoded;
-          ''',
-              '''    {
-              std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
-              if (nvidiaZeroCopy_) {
-                  std::vector<codec::EncodedVideoFrame> encoded;
-                  if (!nvidiaZeroCopy_->flush(encoded, error)) return false;
-                  for (const auto& frame : encoded)
-                      if (!emitVideo(frame, error)) return false;
-              }
-          }
-              {
-              std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
-              if (videoEncoder_) {
-                  std::vector<codec::EncodedVideoFrame> encoded;
-          ''',
-              'flush zero-copy')
+          patch_section(cpp, 'bool NativeTranscoderPipeline::flush(',
+                        'std::string NativeTranscoderPipeline::status() const',
+                        '    {\n        std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);\n        if (videoEncoder_) {\n',
+                        '    {\n        std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);\n'
+                        '        if (nvidiaZeroCopy_) {\n'
+                        '            std::vector<codec::EncodedVideoFrame> encoded;\n'
+                        '            if (!nvidiaZeroCopy_->flush(encoded, error)) return false;\n'
+                        '            for (const auto& frame : encoded)\n'
+                        '                if (!emitVideo(frame, error)) return false;\n'
+                        '        }\n'
+                        '    }\n'
+                        '    {\n        std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);\n        if (videoEncoder_) {\n',
+                        'flush zero-copy')
 
-          replace_once(
-              'src/media/NativeTranscoderPipeline.cpp',
-              '''           " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +
-                 " adrop=" + std::to_string(adrop);
-          ''',
-              '''           " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +
-                 " nvidia_zero_copy=" + std::to_string(
-                     nvidiaZeroCopyActive_.load(std::memory_order_acquire) ? 1 : 0) +
-                 " adrop=" + std::to_string(adrop);
-          ''',
-              'status zero-copy')
+          patch_section(cpp, 'std::string NativeTranscoderPipeline::status() const',
+                        '} // namespace dvbstreamer5::media::transcode',
+                        '           " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +\n           " adrop=" + std::to_string(adrop);\n',
+                        '           " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +\n'
+                        '           " nvidia_zero_copy=" + std::to_string(\n'
+                        '               nvidiaZeroCopyActive_.load(std::memory_order_acquire) ? 1 : 0) +\n'
+                        '           " adrop=" + std::to_string(adrop);\n',
+                        'status zero-copy')
 
-          replace_once(
-              'scripts/install_native_hw_backends.sh',
-              '''  /usr/include/ffnvcodec/nvEncodeAPI.h   /usr/include/nvEncodeAPI.h
-          ''',
-              '''  /usr/include/ffnvcodec/nvEncodeAPI.h   /usr/include/nvEncodeAPI.h   /usr/include/ffnvcodec/dynlink_cuda.h   /usr/include/ffnvcodec/dynlink_cuviddec.h   /usr/include/ffnvcodec/dynlink_nvcuvid.h
-          ''',
-              'installer NVIDIA headers')
-
-          replace_once(
-              'scripts/install_native_hw_backends.sh',
-              '''  grep -E 'libvpl|libva\\.so|libva-drm|libnvidia-encode|libcuda' || true
-          ''',
-              '''  grep -E 'libvpl|libva\\.so|libva-drm|libnvidia-encode|libnvcuvid|libcuda' || true
-          ''',
-              'installer NVIDIA runtime diagnostic')
-
-          replace_once(
-              'src/AppVersion.h',
-              'inline constexpr const char* kProgramVersion = "10.8.38";',
-              'inline constexpr const char* kProgramVersion = "10.8.39";',
-              'About version')
+          exact('scripts/install_native_hw_backends.sh',
+                '  /usr/include/ffnvcodec/nvEncodeAPI.h   /usr/include/nvEncodeAPI.h\n',
+                '  /usr/include/ffnvcodec/nvEncodeAPI.h   /usr/include/nvEncodeAPI.h   /usr/include/ffnvcodec/dynlink_cuda.h   /usr/include/ffnvcodec/dynlink_cuviddec.h   /usr/include/ffnvcodec/dynlink_nvcuvid.h\n',
+                'installer headers')
+          exact('scripts/install_native_hw_backends.sh',
+                "grep -E 'libvpl|libva\\\\.so|libva-drm|libnvidia-encode|libcuda' || true",
+                "grep -E 'libvpl|libva\\\\.so|libva-drm|libnvidia-encode|libnvcuvid|libcuda' || true",
+                'installer runtime')
+          exact('src/AppVersion.h',
+                'inline constexpr const char* kProgramVersion = "10.8.38";',
+                'inline constexpr const char* kProgramVersion = "10.8.39";',
+                'About version')
           PY
-
           git diff --check
 
       - name: Syntax check integrated pipeline
         shell: bash
         run: |
           set -euo pipefail
-          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
-            -Isrc -fsyntax-only \
-            src/media/NativeNvidiaZeroCopy.cpp \
-            src/media/NativeTranscoderPipeline.cpp
-
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -fsyntax-only \
+            src/media/NativeNvidiaZeroCopy.cpp src/media/NativeTranscoderPipeline.cpp
           for sdk in n11.1.5.2 master; do
             dir="/tmp/nv-${sdk//./-}"
             mkdir -p "$dir"
@@ -345,11 +277,9 @@ jobs:
             done
             echo "=== integrated syntax: $sdk ==="
             g++ -std=c++17 -Wall -Wextra -Werror=return-type \
-              -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 \
-              -DDVBSTREAMER5_HAVE_NVDEC_HEADERS=1 \
+              -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 -DDVBSTREAMER5_HAVE_NVDEC_HEADERS=1 \
               -Isrc -I"$dir" -fsyntax-only \
-              src/media/NativeNvidiaZeroCopy.cpp \
-              src/media/NativeTranscoderPipeline.cpp
+              src/media/NativeNvidiaZeroCopy.cpp src/media/NativeTranscoderPipeline.cpp
           done
 
       - name: Commit zero-copy integration
@@ -357,12 +287,8 @@ jobs:
         run: |
           git config user.name "DVBStreamer5 automation"
           git config user.email "actions@users.noreply.github.com"
-          git add CMakeLists.txt \
-            src/media/NativeNvidiaZeroCopy.h \
-            src/media/NativeNvidiaZeroCopy.cpp \
-            src/media/NativeTranscoderPipeline.h \
-            src/media/NativeTranscoderPipeline.cpp \
-            scripts/install_native_hw_backends.sh \
-            src/AppVersion.h
+          git add CMakeLists.txt src/media/NativeNvidiaZeroCopy.h src/media/NativeNvidiaZeroCopy.cpp \
+            src/media/NativeTranscoderPipeline.h src/media/NativeTranscoderPipeline.cpp \
+            scripts/install_native_hw_backends.sh src/AppVersion.h
           git commit -m "Stage 9 V10.8.39 add NVDEC CUDA NVENC zero-copy path"
           git push origin HEAD:main
