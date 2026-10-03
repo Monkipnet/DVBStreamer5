@@ -1,0 +1,56 @@
+name: V10.8.44 OSCam reader discovery check
+
+on:
+  push:
+    branches:
+      - stage-v10.8.44-oscam-readers
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage-v10.8.44-oscam-readers
+          fetch-depth: 0
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ libjsoncpp-dev python3 nodejs
+
+      - name: Apply production patch
+        run: python3 .github/v10.8.44_apply.py
+
+      - name: Syntax check OSCam manager
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc $(pkg-config --cflags jsoncpp) \
+            -fsyntax-only src/OscamMiniManager.cpp
+
+      - name: Check embedded JavaScript
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('src/OscamMiniManager.cpp').read_text()
+          start=s.index('<script>')+len('<script>')
+          end=s.index('</script>', start)
+          Path('/tmp/oscam-mini.js').write_text(s[start:end])
+          PY
+          node --check /tmp/oscam-mini.js
+
+      - name: Check production diff
+        run: |
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.44"' src/AppVersion.h
+          grep -F 'detected_readers' src/OscamMiniManager.cpp
+          grep -F 'Найденный ридер' src/OscamMiniManager.cpp
+          grep -F 'timeout 2s pcsc_scan -n' src/OscamMiniManager.cpp
+
+      - name: Commit production patch
+        run: |
+          git config user.name 'DVBStreamer5 automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/AppVersion.h src/OscamMiniManager.h src/OscamMiniManager.cpp OSCAM_MINI.md
+          git commit -m 'V10.8.44 add OSCam reader auto-discovery and selection'
+          git push origin HEAD:stage-v10.8.44-oscam-readers
