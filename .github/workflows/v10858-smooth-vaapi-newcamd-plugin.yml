@@ -43,6 +43,12 @@ jobs:
           cm = cm_path.read_text()
           json_anchor = "target_include_directories(dvbstreamer5_jsoncpp PUBLIC\n    ${CMAKE_SOURCE_DIR}/third_party\n)\n"
           cm = replace_once(cm, json_anchor, json_anchor + "set_target_properties(dvbstreamer5_jsoncpp PROPERTIES POSITION_INDEPENDENT_CODE ON)\n", "jsoncpp PIC")
+
+          # Remove Newcamd from the executable before adding the new plugin target,
+          # otherwise the same source pair intentionally appears twice.
+          builtin_sources = "    src/ca/backends/newcamd/NewcamdPlugin.cpp\n    src/ca/backends/newcamd/NewcamdClient.cpp\n"
+          cm = replace_once(cm, builtin_sources, "", "remove built-in Newcamd sources")
+
           plugin_anchor = "include_directories(\n    ${CMAKE_SOURCE_DIR}/src\n)\n\n"
           plugin_lines = [
               "include_directories(",
@@ -74,8 +80,6 @@ jobs:
               "",
           ]
           cm = replace_once(cm, plugin_anchor, "\n".join(plugin_lines), "Newcamd plugin target")
-          builtin_sources = "    src/ca/backends/newcamd/NewcamdPlugin.cpp\n    src/ca/backends/newcamd/NewcamdClient.cpp\n"
-          cm = replace_once(cm, builtin_sources, "", "remove built-in Newcamd sources")
           cm_path.write_text(cm)
 
           ca_path = Path("src/CaBackend.cpp")
