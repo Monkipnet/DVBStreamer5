@@ -28,6 +28,9 @@ extern "C" {
 namespace dvbstreamer5::media::codec {
 namespace {
 
+constexpr std::size_t kMaxBufferedAvcBytes = 16U * 1024U * 1024U;
+constexpr unsigned kMaxDecodeCallsPerInput = 100U;
+
 void* avcAlignedAlloc(void*, WORD32 alignment, WORD32 size) {
     if (size <= 0) size = 1;
     if (alignment < static_cast<WORD32>(sizeof(void*)))
@@ -82,50 +85,29 @@ public:
             return false;
         }
 
-        // libavc supports field-coded/interlaced AVC. First let it parse SPS/PPS
-        // in header mode so the exact output buffer requirements are known.
-        // Once geometry is available, re-feed the same complete Annex-B access
-        // unit in frame mode. Repeating SPS/PPS is valid AVC and ensures that an
-        // IDR carried in the same access unit is not lost at startup.
-        if (!headerReady_) {
-            ivd_video_decode_ip_t ip{};
-            ivd_video_decode_op_t op{};
-            ip.u4_size = sizeof(ip);
-            ip.e_cmd = IVD_CMD_VIDEO_DECODE;
-            ip.u4_ts = 0;
-            ip.u4_num_Bytes = static_cast<UWORD32>(size);
-            ip.pv_stream_buffer = const_cast<std::uint8_t*>(data);
-            op.u4_size = sizeof(op);
+        if (!headerReady_)
+            return decodeHeaders(data, size, pts90k, hasPts, output, error);
 
-            const IV_API_CALL_STATUS_T status =
-                ih264d_api_function(codec_, &ip, &op);
-            ++headerAttempts_;
-
-            if (op.u4_pic_wd != 0 && op.u4_pic_ht != 0) {
-                width_ = static_cast<int>(op.u4_pic_wd);
-                height_ = static_cast<int>(op.u4_pic_ht);
-                if (!allocateOutputBuffers(error) ||
-                    !setDecodeMode(IVD_DECODE_FRAME, error))
-                    return false;
-                headerReady_ = true;
-                std::cerr << "NATIVE AVC ITTIAM header size="
-                          << width_ << "x" << height_
-                          << " progressive=" << op.u4_progressive_frame_flag
-                          << " attempts=" << headerAttempts_ << '\n';
+        // A recoverable libavc call is allowed to leave an unconsumed tail.
+        // Preserve that byte-exact tail and prepend it to the next demuxed AU;
+        // never silently discard bytes at an arbitrary decoder-call boundary.
+        if (!pendingFrame_.empty()) {
+            const std::size_t pendingSize = pendingFrame_.size();
+            if (pendingSize > kMaxBufferedAvcBytes - std::min(size, kMaxBufferedAvcBytes)) {
+                std::cerr << "NATIVE AVC ITTIAM pending overflow bytes="
+                          << pendingSize << " incoming=" << size
+                          << " action=drop-stale-tail\n";
+                pendingFrame_.clear();
             } else {
-                if (status != IV_SUCCESS && IS_IVD_FATAL_ERROR(op.u4_error_code)) {
-                    error = "Ittiam AVC header fatal error: 0x" + hex(op.u4_error_code);
-                    return false;
-                }
-                if (status != IV_SUCCESS &&
-                    (headerAttempts_ <= 4U || (headerAttempts_ % 100U) == 0U)) {
-                    std::cerr << "NATIVE AVC ITTIAM header wait status="
-                              << static_cast<int>(status)
-                              << " error=0x" << hex(op.u4_error_code)
-                              << " consumed=" << op.u4_num_bytes_consumed
-                              << " bytes=" << size << '\n';
-                }
-                return true;
+                std::vector<std::uint8_t> joined;
+                joined.reserve(pendingSize + size);
+                joined.insert(joined.end(), pendingFrame_.begin(), pendingFrame_.end());
+                joined.insert(joined.end(), data, data + size);
+                const std::uint64_t joinedPts = pendingFramePts90k_;
+                const bool joinedHasPts = pendingFrameHasPts_;
+                pendingFrame_.clear();
+                return decodeFrame(joined.data(), joined.size(), joinedPts,
+                                   joinedHasPts, output, error);
             }
         }
 
@@ -134,10 +116,14 @@ public:
 
     void reset() override {
         timestamps_.clear();
+        headerPending_.clear();
+        pendingFrame_.clear();
         nextToken_ = 1;
         outputFrames_ = 0;
         headerAttempts_ = 0;
         decodeErrors_ = 0;
+        pendingEvents_ = 0;
+        resolutionRetries_ = 0;
         headerReady_ = false;
         width_ = 0;
         height_ = 0;
@@ -221,7 +207,7 @@ private:
         }
 
         std::cerr << "NATIVE AVC DECODER backend=ittiam-libavc"
-                  << " interlaced=1 threads=2\n";
+                  << " interlaced=1 threads=2 streaming=1\n";
         return true;
     }
 
@@ -248,6 +234,22 @@ private:
             return false;
         }
         return true;
+    }
+
+    bool resetCodecForFrame(std::string& error) {
+        ivd_ctl_reset_ip_t ip{};
+        ivd_ctl_reset_op_t op{};
+        ip.u4_size = sizeof(ip);
+        ip.e_cmd = IVD_CMD_VIDEO_CTL;
+        ip.e_sub_cmd = IVD_CMD_CTL_RESET;
+        op.u4_size = sizeof(op);
+        const IV_API_CALL_STATUS_T status =
+            ih264d_api_function(codec_, &ip, &op);
+        if (status != IV_SUCCESS) {
+            error = "Ittiam AVC reset after resolution change failed";
+            return false;
+        }
+        return setDecodeMode(IVD_DECODE_FRAME, error);
     }
 
     bool allocateOutputBuffers(std::string& error) {
@@ -301,6 +303,143 @@ private:
         return true;
     }
 
+    void saveHeaderTail(const std::uint8_t* data, std::size_t size,
+                        std::uint64_t pts90k, bool hasPts) {
+        if (!data || size == 0) return;
+        if (size > kMaxBufferedAvcBytes) {
+            std::cerr << "NATIVE AVC ITTIAM header tail too large bytes="
+                      << size << " action=drop\n";
+            headerPending_.clear();
+            return;
+        }
+        headerPending_.assign(data, data + size);
+        headerPendingPts90k_ = pts90k;
+        headerPendingHasPts_ = hasPts;
+        ++pendingEvents_;
+        if (pendingEvents_ <= 8U || (pendingEvents_ % 100U) == 0U) {
+            std::cerr << "NATIVE AVC ITTIAM header pending bytes=" << size
+                      << " events=" << pendingEvents_ << '\n';
+        }
+    }
+
+    void saveFrameTail(const std::uint8_t* data, std::size_t size,
+                       std::uint64_t pts90k, bool hasPts) {
+        if (!data || size == 0) return;
+        if (size > kMaxBufferedAvcBytes) {
+            std::cerr << "NATIVE AVC ITTIAM frame tail too large bytes="
+                      << size << " action=drop\n";
+            pendingFrame_.clear();
+            return;
+        }
+        pendingFrame_.assign(data, data + size);
+        pendingFramePts90k_ = pts90k;
+        pendingFrameHasPts_ = hasPts;
+        ++pendingEvents_;
+        if (pendingEvents_ <= 8U || (pendingEvents_ % 100U) == 0U) {
+            std::cerr << "NATIVE AVC ITTIAM frame pending bytes=" << size
+                      << " events=" << pendingEvents_ << '\n';
+        }
+    }
+
+    bool decodeHeaders(const std::uint8_t* data, std::size_t size,
+                       std::uint64_t pts90k, bool hasPts,
+                       std::vector<RawVideoFrame>& output,
+                       std::string& error) {
+        std::vector<std::uint8_t> joined;
+        const std::uint8_t* input = data;
+        std::size_t inputSize = size;
+        std::uint64_t inputPts = pts90k;
+        bool inputHasPts = hasPts;
+
+        if (!headerPending_.empty()) {
+            const std::size_t pendingSize = headerPending_.size();
+            inputPts = headerPendingPts90k_;
+            inputHasPts = headerPendingHasPts_;
+            if (pendingSize > kMaxBufferedAvcBytes - std::min(size, kMaxBufferedAvcBytes)) {
+                std::cerr << "NATIVE AVC ITTIAM header pending overflow bytes="
+                          << pendingSize << " incoming=" << size
+                          << " action=drop-stale-tail\n";
+                headerPending_.clear();
+                inputPts = pts90k;
+                inputHasPts = hasPts;
+            } else {
+                joined.reserve(pendingSize + size);
+                joined.insert(joined.end(), headerPending_.begin(), headerPending_.end());
+                joined.insert(joined.end(), data, data + size);
+                headerPending_.clear();
+                input = joined.data();
+                inputSize = joined.size();
+            }
+        }
+
+        std::size_t offset = 0;
+        for (unsigned guard = 0;
+             guard < kMaxDecodeCallsPerInput && offset < inputSize; ++guard) {
+            ivd_video_decode_ip_t ip{};
+            ivd_video_decode_op_t op{};
+            ip.u4_size = sizeof(ip);
+            ip.e_cmd = IVD_CMD_VIDEO_DECODE;
+            ip.u4_ts = 0;
+            ip.u4_num_Bytes = static_cast<UWORD32>(inputSize - offset);
+            ip.pv_stream_buffer = const_cast<std::uint8_t*>(input + offset);
+            op.u4_size = sizeof(op);
+
+            const IV_API_CALL_STATUS_T status =
+                ih264d_api_function(codec_, &ip, &op);
+            ++headerAttempts_;
+
+            if (op.u4_pic_wd != 0 && op.u4_pic_ht != 0) {
+                width_ = static_cast<int>(op.u4_pic_wd);
+                height_ = static_cast<int>(op.u4_pic_ht);
+                if (!allocateOutputBuffers(error) ||
+                    !setDecodeMode(IVD_DECODE_FRAME, error))
+                    return false;
+                headerReady_ = true;
+                headerPending_.clear();
+                std::cerr << "NATIVE AVC ITTIAM header size="
+                          << width_ << "x" << height_
+                          << " progressive=" << op.u4_progressive_frame_flag
+                          << " attempts=" << headerAttempts_
+                          << " consumed=" << op.u4_num_bytes_consumed << '\n';
+
+                // Re-feed the byte range that completed header discovery in
+                // frame mode. Header decode may have consumed SPS/PPS and part
+                // of an IDR; the frame path must see the same Annex-B bytes.
+                return decodeFrame(input, inputSize, inputPts, inputHasPts,
+                                   output, error);
+            }
+
+            if (status != IV_SUCCESS && IS_IVD_FATAL_ERROR(op.u4_error_code)) {
+                error = "Ittiam AVC header fatal error: 0x" + hex(op.u4_error_code);
+                return false;
+            }
+
+            const std::size_t consumed = std::min<std::size_t>(
+                op.u4_num_bytes_consumed, inputSize - offset);
+            if (status != IV_SUCCESS &&
+                (headerAttempts_ <= 8U || (headerAttempts_ % 100U) == 0U)) {
+                std::cerr << "NATIVE AVC ITTIAM header wait status="
+                          << static_cast<int>(status)
+                          << " error=0x" << hex(op.u4_error_code)
+                          << " consumed=" << consumed
+                          << " remaining=" << (inputSize - offset) << '\n';
+            }
+
+            if (consumed == 0) {
+                saveHeaderTail(input + offset, inputSize - offset,
+                               inputPts, inputHasPts);
+                return true;
+            }
+            offset += consumed;
+        }
+
+        if (offset < inputSize) {
+            saveHeaderTail(input + offset, inputSize - offset,
+                           inputPts, inputHasPts);
+        }
+        return true;
+    }
+
     bool decodeFrame(const std::uint8_t* data, std::size_t size,
                      std::uint64_t pts90k, bool hasPts,
                      std::vector<RawVideoFrame>& output,
@@ -311,7 +450,9 @@ private:
         while (timestamps_.size() > 512) timestamps_.pop_front();
 
         std::size_t offset = 0;
-        for (unsigned guard = 0; guard < 16 && offset < size; ++guard) {
+        unsigned resolutionRetries = 0;
+        unsigned guard = 0;
+        for (; guard < kMaxDecodeCallsPerInput && offset < size; ++guard) {
             ivd_video_decode_ip_t ip{};
             ivd_video_decode_op_t op{};
             ip.u4_size = sizeof(ip);
@@ -324,6 +465,30 @@ private:
 
             const IV_API_CALL_STATUS_T status =
                 ih264d_api_function(codec_, &ip, &op);
+
+            // libavc's own decoder harness resets and re-feeds exactly the
+            // same input when IVD_RES_CHANGED is reported. Do not advance the
+            // pointer here: dropping the triggering SPS/IDR can leave a live
+            // broadcast stream permanently without decoded pictures.
+            const bool resolutionChanged =
+                (op.u4_error_code & IVD_ERROR_MASK) == IVD_RES_CHANGED;
+            if (resolutionChanged) {
+                ++resolutionRetries;
+                ++resolutionRetries_;
+                std::cerr << "NATIVE AVC ITTIAM resolution change error=0x"
+                          << hex(op.u4_error_code)
+                          << " retry=" << resolutionRetries
+                          << " offset=" << offset << '\n';
+                if (resolutionRetries > 2U) {
+                    saveFrameTail(data + offset, size - offset, pts90k, hasPts);
+                    return true;
+                }
+                if (!resetCodecForFrame(error)) return false;
+                timestamps_.clear();
+                timestamps_.push_back({token, pts90k, hasPts});
+                continue;
+            }
+            resolutionRetries = 0;
 
             if (op.u4_output_present) {
                 RawVideoFrame frame;
@@ -346,15 +511,6 @@ private:
                 op.u4_num_bytes_consumed, size - offset);
             offset += consumed;
 
-            const bool resolutionChanged =
-                (op.u4_error_code & IVD_ERROR_MASK) == IVD_RES_CHANGED;
-            if (resolutionChanged) {
-                std::cerr << "NATIVE AVC ITTIAM resolution change error=0x"
-                          << hex(op.u4_error_code) << '\n';
-                reset();
-                return true;
-            }
-
             if (status != IV_SUCCESS) {
                 ++decodeErrors_;
                 if (IS_IVD_FATAL_ERROR(op.u4_error_code)) {
@@ -372,7 +528,14 @@ private:
                 }
             }
 
-            if (consumed == 0) break;
+            if (consumed == 0) {
+                saveFrameTail(data + offset, size - offset, pts90k, hasPts);
+                return true;
+            }
+        }
+
+        if (offset < size) {
+            saveFrameTail(data + offset, size - offset, pts90k, hasPts);
         }
         return true;
     }
@@ -447,6 +610,8 @@ private:
         outputBuffers_ = {};
         outputStorage_.clear();
         timestamps_.clear();
+        headerPending_.clear();
+        pendingFrame_.clear();
     }
 
     iv_obj_t* codec_ = nullptr;
@@ -457,10 +622,18 @@ private:
     ivd_out_bufdesc_t outputBuffers_{};
     std::vector<std::vector<std::uint8_t>> outputStorage_;
     std::deque<TimestampEntry> timestamps_;
+    std::vector<std::uint8_t> headerPending_;
+    std::vector<std::uint8_t> pendingFrame_;
+    std::uint64_t headerPendingPts90k_ = 0;
+    std::uint64_t pendingFramePts90k_ = 0;
+    bool headerPendingHasPts_ = false;
+    bool pendingFrameHasPts_ = false;
     UWORD32 nextToken_ = 1;
     std::uint64_t outputFrames_ = 0;
     std::uint64_t headerAttempts_ = 0;
     std::uint64_t decodeErrors_ = 0;
+    std::uint64_t pendingEvents_ = 0;
+    std::uint64_t resolutionRetries_ = 0;
     std::string initError_;
 };
 
