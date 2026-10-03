@@ -1,0 +1,94 @@
+name: Run NVIDIA zero-copy source integration
+
+on:
+  push:
+    paths:
+      - .github/workflows/run-nvidia-zero-copy-integration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply prepared zero-copy source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import textwrap
+
+          workflow = Path('.github/workflows/apply-nvidia-zero-copy-integration.yml').read_text()
+          begin_marker = "          python3 - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          begin = workflow.index(begin_marker) + len(begin_marker)
+          end = workflow.index(end_marker, begin)
+          script = textwrap.dedent(workflow[begin:end])
+
+          needle = "        raise SystemExit(f'{label}: matches={s.count(old)}')"
+          replacement = (
+              "        if label == 'installer runtime':\n"
+              "            return\n"
+              "        raise SystemExit(f'{label}: matches={s.count(old)}')"
+          )
+          if script.count(needle) < 1:
+              raise SystemExit('could not patch prepared exact() helper')
+          script = script.replace(needle, replacement, 1)
+          Path('/tmp/apply-zero-copy.py').write_text(script)
+          subprocess.run(['python3', '/tmp/apply-zero-copy.py'], check=True)
+
+          installer = Path('scripts/install_native_hw_backends.sh')
+          text = installer.read_text()
+          old = 'libnvidia-encode|libcuda'
+          new = 'libnvidia-encode|libnvcuvid|libcuda'
+          if text.count(old) != 1:
+              raise SystemExit(f'installer runtime marker matches={text.count(old)}')
+          installer.write_text(text.replace(old, new))
+          PY
+          git diff --check
+
+      - name: Syntax check integrated pipeline
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -fsyntax-only \
+            src/media/NativeNvidiaZeroCopy.cpp src/media/NativeTranscoderPipeline.cpp
+
+          for sdk in n11.1.5.2 master; do
+            dir="/tmp/nv-${sdk//./-}"
+            mkdir -p "$dir"
+            base="https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/$sdk/include/ffnvcodec"
+            for h in dynlink_cuda.h dynlink_cuviddec.h dynlink_nvcuvid.h nvEncodeAPI.h; do
+              curl -fsSL "$base/$h" -o "$dir/$h"
+            done
+            echo "=== integrated syntax: $sdk ==="
+            g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+              -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 \
+              -DDVBSTREAMER5_HAVE_NVDEC_HEADERS=1 \
+              -Isrc -I"$dir" -fsyntax-only \
+              src/media/NativeNvidiaZeroCopy.cpp src/media/NativeTranscoderPipeline.cpp
+          done
+
+      - name: Commit zero-copy integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "DVBStreamer5 automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add CMakeLists.txt \
+            src/media/NativeNvidiaZeroCopy.h \
+            src/media/NativeNvidiaZeroCopy.cpp \
+            src/media/NativeTranscoderPipeline.h \
+            src/media/NativeTranscoderPipeline.cpp \
+            scripts/install_native_hw_backends.sh \
+            src/AppVersion.h
+          git commit -m "Stage 9 V10.8.39 add NVDEC CUDA NVENC zero-copy path"
+          git push origin HEAD:main
