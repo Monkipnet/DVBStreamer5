@@ -1,0 +1,185 @@
+name: V10.8.58 integration
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/v10858-smooth-vaapi-newcamd-plugin.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply V10.8.58
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one match, got {count}')
+              return text.replace(old, new, 1)
+
+          # 1) Direct VAAPI path: do not synchronously wait between VPP scale
+          # and encode submission.  The final encode vaSyncSurface remains and
+          # waits for the complete VPP->encode dependency chain.
+          hw_path = Path('src/media/NativeHardwareCodec.cpp')
+          hw = hw_path.read_text()
+          pattern = re.compile(
+              r'(?P<prefix>\n\s*st = vaSyncSurface\(display_, target\);\n'
+              r'\s*if \(st != VA_STATUS_SUCCESS\) \{\n'
+              r'\s*error = "VAAPI VPP output sync failed: " \+ std::string\(vaErrorStr\(st\)\);\n'
+              r'\s*return false;\n\s*\}\n)')
+          matches = list(pattern.finditer(hw))
+          if len(matches) != 1:
+              raise SystemExit(f'VAAPI VPP sync block: expected one match, got {len(matches)}')
+          hw = hw[:matches[0].start()] + '''
+        // Keep VPP and H.264 encode in one asynchronous VAAPI dependency
+        // chain.  Synchronizing the scaled surface here serialized every live
+        // frame (VPP wait, then encode wait) and made legacy Intel/i965 fall
+        // below realtime when upscaling PAL to HD/FullHD.  The final
+        // vaSyncSurface() after encode submission waits for both operations.
+''' + hw[matches[0].end():]
+          hw_path.write_text(hw)
+
+          # 2) Build Newcamd as a real loadable CA plugin rather than linking it
+          # into the main executable.
+          cm_path = Path('CMakeLists.txt')
+          cm = cm_path.read_text()
+          json_anchor = '''target_include_directories(dvbstreamer5_jsoncpp PUBLIC
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+'''
+          cm = replace_once(cm, json_anchor, json_anchor + '''set_target_properties(dvbstreamer5_jsoncpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+''', 'jsoncpp PIC')
+
+          plugin_anchor = '''include_directories(
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+'''
+          plugin_block = '''include_directories(
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+# Newcamd is a loadable CA backend.  Keep protocol/client code out of the
+# DVBStreamer5 executable so CA modules remain independently replaceable.
+add_library(dvbstreamer5_ca_newcamd SHARED
+    src/ca/backends/newcamd/NewcamdPlugin.cpp
+    src/ca/backends/newcamd/NewcamdClient.cpp
+)
+target_include_directories(dvbstreamer5_ca_newcamd PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party
+)
+target_link_libraries(dvbstreamer5_ca_newcamd PRIVATE
+    dvbstreamer5_boost_headers
+    dvbstreamer5_jsoncpp
+    dvbstreamer5_dvbcsa
+    OpenSSL::Crypto
+    Threads::Threads
+)
+set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "dvbstreamer5-ca-newcamd"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
+)
+
+'''
+          cm = replace_once(cm, plugin_anchor, plugin_block, 'Newcamd plugin target')
+          cm = replace_once(cm, '''    src/ca/backends/newcamd/NewcamdPlugin.cpp
+    src/ca/backends/newcamd/NewcamdClient.cpp
+''', '', 'remove built-in Newcamd sources')
+          cm_path.write_text(cm)
+
+          # 3) Host discovers Newcamd only through the generic plugin loader.
+          ca_path = Path('src/CaBackend.cpp')
+          ca = ca_path.read_text()
+          ca = replace_once(ca, '#include "ca/backends/newcamd/NewcamdBuiltin.h"\n', '', 'remove Newcamd built-in include')
+          builtin_ctor = '''
+    if (!registerBuiltinBackendLocked(
+            dvbstreamer5_ca_backend_get_api_v1(), "builtin:newcamd")) {
+        std::cerr << "Built-in Newcamd CA backend registration failed" << std::endl;
+    }
+'''
+          ca = replace_once(ca, builtin_ctor, '', 'remove built-in Newcamd registration')
+
+          # Remove the busy-snapshot special case that directly calls the
+          # built-in Newcamd entry point.  External plugins are represented by
+          # the normal loaded-backend snapshot when the manager lock is held.
+          anchor = '        if (const auto* api = dvbstreamer5_ca_backend_get_api_v1()) {'
+          start = ca.find(anchor)
+          if start < 0:
+              raise SystemExit('busy Newcamd block anchor not found')
+          depth = 0
+          end = None
+          brace = ca.find('{', start)
+          for i in range(brace, len(ca)):
+              if ca[i] == '{': depth += 1
+              elif ca[i] == '}':
+                  depth -= 1
+                  if depth == 0:
+                      end = i + 1
+                      break
+          if end is None:
+              raise SystemExit('busy Newcamd block end not found')
+          # Include following newline(s), but leave surrounding code intact.
+          while end < len(ca) and ca[end] == '\n':
+              end += 1
+          ca = ca[:start] + ca[end:]
+          if 'dvbstreamer5_ca_backend_get_api_v1()' in ca:
+              raise SystemExit('unexpected direct Newcamd entry-point reference remains in CaBackend.cpp')
+          ca_path.write_text(ca)
+
+          # 4) Header belongs to the plugin now; keep only the ABI declaration.
+          nb_path = Path('src/ca/backends/newcamd/NewcamdBuiltin.h')
+          nb = nb_path.read_text()
+          old_comment = '''// The Newcamd backend is linked into DVBStreamer5.  Keeping the versioned C
+// function table lets the built-in backend and optional third-party backends
+// share the same host-side implementation without dlopen for the default path.
+'''
+          new_comment = '''// Exported entry point of the loadable Newcamd CA backend.  The host resolves
+// this symbol through dlsym using the versioned CA backend ABI.
+'''
+          nb = replace_once(nb, old_comment, new_comment, 'Newcamd ABI header comment')
+          nb_path.write_text(nb)
+
+          # 5) Version.
+          ver_path = Path('src/AppVersion.h')
+          ver = ver_path.read_text()
+          ver = replace_once(ver, 'kProgramVersion = "10.8.57"', 'kProgramVersion = "10.8.58"', 'version')
+          ver_path.write_text(ver)
+
+          # Structural validation before committing.
+          cm = cm_path.read_text()
+          ca = ca_path.read_text()
+          hw = hw_path.read_text()
+          assert 'add_library(dvbstreamer5_ca_newcamd SHARED' in cm
+          assert 'OUTPUT_NAME "dvbstreamer5-ca-newcamd"' in cm
+          exe = cm.split('add_executable(DVBStreamer5', 1)[1].split(')', 1)[0]
+          assert 'NewcamdPlugin.cpp' not in exe and 'NewcamdClient.cpp' not in exe
+          assert 'NewcamdBuiltin.h' not in ca
+          assert 'builtin:newcamd' not in ca
+          assert 'VAAPI VPP output sync failed' not in hw
+          assert 'kProgramVersion = "10.8.58"' in ver_path.read_text()
+          PY
+
+          rm -f .github/workflows/v10858-smooth-vaapi-newcamd-plugin.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name 'Monkipnet'
+          git config user.email 'monkipnet@yandex.ru'
+          git add -A
+          git status --short
+          git commit -m 'V10.8.58 smooth VAAPI scaling and externalize Newcamd'
+          git push origin HEAD:main
