@@ -3,7 +3,7 @@
 namespace dvbstreamer5::app {
 
 inline constexpr const char* kProductName = "DVBStreamer5";
-inline constexpr const char* kProgramVersion = "10.8.54";
+inline constexpr const char* kProgramVersion = "10.8.55";
 inline constexpr const char* kSupportEmail = "monkipnet@gmail.com";
 
 } // namespace dvbstreamer5::app
