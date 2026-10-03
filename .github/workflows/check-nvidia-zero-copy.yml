@@ -1,0 +1,35 @@
+name: Check NVIDIA zero-copy backend
+
+on:
+  push:
+    paths:
+      - .github/workflows/check-nvidia-zero-copy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Syntax check NVDEC CUDA NVENC backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for sdk in n11.1.5.2 master; do
+            dir="/tmp/nv-${sdk//./-}"
+            mkdir -p "$dir"
+            base="https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/$sdk/include/ffnvcodec"
+            for h in dynlink_cuda.h dynlink_cuviddec.h dynlink_nvcuvid.h nvEncodeAPI.h; do
+              curl -fsSL "$base/$h" -o "$dir/$h"
+            done
+            echo "=== syntax: $sdk ==="
+            g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+              -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 \
+              -DDVBSTREAMER5_HAVE_NVDEC_HEADERS=1 \
+              -Isrc -I"$dir" -fsyntax-only \
+              src/media/NativeNvidiaZeroCopy.cpp
+          done
