@@ -1,6 +1,9 @@
 #include "media/NativeIttiamAvc.h"
 
 extern "C" {
+#include <ittiam-avc/ih264_typedefs.h>
+#include <ittiam-avc/iv.h>
+#include <ittiam-avc/ivd.h>
 #include <ittiam-avc/ih264d.h>
 }
 
