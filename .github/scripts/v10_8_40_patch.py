@@ -24,11 +24,15 @@ replace('src/media/NativeTranscoderPipeline.h',
 
 replace('src/media/NativeTranscoderPipeline.h',
         '    std::unique_ptr<codec::VideoDecoder> videoDecoder_;\n    std::unique_ptr<codec::NvidiaZeroCopyTranscoder> nvidiaZeroCopy_;\n',
-        '    std::unique_ptr<codec::VideoDecoder> videoDecoder_;\n    std::unique_ptr<codec::IntelZeroCopyTranscoder> intelZeroCopy_;\n    bool intelZeroCopyAttempted_ = false;\n    bool intelZeroCopyFallbackLogged_ = false;\n    std::atomic<bool> intelZeroCopyActive_\{false\};\n    std::unique_ptr<codec::NvidiaZeroCopyTranscoder> nvidiaZeroCopy_;\n'.replace('\\{','{'), 1)
+        '    std::unique_ptr<codec::VideoDecoder> videoDecoder_;\n    std::unique_ptr<codec::IntelZeroCopyTranscoder> intelZeroCopy_;\n    bool intelZeroCopyAttempted_ = false;\n    bool intelZeroCopyFallbackLogged_ = false;\n    std::atomic<bool> intelZeroCopyActive_{false};\n    std::unique_ptr<codec::NvidiaZeroCopyTranscoder> nvidiaZeroCopy_;\n', 1)
 
 replace('src/media/NativeTranscoderPipeline.cpp',
         '            nvidiaZeroCopy_.reset();\n            videoDecoder_.reset();\n            nvidiaZeroCopyAttempted_ = false;\n            nvidiaZeroCopyFallbackLogged_ = false;\n            nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n',
-        '            intelZeroCopy_.reset();\n            nvidiaZeroCopy_.reset();\n            videoDecoder_.reset();\n            intelZeroCopyAttempted_ = false;\n            intelZeroCopyFallbackLogged_ = false;\n            intelZeroCopyActive_.store(false, std::memory_order_release);\n            nvidiaZeroCopyAttempted_ = false;\n            nvidiaZeroCopyFallbackLogged_ = false;\n            nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n', 2)
+        '            intelZeroCopy_.reset();\n            nvidiaZeroCopy_.reset();\n            videoDecoder_.reset();\n            intelZeroCopyAttempted_ = false;\n            intelZeroCopyFallbackLogged_ = false;\n            intelZeroCopyActive_.store(false, std::memory_order_release);\n            nvidiaZeroCopyAttempted_ = false;\n            nvidiaZeroCopyFallbackLogged_ = false;\n            nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n', 1)
+
+replace('src/media/NativeTranscoderPipeline.cpp',
+        '                nvidiaZeroCopy_.reset();\n                videoDecoder_.reset();\n                nvidiaZeroCopyAttempted_ = false;\n                nvidiaZeroCopyFallbackLogged_ = false;\n                nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n                videoStartupReady_ = false;\n',
+        '                intelZeroCopy_.reset();\n                nvidiaZeroCopy_.reset();\n                videoDecoder_.reset();\n                intelZeroCopyAttempted_ = false;\n                intelZeroCopyFallbackLogged_ = false;\n                intelZeroCopyActive_.store(false, std::memory_order_release);\n                nvidiaZeroCopyAttempted_ = false;\n                nvidiaZeroCopyFallbackLogged_ = false;\n                nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n                videoStartupReady_ = false;\n', 1)
 
 replace('src/media/NativeTranscoderPipeline.cpp',
         '        nvidiaZeroCopy_.reset();\n        videoDecoder_.reset();\n        nvidiaZeroCopyAttempted_ = false;\n        nvidiaZeroCopyFallbackLogged_ = false;\n        nvidiaZeroCopyActive_.store(false, std::memory_order_release);\n',
