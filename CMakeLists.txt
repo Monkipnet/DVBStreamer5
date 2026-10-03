@@ -131,6 +131,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeMpegTsMux.cpp
     ${DVBSTREAMER5_CODEC_SOURCE}
     src/media/NativeHardwareCodec.cpp
+    src/media/NativeNvidiaZeroCopy.cpp
     src/media/NativeVideoProcessing.cpp
     src/media/NativeTranscoderPipeline.cpp
     src/media/NativeTestPatternSource.cpp
@@ -216,6 +217,7 @@ endif()
 
 if(DVBSTREAMER5_ENABLE_NVENC)
     find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
+    find_path(DVBSTREAMER5_NVDEC_INCLUDE_DIR NAMES dynlink_nvcuvid.h PATH_SUFFIXES ffnvcodec nvcodec)
 endif()
 if(DVBSTREAMER5_ENABLE_NVENC AND DVBSTREAMER5_NVENC_INCLUDE_DIR)
     target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_NVENC_HEADERS=1)
@@ -223,6 +225,17 @@ if(DVBSTREAMER5_ENABLE_NVENC AND DVBSTREAMER5_NVENC_INCLUDE_DIR)
     message(STATUS "Native NVIDIA NVENC backend: enabled (runtime loaded dynamically)")
 else()
     message(STATUS "Native NVIDIA NVENC backend: disabled (nvEncodeAPI.h not found)")
+endif()
+if(DVBSTREAMER5_ENABLE_NVENC AND DVBSTREAMER5_NVENC_INCLUDE_DIR AND
+   DVBSTREAMER5_NVDEC_INCLUDE_DIR AND
+   EXISTS "${DVBSTREAMER5_NVDEC_INCLUDE_DIR}/dynlink_cuda.h" AND
+   EXISTS "${DVBSTREAMER5_NVDEC_INCLUDE_DIR}/dynlink_cuviddec.h" AND
+   EXISTS "${DVBSTREAMER5_NVDEC_INCLUDE_DIR}/dynlink_nvcuvid.h")
+    target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_NVDEC_HEADERS=1)
+    target_include_directories(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_NVDEC_INCLUDE_DIR})
+    message(STATUS "Native NVIDIA NVDEC->CUDA->NVENC zero-copy backend: enabled (runtime loaded dynamically)")
+else()
+    message(STATUS "Native NVIDIA NVDEC->CUDA->NVENC zero-copy backend: disabled (NVDEC dynlink headers not found)")
 endif()
 
 include_directories(

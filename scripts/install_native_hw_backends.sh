@@ -153,12 +153,12 @@ fi
 
 echo
 echo "=== Build prerequisite summary ==="
-for h in   /usr/include/vpl/mfxdispatcher.h   /usr/include/va/va.h   /usr/include/ffnvcodec/nvEncodeAPI.h   /usr/include/nvEncodeAPI.h
+for h in   /usr/include/vpl/mfxdispatcher.h   /usr/include/va/va.h   /usr/include/ffnvcodec/nvEncodeAPI.h   /usr/include/nvEncodeAPI.h   /usr/include/ffnvcodec/dynlink_cuda.h   /usr/include/ffnvcodec/dynlink_cuviddec.h   /usr/include/ffnvcodec/dynlink_nvcuvid.h
 do
   [[ -e "$h" ]] && echo "FOUND  $h"
 done
 
-ldconfig -p 2>/dev/null |   grep -E 'libvpl|libva\.so|libva-drm|libnvidia-encode|libcuda' || true
+ldconfig -p 2>/dev/null |   grep -E 'libvpl|libva\.so|libva-drm|libnvidia-encode|libnvcuvid|libcuda' || true
 
 echo
 echo "Hardware dependency installation finished."

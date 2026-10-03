@@ -300,7 +300,11 @@ void NativeTranscoderPipeline::reset() {
     }
     {
         std::lock_guard<std::mutex> lock(videoDecoderMutex_);
+        nvidiaZeroCopy_.reset();
         videoDecoder_.reset();
+        nvidiaZeroCopyAttempted_ = false;
+        nvidiaZeroCopyFallbackLogged_ = false;
+        nvidiaZeroCopyActive_.store(false, std::memory_order_release);
     }
     {
         std::lock_guard<std::mutex> lock(videoEncoderMutex_);
@@ -397,7 +401,14 @@ void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamIn
     const bool videoChanged = newVideoPid != inputVideoPid_ || newVideoCodec != inputVideoCodec_;
     const bool audioChanged = newAudioPid != inputAudioPid_ || newAudioCodec != inputAudioCodec_;
     if (videoChanged) {
-        { std::lock_guard<std::mutex> codecLock(videoDecoderMutex_); videoDecoder_.reset(); }
+        {
+            std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
+            nvidiaZeroCopy_.reset();
+            videoDecoder_.reset();
+            nvidiaZeroCopyAttempted_ = false;
+            nvidiaZeroCopyFallbackLogged_ = false;
+            nvidiaZeroCopyActive_.store(false, std::memory_order_release);
+        }
         inputVideoPid_ = newVideoPid;
         inputVideoCodec_ = newVideoCodec;
         videoResetRequested_.store(false, std::memory_order_release);
@@ -573,7 +584,11 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
         {
             std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
             if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
+                nvidiaZeroCopy_.reset();
                 videoDecoder_.reset();
+                nvidiaZeroCopyAttempted_ = false;
+                nvidiaZeroCopyFallbackLogged_ = false;
+                nvidiaZeroCopyActive_.store(false, std::memory_order_release);
                 videoStartupReady_ = false;
             }
             if (!handleVideo(std::move(sample), error))
@@ -943,6 +958,91 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
     if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);
+
+    bool abrRawFanout = false;
+    {
+        std::lock_guard<std::mutex> observerLock(decodedVideoObserverMutex_);
+        abrRawFanout = static_cast<bool>(decodedVideoObserver_);
+    }
+    if (abrRawFanout && nvidiaZeroCopy_) {
+        nvidiaZeroCopy_.reset();
+        nvidiaZeroCopyActive_.store(false, std::memory_order_release);
+        nvidiaZeroCopyAttempted_ = true;
+        std::cerr << "NATIVE NVIDIA ZERO-COPY disabled reason=abr_shared_raw "
+                     "fallback=shared_cpu_decode"
+                  << std::endl;
+    }
+
+    const bool zeroCopyCodec =
+        sample.stream.codec == mpegts::ElementaryCodec::H264 ||
+        sample.stream.codec == mpegts::ElementaryCodec::H265;
+    const bool zeroCopyBackend =
+        config_.videoEncoder == "nvenc" || config_.videoEncoder == "auto";
+    if (!abrRawFanout && zeroCopyCodec && zeroCopyBackend) {
+        if (!nvidiaZeroCopyAttempted_) {
+            nvidiaZeroCopyAttempted_ = true;
+            std::string zeroCopyError;
+            if (codec::nvidiaZeroCopyRuntimeAvailable()) {
+                codec::NvidiaZeroCopyConfig zeroCopyConfig;
+                zeroCopyConfig.inputCodec = sample.stream.codec;
+                zeroCopyConfig.outputCodec = videoCodecFromName(config_.videoCodec);
+                zeroCopyConfig.width = config_.width;
+                zeroCopyConfig.height = config_.height;
+                zeroCopyConfig.fps = config_.fps;
+                zeroCopyConfig.bitrate = config_.videoBitrate;
+                zeroCopyConfig.deinterlace = config_.deinterlace;
+                nvidiaZeroCopy_ = codec::createNvidiaZeroCopyTranscoder(
+                    zeroCopyConfig, zeroCopyError);
+            } else {
+                zeroCopyError = "NVDEC/CUDA/NVENC runtime not available";
+            }
+            if (nvidiaZeroCopy_) {
+                nvidiaZeroCopyActive_.store(true, std::memory_order_release);
+                std::cerr << "NATIVE NVIDIA ZERO-COPY selected input="
+                          << (sample.stream.codec == mpegts::ElementaryCodec::H264
+                                  ? "h264" : "hevc")
+                          << " output=" << config_.videoCodec
+                          << " backend=" << config_.videoEncoder
+                          << std::endl;
+            } else if (!nvidiaZeroCopyFallbackLogged_) {
+                nvidiaZeroCopyFallbackLogged_ = true;
+                std::cerr << "NATIVE NVIDIA ZERO-COPY unavailable reason="
+                          << zeroCopyError << " fallback="
+                          << (config_.videoEncoder == "nvenc"
+                                  ? "cpu-decode+nvenc" : "standard-auto-path")
+                          << std::endl;
+            }
+        }
+
+        if (nvidiaZeroCopy_) {
+            std::vector<codec::EncodedVideoFrame> encoded;
+            if (!nvidiaZeroCopy_->process(
+                    sample.data.data(), sample.data.size(),
+                    sample.pts90k, sample.hasPts, encoded, error))
+                return false;
+            decodedVideoFrames_ += encoded.size();
+            if (!sourceGeometryResolved_ &&
+                nvidiaZeroCopy_->sourceWidth() > 0 &&
+                nvidiaZeroCopy_->sourceHeight() > 0) {
+                sourceGeometryResolved_ = true;
+                sourceWidth_ = nvidiaZeroCopy_->sourceWidth();
+                sourceHeight_ = nvidiaZeroCopy_->sourceHeight();
+                const int outWidth = nvidiaZeroCopy_->outputWidth();
+                const int outHeight = nvidiaZeroCopy_->outputHeight();
+                if (outWidth > 0 && outHeight > 0 &&
+                    (outWidth != config_.width || outHeight != config_.height))
+                    (void)setOutputGeometryIfUnconfigured(outWidth, outHeight);
+                std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
+                          << sourceWidth_ << "x" << sourceHeight_
+                          << " output=" << config_.width << "x" << config_.height
+                          << " path=nvidia-zero-copy" << std::endl;
+            }
+            for (const auto& frame : encoded)
+                if (!emitVideo(frame, error)) return false;
+            return true;
+        }
+    }
+
     if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
 
     std::vector<codec::RawVideoFrame> decoded;
@@ -1213,6 +1313,15 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
         return false;
     }
     {
+        std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
+        if (nvidiaZeroCopy_) {
+            std::vector<codec::EncodedVideoFrame> encoded;
+            if (!nvidiaZeroCopy_->flush(encoded, error)) return false;
+            for (const auto& frame : encoded)
+                if (!emitVideo(frame, error)) return false;
+        }
+    }
+    {
         std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
         if (videoEncoder_) {
             std::vector<codec::EncodedVideoFrame> encoded;
@@ -1292,6 +1401,8 @@ std::string NativeTranscoderPipeline::status() const {
            " raw_vdrop=" + std::to_string(rawVdrop) +
            " primary_raw_drop=" + std::to_string(primaryRawDrop) +
            " fps_gate_drop=" + std::to_string(videoRateDroppedFrames_) +
+           " nvidia_zero_copy=" + std::to_string(
+               nvidiaZeroCopyActive_.load(std::memory_order_acquire) ? 1 : 0) +
            " adrop=" + std::to_string(adrop);
 }
 
