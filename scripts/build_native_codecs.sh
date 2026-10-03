@@ -26,8 +26,14 @@ make -C "$ROOT/third_party/openh264" -j"$JOBS" OS=linux ARCH="$oh_arch" BUILDTYP
 make -C "$ROOT/third_party/openh264" OS=linux ARCH="$oh_arch" BUILDTYPE=Release install-static PREFIX="$PREFIX"
 
 echo "[2/7] Ittiam AVC decoder static"
+# Ittiam libavc and libmpeg2 both export an upstream helper named
+# check_app_out_buf_size. They are normally built as separate libraries, but
+# DVBStreamer5 links both statically into one executable. Give the AVC copy a
+# codec-specific name at compile time so the final link remains strict and we
+# do not have to hide the collision with --allow-multiple-definition.
 cmake -S "$ROOT/third_party/ittiam-libavc" -B "$BUILD_ROOT/ittiam-libavc" \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_C_FLAGS="-Dcheck_app_out_buf_size=ih264d_check_app_out_buf_size" \
   -DENABLE_MVC=OFF -DENABLE_SVC=OFF -DENABLE_TESTS=OFF
 cmake --build "$BUILD_ROOT/ittiam-libavc" --target libavcdec --parallel "$JOBS"
 AVC_LIB="$(find "$BUILD_ROOT/ittiam-libavc" -type f \
@@ -40,6 +46,16 @@ install -m 0644 "$AVC_LIB" "$PREFIX/lib/libavcdec.a"
 install -d "$PREFIX/include/ittiam-avc"
 find "$ROOT/third_party/ittiam-libavc/common" "$ROOT/third_party/ittiam-libavc/decoder" \
   -maxdepth 1 -type f -name '*.h' -exec install -m 0644 {} "$PREFIX/include/ittiam-avc/" \;
+if nm -g --defined-only "$PREFIX/lib/libavcdec.a" 2>/dev/null | \
+     grep -Eq '[[:space:]]check_app_out_buf_size$'; then
+  echo "Ittiam AVC symbol isolation failed: check_app_out_buf_size is still exported" >&2
+  exit 1
+fi
+if ! nm -g --defined-only "$PREFIX/lib/libavcdec.a" 2>/dev/null | \
+     grep -Eq '[[:space:]]ih264d_check_app_out_buf_size$'; then
+  echo "Ittiam AVC symbol isolation failed: renamed helper is missing" >&2
+  exit 1
+fi
 
 echo "[3/7] libde265 static"
 cmake -S "$ROOT/third_party/libde265" -B "$BUILD_ROOT/libde265" \
