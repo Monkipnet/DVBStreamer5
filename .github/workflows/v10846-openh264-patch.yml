@@ -1,138 +1,50 @@
-name: V10.8.46 OpenH264 parameter priming
+name: V10.8.46 OpenH264 parameter priming check
 
 on:
   push:
     branches:
       - repair/openh264-param-prime-v10846
-    paths:
-      - .github/workflows/v10846-openh264-patch.yml
 
 permissions:
   contents: write
 
 jobs:
-  patch:
+  check:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: repair/openh264-param-prime-v10846
-      - name: Apply V10.8.46 source patch
+          fetch-depth: 0
+
+      - name: Apply production patch
+        run: python3 .github/v10.8.46_apply.py
+
+      - name: Build vendored codec headers and libraries
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          chmod +x scripts/vendor_native_codecs.sh scripts/build_native_codecs.sh
+          ./scripts/vendor_native_codecs.sh
+          DVBSTREAMER5_CODEC_JOBS=2 ./scripts/build_native_codecs.sh
 
-          codec = Path('src/media/NativeCodecVendored.cpp')
-          text = codec.read_text()
+      - name: Syntax check native codec wrapper
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc \
+            -Ithird_party/native-codecs-prefix/include \
+            -Ithird_party/native-codecs-prefix/include/ittiam-mpeg2 \
+            -fsyntax-only src/media/NativeCodecVendored.cpp
 
-          old = '''        if (!synchronized_) {
-              if (!h264.hasIdr || sps_.empty() || pps_.empty()) return true;
-              if (!reinitializeDecoderState()) {
-                  error = "OpenH264 decoder reinitialize failed at IDR picture";
-                  return false;
-              }
-              std::vector<std::uint8_t> primed;
-              if (!h264.hasSps) primed.insert(primed.end(), sps_.begin(), sps_.end());
-              if (!h264.hasPps) primed.insert(primed.end(), pps_.begin(), pps_.end());
-              primed.insert(primed.end(), picture.begin(), picture.end());
-              synchronized_ = true;
-              return decodePictureBytes(
-                  primed.data(), primed.size(), pts90k, hasPts, output, error);
-          }
-          '''
-          new = '''        if (!synchronized_) {
-              if (!h264.hasIdr || sps_.empty() || pps_.empty()) return true;
-
-              // V10.8.46: keep the decoder instance continuous. The previous
-              // fallback uninitialized and initialized OpenH264 immediately
-              // before every recovery IDR. Prime the cached parameter sets
-              // first, matching OpenH264's GMP integration, then decode the
-              // complete picture through the normal no-delay path.
-              std::vector<std::uint8_t> parameterSets;
-              parameterSets.reserve(sps_.size() + pps_.size());
-              parameterSets.insert(parameterSets.end(), sps_.begin(), sps_.end());
-              parameterSets.insert(parameterSets.end(), pps_.begin(), pps_.end());
-
-              unsigned char* primePlanes[3]{};
-              SBufferInfo primeInfo{};
-              const DECODING_STATE primeRc = decoder_->DecodeFrame2(
-                  parameterSets.data(), static_cast<int>(parameterSets.size()),
-                  primePlanes, &primeInfo);
-              const int primeState = static_cast<int>(primeRc);
-              ++parameterPrimeCalls_;
-              if (primeState != 0) {
-                  ++parameterPrimeErrors_;
-                  if (parameterPrimeErrors_ <= 8U ||
-                      (parameterPrimeErrors_ % 100U) == 0U) {
-                      std::cerr << "NATIVE AVC PARAM PRIME state=" << primeState
-                                << " sps_bytes=" << sps_.size()
-                                << " pps_bytes=" << pps_.size()
-                                << " calls=" << parameterPrimeCalls_
-                                << " errors=" << parameterPrimeErrors_ << '\\n';
-                  }
-              }
-
-              synchronized_ = true;
-              return decodePictureBytes(
-                  picture.data(), picture.size(), pts90k, hasPts, output, error);
-          }
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one recovery block, found {text.count(old)}')
-          text = text.replace(old, new)
-
-          old_diag = '''                      << " noParam=" << noParamSeen_
-                        << " bitErr=" << bitstreamErrorSeen_
-                        << " out=" << outputFrames_ << '\\n';
-          '''
-          new_diag = '''                      << " noParam=" << noParamSeen_
-                        << " bitErr=" << bitstreamErrorSeen_
-                        << " prime=" << parameterPrimeCalls_
-                        << " primeErr=" << parameterPrimeErrors_
-                        << " out=" << outputFrames_ << '\\n';
-          '''
-          if text.count(old_diag) != 1:
-              raise SystemExit(f'expected one diagnostic block, found {text.count(old_diag)}')
-          text = text.replace(old_diag, new_diag)
-
-          old_reset = '''        refLostSeen_ = noParamSeen_ = bitstreamErrorSeen_ = outputFrames_ = 0;
-          '''
-          new_reset = '''        refLostSeen_ = noParamSeen_ = bitstreamErrorSeen_ = outputFrames_ = 0;
-          parameterPrimeCalls_ = parameterPrimeErrors_ = 0;
-          '''
-          if text.count(old_reset) != 1:
-              raise SystemExit(f'expected one reset counter line, found {text.count(old_reset)}')
-          text = text.replace(old_reset, new_reset)
-
-          old_members = '''    std::uint64_t refLostSeen_ = 0, noParamSeen_ = 0;
-      std::uint64_t bitstreamErrorSeen_ = 0, outputFrames_ = 0;
-          '''
-          new_members = '''    std::uint64_t refLostSeen_ = 0, noParamSeen_ = 0;
-      std::uint64_t bitstreamErrorSeen_ = 0, outputFrames_ = 0;
-      std::uint64_t parameterPrimeCalls_ = 0, parameterPrimeErrors_ = 0;
-          '''
-          if text.count(old_members) != 1:
-              raise SystemExit(f'expected one member counter block, found {text.count(old_members)}')
-          text = text.replace(old_members, new_members)
-          codec.write_text(text)
-
-          version = Path('src/AppVersion.h')
-          v = version.read_text()
-          if 'kProgramVersion = "10.8.45"' not in v:
-              raise SystemExit('unexpected input version')
-          version.write_text(v.replace('kProgramVersion = "10.8.45"',
-                                       'kProgramVersion = "10.8.46"'))
-          PY
-      - name: Validate patch shape
+      - name: Check production diff
         run: |
           git diff --check
           grep -F 'kProgramVersion = "10.8.46"' src/AppVersion.h
           grep -F 'NATIVE AVC PARAM PRIME state=' src/media/NativeCodecVendored.cpp
           grep -F 'parameterPrimeCalls_' src/media/NativeCodecVendored.cpp
-      - name: Commit patched sources
+
+      - name: Commit production patch
         run: |
-          git config user.name 'Vitali Lukomski'
-          git config user.email 'monkipnet@yandex.ru'
+          git config user.name 'DVBStreamer5 automation'
+          git config user.email 'actions@users.noreply.github.com'
           git add src/AppVersion.h src/media/NativeCodecVendored.cpp
-          git commit -m 'V10.8.46 prime OpenH264 parameter sets [v10846-applied]'
+          git commit -m 'V10.8.46 prime OpenH264 parameter sets'
           git push origin HEAD:repair/openh264-param-prime-v10846
