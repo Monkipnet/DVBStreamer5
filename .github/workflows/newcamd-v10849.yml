@@ -1,0 +1,54 @@
+name: V10.8.49 Newcamd repair
+
+on:
+  push:
+    branches:
+      - repair/newcamd-v10849
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: repair/newcamd-v10849
+          fetch-depth: 0
+
+      - name: Install build headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ libjsoncpp-dev libboost-system-dev libssl-dev
+
+      - name: Apply V10.8.49 patch
+        run: python3 scripts/apply_newcamd_v10849.py
+
+      - name: Syntax check CA manager
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -I/usr/include/jsoncpp \
+            -fsyntax-only src/CaBackend.cpp
+
+      - name: Syntax check Newcamd client
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+            -Isrc -Ithird_party \
+            -fsyntax-only src/ca/backends/newcamd/NewcamdClient.cpp
+
+      - name: Verify production diff
+        run: |
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.49"' src/AppVersion.h
+          git diff --name-only | sort
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/AppVersion.h src/CaBackend.cpp src/ca/backends/newcamd/NewcamdClient.cpp "
+
+      - name: Commit tested production patch to staging branch
+        run: |
+          git config user.name 'OpenAI'
+          git config user.email 'noreply@openai.com'
+          git add src/AppVersion.h src/CaBackend.cpp src/ca/backends/newcamd/NewcamdClient.cpp
+          git commit -m 'V10.8.49 repair built-in Newcamd lifecycle and OSCam login'
+          git push origin HEAD:repair/newcamd-v10849
