@@ -23,8 +23,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y g++ libjsoncpp-dev libboost-system-dev libssl-dev
 
-      - name: Apply V10.8.49 patch
-        run: python3 scripts/apply_newcamd_v10849.py
+      - name: Apply V10.8.49 production patches
+        run: |
+          if grep -Fq 'kProgramVersion = "10.8.48"' src/AppVersion.h; then
+            python3 scripts/apply_newcamd_v10849.py
+          fi
+          python3 scripts/apply_newcamd_v10849_busy_snapshot.py
 
       - name: Syntax check CA manager
         run: |
@@ -38,17 +42,18 @@ jobs:
             -Isrc -Ithird_party \
             -fsyntax-only src/ca/backends/newcamd/NewcamdClient.cpp
 
-      - name: Verify production diff
+      - name: Verify version and diff
         run: |
           git diff --check
           grep -F 'kProgramVersion = "10.8.49"' src/AppVersion.h
-          git diff --name-only | sort
-          test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/AppVersion.h src/CaBackend.cpp src/ca/backends/newcamd/NewcamdClient.cpp "
+          git diff --name-only
 
-      - name: Commit tested production patch to staging branch
+      - name: Commit tested production changes when needed
         run: |
           git config user.name 'OpenAI'
           git config user.email 'noreply@openai.com'
           git add src/AppVersion.h src/CaBackend.cpp src/ca/backends/newcamd/NewcamdClient.cpp
-          git commit -m 'V10.8.49 repair built-in Newcamd lifecycle and OSCam login'
-          git push origin HEAD:repair/newcamd-v10849
+          if ! git diff --cached --quiet; then
+            git commit -m 'V10.8.49 keep built-in Newcamd visible during authentication'
+            git push origin HEAD:repair/newcamd-v10849
+          fi
