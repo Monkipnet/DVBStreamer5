@@ -4,12 +4,15 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "ConfigManager.h"
@@ -35,6 +38,165 @@ struct ActiveStreamSession {
     size_t connections = 0;
 };
 
+// V10.8.53: browser preview must not keep a complete transcoder worker set
+// alive while nobody is watching. StreamManager still owns a stable object so
+// its relay callback never holds a dangling pointer, but the real native
+// pipeline is initialized only by the first preview transport packet. When no
+// packet reaches the preview path for five seconds (longer than the normal
+// ~3-second HLS source segment cadence), all decoder/encoder/mux workers are
+// stopped. A later preview transparently initializes the saved configuration
+// again. Production transcoders are not routed through this wrapper.
+class LazyPreviewTranscoder {
+public:
+    LazyPreviewTranscoder() = default;
+    ~LazyPreviewTranscoder() { reset(); }
+
+    LazyPreviewTranscoder(const LazyPreviewTranscoder&) = delete;
+    LazyPreviewTranscoder& operator=(const LazyPreviewTranscoder&) = delete;
+
+    bool initialize(
+        const dvbstreamer5::media::transcode::NativeTranscoderConfig& config,
+        std::string& error) {
+        reset();
+        std::lock_guard<std::mutex> lock(mutex_);
+        config_ = config;
+        configured_ = true;
+        error.clear();
+        return true;
+    }
+
+    bool process(const std::uint8_t* data, std::size_t size,
+                 std::vector<std::uint8_t>& output, std::string& error) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!configured_) {
+            error = "browser preview transcoder is not configured";
+            return false;
+        }
+
+        if (!active_) {
+            if (monitor_.joinable()) {
+                std::thread finished = std::move(monitor_);
+                lock.unlock();
+                finished.join();
+                lock.lock();
+            }
+
+            if (!pipeline_.initialize(config_, error)) return false;
+            active_ = true;
+            stopMonitor_ = false;
+            lastActivity_ = std::chrono::steady_clock::now();
+            const std::uint64_t generation = ++generation_;
+            monitor_ = std::thread([this, generation] {
+                monitorLoop(generation);
+            });
+            std::cerr << "NATIVE BROWSER PREVIEW transcoder active"
+                      << " idle_shutdown_s=5" << std::endl;
+        } else {
+            lastActivity_ = std::chrono::steady_clock::now();
+        }
+        activityCv_.notify_all();
+
+        // Keep the wrapper lock while process() owns the native pipeline. The
+        // idle monitor therefore cannot reset codecs/workers concurrently.
+        return pipeline_.process(data, size, output, error);
+    }
+
+    bool flush(std::vector<std::uint8_t>& output, std::string& error) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!active_) {
+            output.clear();
+            error.clear();
+            return true;
+        }
+        return pipeline_.flush(output, error);
+    }
+
+    std::string status() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!configured_) return "not configured";
+        if (!active_) return "preview idle";
+        return pipeline_.status();
+    }
+
+    void reset() {
+        std::thread monitor;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopMonitor_ = true;
+            ++generation_;
+            activityCv_.notify_all();
+            if (monitor_.joinable()) monitor = std::move(monitor_);
+        }
+        if (monitor.joinable()) monitor.join();
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (active_) pipeline_.reset();
+        active_ = false;
+        configured_ = false;
+        stopMonitor_ = false;
+    }
+
+private:
+    void monitorLoop(std::uint64_t generation) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        constexpr auto kIdle = std::chrono::seconds(5);
+        for (;;) {
+            if (stopMonitor_ || generation != generation_) return;
+            const auto observedActivity = lastActivity_;
+            activityCv_.wait_for(lock, kIdle, [&] {
+                return stopMonitor_ || generation != generation_ ||
+                       lastActivity_ != observedActivity;
+            });
+            if (stopMonitor_ || generation != generation_) return;
+            if (lastActivity_ != observedActivity) continue;
+
+            if (active_) {
+                pipeline_.reset();
+                active_ = false;
+                std::cerr << "NATIVE BROWSER PREVIEW transcoder stopped"
+                          << " reason=idle" << std::endl;
+            }
+            return;
+        }
+    }
+
+    mutable std::mutex mutex_;
+    std::condition_variable activityCv_;
+    dvbstreamer5::media::transcode::NativeTranscoderConfig config_;
+    dvbstreamer5::media::transcode::NativeTranscoderPipeline pipeline_;
+    std::thread monitor_;
+    std::chrono::steady_clock::time_point lastActivity_{};
+    bool configured_ = false;
+    bool active_ = false;
+    bool stopMonitor_ = false;
+    std::uint64_t generation_ = 0;
+};
+
+// Adapter used so existing StreamManager.cpp code can keep its unique_ptr-like
+// syntax. Its assignment intentionally discards the eagerly allocated base
+// pipeline and replaces it with the lazy preview-only implementation above.
+class LazyPreviewTranscoderHandle {
+public:
+    LazyPreviewTranscoderHandle() = default;
+    LazyPreviewTranscoderHandle(const LazyPreviewTranscoderHandle&) = delete;
+    LazyPreviewTranscoderHandle& operator=(const LazyPreviewTranscoderHandle&) = delete;
+
+    LazyPreviewTranscoderHandle& operator=(
+        std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline>&& eager) {
+        eager.reset();
+        value_ = std::make_unique<LazyPreviewTranscoder>();
+        return *this;
+    }
+
+    LazyPreviewTranscoder* get() const noexcept { return value_.get(); }
+    LazyPreviewTranscoder* operator->() const noexcept { return value_.get(); }
+    explicit operator bool() const noexcept { return static_cast<bool>(value_); }
+    void reset() noexcept { value_.reset(); }
+
+private:
+    std::unique_ptr<LazyPreviewTranscoder> value_;
+};
+
 struct StreamState {
     std::atomic<bool> active{false};
     std::atomic<bool> running{false};
@@ -58,10 +220,10 @@ struct StreamState {
 
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
-    // Private browser preview is always H.264/AAC MPEG-TS. It is fed only
-    // while /api/streams/<id>/preview.ts has active subscribers, so production
-    // UDP/SRT/HLS outputs remain untouched and there is no idle encode load.
-    std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativePreviewTranscoder;
+    // Private browser preview is always H.264/AAC MPEG-TS. The lazy handle
+    // starts its native workers only while preview.ts is actively consuming
+    // transport and tears them down after the short idle grace period.
+    LazyPreviewTranscoderHandle nativePreviewTranscoder;
     std::atomic<bool> previewTranscodeFailed{false};
     struct HlsAbrVariantRuntime {
         std::string name;
