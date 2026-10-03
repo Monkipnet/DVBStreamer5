@@ -19,6 +19,7 @@ struct RawVideoFrame {
     bool hasPts = false;
     bool hasDts = false;
     bool keyFrame = false;
+    bool interlaced = false;
 };
 
 struct PcmAudioFrame {

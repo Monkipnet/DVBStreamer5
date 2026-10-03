@@ -789,10 +789,33 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         state.bytes.erase(state.bytes.begin(),
                           state.bytes.begin() + static_cast<std::ptrdiff_t>(boundary));
 
-        // PTS/DTS do not participate in H.264 reference reconstruction, but
-        // keep a monotonic fallback for an AU that spans several PES packets.
-        // The source is 25 fps (confirmed by ffprobe in this debugging case).
-        constexpr std::uint64_t step90k = 90000U / 25U;
+        // V10.8.52: a standalone H.264 field picture occupies half of a
+        // 25-fps PAL frame interval. If both complementary fields were kept
+        // in this AU, advance one complete frame instead. Progressive and
+        // frame-coded AVC retain the normal 3600-tick frame step.
+        const bool singleFieldPicture =
+            state.stream.codec == ElementaryCodec::H264 &&
+            haveParsedFirstPicture &&
+            firstPicture.fieldPic &&
+            !complementaryPairComplete;
+
+        const std::uint64_t step90k =
+            singleFieldPicture ? (90000U / 50U) : (90000U / 25U);
+
+        if (singleFieldPicture) {
+            ++state.h264SingleFields;
+            if (state.h264SingleFields <= 4U ||
+                (state.h264SingleFields % 250U) == 0U) {
+                std::cerr << "NATIVE AVC AU FIELD_CLOCK pid="
+                          << sample.stream.pid
+                          << " frame_num=" << firstPicture.frameNum
+                          << " bottom=" << (firstPicture.bottomField ? 1 : 0)
+                          << " step90k=" << step90k
+                          << " fields=" << state.h264SingleFields
+                          << std::endl;
+            }
+        }
+
         if (state.hasPts) state.pts90k += step90k;
         if (state.hasDts) state.dts90k += step90k;
         state.randomAccess = containsRandomAccessNal(
