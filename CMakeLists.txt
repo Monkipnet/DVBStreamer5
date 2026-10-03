@@ -96,6 +96,7 @@ set(DVBSTREAMER5_CODEC_PREFIX "${CMAKE_SOURCE_DIR}/third_party/native-codecs-pre
     "Static native codec prefix produced by scripts/build_native_codecs.sh")
 set(_codec_headers
     "${DVBSTREAMER5_CODEC_PREFIX}/include/wels/codec_api.h"
+    "${DVBSTREAMER5_CODEC_PREFIX}/include/ittiam-avc/ih264d.h"
     "${DVBSTREAMER5_CODEC_PREFIX}/include/libde265/de265.h"
     "${DVBSTREAMER5_CODEC_PREFIX}/include/kvazaar.h"
     "${DVBSTREAMER5_CODEC_PREFIX}/include/fdk-aac/aacdecoder_lib.h"
@@ -116,13 +117,15 @@ function(dvbstreamer5_import_static_codec target filename)
     set_target_properties(${target} PROPERTIES IMPORTED_LOCATION "${_path}")
 endfunction()
 dvbstreamer5_import_static_codec(dvbstreamer5_openh264 libopenh264.a)
+dvbstreamer5_import_static_codec(dvbstreamer5_avcdec libavcdec.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_de265 libde265.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_kvazaar libkvazaar.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_fdkaac libfdk-aac.a)
 dvbstreamer5_import_static_codec(dvbstreamer5_mpeg2dec libmpeg2dec.a)
 set(DVBSTREAMER5_CODEC_SOURCE src/media/NativeCodecVendored.cpp)
 set(DVBSTREAMER5_CODEC_LIBRARIES
-    dvbstreamer5_openh264 dvbstreamer5_de265 dvbstreamer5_kvazaar
+    dvbstreamer5_openh264 dvbstreamer5_avcdec
+    dvbstreamer5_de265 dvbstreamer5_kvazaar
     dvbstreamer5_fdkaac dvbstreamer5_mpeg2dec)
 
 add_library(dvbstreamer5_media_core
@@ -130,6 +133,7 @@ add_library(dvbstreamer5_media_core
     src/media/MpegTsRemapper.cpp
     src/media/NativeMpegTsMux.cpp
     ${DVBSTREAMER5_CODEC_SOURCE}
+    src/media/NativeIttiamAvc.cpp
     src/media/NativeHardwareCodec.cpp
     src/media/NativeIntelZeroCopy.cpp
     src/media/NativeNvidiaZeroCopy.cpp
