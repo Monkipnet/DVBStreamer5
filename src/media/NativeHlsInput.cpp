@@ -11,9 +11,11 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -27,6 +29,7 @@ using Clock = std::chrono::steady_clock;
 constexpr auto kLowAhead = std::chrono::seconds(4);
 constexpr auto kTargetAhead = std::chrono::seconds(8);
 constexpr auto kMaxAhead = std::chrono::seconds(12);
+constexpr std::size_t kMaxPrefetchSegments = 8;
 constexpr auto kPlaylistPollMin = std::chrono::milliseconds(400);
 constexpr auto kPlaylistPollMax = std::chrono::milliseconds(2000);
 constexpr long kPlaylistTimeoutMs = 3000;
@@ -379,22 +382,26 @@ void NativeHlsInput::run() {
         if (finishCallback_) finishCallback_(value);
     };
 
-    auto loadPlaylist = [&](Playlist& playlist) -> bool {
+    auto loadPlaylistAt = [&](std::string& activeUrl, Playlist& playlist, std::string& loadError) -> bool {
         std::vector<std::uint8_t> bytes;
         std::string effective;
-        if (!fetch(active, config_, stopping_, kMaxPlaylistBytes, kPlaylistTimeoutMs, bytes, effective, error)) return false;
+        if (!fetch(activeUrl, config_, stopping_, kMaxPlaylistBytes, kPlaylistTimeoutMs, bytes, effective, loadError)) return false;
         const std::string text(bytes.begin(), bytes.end());
         playlist = parsePlaylist(text, effective);
         if (playlist.master) {
             const auto variant = chooseVariant(playlist.variants, config_.targetBitrate);
-            if (!variant) { error = "HLS master playlist contains no variants"; return false; }
-            active = variant->url;
+            if (!variant) { loadError = "HLS master playlist contains no variants"; return false; }
+            activeUrl = variant->url;
             bytes.clear(); effective.clear();
-            if (!fetch(active, config_, stopping_, kMaxPlaylistBytes, kPlaylistTimeoutMs, bytes, effective, error)) return false;
+            if (!fetch(activeUrl, config_, stopping_, kMaxPlaylistBytes, kPlaylistTimeoutMs, bytes, effective, loadError)) return false;
             playlist = parsePlaylist(std::string(bytes.begin(), bytes.end()), effective);
         }
-        if (playlist.segments.empty()) { error = "HLS media playlist contains no segments"; return false; }
+        if (playlist.segments.empty()) { loadError = "HLS media playlist contains no segments"; return false; }
         return true;
+    };
+
+    auto loadPlaylist = [&](Playlist& playlist) -> bool {
+        return loadPlaylistAt(active, playlist, error);
     };
 
     Playlist playlist;
@@ -420,10 +427,9 @@ void NativeHlsInput::run() {
     std::string initializedMap;
 
     // MPEG-TS HLS segments arrive from the origin as multi-megabyte bursts.
-    // Feeding a complete 6-second segment to the relay in one call produces
-    // burst -> silence -> burst timing on UDP-VBR and also builds a very deep
-    // queue in UDP-CBR.  Keep a media-time wall-clock deadline and release
-    // conventional 7-packet (1316-byte) chunks smoothly across EXTINF.
+    // Pace 7-packet (1316-byte) batches against EXTINF while a separate
+    // producer keeps several complete segments prefetched.  This decouples
+    // origin/CDN fetch jitter from the realtime relay clock.
     bool tsPacingStarted = false;
     Clock::time_point tsSegmentDeadline {};
 
@@ -442,7 +448,8 @@ void NativeHlsInput::run() {
 
     auto pushTsSegmentPaced = [&](const Segment& segment,
                                   const std::vector<std::uint8_t>& bytes,
-                                  double fetchSeconds) -> bool {
+                                  double fetchSeconds,
+                                  double bufferedSeconds) -> bool {
         constexpr std::size_t kTsPacketSize = 188;
         constexpr std::size_t kPacketsPerBatch = 7;
         constexpr std::size_t kBatchBytes = kTsPacketSize * kPacketsPerBatch;
@@ -468,8 +475,6 @@ void NativeHlsInput::run() {
             resync = segment.discontinuity;
         } else {
             tsSegmentDeadline += mediaDuration;
-            // A long origin/network stall should not be followed by a huge
-            // high-speed catch-up burst.  Re-anchor after two seconds late.
             if (now > tsSegmentDeadline + std::chrono::seconds(2)) {
                 tsSegmentDeadline = now + mediaDuration;
                 resync = true;
@@ -518,6 +523,7 @@ void NativeHlsInput::run() {
                   << " media_kbps=" << mediaKbps
                   << " fetch_ms=" << static_cast<long long>(fetchSeconds * 1000.0)
                   << " pace_ms=" << actualPacingMs
+                  << " buffer_ms=" << static_cast<long long>(bufferedSeconds * 1000.0)
                   << " resync=" << (resync ? 1 : 0)
                   << std::endl;
         return true;
@@ -543,6 +549,212 @@ void NativeHlsInput::run() {
 
     if (!ensureMap(playlist)) { fail(error); running_.store(false); return; }
 
+    if (!playlist.hasMap) {
+        struct BufferedTsSegment {
+            Segment segment;
+            std::vector<std::uint8_t> bytes;
+            double fetchSeconds = 0.0;
+        };
+
+        std::mutex bufferMutex;
+        std::condition_variable bufferCv;
+        std::deque<BufferedTsSegment> buffer;
+        double bufferedSeconds = 0.0;
+        std::atomic<bool> prefetchStop {false};
+        bool producerDone = false;
+        std::string producerFailure;
+        std::string producerActive = active;
+        Playlist producerPlaylist = playlist;
+        std::uint64_t producerSequence = nextSequence;
+        bool forceProducerDiscontinuity = false;
+
+        std::thread producer([&] {
+            auto setProducerFailure = [&](std::string value) {
+                {
+                    std::lock_guard<std::mutex> lock(bufferMutex);
+                    producerFailure = std::move(value);
+                    producerDone = true;
+                }
+                bufferCv.notify_all();
+            };
+
+            while (!stopping_.load() && !prefetchStop.load()) {
+                {
+                    std::unique_lock<std::mutex> lock(bufferMutex);
+                    bufferCv.wait_for(lock, std::chrono::milliseconds(100), [&] {
+                        return stopping_.load() || prefetchStop.load() ||
+                               (bufferedSeconds < std::chrono::duration<double>(kMaxAhead).count() &&
+                                buffer.size() < kMaxPrefetchSegments);
+                    });
+                    if (stopping_.load() || prefetchStop.load()) break;
+                    if (bufferedSeconds >= std::chrono::duration<double>(kMaxAhead).count() ||
+                        buffer.size() >= kMaxPrefetchSegments) {
+                        continue;
+                    }
+                }
+
+                auto index = findSequence(producerPlaylist, producerSequence);
+                if (!index) {
+                    if (producerPlaylist.endList && !producerPlaylist.segments.empty() &&
+                        producerSequence > producerPlaylist.segments.back().sequence) {
+                        {
+                            std::lock_guard<std::mutex> lock(bufferMutex);
+                            producerDone = true;
+                        }
+                        bufferCv.notify_all();
+                        break;
+                    }
+
+                    Playlist refreshed;
+                    std::string reloadError;
+                    if (loadPlaylistAt(producerActive, refreshed, reloadError)) {
+                        producerPlaylist = std::move(refreshed);
+                        if (producerSequence < producerPlaylist.segments.front().sequence) {
+                            producerSequence = startupSequence(producerPlaylist);
+                            forceProducerDiscontinuity = true;
+                            std::cerr << "NATIVE HLS PREFETCH WINDOW JUMP"
+                                      << " next_seq=" << producerSequence << std::endl;
+                        }
+                    } else if (!stopping_.load() && !prefetchStop.load()) {
+                        std::cerr << "NATIVE HLS PLAYLIST FETCH ERROR"
+                                  << " error=" << reloadError << std::endl;
+                    }
+                    const auto interval = pollInterval(producerPlaylist);
+                    const auto sleepUntil = Clock::now() + interval;
+                    while (!stopping_.load() && !prefetchStop.load() && Clock::now() < sleepUntil) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    }
+                    continue;
+                }
+
+                Segment segment = producerPlaylist.segments[*index];
+                if (forceProducerDiscontinuity) {
+                    segment.discontinuity = true;
+                    forceProducerDiscontinuity = false;
+                }
+
+                std::vector<std::uint8_t> bytes;
+                std::string effective;
+                std::string fetchError;
+                const auto segmentFetchStart = Clock::now();
+                if (!fetch(segment.url, config_, stopping_, kMaxSegmentBytes, kSegmentTimeoutMs,
+                           bytes, effective, fetchError)) {
+                    if (stopping_.load() || prefetchStop.load()) break;
+                    std::cerr << "NATIVE HLS SEGMENT FETCH ERROR"
+                              << " seq=" << segment.sequence
+                              << " error=" << fetchError << std::endl;
+                    Playlist refreshed;
+                    std::string reloadError;
+                    if (loadPlaylistAt(producerActive, refreshed, reloadError)) {
+                        producerPlaylist = std::move(refreshed);
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                    continue;
+                }
+                const double segmentFetchSeconds = std::chrono::duration<double>(
+                    Clock::now() - segmentFetchStart).count();
+
+                std::string decryptError;
+                if (!decryptSegment(segment, config_, stopping_, bytes, decryptError)) {
+                    if (stopping_.load() || prefetchStop.load()) break;
+                    setProducerFailure("native HLS segment decrypt failed: " + decryptError);
+                    break;
+                }
+                if (bytes.empty() || (bytes.size() % 188U) != 0U || bytes.front() != 0x47) {
+                    setProducerFailure("HLS MPEG-TS segment is not 188-byte aligned");
+                    break;
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(bufferMutex);
+                    bufferedSeconds += std::max(0.001, segment.duration);
+                    buffer.push_back({std::move(segment), std::move(bytes), segmentFetchSeconds});
+                }
+                producerSequence = producerPlaylist.segments[*index].sequence + 1;
+                bufferCv.notify_all();
+            }
+        });
+
+        const auto initialBufferDeadline = Clock::now() + std::chrono::seconds(5);
+        {
+            std::unique_lock<std::mutex> lock(bufferMutex);
+            while (!stopping_.load() && producerFailure.empty() && !producerDone) {
+                const double target = std::chrono::duration<double>(kTargetAhead).count();
+                const double low = std::chrono::duration<double>(kLowAhead).count();
+                if (bufferedSeconds >= target) break;
+                if (Clock::now() >= initialBufferDeadline && bufferedSeconds >= low) break;
+                bufferCv.wait_for(lock, std::chrono::milliseconds(100));
+            }
+            if (!buffer.empty()) {
+                std::cerr << "NATIVE HLS PREFETCH READY"
+                          << " segments=" << buffer.size()
+                          << " buffer_ms=" << static_cast<long long>(bufferedSeconds * 1000.0)
+                          << std::endl;
+            }
+        }
+
+        std::string consumerFailure;
+        while (!stopping_.load()) {
+            BufferedTsSegment item;
+            double remainingBufferedSeconds = 0.0;
+            const auto waitStart = Clock::now();
+            {
+                std::unique_lock<std::mutex> lock(bufferMutex);
+                bufferCv.wait(lock, [&] {
+                    return stopping_.load() || !buffer.empty() || producerDone || !producerFailure.empty();
+                });
+                if (stopping_.load()) break;
+                if (buffer.empty()) {
+                    if (!producerFailure.empty()) consumerFailure = producerFailure;
+                    else if (producerDone && finishCallback_) finishCallback_({});
+                    break;
+                }
+                item = std::move(buffer.front());
+                buffer.pop_front();
+                bufferedSeconds = std::max(0.0, bufferedSeconds - std::max(0.001, item.segment.duration));
+                remainingBufferedSeconds = bufferedSeconds;
+            }
+            bufferCv.notify_all();
+
+            const auto waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                Clock::now() - waitStart).count();
+            if (tsPacingStarted && waitedMs > 250) {
+                item.segment.discontinuity = true;
+                std::cerr << "NATIVE HLS BUFFER UNDERRUN"
+                          << " wait_ms=" << waitedMs
+                          << " seq=" << item.segment.sequence
+                          << std::endl;
+            }
+
+            if (!pushTsSegmentPaced(item.segment, item.bytes, item.fetchSeconds, remainingBufferedSeconds)) {
+                if (!stopping_.load()) consumerFailure = error.empty()
+                    ? "native HLS relay rejected segment data"
+                    : error;
+                break;
+            }
+
+            inputBytes_.fetch_add(item.bytes.size());
+            rateBytes += item.bytes.size();
+            rateSeconds += std::max(0.001, item.segment.duration);
+            if (rateSeconds >= 1.0) {
+                mediaBitrate_.store(static_cast<std::uint64_t>(
+                    (static_cast<long double>(rateBytes) * 8.0L) / rateSeconds));
+                if (rateSeconds >= 12.0) { rateBytes = 0; rateSeconds = 0.0; }
+            }
+            nextSequence = item.segment.sequence + 1;
+        }
+
+        prefetchStop.store(true);
+        bufferCv.notify_all();
+        if (producer.joinable()) producer.join();
+
+        if (!stopping_.load() && !consumerFailure.empty()) fail(consumerFailure);
+        running_.store(false);
+        return;
+    }
+
+    // fMP4/CMAF keeps the original sequential fragment handling because its
+    // init map and SAMPLE-AES state are coupled to the active media playlist.
     while (!stopping_.load()) {
         const double elapsed = std::chrono::duration<double>(Clock::now() - playbackStart).count();
         const double ahead = std::max(0.0, pushedSeconds - elapsed);
@@ -564,7 +776,8 @@ void NativeHlsInput::run() {
             }
             const double segmentFetchSeconds = std::chrono::duration<double>(
                 Clock::now() - segmentFetchStart).count();
-            if (playlist.hasMap && segment.keyMethod == "sample-aes") {
+            (void)segmentFetchSeconds;
+            if (segment.keyMethod == "sample-aes") {
                 std::vector<std::uint8_t> keyBytes;
                 std::string keyEffective;
                 if (!fetch(segment.keyUri, config_, stopping_, 1024, 4000, keyBytes, keyEffective, error)) {
@@ -585,13 +798,9 @@ void NativeHlsInput::run() {
                 if (!stopping_.load()) fail("native HLS segment decrypt failed: " + error);
                 break;
             }
-            bool accepted = false;
-            if (!playlist.hasMap) {
-                accepted = pushTsSegmentPaced(segment, bytes, segmentFetchSeconds);
-            } else {
-                if (!ensureMap(playlist)) { if (!stopping_.load()) fail(error); break; }
-                accepted = !bytes.empty() && fmp4.pushFragment(bytes, error);
-            }
+
+            if (!ensureMap(playlist)) { if (!stopping_.load()) fail(error); break; }
+            const bool accepted = !bytes.empty() && fmp4.pushFragment(bytes, error);
             if (!accepted) {
                 if (!stopping_.load()) fail(error.empty() ? "native HLS relay rejected segment data" : error);
                 break;
