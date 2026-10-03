@@ -592,6 +592,7 @@ private:
         frame.dts90k = frame.pts90k;
         frame.hasDts = frame.hasPts;
         frame.keyFrame = op.e_pic_type == IV_IDR_FRAME || op.e_pic_type == IV_I_FRAME;
+        frame.interlaced = op.u4_progressive_frame_flag == 0;
         return true;
     }
 
