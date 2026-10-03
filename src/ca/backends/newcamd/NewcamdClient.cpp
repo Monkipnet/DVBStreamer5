@@ -391,6 +391,8 @@ bool NewcamdClient::receive_message(Message& message, bool check_msg_id) {
 }
 
 bool NewcamdClient::login() {
+    msg_id_ = 0;
+    authenticated_ = false;
     if (!socket_ || !socket_->is_open()) {
         set_error("Newcamd socket is not open");
         return false;
@@ -417,7 +419,8 @@ bool NewcamdClient::login() {
         loginPayload.push_back(0);
         loginPayload.insert(loginPayload.end(), cryptPass.begin(), cryptPass.end());
         loginPayload.push_back(0);
-        if (!send_message(std::move(loginPayload), kClientId, 0, 0, true)) return false;
+        // OSCam Newcamd sends the login packet with message-id 0.
+        if (!send_message(std::move(loginPayload), kClientId, 0, 0, false)) return false;
 
         Message answer;
         if (!receive_message(answer, false) || answer.payload.empty()) return false;
@@ -436,9 +439,11 @@ bool NewcamdClient::login() {
         }
 
         std::vector<uint8_t> cardReq{ kMsgCardDataReq, 0, 0 };
-        if (!send_message(std::move(cardReq), 0, 0, 0, false)) return false;
+        uint16_t cardReqId = 0;
+        // After LOGIN_ACK OSCam increments the client message id for CARD_DATA_REQ.
+        if (!send_message(std::move(cardReq), 0, 0, 0, true, &cardReqId)) return false;
         Message cardData;
-        if (!receive_message(cardData, false) || cardData.payload.empty()) return false;
+        if (!receive_message(cardData, true) || cardData.payload.empty()) return false;
         if (cardData.payload[0] != kMsgCardData) {
             set_error("Newcamd CARD_DATA_REQ expected CARD_DATA, got " + command_name(cardData.payload[0]));
             return false;
@@ -472,6 +477,13 @@ bool NewcamdClient::login() {
         }
 
         authenticated_ = true;
+        std::cerr << "NEWCAMD LOGIN OK host=" << host_
+                  << " port=" << port_
+                  << " user=" << user_
+                  << " card_caid=0x" << std::hex << card_caid_ << std::dec
+                  << " providers=" << providers_.size()
+                  << " au=" << (au_enabled_ ? 1 : 0)
+                  << std::endl;
         set_error({});
         return true;
     } catch (const std::exception& ex) {
@@ -629,6 +641,8 @@ void NewcamdClient::disconnect() {
     running_ = false;
     authenticated_ = false;
     pending_ecms_ = 0;
+    msg_id_ = 0;
+    session_key_ready_ = false;
     au_enabled_ = false;
     card_caid_ = 0;
     card_ua_.fill(0);
