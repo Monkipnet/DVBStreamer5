@@ -249,15 +249,18 @@ int readDriverMode(const std::string& module) {
 FrontendMetadata readFrontendMetadata(int adapter, int frontend) {
     FrontendMetadata metadata;
 #ifdef __linux__
-    const std::string device = "/dev/dvb/adapter" + std::to_string(adapter) +
-        "/frontend" + std::to_string(frontend);
-    const int fd = open(device.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    if (fd >= 0) {
-        dvb_frontend_info info {};
-        if (ioctl(fd, FE_GET_INFO, &info) == 0) {
-            metadata.name = trim(std::string(info.name, strnlen(info.name, sizeof(info.name))));
+    // Live source owns frontendN; dashboard metadata must not open it again.
+    if (!dvbstreamer5::media::network::LinuxDvbInput::hasActiveFrontend(adapter, frontend)) {
+        const std::string device = "/dev/dvb/adapter" + std::to_string(adapter) +
+            "/frontend" + std::to_string(frontend);
+        const int fd = open(device.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd >= 0) {
+            dvb_frontend_info info {};
+            if (ioctl(fd, FE_GET_INFO, &info) == 0) {
+                metadata.name = trim(std::string(info.name, strnlen(info.name, sizeof(info.name))));
+            }
+            close(fd);
         }
-        close(fd);
     }
 
     const std::filesystem::path moduleLink = std::filesystem::path("/sys/class/dvb") /
@@ -318,6 +321,19 @@ bool readPropertyStat(int fd, uint32_t command, int& percent, double& db, bool& 
 
 FrontendStats readFrontendStats(const DvbSatelliteParams& params) {
     FrontendStats result;
+    dvbstreamer5::media::network::LinuxDvbFrontendStats live;
+    if (dvbstreamer5::media::network::LinuxDvbInput::activeFrontendStats(
+            params.adapter, params.frontend, live)) {
+        result.available = live.available;
+        result.locked = live.locked;
+        result.signalPercent = live.signalPercent;
+        result.qualityPercent = live.qualityPercent;
+        result.signalDb = live.signalDb;
+        result.cnrDb = live.cnrDb;
+        result.hasSignalDb = live.hasSignalDb;
+        result.hasCnrDb = live.hasCnrDb;
+        return result;
+    }
     const int fd = open(frontendPath(params).c_str(), O_RDONLY | O_NONBLOCK);
     if (fd < 0) return result;
     result.available = true;

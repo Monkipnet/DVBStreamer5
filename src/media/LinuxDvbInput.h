@@ -7,6 +7,17 @@
 
 namespace dvbstreamer5::media::network {
 
+struct LinuxDvbFrontendStats {
+    bool available = false;
+    bool locked = false;
+    int signalPercent = 0;
+    int qualityPercent = 0;
+    double signalDb = 0.0;
+    double cnrDb = 0.0;
+    bool hasSignalDb = false;
+    bool hasCnrDb = false;
+};
+
 struct LinuxDvbTuneConfig {
     int adapter = 0;
     int frontend = 0;
@@ -47,7 +58,17 @@ public:
         std::vector<std::uint16_t>& pids,
         std::string& error);
 
+    // A live DVB source keeps the frontend descriptor open for the complete
+    // tuner lifetime. Dashboard Signal/Quality reads this descriptor instead
+    // of repeatedly opening /dev/dvb/.../frontendN behind the source.
+    static bool hasActiveFrontend(int adapter, int frontend) noexcept;
+    static bool activeFrontendStats(
+        int adapter, int frontend, LinuxDvbFrontendStats& stats) noexcept;
+
 private:
+    int frontendFd_ = -1;
+    int frontendAdapter_ = -1;
+    int frontendIndex_ = -1;
     int dvrFd_ = -1;
     std::vector<int> demuxFds_;
     std::uint64_t overflowCount_ = 0;

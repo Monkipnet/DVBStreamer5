@@ -8,6 +8,9 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <mutex>
+#include <utility>
 #include <sstream>
 
 #ifdef __linux__
@@ -28,6 +31,90 @@ constexpr std::size_t kMaxPidFilters = 32;
 // The kernel DVB demux default can be too small for full-transponder reads,
 // especially when CA requires PID 8192.  Keep several seconds of headroom.
 constexpr unsigned long kDmxBufferBytes = 8UL * 1024UL * 1024UL;
+
+using FrontendRegistryKey = std::pair<int, int>;
+
+std::mutex& activeFrontendRegistryMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::map<FrontendRegistryKey, int>& activeFrontendRegistry() {
+    static std::map<FrontendRegistryKey, int> registry;
+    return registry;
+}
+
+bool registerActiveFrontend(int adapter, int frontend, int fd) {
+    std::lock_guard<std::mutex> lock(activeFrontendRegistryMutex());
+    const FrontendRegistryKey key{adapter, frontend};
+    const auto existing = activeFrontendRegistry().find(key);
+    if (existing != activeFrontendRegistry().end() && existing->second != fd)
+        return false;
+    activeFrontendRegistry()[key] = fd;
+    return true;
+}
+
+void releaseActiveFrontend(int adapter, int frontend, int fd) noexcept {
+    std::lock_guard<std::mutex> lock(activeFrontendRegistryMutex());
+    const FrontendRegistryKey key{adapter, frontend};
+    const auto existing = activeFrontendRegistry().find(key);
+    if (existing != activeFrontendRegistry().end() && existing->second == fd)
+        activeFrontendRegistry().erase(existing);
+    if (fd >= 0) ::close(fd);
+}
+
+int clampFrontendPercent(double value) {
+    return std::clamp(static_cast<int>(value >= 0.0 ? value + 0.5 : value - 0.5), 0, 100);
+}
+
+bool readFrontendPropertyStat(int fd, std::uint32_t command, int& percent,
+                              double& db, bool& hasDb) {
+    dtv_property property{};
+    property.cmd = command;
+    dtv_properties properties{};
+    properties.num = 1;
+    properties.props = &property;
+    if (::ioctl(fd, FE_GET_PROPERTY, &properties) != 0 || property.u.st.len < 1)
+        return false;
+    const auto& stat = property.u.st.stat[0];
+    if (stat.scale == FE_SCALE_RELATIVE) {
+        percent = clampFrontendPercent(static_cast<double>(stat.uvalue) * 100.0 / 65535.0);
+        return true;
+    }
+    if (stat.scale == FE_SCALE_DECIBEL) {
+        db = static_cast<double>(stat.svalue) / 1000.0;
+        hasDb = true;
+        return true;
+    }
+    return false;
+}
+
+void readFrontendStatsFromFd(int fd, LinuxDvbFrontendStats& result) {
+    result = LinuxDvbFrontendStats{};
+    result.available = fd >= 0;
+    if (fd < 0) return;
+    fe_status_t status{};
+    if (::ioctl(fd, FE_READ_STATUS, &status) == 0)
+        result.locked = (status & FE_HAS_LOCK) != 0;
+    int signalRelative = -1;
+    int qualityRelative = -1;
+    readFrontendPropertyStat(fd, DTV_STAT_SIGNAL_STRENGTH, signalRelative, result.signalDb, result.hasSignalDb);
+    readFrontendPropertyStat(fd, DTV_STAT_CNR, qualityRelative, result.cnrDb, result.hasCnrDb);
+    if (signalRelative < 0) {
+        std::uint16_t legacy = 0;
+        if (::ioctl(fd, FE_READ_SIGNAL_STRENGTH, &legacy) == 0)
+            signalRelative = clampFrontendPercent(static_cast<double>(legacy) * 100.0 / 65535.0);
+    }
+    if (qualityRelative < 0) {
+        std::uint16_t legacy = 0;
+        if (::ioctl(fd, FE_READ_SNR, &legacy) == 0)
+            qualityRelative = clampFrontendPercent(static_cast<double>(legacy) * 100.0 / 65535.0);
+    }
+    if (signalRelative >= 0) result.signalPercent = signalRelative;
+    else if (result.hasSignalDb) result.signalPercent = clampFrontendPercent((result.signalDb + 100.0) * 1.5);
+    if (qualityRelative >= 0) result.qualityPercent = qualityRelative;
+    else if (result.hasCnrDb) result.qualityPercent = clampFrontendPercent(result.cnrDb * 100.0 / 18.0);
+}
 #endif
 
 #ifdef __linux__
@@ -443,6 +530,33 @@ bool LinuxDvbInput::parsePidList(
     return true;
 }
 
+bool LinuxDvbInput::hasActiveFrontend(int adapter, int frontend) noexcept {
+#ifdef __linux__
+    std::lock_guard<std::mutex> lock(activeFrontendRegistryMutex());
+    return activeFrontendRegistry().count({adapter, frontend}) != 0;
+#else
+    (void)adapter;
+    (void)frontend;
+    return false;
+#endif
+}
+
+bool LinuxDvbInput::activeFrontendStats(
+    int adapter, int frontend, LinuxDvbFrontendStats& stats) noexcept {
+    stats = LinuxDvbFrontendStats{};
+#ifdef __linux__
+    std::lock_guard<std::mutex> lock(activeFrontendRegistryMutex());
+    const auto found = activeFrontendRegistry().find({adapter, frontend});
+    if (found == activeFrontendRegistry().end()) return false;
+    readFrontendStatsFromFd(found->second, stats);
+    return true;
+#else
+    (void)adapter;
+    (void)frontend;
+    return false;
+#endif
+}
+
 bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
     close();
 #ifdef __linux__
@@ -459,8 +573,20 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
         return false;
     }
     const bool tuned = tuneFrontend(config, frontendFd, error);
-    ::close(frontendFd);
-    if (!tuned) return false;
+    if (!tuned) {
+        ::close(frontendFd);
+        return false;
+    }
+    if (!registerActiveFrontend(config.adapter, config.frontend, frontendFd)) {
+        error = "DVB frontend already has an active in-process owner: " + frontend;
+        ::close(frontendFd);
+        return false;
+    }
+    frontendFd_ = frontendFd;
+    frontendAdapter_ = config.adapter;
+    frontendIndex_ = config.frontend;
+    std::clog << "NATIVE DVB FRONTEND owner acquired adapter="
+              << frontendAdapter_ << " frontend=" << frontendIndex_ << '\n';
 
     const std::string demux = devicePath(config, "demux");
     const std::vector<std::uint16_t> filters =
@@ -586,6 +712,14 @@ void LinuxDvbInput::close() noexcept {
     for (const int fd : demuxFds_) {
         ::ioctl(fd, DMX_STOP);
         ::close(fd);
+    }
+    if (frontendFd_ >= 0) {
+        std::clog << "NATIVE DVB FRONTEND owner released adapter="
+                  << frontendAdapter_ << " frontend=" << frontendIndex_ << '\n';
+        releaseActiveFrontend(frontendAdapter_, frontendIndex_, frontendFd_);
+        frontendFd_ = -1;
+        frontendAdapter_ = -1;
+        frontendIndex_ = -1;
     }
 #endif
     demuxFds_.clear();
