@@ -162,6 +162,14 @@ private:
     bool videoRateClockValid_ = false;
     std::uint64_t videoRateNextPts90k_ = 0;
     std::uint64_t videoRateDroppedFrames_ = 0;
+
+    // V10.8.52: Ittiam may return interlaced display frames in presentation
+    // order while its u4_ts token originates from field/decode-order input.
+    // Re-clock complete interlaced display frames at the configured output fps.
+    bool interlacedDisplayClockValid_ = false;
+    std::uint64_t interlacedDisplayNextPts90k_ = 0;
+    std::uint64_t interlacedDisplayFrames_ = 0;
+
     bool sourceGeometryResolved_ = false;
     int sourceWidth_ = 0;
     int sourceHeight_ = 0;
