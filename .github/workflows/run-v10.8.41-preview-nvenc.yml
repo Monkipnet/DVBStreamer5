@@ -1,0 +1,276 @@
+name: Run V10.8.41 preview and NVENC integration
+
+on:
+  push:
+    paths:
+      - .github/workflows/run-v10.8.41-preview-nvenc.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage-v10.8.41-preview-nvenc
+          fetch-depth: 0
+
+      - name: Apply V10.8.41 source changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: matches={count}')
+              p.write_text(s.replace(old, new, 1))
+
+          replace_once(
+              'src/AppVersion.h',
+              'inline constexpr const char* kProgramVersion = "10.8.40";',
+              'inline constexpr const char* kProgramVersion = "10.8.41";',
+              'version')
+
+          replace_once(
+              'src/media/NativeTranscoderPipeline.h',
+              '''    bool deinterlace = true;
+              std::uint16_t serviceId = 1;
+          ''',
+              '''    bool deinterlace = true;
+              // Keep the explicitly configured output raster even when the source
+              // has fewer coded pixels. Browser preview uses this to normalize
+              // anamorphic DVB MPEG-2 (for example 720x576 DAR 16:9) to square-pixel
+              // 1280x720 instead of silently falling back to 720x576.
+              bool lockOutputGeometry = false;
+              std::uint16_t serviceId = 1;
+          ''',
+              'transcoder geometry flag')
+
+          replace_once(
+              'src/StreamManager.cpp',
+              '''        previewTc.deinterlace = true;
+              previewTc.serviceId = static_cast<std::uint16_t>(
+          ''',
+              '''        previewTc.deinterlace = true;
+              // Browser video is square-pixel AVC. Do not let the generic
+              // anti-upscale guard replace 1280x720 with an anamorphic MPEG-2
+              // coded raster such as 720x576 (SAR 64:45, DAR 16:9).
+              previewTc.lockOutputGeometry = true;
+              previewTc.serviceId = static_cast<std::uint16_t>(
+          ''',
+              'preview lock geometry')
+
+          replace_once(
+              'src/StreamManager.cpp',
+              '''                      << " codec=h264/aac max_size=1280x720"
+                      << " video_kbps=1800 audio_kbps=128"
+          ''',
+              '''                      << " codec=h264/aac size=1280x720 dar=16:9"
+                      << " video_kbps=1800 audio_kbps=128"
+          ''',
+              'preview log geometry')
+
+          replace_once(
+              'src/media/NativeTranscoderPipeline.cpp',
+              '''            if (requestedPixels > sourcePixels) {
+                  (void)setOutputGeometryIfUnconfigured(raw.width, raw.height);
+              }
+          ''',
+              '''            if (!config_.lockOutputGeometry && requestedPixels > sourcePixels) {
+                  (void)setOutputGeometryIfUnconfigured(raw.width, raw.height);
+              }
+          ''',
+              'cpu geometry guard')
+
+          replace_once(
+              'src/media/NativeNvidiaZeroCopy.cpp',
+              '''cudaVideoCodec nvdecCodec(mpegts::ElementaryCodec codec) {
+              if (codec == mpegts::ElementaryCodec::H264) return cudaVideoCodec_H264;
+              if (codec == mpegts::ElementaryCodec::H265) return cudaVideoCodec_HEVC;
+              return cudaVideoCodec_NumCodecs;
+          }
+          ''',
+              '''cudaVideoCodec nvdecCodec(mpegts::ElementaryCodec codec) {
+              if (codec == mpegts::ElementaryCodec::Mpeg2Video) return cudaVideoCodec_MPEG2;
+              if (codec == mpegts::ElementaryCodec::H264) return cudaVideoCodec_H264;
+              if (codec == mpegts::ElementaryCodec::H265) return cudaVideoCodec_HEVC;
+              return cudaVideoCodec_NumCodecs;
+          }
+          ''',
+              'nvdec MPEG2 mapping')
+
+          replace_once(
+              'src/media/NativeNvidiaZeroCopy.cpp',
+              '''const char* codecName(mpegts::ElementaryCodec codec) {
+              if (codec == mpegts::ElementaryCodec::H264) return "h264";
+              if (codec == mpegts::ElementaryCodec::H265) return "hevc";
+              return "unknown";
+          }
+          ''',
+              '''const char* codecName(mpegts::ElementaryCodec codec) {
+              if (codec == mpegts::ElementaryCodec::Mpeg2Video) return "mpeg2";
+              if (codec == mpegts::ElementaryCodec::H264) return "h264";
+              if (codec == mpegts::ElementaryCodec::H265) return "hevc";
+              return "unknown";
+          }
+          ''',
+              'nvidia codec name')
+
+          replace_once(
+              'src/media/NativeNvidiaZeroCopy.cpp',
+              '''        if ((config_.inputCodec != mpegts::ElementaryCodec::H264 &&
+                   config_.inputCodec != mpegts::ElementaryCodec::H265) ||
+                  (config_.outputCodec != mpegts::ElementaryCodec::H264 &&
+                   config_.outputCodec != mpegts::ElementaryCodec::H265)) {
+                  error = "NVIDIA zero-copy supports H.264/HEVC input and output only";
+          ''',
+              '''        if ((config_.inputCodec != mpegts::ElementaryCodec::Mpeg2Video &&
+                   config_.inputCodec != mpegts::ElementaryCodec::H264 &&
+                   config_.inputCodec != mpegts::ElementaryCodec::H265) ||
+                  (config_.outputCodec != mpegts::ElementaryCodec::H264 &&
+                   config_.outputCodec != mpegts::ElementaryCodec::H265)) {
+                  error = "NVIDIA zero-copy supports MPEG-2/H.264/HEVC input and H.264/HEVC output";
+          ''',
+              'nvidia input validation')
+
+          replace_once(
+              'src/media/NativeTranscoderPipeline.cpp',
+              '''    const bool zeroCopyCodec =
+                  sample.stream.codec == mpegts::ElementaryCodec::H264 ||
+                  sample.stream.codec == mpegts::ElementaryCodec::H265;
+          ''',
+              '''    const bool zeroCopyCodec =
+                  sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ||
+                  sample.stream.codec == mpegts::ElementaryCodec::H264 ||
+                  sample.stream.codec == mpegts::ElementaryCodec::H265;
+          ''',
+              'pipeline NVIDIA MPEG2 selection')
+
+          replace_once(
+              'src/media/NativeTranscoderPipeline.cpp',
+              '''                std::cerr << "NATIVE NVIDIA ZERO-COPY selected input="
+                          << (sample.stream.codec == mpegts::ElementaryCodec::H264
+                                  ? "h264" : "hevc")
+                          << " output=" << config_.videoCodec
+          ''',
+              '''                const char* inputName =
+                    sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ? "mpeg2" :
+                    sample.stream.codec == mpegts::ElementaryCodec::H264 ? "h264" : "hevc";
+                std::cerr << "NATIVE NVIDIA ZERO-COPY selected input="
+                          << inputName
+                          << " output=" << config_.videoCodec
+          ''',
+              'pipeline NVIDIA selected log')
+
+          p = Path('src/media/NativeTranscoderPipeline.cpp')
+          s = p.read_text()
+          start_marker = '''        if (nvidiaZeroCopy_) {
+              std::vector<codec::EncodedVideoFrame> encoded;
+              if (!nvidiaZeroCopy_->process(
+          '''
+          end_marker = '''        }
+              }
+          
+              const bool intelZeroCopyCodec =
+          '''
+          start = s.find(start_marker)
+          end = s.find(end_marker, start if start >= 0 else 0)
+          if start < 0 or end < 0:
+              raise SystemExit(f'nvidia runtime block markers start={start} end={end}')
+          replacement = '''        if (nvidiaZeroCopy_) {
+              std::vector<codec::EncodedVideoFrame> encoded;
+              std::string nvidiaProcessError;
+              if (!nvidiaZeroCopy_->process(
+                      sample.data.data(), sample.data.size(),
+                      sample.pts90k, sample.hasPts, encoded, nvidiaProcessError)) {
+                  std::cerr << "NATIVE NVIDIA ZERO-COPY runtime fallback reason="
+                            << nvidiaProcessError << " fallback="
+                            << (config_.videoEncoder == "nvenc"
+                                    ? "cpu-decode+nvenc" : "standard-auto-path")
+                            << std::endl;
+                  nvidiaZeroCopy_.reset();
+                  nvidiaZeroCopyActive_.store(false, std::memory_order_release);
+                  nvidiaZeroCopyFallbackLogged_ = true;
+                  error.clear();
+              } else {
+                  decodedVideoFrames_ += encoded.size();
+                  if (!sourceGeometryResolved_ &&
+                      nvidiaZeroCopy_->sourceWidth() > 0 &&
+                      nvidiaZeroCopy_->sourceHeight() > 0) {
+                      sourceGeometryResolved_ = true;
+                      sourceWidth_ = nvidiaZeroCopy_->sourceWidth();
+                      sourceHeight_ = nvidiaZeroCopy_->sourceHeight();
+                      const int outWidth = nvidiaZeroCopy_->outputWidth();
+                      const int outHeight = nvidiaZeroCopy_->outputHeight();
+                      if (outWidth > 0 && outHeight > 0 &&
+                          (outWidth != config_.width || outHeight != config_.height))
+                          (void)setOutputGeometryIfUnconfigured(outWidth, outHeight);
+                      std::cerr << "NATIVE VIDEO SOURCE GEOMETRY "
+                                << sourceWidth_ << "x" << sourceHeight_
+                                << " output=" << config_.width << "x" << config_.height
+                                << " path=nvidia-zero-copy" << std::endl;
+                  }
+                  for (const auto& frame : encoded)
+                      if (!emitVideo(frame, error)) return false;
+                  return true;
+              }
+          }
+              }
+          
+              const bool intelZeroCopyCodec =
+          '''
+          s = s[:start] + replacement + s[end + len(end_marker):]
+          p.write_text(s)
+          PY
+
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.41"' src/AppVersion.h
+          grep -q 'lockOutputGeometry = true' src/StreamManager.cpp
+          grep -q 'codec=h264/aac size=1280x720 dar=16:9' src/StreamManager.cpp
+          grep -q 'cudaVideoCodec_MPEG2' src/media/NativeNvidiaZeroCopy.cpp
+          grep -q 'runtime fallback reason=' src/media/NativeTranscoderPipeline.cpp
+
+      - name: Compile NVIDIA and integration paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -fsyntax-only \
+            src/media/NativeNvidiaZeroCopy.cpp src/media/NativeTranscoderPipeline.cpp
+          g++ -std=c++17 -Wall -Wextra -Werror=return-type -Isrc -fsyntax-only \
+            src/StreamManager.cpp
+
+          for sdk in n11.1.5.2 master; do
+            dir="/tmp/nv-${sdk//./-}"
+            mkdir -p "$dir"
+            base="https://raw.githubusercontent.com/FFmpeg/nv-codec-headers/$sdk/include/ffnvcodec"
+            for h in dynlink_cuda.h dynlink_cuviddec.h dynlink_nvcuvid.h nvEncodeAPI.h; do
+              curl -fsSL "$base/$h" -o "$dir/$h"
+            done
+            echo "=== V10.8.41 NVIDIA syntax: $sdk ==="
+            g++ -std=c++17 -Wall -Wextra -Werror=return-type \
+              -DDVBSTREAMER5_HAVE_NVENC_HEADERS=1 \
+              -DDVBSTREAMER5_HAVE_NVDEC_HEADERS=1 \
+              -Isrc -I"$dir" -fsyntax-only \
+              src/media/NativeNvidiaZeroCopy.cpp src/media/NativeTranscoderPipeline.cpp
+          done
+
+      - name: Commit production changes to staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "DVBStreamer5 automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/AppVersion.h \
+            src/StreamManager.cpp \
+            src/media/NativeTranscoderPipeline.h \
+            src/media/NativeTranscoderPipeline.cpp \
+            src/media/NativeNvidiaZeroCopy.cpp
+          git commit -m "V10.8.41 fix MPEG-2 preview aspect and complete NVENC path"
+          git push origin HEAD:stage-v10.8.41-preview-nvenc
