@@ -1,0 +1,103 @@
+name: one-shot-http-preview-fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message == 'Install one-shot HTTP preview separation fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply V10.8.54 HTTP/preview separation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cpp = Path('src/StreamManager.cpp')
+          s = cpp.read_text()
+
+          def repl(old, new, count=1):
+              global s
+              found = s.count(old)
+              if found != count:
+                  raise SystemExit(f'Expected {count} occurrence(s), found {found}: {old[:100]!r}')
+              s = s.replace(old, new, count)
+
+          repl(
+              '    state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();\n'
+              '    state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();',
+              '    state->nativeHttpHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();\n'
+              '    state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();\n'
+              '    state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();')
+
+          repl(
+              '    auto previewHub = state->nativePreviewHub;\n'
+              '    const bool previewPassthrough = !state->nativePreviewTranscoder;',
+              '    auto httpHub = state->nativeHttpHub;\n'
+              '    auto previewHub = state->nativePreviewHub;\n'
+              '    const bool previewPassthrough = !state->nativePreviewTranscoder;')
+
+          repl(
+              '    relay.observeTransport = [previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {',
+              '    relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {')
+
+          repl(
+              '        for (auto* output : rtmpOutputs) if (output) output->push(data, size);\n'
+              '        if (previewPassthrough && previewHub) previewHub->publish(data, size);',
+              '        for (auto* output : rtmpOutputs) if (output) output->push(data, size);\n'
+              '        // Normal HTTP MPEG-TS clients consume the finished production transport.\n'
+              '        // They must never subscribe to the browser-preview hub because doing so\n'
+              '        // would wake the dedicated H.264/AAC preview transcoder.\n'
+              '        if (httpHub) httpHub->publish(data, size);\n'
+              '        if (previewPassthrough && previewHub) previewHub->publish(data, size);')
+
+          repl(
+              '    if (state->nativePreviewHub) state->nativePreviewHub->close();',
+              '    if (state->nativeHttpHub) state->nativeHttpHub->close();\n'
+              '    if (state->nativePreviewHub) state->nativePreviewHub->close();')
+
+          old = '''        const auto it = streams.find(id);\n        if (it == streams.end() || !it->second->active.load() || !it->second->nativePreviewHub) {\n            ::close(fd);\n            return false;\n        }\n        hub = it->second->nativePreviewHub;'''
+          new = '''        const auto it = streams.find(id);\n        if (it == streams.end() || !it->second->active.load()) {\n            ::close(fd);\n            return false;\n        }\n        // previewSession is set only for the private browser preview endpoint.\n        // Ordinary HTTP MPEG-TS must consume the production-output hub.\n        hub = previewSession.empty() ? it->second->nativeHttpHub\n                                     : it->second->nativePreviewHub;\n        if (!hub) {\n            ::close(fd);\n            return false;\n        }'''
+          repl(old, new)
+
+          cpp.write_text(s)
+
+          hdr = Path('src/StreamManager.h')
+          h = hdr.read_text()
+          old = '    std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;'
+          new = ('    // Production HTTP MPEG-TS and private browser preview are deliberately separate.\n'
+                 '    // HTTP clients receive post-remap/post-CA/post-transcode TS without waking preview codecs.\n'
+                 '    std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativeHttpHub;\n'
+                 '    std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> nativePreviewHub;')
+          if h.count(old) != 1:
+              raise SystemExit('StreamManager.h nativePreviewHub anchor mismatch')
+          hdr.write_text(h.replace(old, new, 1))
+
+          ver = Path('src/AppVersion.h')
+          v = ver.read_text()
+          old = 'inline constexpr const char* kProgramVersion = "10.8.53";'
+          new = 'inline constexpr const char* kProgramVersion = "10.8.54";'
+          if v.count(old) != 1:
+              raise SystemExit('AppVersion anchor mismatch')
+          ver.write_text(v.replace(old, new, 1))
+          PY
+
+          rm -f .github/workflows/one-shot-http-preview-fix.yml
+
+          grep -n 'nativeHttpHub\|previewSession.empty\|kProgramVersion' \
+            src/StreamManager.cpp src/StreamManager.h src/AppVersion.h
+          git diff --check
+
+          git config user.name 'Monkipnet'
+          git config user.email 'monkipnet@yandex.ru'
+          git add src/StreamManager.cpp src/StreamManager.h src/AppVersion.h .github/workflows/one-shot-http-preview-fix.yml
+          git commit -m 'V10.8.54 separate production HTTP from browser preview'
+          git push origin HEAD:main
