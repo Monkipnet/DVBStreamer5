@@ -1388,7 +1388,10 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
 }
 
 void StreamManager::monitorOnDemandStreams() {
-    constexpr auto kIdleGrace = std::chrono::seconds(10);
+    // HLS clients fetch short-lived playlist/segment resources rather than keeping
+    // a persistent socket open. Ten seconds was too aggressive and could stop an
+    // actively watched channel between requests, producing visible HLS stalls.
+    constexpr auto kIdleGrace = std::chrono::seconds(30);
     while (!onDemandMonitorStop.load(std::memory_order_acquire)) {
         for (int i = 0; i < 4 && !onDemandMonitorStop.load(std::memory_order_acquire); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -1435,7 +1438,7 @@ void StreamManager::monitorOnDemandStreams() {
             onDemandLastActivity.erase(id);
             if (isStreamActive(id)) {
                 std::cerr << "ONDEMAND DEACTIVATE stream=" << id
-                          << " reason=no-clients idle_s=10" << std::endl;
+                          << " reason=no-clients idle_s=30" << std::endl;
                 stopStream(id);
             }
         }
@@ -1533,9 +1536,17 @@ bool StreamManager::addStreamSession(const std::string& streamId, const std::str
     if (streamId.empty() || clientIp.empty()) return false;
     std::lock_guard<std::mutex> lock(managerMutex);
     const std::string ip = normalizeIpAddress(clientIp);
-    const std::string key = protocol + ":" + streamId + ":" + ip + ":" +
-        std::to_string(nextSessionId.fetch_add(1));
-    adHocSessions[key] = {streamId, ip, protocol, std::chrono::steady_clock::now(), -1, {}};
+    // HLS performs many independent HTTP requests per viewer. Reuse one logical
+    // session per protocol/stream/client and only refresh its activity timestamp;
+    // otherwise every .m3u8/.ts request allocates another map node for two minutes.
+    const std::string key = protocol + ":" + streamId + ":" + ip;
+    auto& session = adHocSessions[key];
+    session.streamId = streamId;
+    session.clientIp = ip;
+    session.protocol = protocol;
+    session.lastActivity = std::chrono::steady_clock::now();
+    session.upstreamFd = -1;
+    session.previewSession.clear();
     return true;
 }
 
