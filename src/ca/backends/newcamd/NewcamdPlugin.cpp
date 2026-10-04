@@ -8,6 +8,7 @@ extern "C" {
 }
 #include <jsoncpp/json/json.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -131,6 +132,17 @@ struct DvbcsaBatchScratch {
     size_t capacity() const { return even.empty() ? 0 : even.size() - 1; }
 };
 
+// Diagnostic-only probe for validating decrypted PUSI payloads.  It stores
+// one encrypted payload copy so we can test the opposite parity without ever
+// exposing control-word bytes or altering the output stream.
+struct CsaVerifyProbe {
+    uint8_t* decryptedPayload = nullptr;
+    size_t payloadSize = 0;
+    uint16_t pid = 0;
+    uint8_t scramblingControl = 0;
+    std::array<uint8_t, kTsPacketSize - 4> encryptedPayload{};
+};
+
 struct ServiceBinding {
     mutable std::mutex mutex;
     std::string clientKey;
@@ -179,6 +191,15 @@ struct ServiceBinding {
     uint64_t diagBsFullChunks = 0;
     uint64_t diagBsTailChunks = 0;
     uint64_t diagScalarTailPackets = 0;
+    uint64_t diagDecryptEvenPackets = 0;
+    uint64_t diagDecryptOddPackets = 0;
+    uint64_t diagPusiChecked = 0;
+    uint64_t diagPesOk = 0;
+    uint64_t diagPesBad = 0;
+    uint64_t diagParitySwapPesOk = 0;
+    uint64_t diagParitySwapEvenToOdd = 0;
+    uint64_t diagParitySwapOddToEven = 0;
+    uint16_t diagVerifySamplePid = 0;
     uint16_t diagSamplePid = 0;
     uint8_t diagSampleScrambling = 0;
     uint8_t diagSampleAdaptation = 0;
@@ -1218,6 +1239,41 @@ static void decrypt_csa_batch_chunk(ControlWordSlot& slot,
     count = 0;
 }
 
+static bool has_pes_start_code(const uint8_t* payload, size_t size) {
+    return payload && size >= 3 && payload[0] == 0x00 &&
+           payload[1] == 0x00 && payload[2] == 0x01;
+}
+
+static void verify_csa_probe(ServiceBinding& binding, const CsaVerifyProbe& probe) {
+    if (!probe.decryptedPayload || probe.payloadSize < 3) return;
+
+    ++binding.diagPusiChecked;
+    binding.diagVerifySamplePid = probe.pid;
+    if (has_pes_start_code(probe.decryptedPayload, probe.payloadSize)) {
+        ++binding.diagPesOk;
+        return;
+    }
+
+    ++binding.diagPesBad;
+
+    // A failed normal decode is tested against the opposite CW parity on a
+    // private copy of the original encrypted payload.  This is diagnostic-only:
+    // the alternate result never reaches the transport stream.
+    ControlWordSlot& swappedSlot =
+        probe.scramblingControl == 3 ? binding.even : binding.odd;
+    if (!swappedSlot.valid || !swappedSlot.scalarKey) return;
+
+    auto swappedPayload = probe.encryptedPayload;
+    dvbcsa_decrypt(swappedSlot.scalarKey, swappedPayload.data(), probe.payloadSize);
+    if (!has_pes_start_code(swappedPayload.data(), probe.payloadSize)) return;
+
+    ++binding.diagParitySwapPesOk;
+    if (probe.scramblingControl == 3)
+        ++binding.diagParitySwapOddToEven;
+    else
+        ++binding.diagParitySwapEvenToOdd;
+}
+
 static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* data, size_t size, struct dvbstreamer5_ca_ts_result_v1* result) {
     if (!instance || !stream_id || !data || !result) return DVBSTREAMER5_CA_RESULT_PASSTHROUGH;
     auto* inst = static_cast<NewcamdInstance*>(instance);
@@ -1246,8 +1302,12 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
     bool waitingForKey = false;
     bool sawEcm = false;
     const bool diagnostics = caDiagnosticsEnabled();
+    std::vector<CsaVerifyProbe> verifyProbes;
 
-    if (diagnostics) ++binding.diagCalls;
+    if (diagnostics) {
+        ++binding.diagCalls;
+        verifyProbes.reserve(std::min<size_t>(size / kTsPacketSize, 64));
+    }
     const size_t bufferRemainder = size % kTsPacketSize;
     if (diagnostics && bufferRemainder != 0) ++binding.diagUnalignedBuffers;
 
@@ -1427,6 +1487,24 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             continue;
         }
 
+        if (diagnostics) {
+            if (scramblingControl == 3)
+                ++binding.diagDecryptOddPackets;
+            else
+                ++binding.diagDecryptEvenPackets;
+
+            if (payloadStart && scrambledPayloadSize >= 3 &&
+                scrambledPayloadSize <= (kTsPacketSize - 4)) {
+                CsaVerifyProbe probe;
+                probe.decryptedPayload = scrambledPayload;
+                probe.payloadSize = scrambledPayloadSize;
+                probe.pid = pid;
+                probe.scramblingControl = scramblingControl;
+                std::memcpy(probe.encryptedPayload.data(), scrambledPayload, scrambledPayloadSize);
+                verifyProbes.push_back(std::move(probe));
+            }
+        }
+
         auto& batch = scramblingControl == 3 ? binding.csaBatch.odd : binding.csaBatch.even;
         size_t& batchCount = scramblingControl == 3 ? binding.csaBatch.oddCount : binding.csaBatch.evenCount;
         const size_t batchCapacity = binding.csaBatch.capacity();
@@ -1464,6 +1542,10 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
         binding.odd, binding.csaBatch.odd, binding.csaBatch.oddCount,
         false, binding, diagnostics);
 
+    if (diagnostics) {
+        for (const auto& probe : verifyProbes) verify_csa_probe(binding, probe);
+    }
+
     const uint64_t diagNowMs = diagnostics ? monotonic_ms() : 0;
     if (diagnostics && (binding.diagLastLogMs == 0 || diagNowMs - binding.diagLastLogMs >= 1000)) {
         binding.diagLastLogMs = diagNowMs;
@@ -1492,6 +1574,18 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             << " sample_cc=" << static_cast<unsigned>(binding.diagSampleCc)
             << " sample_pusi=" << (binding.diagSamplePusi ? 1 : 0)
             << " sample_tei=" << (binding.diagSampleTei ? 1 : 0)
+            << std::endl;
+        std::cerr
+            << "CSA VERIFY: stream=" << stream_id
+            << " decrypt_even=" << binding.diagDecryptEvenPackets
+            << " decrypt_odd=" << binding.diagDecryptOddPackets
+            << " pusi_checked=" << binding.diagPusiChecked
+            << " pes_ok=" << binding.diagPesOk
+            << " pes_bad=" << binding.diagPesBad
+            << " swapped_pes_ok=" << binding.diagParitySwapPesOk
+            << " even_to_odd=" << binding.diagParitySwapEvenToOdd
+            << " odd_to_even=" << binding.diagParitySwapOddToEven
+            << " sample_pid=" << binding.diagVerifySamplePid
             << std::endl;
     }
 
