@@ -1391,7 +1391,7 @@ void StreamManager::monitorOnDemandStreams() {
     // HLS clients fetch short-lived playlist/segment resources rather than keeping
     // a persistent socket open. Ten seconds was too aggressive and could stop an
     // actively watched channel between requests, producing visible HLS stalls.
-    constexpr auto kIdleGrace = std::chrono::seconds(5);
+    constexpr auto kIdleGrace = std::chrono::seconds(10);
     while (!onDemandMonitorStop.load(std::memory_order_acquire)) {
         for (int i = 0; i < 4 && !onDemandMonitorStop.load(std::memory_order_acquire); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -1438,7 +1438,7 @@ void StreamManager::monitorOnDemandStreams() {
             onDemandLastActivity.erase(id);
             if (isStreamActive(id)) {
                 std::cerr << "ONDEMAND DEACTIVATE stream=" << id
-                          << " reason=no-clients idle_s=5" << std::endl;
+                          << " reason=no-clients idle_s=10" << std::endl;
                 stopStream(id);
             }
         }
