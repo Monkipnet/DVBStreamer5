@@ -9,87 +9,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply preview restoration
-        shell: bash
+      - run: python3 scripts/apply_preview_v10_8_69.py
+      - run: git diff --check
+      - run: grep -n 'kProgramVersion' src/AppVersion.h
+      - run: grep -n 'previewTc.videoEncoder' src/StreamManager.cpp
+      - run: grep -n 'lockOutputGeometry = true' src/StreamManager.cpp
+      - name: Commit patch
         run: |
-          if grep -q '"10.8.69"' src/AppVersion.h; then
-            echo already-applied
-            exit 0
-          fi
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('src/StreamManager.cpp')
-          s = p.read_text()
-          s = s.replace(
-              'low-bitrate hardware-auto pipeline whose output is used only by preview.ts.\n    // NVDEC/NVENC or QSV decode/VPP/encode is preferred for broadcast Main/HEVC;\n    // compatible streams can still fall back to the native CPU codecs.',
-              'low-bitrate CPU pipeline whose output is used only by preview.ts.\n    // V10.8.69 restores the proven V10.8.41 preview path; production transcoding\n    // remains independent and may still use hardware acceleration.',
-              1)
-          if 'previewTc.videoEncoder = "auto";' not in s:
-              raise SystemExit('preview encoder anchor not found')
-          s = s.replace('previewTc.videoEncoder = "auto";', 'previewTc.videoEncoder = "cpu";', 1)
-          s = s.replace('encoder=auto video_kbps=1800 audio_kbps=128',
-                        'encoder=cpu video_kbps=1800 audio_kbps=128', 1)
-          p.write_text(s)
-
-          h = Path('src/StreamManager.h')
-          s = h.read_text()
-          old = '''    bool initialize(
-        const dvbstreamer5::media::transcode::NativeTranscoderConfig& config,
-        std::string& error) {
-        reset();
-        std::lock_guard<std::mutex> lock(mutex_);
-        config_ = config;
-        configured_ = true;
-        error.clear();
-        return true;
-    }
-'''
-          new = '''    bool initialize(
-        const dvbstreamer5::media::transcode::NativeTranscoderConfig& config,
-        std::string& error) {
-        reset();
-        std::lock_guard<std::mutex> lock(mutex_);
-        config_ = config;
-        // V10.8.69: restore V10.8.41 preview semantics.  The dedicated
-        // preview transcoder is initialized immediately and remains alive for
-        // the stream lifetime instead of being torn down/recreated on every
-        // preview idle interval.  This avoids decoder state loss on live DVB.
-        if (!pipeline_.initialize(config_, error)) {
-            configured_ = false;
-            active_ = false;
-            return false;
-        }
-        configured_ = true;
-        active_ = true;
-        stopMonitor_ = false;
-        lastActivity_ = std::chrono::steady_clock::now();
-        error.clear();
-        return true;
-    }
-'''
-          if old not in s:
-              raise SystemExit('LazyPreviewTranscoder initialize anchor not found')
-          h.write_text(s.replace(old, new, 1))
-
-          v = Path('src/AppVersion.h')
-          s = v.read_text()
-          if '"10.8.68"' not in s:
-              raise SystemExit('version anchor not found')
-          v.write_text(s.replace('"10.8.68"', '"10.8.69"', 1))
-          PY
-          git diff --check
-          grep -n 'kProgramVersion' src/AppVersion.h
-          grep -n 'previewTc.videoEncoder' src/StreamManager.cpp
-          grep -n 'lockOutputGeometry = true' src/StreamManager.cpp
-          grep -n 'restore V10.8.41 preview semantics' src/StreamManager.h
-      - name: Commit preview restoration
-        shell: bash
-        run: |
-          if git diff --quiet; then
-            echo nothing-to-commit
-            exit 0
-          fi
+          if git diff --quiet; then exit 0; fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/AppVersion.h src/StreamManager.cpp src/StreamManager.h
