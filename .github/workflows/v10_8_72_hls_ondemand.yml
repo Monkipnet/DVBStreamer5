@@ -1,0 +1,46 @@
+name: V10.8.72 HLS OnDemand stability
+
+on:
+  push:
+    branches:
+      - staging/v10.8.72-hls-ondemand
+    paths:
+      - .github/workflows/v10_8_72_hls_ondemand.yml
+      - scripts/apply_v10_8_72_hls_ondemand.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: staging/v10.8.72-hls-ondemand
+
+      - name: Apply source patch
+        run: python3 scripts/apply_v10_8_72_hls_ondemand.py
+
+      - name: Install syntax-check dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ libssl-dev libcrypt-dev libjsoncpp-dev
+
+      - name: Validate source
+        run: |
+          git diff --check
+          g++ -std=c++17 -pthread -fsyntax-only -Isrc -Ithird_party -Ithird_party/boost src/StreamManager.cpp
+          grep -q 'kProgramVersion = "10.8.72"' src/AppVersion.h
+          grep -q 'kIdleGrace = std::chrono::seconds(30)' src/StreamManager.cpp
+          grep -q 'const std::string key = protocol + ":" + streamId + ":" + ip;' src/StreamManager.cpp
+
+      - name: Commit validated source patch
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AppVersion.h src/StreamManager.cpp
+          git diff --cached --check
+          git commit -m "V10.8.72 stabilize HLS on-demand sessions"
+          git push origin HEAD:staging/v10.8.72-hls-ondemand
