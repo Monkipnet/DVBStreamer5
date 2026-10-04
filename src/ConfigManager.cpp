@@ -568,7 +568,7 @@ CamClientConfig CamClientConfig::fromJson(const Json::Value& root) {
     CamClientConfig config;
     config.id = root.get("id", "").asString();
     config.name = root.get("name", config.id).asString();
-    config.maxServices = 0; // no software decoded-service cap
+    config.maxServices = std::clamp(root.get("max_services", 10).asUInt(), 1u, 64u);
     config.backendId = root.get("backend_id", "newcamd").asString();
     if (config.backendId.empty() || config.backendId == "passthrough") config.backendId = "newcamd";
     config.backendConfig = root.get("backend_config", "{}").asString();
@@ -580,7 +580,7 @@ Json::Value CamClientConfig::toJson() const {
     Json::Value root;
     root["id"] = id;
     root["name"] = name.empty() ? id : name;
-    root["max_services"] = 0;
+    root["max_services"] = std::clamp(maxServices, 1u, 64u);
     root["backend_id"] = backendId.empty() ? "newcamd" : backendId;
     root["backend_config"] = backendConfig.empty() ? "{}" : backendConfig;
     return root;

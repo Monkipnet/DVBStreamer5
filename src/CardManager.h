@@ -30,8 +30,8 @@ public:
     Json::Value snapshot() const;
     Json::Value streamState(const std::string& streamId) const;
 
-    static constexpr unsigned kDefaultMaxServices = 0; // unlimited
-    static constexpr unsigned kMaxConfigurableServices = 0; // no software cap
+    static constexpr unsigned kDefaultMaxServices = 10;
+    static constexpr unsigned kMaxConfigurableServices = 64;
 
 private:
     CardManager() = default;
