@@ -1,0 +1,39 @@
+name: v10-8-70-ca-tile
+on:
+  push:
+    branches:
+      - staging/v10.8.70-ca-tile
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply telemetry patch
+        run: python3 scripts/apply_v10_8_70_ca_tile.py
+      - name: Validate patch
+        shell: bash
+        run: |
+          git diff --check
+          grep -n 'kProgramVersion = "10.8.70"' src/AppVersion.h
+          grep -n 'outputTsPayloadPackets{0}' src/StreamManager.h
+          grep -n 'outputTsScrambledPackets{0}' src/StreamManager.h
+          grep -n 'outputTsClearPesStarts{0}' src/StreamManager.h
+          grep -n 'V10.8.70: dashboard decode state' src/StreamManager.cpp
+          grep -n 'outputTsPayloadPacketsDelta.store' src/StreamManager.cpp
+      - name: Commit source patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo nothing-to-commit
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/AppVersion.h src/StreamManager.h src/StreamManager.cpp
+          git commit -m 'V10.8.70 fix decoded tile telemetry'
+          git push origin HEAD:staging/v10.8.70-ca-tile
