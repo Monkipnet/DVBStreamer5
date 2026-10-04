@@ -806,7 +806,63 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::vector<dvbstreamer5::media::rtsp::NativeRtspOutput*> rtspOutputs; for (auto& output : state->nativeRtspOutputs) rtspOutputs.push_back(output.get());
     std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
-    relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId](const uint8_t* data, std::size_t size) {
+    StreamState* outputStatsState = state.get();
+    relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {
+        // V10.8.70: dashboard decode state must describe the transport that
+        // clients actually receive. Count payload/scrambling/PES only here,
+        // after remap + CA descrambling + optional production transcoding.
+        if (outputStatsState && data && size >= 188U) {
+            std::uint64_t payloadPackets = 0;
+            std::uint64_t scrambledPackets = 0;
+            std::uint64_t clearPesStarts = 0;
+
+            for (std::size_t offset = 0; offset + 188U <= size; offset += 188U) {
+                const std::uint8_t* packet = data + offset;
+                if (packet[0] != 0x47U) continue;
+
+                const std::uint16_t pid = static_cast<std::uint16_t>(
+                    (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8) | packet[2]);
+                // Common PSI/SI and null packets do not describe A/V decode health.
+                if (pid == 0x0000U || pid == 0x0001U ||
+                    pid == 0x0011U || pid == 0x1fffU) {
+                    continue;
+                }
+
+                const std::uint8_t adaptationControl =
+                    static_cast<std::uint8_t>((packet[3] >> 4) & 0x03U);
+                if ((adaptationControl & 0x01U) == 0) continue;
+
+                std::size_t payloadOffset = 4U;
+                if ((adaptationControl & 0x02U) != 0) {
+                    payloadOffset = 5U + packet[4];
+                    if (payloadOffset >= 188U) continue;
+                }
+
+                ++payloadPackets;
+
+                const std::uint8_t scramblingControl =
+                    static_cast<std::uint8_t>((packet[3] >> 6) & 0x03U);
+                if (scramblingControl == 2U || scramblingControl == 3U) {
+                    ++scrambledPackets;
+                }
+
+                if ((packet[1] & 0x40U) != 0 &&
+                    scramblingControl == 0U &&
+                    payloadOffset + 3U <= 188U &&
+                    packet[payloadOffset] == 0x00U &&
+                    packet[payloadOffset + 1U] == 0x00U &&
+                    packet[payloadOffset + 2U] == 0x01U) {
+                    ++clearPesStarts;
+                }
+            }
+
+            outputStatsState->outputTsPayloadPackets.fetch_add(
+                payloadPackets, std::memory_order_relaxed);
+            outputStatsState->outputTsScrambledPackets.fetch_add(
+                scrambledPackets, std::memory_order_relaxed);
+            outputStatsState->outputTsClearPesStarts.fetch_add(
+                clearPesStarts, std::memory_order_relaxed);
+        }
         if (hlsSegmenter) hlsSegmenter->push(data, size);
         if (cmafSegmenter) cmafSegmenter->push(data, size);
         for (auto* output : srtOutputs) if (output) output->push(data, size);
@@ -1090,6 +1146,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
 void StreamManager::monitorNativeStream(StreamState* state) {
     uint64_t lastIn = 0, lastOut = 0, lastPayloadOut = 0, lastCc = 0;
+    uint64_t lastTsPayloadPackets = 0;
+    uint64_t lastTsScrambledPackets = 0;
+    uint64_t lastTsClearPesStarts = 0;
     const bool selectedDvbService =
         DvbSatellite::isDvbUri(state->config.inputUri) &&
         state->config.inputServiceId > 0;
@@ -1171,6 +1230,23 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         }
         state->inputCcErrors.store(cc);
         state->inputCcErrorsDelta.store(cc - lastCc);
+
+        const uint64_t tsPayloadPackets =
+            state->outputTsPayloadPackets.load(std::memory_order_relaxed);
+        const uint64_t tsScrambledPackets =
+            state->outputTsScrambledPackets.load(std::memory_order_relaxed);
+        const uint64_t tsClearPesStarts =
+            state->outputTsClearPesStarts.load(std::memory_order_relaxed);
+        state->outputTsPayloadPacketsDelta.store(
+            tsPayloadPackets - lastTsPayloadPackets, std::memory_order_relaxed);
+        state->outputTsScrambledPacketsDelta.store(
+            tsScrambledPackets - lastTsScrambledPackets, std::memory_order_relaxed);
+        state->outputTsClearPesStartsDelta.store(
+            tsClearPesStarts - lastTsClearPesStarts, std::memory_order_relaxed);
+        lastTsPayloadPackets = tsPayloadPackets;
+        lastTsScrambledPackets = tsScrambledPackets;
+        lastTsClearPesStarts = tsClearPesStarts;
+
         lastIn = in;
         lastOut = out;
         lastPayloadOut = payloadOut;

@@ -214,6 +214,12 @@ struct StreamState {
     std::atomic<uint64_t> inputCcErrorsDelta{0};
     std::atomic<uint64_t> outputCcErrors{0};
     std::atomic<uint64_t> outputCcErrorsDelta{0};
+    // V10.8.70: cumulative counters sampled from the finished production TS.
+    // /api/state consumes the per-second Delta fields below for the dashboard
+    // CA indicator, so collect them after remap/CA/transcode, not from input TS.
+    std::atomic<uint64_t> outputTsPayloadPackets{0};
+    std::atomic<uint64_t> outputTsScrambledPackets{0};
+    std::atomic<uint64_t> outputTsClearPesStarts{0};
     std::atomic<uint64_t> outputTsPayloadPacketsDelta{0};
     std::atomic<uint64_t> outputTsScrambledPacketsDelta{0};
     std::atomic<uint64_t> outputTsClearPesStartsDelta{0};
