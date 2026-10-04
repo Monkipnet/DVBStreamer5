@@ -60,7 +60,19 @@ public:
         reset();
         std::lock_guard<std::mutex> lock(mutex_);
         config_ = config;
+        // V10.8.69: restore V10.8.41 preview semantics. The dedicated
+        // preview transcoder is initialized immediately and remains alive for
+        // the stream lifetime instead of being torn down/recreated on every
+        // preview idle interval. This avoids decoder state loss on live DVB.
+        if (!pipeline_.initialize(config_, error)) {
+            configured_ = false;
+            active_ = false;
+            return false;
+        }
         configured_ = true;
+        active_ = true;
+        stopMonitor_ = false;
+        lastActivity_ = std::chrono::steady_clock::now();
         error.clear();
         return true;
     }
