@@ -1,0 +1,33 @@
+name: V10.8.74 OnDemand 10s
+
+on:
+  push:
+    branches:
+      - staging/v10.8.74-ondemand-10s
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply source patch
+        run: python3 scripts/apply_v10_8_74_ondemand_10s.py
+      - name: Validate source
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.74"' src/AppVersion.h
+          grep -q 'constexpr auto kIdleGrace = std::chrono::seconds(10);' src/StreamManager.cpp
+          grep -q 'reason=no-clients idle_s=10' src/StreamManager.cpp
+          if grep -q 'reason=no-clients idle_s=5' src/StreamManager.cpp; then exit 1; fi
+      - name: Commit validated source patch
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AppVersion.h src/StreamManager.cpp
+          git commit -m "V10.8.74 use 10s OnDemand idle grace"
+          git push
