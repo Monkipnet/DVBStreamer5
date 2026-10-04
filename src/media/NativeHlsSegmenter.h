@@ -67,6 +67,10 @@ private:
     std::ofstream segment_;
     std::filesystem::path segmentPath_;
     std::deque<SegmentInfo> liveSegments_;
+    // Keep one previous live window on disk after it leaves the playlist.
+    // HLS clients can legally request segments from a slightly stale playlist;
+    // deleting an evicted segment immediately turns that race into a 404/stall.
+    std::deque<SegmentInfo> retiredSegments_;
     std::uint64_t nextSequence_ = 0;
     std::uint64_t completedSegments_ = 0;
     bool running_ = false;

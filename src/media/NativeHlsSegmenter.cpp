@@ -112,6 +112,7 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
 
     framer_.reset();
     liveSegments_.clear();
+    retiredSegments_.clear();
     nextSequence_ = 0;
     completedSegments_ = 0;
     haveFirstPcr_ = false;
@@ -243,11 +244,23 @@ void NativeHlsSegmenter::prune() {
         const SegmentInfo old = liveSegments_.front();
         liveSegments_.pop_front();
         if (!config_.archiveEnabled) {
+            retiredSegments_.push_back(old);
+        }
+    }
+    if (!config_.archiveEnabled) {
+        // Do not remove a segment at the exact instant it disappears from the
+        // newest playlist. A player may still be working from the immediately
+        // previous manifest and request it a moment later. Retaining one extra
+        // playlist window keeps storage bounded while eliminating that 404 race.
+        const std::size_t graceSegments = std::max<std::size_t>(3, config_.liveWindowSegments);
+        while (retiredSegments_.size() > graceSegments) {
+            const SegmentInfo old = retiredSegments_.front();
+            retiredSegments_.pop_front();
             std::error_code ec;
             std::filesystem::remove(config_.directory / old.fileName, ec);
         }
+        return;
     }
-    if (!config_.archiveEnabled) return;
     const auto cutoff = std::chrono::system_clock::now() - std::chrono::hours(config_.archiveHours);
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(config_.directory, ec)) {
