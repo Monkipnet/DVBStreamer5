@@ -1,0 +1,195 @@
+name: V10.8.65 import working Tvstreamer_sat Newcamd
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/one-shot-v10865-import-newcamd.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch pinned working Newcamd source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA=f9af8f699455c9f16076734785b224d73eea5b23
+          rm -rf /tmp/Tvstreamer_sat
+          git clone -q https://github.com/Monkipnet/Tvstreamer_sat.git /tmp/Tvstreamer_sat
+          git -C /tmp/Tvstreamer_sat checkout -q "$SOURCE_SHA"
+          test "$(git -C /tmp/Tvstreamer_sat rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C /tmp/Tvstreamer_sat hash-object src/ca/backends/newcamd/NewcamdClient.cpp)" = "27a1d10cd69d00db00193fa36289fbd0124a6481"
+          test "$(git -C /tmp/Tvstreamer_sat hash-object src/ca/backends/newcamd/NewcamdClient.h)" = "0cb0d8e5d2eae4d694116c908c1132ccf7ac4c22"
+          test "$(git -C /tmp/Tvstreamer_sat hash-object src/ca/backends/newcamd/NewcamdPlugin.cpp)" = "9d37bd6a0e2cab0d9ea25382dc47d42971c32a38"
+
+      - name: Replace DVBStreamer5 Newcamd with pinned working module
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+
+          src = Path('/tmp/Tvstreamer_sat/src/ca/backends/newcamd')
+          dst = Path('src/ca/backends/newcamd')
+
+          # Import the known-working client/header byte-for-byte.
+          shutil.copyfile(src / 'NewcamdClient.cpp', dst / 'NewcamdClient.cpp')
+          shutil.copyfile(src / 'NewcamdClient.h', dst / 'NewcamdClient.h')
+
+          # Import the known-working plugin and apply only host ABI/name adaptation
+          # plus the requested removal of the artificial 10-service limit.
+          text = (src / 'NewcamdPlugin.cpp').read_text()
+          text = text.replace('TVS_CA_DIAGNOSTICS', 'DVBSTREAMER5_CA_DIAGNOSTICS')
+          text = text.replace('TVS_DVB_DIAGNOSTICS', 'DVBSTREAMER5_DVB_DIAGNOSTICS')
+          text = text.replace('TVS_CA_', 'DVBSTREAMER5_CA_')
+          text = text.replace('tvs_ca_', 'dvbstreamer5_ca_')
+          text = text.replace('tvstreammersat5_ca_backend_get_api_v1', 'dvbstreamer5_ca_backend_get_api_v1')
+          text = text.replace('TVStreammerSAT5', 'DVBStreamer5')
+
+          old_const = 'constexpr size_t kMaxSessionsPerReader = 10;'
+          assert text.count(old_const) == 1
+          text = text.replace(old_const,
+              'constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited')
+
+          old_guard = 'if (activeForReader >= kMaxSessionsPerReader) {'
+          assert text.count(old_guard) == 2
+          text = text.replace(old_guard,
+              'if (kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader) {')
+
+          old_error = 'Newcamd per-reader service session limit reached (10)'
+          assert text.count(old_error) == 2
+          text = text.replace(old_error, 'Newcamd per-reader service session limit reached')
+
+          old_reader_log = '<< " session_mode=per-service max_sessions=" << kMaxSessionsPerReader'
+          assert text.count(old_reader_log) == 1
+          text = text.replace(old_reader_log,
+                              '<< " session_mode=per-service max_sessions=unlimited"')
+
+          old_service_log = '<< "/" << kMaxSessionsPerReader'
+          assert text.count(old_service_log) == 1
+          text = text.replace(old_service_log,
+                              '<< " max_sessions=unlimited"')
+
+          provenance = ('// Imported from Monkipnet/Tvstreamer_sat@'
+                        'f9af8f699455c9f16076734785b224d73eea5b23.\n'
+                        '// Changes here are limited to the DVBStreamer5 CA ABI/name adaptation\n'
+                        '// and removal of the artificial per-reader service-session limit.\n')
+          text = provenance + text
+          (dst / 'NewcamdPlugin.cpp').write_text(text)
+
+          # This declaration belonged to the previous in-tree variant and is no
+          # longer needed by the imported loadable plugin.
+          builtin = dst / 'NewcamdBuiltin.h'
+          if builtin.exists():
+              builtin.unlink()
+
+          # Restore the dependency used by the working source: libc crypt(3).
+          cmake = Path('CMakeLists.txt')
+          ctext = cmake.read_text()
+          find_anchor = 'find_package(OpenSSL REQUIRED)\nfind_package(Threads REQUIRED)\n'
+          assert ctext.count(find_anchor) == 1
+          find_block = '''find_package(OpenSSL REQUIRED)\nfind_package(Threads REQUIRED)\nfind_library(DVBSTREAMER5_CRYPT_LIBRARY NAMES crypt)\nif(NOT DVBSTREAMER5_CRYPT_LIBRARY)\n    message(FATAL_ERROR "libcrypt is required by the imported Newcamd backend (install libcrypt-dev)")\nendif()\n'''
+          ctext = ctext.replace(find_anchor, find_block)
+          link_anchor = '''    dvbstreamer5_dvbcsa\n    OpenSSL::Crypto\n    Threads::Threads\n)\nset_target_properties(dvbstreamer5_ca_newcamd PROPERTIES'''
+          assert ctext.count(link_anchor) == 1
+          link_repl = '''    dvbstreamer5_dvbcsa\n    OpenSSL::Crypto\n    ${DVBSTREAMER5_CRYPT_LIBRARY}\n    Threads::Threads\n)\nset_target_properties(dvbstreamer5_ca_newcamd PROPERTIES'''
+          ctext = ctext.replace(link_anchor, link_repl)
+          cmake.write_text(ctext)
+
+          deps = Path('install_deps.sh')
+          dtext = deps.read_text()
+          dep_anchor = '      libssl-dev ca-certificates curl binutils nasm autoconf automake libtool)'
+          assert dtext.count(dep_anchor) == 1
+          dtext = dtext.replace(dep_anchor,
+              '      libssl-dev libcrypt-dev ca-certificates curl binutils nasm autoconf automake libtool)')
+          deps.write_text(dtext)
+
+          version = Path('src/AppVersion.h')
+          vtext = version.read_text()
+          assert vtext.count('kProgramVersion = "10.8.64"') == 1
+          version.write_text(vtext.replace('kProgramVersion = "10.8.64"',
+                                           'kProgramVersion = "10.8.65"'))
+          PY
+
+      - name: Validate exact source and unlimited policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp /tmp/Tvstreamer_sat/src/ca/backends/newcamd/NewcamdClient.cpp \
+              src/ca/backends/newcamd/NewcamdClient.cpp
+          cmp /tmp/Tvstreamer_sat/src/ca/backends/newcamd/NewcamdClient.h \
+              src/ca/backends/newcamd/NewcamdClient.h
+
+          test "$(git hash-object src/ca/backends/newcamd/NewcamdClient.cpp)" = "27a1d10cd69d00db00193fa36289fbd0124a6481"
+          test "$(git hash-object src/ca/backends/newcamd/NewcamdClient.h)" = "0cb0d8e5d2eae4d694116c908c1132ccf7ac4c22"
+
+          grep -q 'constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited' \
+            src/ca/backends/newcamd/NewcamdPlugin.cpp
+          test "$(grep -c 'kMaxSessionsPerReader != 0 && activeForReader >= kMaxSessionsPerReader' \
+            src/ca/backends/newcamd/NewcamdPlugin.cpp)" -eq 2
+          ! grep -q 'service session limit reached (10)' src/ca/backends/newcamd/NewcamdPlugin.cpp
+          grep -q 'max_sessions=unlimited' src/ca/backends/newcamd/NewcamdPlugin.cpp
+
+          # One ECM in flight per service-local TCP session is protocol
+          # serialization, not a channel count restriction. Preserve it.
+          grep -q 'constexpr size_t kMaxPendingEcms = 1;' \
+            src/ca/backends/newcamd/NewcamdClient.cpp
+
+          grep -q 'DVBSTREAMER5_CRYPT_LIBRARY' CMakeLists.txt
+          grep -q 'libcrypt-dev' install_deps.sh
+          grep -q 'kProgramVersion = "10.8.65"' src/AppVersion.h
+          test ! -e src/ca/backends/newcamd/NewcamdBuiltin.h
+          git diff --check
+
+      - name: Compile imported Newcamd sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential libssl-dev libcrypt-dev
+
+          COMMON=(
+            -std=c++17 -fPIC -DBOOST_ERROR_CODE_HEADER_ONLY
+            -Isrc -Ithird_party -Ithird_party/boost
+            -Ithird_party/libdvbcsa/src
+          )
+          g++ "${COMMON[@]}" -fsyntax-only \
+            src/ca/backends/newcamd/NewcamdClient.cpp
+          g++ "${COMMON[@]}" -fsyntax-only \
+            src/ca/backends/newcamd/NewcamdPlugin.cpp
+
+          cat >/tmp/newcamd-crypt-smoke.cpp <<'CPP'
+          #include <crypt.h>
+          #include <cstring>
+          int main() {
+              char* value = crypt("test", "$1$abcdefgh$");
+              return (value && std::strncmp(value, "$1$abcdefgh$", 12) == 0) ? 0 : 1;
+          }
+          CPP
+          g++ /tmp/newcamd-crypt-smoke.cpp -lcrypt -o /tmp/newcamd-crypt-smoke
+          /tmp/newcamd-crypt-smoke
+
+      - name: Commit V10.8.65
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/one-shot-v10865-import-newcamd.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name Monkipnet
+          git config user.email monkipnet@yandex.ru
+          git add -A
+          git diff --cached --check
+          git status --short
+          git commit -m 'V10.8.65 import working Tvstreamer_sat Newcamd backend'
+          git push origin HEAD:main
