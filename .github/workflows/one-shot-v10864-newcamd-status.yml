@@ -1,0 +1,61 @@
+name: V10.8.64 Remote Newcamd status repair
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-v10864-newcamd-status.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply Remote Newcamd status repair
+        run: python3 scripts/apply_v10864_newcamd_status.py
+
+      - name: Validate OSCam-mini integration
+        shell: bash
+        run: |
+          git diff --check
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential cmake pkg-config libssl-dev \
+            libpcsclite-dev pcscd pcsc-tools libjsoncpp-dev
+
+          g++ -std=c++17 -fsyntax-only \
+            -Isrc -I/usr/include/jsoncpp \
+            src/OscamMiniManager.cpp
+
+          bash scripts/build_oscam_mini.sh \
+            third_party/oscam-mini \
+            /tmp/oscam-mini-v10864-build
+
+          /tmp/oscam-mini-v10864-build/oscam-mini -V | tee /tmp/oscam-mini-v10864-features.txt
+          grep -Eq '^newcamd:[[:space:]]+yes$' /tmp/oscam-mini-v10864-features.txt
+          grep -Eq '^Reader support:[[:space:]]+yes$' /tmp/oscam-mini-v10864-features.txt
+          grep -q 'kProgramVersion = "10.8.64"' src/AppVersion.h
+          grep -q 'oscamSocketOnPort' src/OscamMiniManager.cpp
+          grep -q 'Remote Newcamd подключён' src/OscamMiniManager.cpp
+          grep -q 'Newcamd Server:' third_party/oscam-mini/module-newcamd.c
+
+      - name: Commit V10.8.64
+        shell: bash
+        run: |
+          rm -f .github/workflows/one-shot-v10864-newcamd-status.yml
+          rm -f scripts/apply_v10864_newcamd_status.py
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name Monkipnet
+          git config user.email monkipnet@yandex.ru
+          git add -A
+          git status --short
+          git commit -m 'V10.8.64 fix Remote Newcamd connection status'
+          git push origin HEAD:main
