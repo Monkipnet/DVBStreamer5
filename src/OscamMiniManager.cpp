@@ -730,7 +730,24 @@ Json::Value OscamMiniManager::statusLocked() {
     result["log"] = log;
 
     const Settings settings = loadLocked();
-    const std::string established = serviceActive ? run("ss -Htan state established 2>/dev/null") : std::string();
+    // Include socket ownership so Remote Newcamd reader state is based on the
+    // OSCam-mini process itself instead of an unrelated TCP connection that
+    // happens to use the same port.
+    const std::string established = serviceActive ? run("ss -Htanp state established 2>/dev/null") : std::string();
+    const auto oscamSocketOnPort = [&](int port) {
+        if (pid.empty() || port < 1 || port > 65535) return false;
+        const std::string portToken = ":" + std::to_string(port);
+        const std::string pidToken = "pid=" + pid + ",";
+        std::istringstream sockets(established);
+        std::string socketLine;
+        while (std::getline(sockets, socketLine)) {
+            if (socketLine.find(portToken) != std::string::npos &&
+                socketLine.find(pidToken) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    };
 
     Json::Value userActivity(Json::objectValue);
     for (const auto& user : settings.users) {
@@ -739,8 +756,7 @@ Json::Value OscamMiniManager::statusLocked() {
         std::string detail = "OSCam-mini остановлен";
 
         if (serviceActive) {
-            const std::string portToken = ":" + std::to_string(user.port);
-            if (established.find(portToken) != std::string::npos) {
+            if (oscamSocketOnPort(user.port)) {
                 state = "active";
                 detail = "Newcamd клиент подключён";
             } else {
@@ -766,38 +782,47 @@ Json::Value OscamMiniManager::statusLocked() {
             state = "disabled";
             detail = "Ридер отключён";
         } else if (serviceActive) {
+            const bool remoteNewcamd = reader.protocol == "newcamd";
+            const std::string remoteEndpoint = reader.remoteHost + ":" + std::to_string(reader.remotePort);
             const std::string readyNeedle = reader.label + " [irdeto] ready for requests";
             const std::string readyMouseNeedle = reader.label + " [mouse] ready for requests";
-            const bool ready = log.find(readyNeedle) != std::string::npos
-                || log.find(readyMouseNeedle) != std::string::npos
-                || log.find(reader.label + " [newcamd] proxy initialized") != std::string::npos;
-            const bool initializing =
-                log.find(reader.label + " [mouse] card detected") != std::string::npos
-                || log.find(reader.label + " [mouse] detect irdeto card") != std::string::npos
-                || log.find(reader.label + " [mouse] found card system") != std::string::npos
-                || log.find(reader.label + " [pcsc] card detected") != std::string::npos
-                || log.find(reader.label + " [pcsc] found card system") != std::string::npos
-                || log.find(reader.label + " [irdeto] THIS WAS A SUCCESSFUL START ATTEMPT") != std::string::npos
-                || log.find(reader.label + " [newcamd] connecting to ") != std::string::npos;
-            const bool error =
-                log.find(reader.label + " [mouse] Error activating card") != std::string::npos
-                || log.find(reader.label + " [mouse] ERROR") != std::string::npos
-                || log.find(reader.label + " [pcsc] ERROR") != std::string::npos
-                || log.find(reader.label + " [irdeto] ERROR") != std::string::npos
-                || log.find(reader.label + " [mouse] card initializing error") != std::string::npos;
+            const bool remoteSocketReady = remoteNewcamd && oscamSocketOnPort(reader.remotePort);
+            const bool remoteLoggedReady = remoteNewcamd &&
+                log.find(reader.label + " [newcamd] Newcamd Server: " + remoteEndpoint + " - UserID:") != std::string::npos;
+            const bool ready = remoteNewcamd
+                ? remoteSocketReady
+                : (log.find(readyNeedle) != std::string::npos ||
+                   log.find(readyMouseNeedle) != std::string::npos);
+            const bool initializing = remoteNewcamd
+                ? log.find(reader.label + " [newcamd] proxy " + remoteEndpoint + " newcamd52") != std::string::npos
+                : (log.find(reader.label + " [mouse] card detected") != std::string::npos
+                   || log.find(reader.label + " [mouse] detect irdeto card") != std::string::npos
+                   || log.find(reader.label + " [mouse] found card system") != std::string::npos
+                   || log.find(reader.label + " [pcsc] card detected") != std::string::npos
+                   || log.find(reader.label + " [pcsc] found card system") != std::string::npos
+                   || log.find(reader.label + " [irdeto] THIS WAS A SUCCESSFUL START ATTEMPT") != std::string::npos);
+            const bool error = remoteNewcamd
+                ? (log.find(reader.label + " [newcamd] login failed for user") != std::string::npos
+                   || log.find(reader.label + " [newcamd] server does not return 14 bytes") != std::string::npos
+                   || log.find(reader.label + " [newcamd] expected MSG_CLIENT_2_SERVER_LOGIN_ACK") != std::string::npos)
+                : (log.find(reader.label + " [mouse] Error activating card") != std::string::npos
+                   || log.find(reader.label + " [mouse] ERROR") != std::string::npos
+                   || log.find(reader.label + " [pcsc] ERROR") != std::string::npos
+                   || log.find(reader.label + " [irdeto] ERROR") != std::string::npos
+                   || log.find(reader.label + " [mouse] card initializing error") != std::string::npos);
 
             if (ready) {
                 state = "active";
-                detail = "Карта готова";
+                detail = remoteNewcamd ? "Remote Newcamd подключён" : "Карта готова";
             } else if (error) {
                 state = "down";
-                detail = "Ошибка ридера";
-            } else if (initializing) {
+                detail = remoteNewcamd ? "Ошибка Remote Newcamd" : "Ошибка ридера";
+            } else if (initializing || remoteLoggedReady) {
                 state = "idle";
-                detail = "Инициализация карты";
+                detail = remoteNewcamd ? "Подключение к Remote Newcamd" : "Инициализация карты";
             } else {
                 state = "idle";
-                detail = "Ожидание карты";
+                detail = remoteNewcamd ? "Ожидание Remote Newcamd" : "Ожидание карты";
             }
         }
 

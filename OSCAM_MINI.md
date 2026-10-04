@@ -145,6 +145,13 @@ those characters are OSCam/INI comment delimiters and cannot be round-tripped sa
 The Newcamd MD5-crypt wire format and the fixed `$1$abcdefgh$` salt remain protocol-
 compatible with standard OSCam/Newcamd clients.
 
+## Remote Newcamd reader status
+
+The OSCam-mini page marks a Remote Newcamd reader green only while the OSCam-mini
+process owns an established TCP socket on the configured upstream port. Startup and
+authentication errors are derived from the bundled Newcamd client log messages; local
+mouse/Phoenix/PCSC card status handling is unchanged.
+
 ## Remote Newcamd readers
 
 Choose **Remote Newcamd** in a reader row and configure the upstream endpoint.
