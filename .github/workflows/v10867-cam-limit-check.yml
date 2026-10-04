@@ -1,0 +1,38 @@
+name: V10.8.67 CAM limit check
+
+on:
+  push:
+    branches:
+      - fix/v10.8.67-cam-limit
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compile headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ libssl-dev
+      - name: Syntax-check CAM configuration sources
+        run: |
+          g++ -std=c++17 -fsyntax-only -Isrc -Ithird_party src/ConfigManager.cpp
+          g++ -std=c++17 -fsyntax-only -Isrc -Ithird_party src/CardManager.cpp
+      - name: Verify max-services persistence contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          c = Path('src/ConfigManager.cpp').read_text()
+          h = Path('src/ConfigManager.h').read_text()
+          cm = Path('src/CardManager.cpp').read_text()
+          ch = Path('src/CardManager.h').read_text()
+          assert 'root.get("max_services", 10).asUInt(), 1u, 64u' in c
+          assert 'root["max_services"] = std::clamp(maxServices, 1u, 64u);' in c
+          assert 'unsigned maxServices = 10;' in h
+          assert 'kDefaultMaxServices = 10' in ch
+          assert 'kMaxConfigurableServices = 64' in ch
+          assert 'client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);' in cm
+          assert 'if (used >= client.maxServices)' in cm
+          assert 'OscamMiniManager::instance().synchronizeCamClients(configured, oscamSyncError)' in cm
+          print('V10.8.67 CAM max channels contract OK')
+          PY
