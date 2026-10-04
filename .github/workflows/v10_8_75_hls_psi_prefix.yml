@@ -1,0 +1,36 @@
+name: V10.8.75 HLS PSI prefix
+
+on:
+  push:
+    branches:
+      - staging/v10.8.75-hls-psi-prefix
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply source patch
+        run: python3 scripts/apply_v10_8_75_hls_psi_prefix.py
+      - name: Install syntax dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Validate source
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.75"' src/AppVersion.h
+          grep -q 'writePsiPrefix' src/media/NativeHlsSegmenter.cpp
+          grep -q 'passthroughPesBoundary' src/media/NativeHlsSegmenter.cpp
+          g++ -std=c++17 -Isrc -fsyntax-only src/media/TransportStream.cpp
+          g++ -std=c++17 -Isrc -fsyntax-only src/media/NativeHlsSegmenter.cpp
+      - name: Commit validated source patch
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AppVersion.h src/media/NativeHlsSegmenter.cpp src/media/NativeHlsSegmenter.h
+          git commit -m "V10.8.75 make MPEG-TS HLS segments self-describing"
+          git push origin HEAD:staging/v10.8.75-hls-psi-prefix
