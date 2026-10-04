@@ -2,24 +2,26 @@ name: V10.8.69 CA tile telemetry patch
 
 on:
   push:
-    branches:
-      - staging/v10.8.69-ca-tile
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Apply patch
+      - name: Apply V10.8.69 patch
         shell: bash
         run: |
+          if grep -q '"10.8.69"' src/AppVersion.h; then
+            echo "V10.8.69 already applied"
+            exit 0
+          fi
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -29,11 +31,9 @@ jobs:
     std::atomic<uint64_t> outputTsScrambledPacketsDelta{0};
     std::atomic<uint64_t> outputTsClearPesStartsDelta{0};
 '''
-          new = '''    // Cumulative post-processing MPEG-TS counters.  These are sampled by the
-    // monitor thread into the per-second Delta values consumed by /api/state.
-    // Keeping collection in the finished transport callback makes the UI reflect
-    // what HLS/HTTP/preview clients actually receive after remap, CA and optional
-    // transcoding instead of the encrypted source transport.
+          new = '''    // Cumulative post-processing MPEG-TS counters sampled by the monitor
+    // thread into the Delta values consumed by /api/state.  Collection happens
+    // on the finished transport so the tile describes what clients actually get.
     std::atomic<uint64_t> outputTsPayloadPackets{0};
     std::atomic<uint64_t> outputTsScrambledPackets{0};
     std::atomic<uint64_t> outputTsClearPesStarts{0};
@@ -54,12 +54,7 @@ jobs:
           new = '''    const std::string streamId = streamConfig.id;
     StreamState* outputStatsState = state.get();
     relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {
-        // V10.8.69: feed the dashboard CA indicator from the finished production
-        // transport.  Previous releases exposed outputTs*Delta fields but never
-        // populated them, so a correctly descrambled channel could still show
-        // "DECODE: NO" while browser preview was already playing clear video.
-        // Count only payload-bearing service packets and validate clear PES starts
-        // without ever logging or exporting control words.
+        // V10.8.69: derive CA tile health from the finished production TS.
         if (outputStatsState && data && size >= dvbstreamer5::media::mpegts::kPacketSize) {
             std::uint64_t payloadPackets = 0;
             std::uint64_t scrambledPackets = 0;
@@ -71,7 +66,6 @@ jobs:
                 if (packet[0] != dvbstreamer5::media::mpegts::kSyncByte) continue;
                 const std::uint16_t pid = static_cast<std::uint16_t>(
                     (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8) | packet[2]);
-                // Exclude common PSI/null packets from the A/V health sample.
                 if (pid == 0x0000U || pid == 0x0001U || pid == 0x0011U || pid == 0x1fffU) continue;
                 const std::uint8_t adaptationControl =
                     static_cast<std::uint8_t>((packet[3] >> 4) & 0x03U);
@@ -84,9 +78,7 @@ jobs:
                 ++payloadPackets;
                 const std::uint8_t scramblingControl =
                     static_cast<std::uint8_t>((packet[3] >> 6) & 0x03U);
-                if (scramblingControl == 2U || scramblingControl == 3U) {
-                    ++scrambledPackets;
-                }
+                if (scramblingControl == 2U || scramblingControl == 3U) ++scrambledPackets;
                 if ((packet[1] & 0x40U) != 0 && scramblingControl == 0U &&
                     payloadOffset + 3U <= dvbstreamer5::media::mpegts::kPacketSize &&
                     packet[payloadOffset] == 0x00U &&
@@ -95,12 +87,9 @@ jobs:
                     ++clearPesStarts;
                 }
             }
-            outputStatsState->outputTsPayloadPackets.fetch_add(
-                payloadPackets, std::memory_order_relaxed);
-            outputStatsState->outputTsScrambledPackets.fetch_add(
-                scrambledPackets, std::memory_order_relaxed);
-            outputStatsState->outputTsClearPesStarts.fetch_add(
-                clearPesStarts, std::memory_order_relaxed);
+            outputStatsState->outputTsPayloadPackets.fetch_add(payloadPackets, std::memory_order_relaxed);
+            outputStatsState->outputTsScrambledPackets.fetch_add(scrambledPackets, std::memory_order_relaxed);
+            outputStatsState->outputTsClearPesStarts.fetch_add(clearPesStarts, std::memory_order_relaxed);
         }
         if (hlsSegmenter) hlsSegmenter->push(data, size);
 '''
@@ -127,18 +116,12 @@ jobs:
 '''
           new = '''        state->inputCcErrors.store(cc);
         state->inputCcErrorsDelta.store(cc - lastCc);
-        const std::uint64_t tsPayloadPackets =
-            state->outputTsPayloadPackets.load(std::memory_order_relaxed);
-        const std::uint64_t tsScrambledPackets =
-            state->outputTsScrambledPackets.load(std::memory_order_relaxed);
-        const std::uint64_t tsClearPesStarts =
-            state->outputTsClearPesStarts.load(std::memory_order_relaxed);
-        state->outputTsPayloadPacketsDelta.store(
-            tsPayloadPackets - lastTsPayloadPackets, std::memory_order_relaxed);
-        state->outputTsScrambledPacketsDelta.store(
-            tsScrambledPackets - lastTsScrambledPackets, std::memory_order_relaxed);
-        state->outputTsClearPesStartsDelta.store(
-            tsClearPesStarts - lastTsClearPesStarts, std::memory_order_relaxed);
+        const std::uint64_t tsPayloadPackets = state->outputTsPayloadPackets.load(std::memory_order_relaxed);
+        const std::uint64_t tsScrambledPackets = state->outputTsScrambledPackets.load(std::memory_order_relaxed);
+        const std::uint64_t tsClearPesStarts = state->outputTsClearPesStarts.load(std::memory_order_relaxed);
+        state->outputTsPayloadPacketsDelta.store(tsPayloadPackets - lastTsPayloadPackets, std::memory_order_relaxed);
+        state->outputTsScrambledPacketsDelta.store(tsScrambledPackets - lastTsScrambledPackets, std::memory_order_relaxed);
+        state->outputTsClearPesStartsDelta.store(tsClearPesStarts - lastTsClearPesStarts, std::memory_order_relaxed);
         lastTsPayloadPackets = tsPayloadPackets;
         lastTsScrambledPackets = tsScrambledPackets;
         lastTsClearPesStarts = tsClearPesStarts;
@@ -163,6 +146,10 @@ jobs:
       - name: Commit patch
         shell: bash
         run: |
+          if git diff --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/AppVersion.h src/StreamManager.h src/StreamManager.cpp
