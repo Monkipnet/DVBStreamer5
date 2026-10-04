@@ -11,6 +11,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace dvbstreamer5::media::hls {
 
@@ -54,6 +55,8 @@ private:
     };
 
     bool appendPacket(const mpegts::Packet& packet);
+    void observePsi(const mpegts::Packet& packet, const mpegts::PacketInfo& info);
+    bool writePsiPrefix();
     bool rotate(double durationSeconds);
     bool openSegment();
     bool writePlaylist(bool endList = false);
@@ -71,6 +74,14 @@ private:
     // HLS clients can legally request segments from a slightly stale playlist;
     // deleting an evicted segment immediately turns that race into a 404/stall.
     std::deque<SegmentInfo> retiredSegments_;
+    // MPEG-TS HLS clients may open every segment with a fresh demuxer.
+    // Keep the latest complete PAT/PMT repetition and prepend it to each
+    // subsequent segment so audio/video PIDs are known before media bytes.
+    std::vector<mpegts::Packet> patCollecting_;
+    std::vector<mpegts::Packet> patPrefix_;
+    std::vector<mpegts::Packet> pmtCollecting_;
+    std::vector<mpegts::Packet> pmtPrefix_;
+    std::uint16_t pmtPid_ = mpegts::kNullPid;
     std::uint64_t nextSequence_ = 0;
     std::uint64_t completedSegments_ = 0;
     bool running_ = false;

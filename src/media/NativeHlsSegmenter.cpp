@@ -113,6 +113,11 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     framer_.reset();
     liveSegments_.clear();
     retiredSegments_.clear();
+    patCollecting_.clear();
+    patPrefix_.clear();
+    pmtCollecting_.clear();
+    pmtPrefix_.clear();
+    pmtPid_ = mpegts::kNullPid;
     nextSequence_ = 0;
     completedSegments_ = 0;
     haveFirstPcr_ = false;
@@ -135,9 +140,86 @@ bool NativeHlsSegmenter::push(const std::uint8_t* data, std::size_t size) {
     return true;
 }
 
+void NativeHlsSegmenter::observePsi(const mpegts::Packet& packet,
+                                      const mpegts::PacketInfo& info) {
+    constexpr std::size_t kMaxPsiPackets = 32;
+    if (!info.hasPayload || info.payloadOffset >= mpegts::kPacketSize) return;
+
+    if (info.pid == 0x0000U) {
+        if (info.payloadUnitStart) {
+            if (!patCollecting_.empty()) patPrefix_ = patCollecting_;
+            patCollecting_.clear();
+
+            const std::uint8_t* payload = packet.data() + info.payloadOffset;
+            const std::size_t payloadSize = mpegts::kPacketSize - info.payloadOffset;
+            if (payloadSize >= 1U) {
+                const std::size_t sectionStart = 1U + static_cast<std::size_t>(payload[0]);
+                if (sectionStart + 12U <= payloadSize && payload[sectionStart] == 0x00U) {
+                    const std::size_t sectionLength =
+                        (static_cast<std::size_t>(payload[sectionStart + 1U] & 0x0fU) << 8U) |
+                        static_cast<std::size_t>(payload[sectionStart + 2U]);
+                    const std::size_t sectionSize = 3U + sectionLength;
+                    if (sectionSize >= 12U && sectionStart + sectionSize <= payloadSize) {
+                        const std::size_t entriesEnd = sectionStart + sectionSize - 4U;
+                        std::uint16_t discovered = mpegts::kNullPid;
+                        for (std::size_t off = sectionStart + 8U; off + 4U <= entriesEnd; off += 4U) {
+                            const std::uint16_t service = static_cast<std::uint16_t>(
+                                (static_cast<std::uint16_t>(payload[off]) << 8U) |
+                                payload[off + 1U]);
+                            const std::uint16_t pid = static_cast<std::uint16_t>(
+                                (static_cast<std::uint16_t>(payload[off + 2U] & 0x1fU) << 8U) |
+                                payload[off + 3U]);
+                            if (service != 0U && pid < mpegts::kNullPid) {
+                                discovered = pid;
+                                break;
+                            }
+                        }
+                        if (discovered != mpegts::kNullPid && discovered != pmtPid_) {
+                            pmtPid_ = discovered;
+                            pmtCollecting_.clear();
+                            pmtPrefix_.clear();
+                        }
+                    }
+                }
+            }
+        }
+        if ((info.payloadUnitStart || !patCollecting_.empty()) &&
+            patCollecting_.size() < kMaxPsiPackets) {
+            patCollecting_.push_back(packet);
+        }
+        return;
+    }
+
+    if (pmtPid_ != mpegts::kNullPid && info.pid == pmtPid_) {
+        if (info.payloadUnitStart) {
+            if (!pmtCollecting_.empty()) pmtPrefix_ = pmtCollecting_;
+            pmtCollecting_.clear();
+        }
+        if ((info.payloadUnitStart || !pmtCollecting_.empty()) &&
+            pmtCollecting_.size() < kMaxPsiPackets) {
+            pmtCollecting_.push_back(packet);
+        }
+    }
+}
+
+bool NativeHlsSegmenter::writePsiPrefix() {
+    auto writePackets = [this](const std::vector<mpegts::Packet>& packets) {
+        for (const auto& packet : packets) {
+            segment_.write(reinterpret_cast<const char*>(packet.data()),
+                           static_cast<std::streamsize>(packet.size()));
+            if (!segment_) return false;
+        }
+        return true;
+    };
+    if (!patPrefix_.empty() && !writePackets(patPrefix_)) return false;
+    if (!pmtPrefix_.empty() && !writePackets(pmtPrefix_)) return false;
+    return true;
+}
+
 bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
     mpegts::PacketInfo info;
     if (!mpegts::inspectPacket(packet.data(), packet.size(), info)) return true;
+    observePsi(packet, info);
 
     if (waitingForIndependentStart_) {
         // For ABR, do not publish a first segment that begins between IDRs.
@@ -156,9 +238,13 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         if (!haveFirstPcr_) { firstPcr_ = lastPcr_; haveFirstPcr_ = true; }
         const double elapsed = pcrDeltaSeconds(firstPcr_, lastPcr_);
         const bool targetReached = segmentHasPackets_ && elapsed >= config_.targetDurationSeconds;
+        // DVB passthrough encoders do not always set random_access_indicator.
+        // Prefer a PCR-bearing PES boundary instead of waiting six seconds
+        // and then cutting at an arbitrary PCR in the middle of transport.
+        const bool passthroughPesBoundary = !config_.independentSegments && info.payloadUnitStart;
         const bool hardLimit = !config_.independentSegments &&
             segmentHasPackets_ && elapsed >= config_.targetDurationSeconds * 3.0;
-        if (targetReached && (info.randomAccess || hardLimit)) {
+        if (targetReached && (info.randomAccess || passthroughPesBoundary || hardLimit)) {
             if (!rotate(std::max(0.001, elapsed))) return false;
             firstPcr_ = lastPcr_;
             haveFirstPcr_ = true;
@@ -177,6 +263,13 @@ bool NativeHlsSegmenter::openSegment() {
     segmentPath_ = config_.directory / name.str();
     segment_.open(segmentPath_, std::ios::binary | std::ios::trunc);
     if (!segment_.is_open()) { fail("failed to create HLS segment " + segmentPath_.string()); return false; }
+    // The first segment naturally starts with remapper PSI. For every later
+    // segment prepend the last complete PAT/PMT repetition so a fresh HLS
+    // demuxer never sees audio/video packets before program metadata.
+    if (completedSegments_ > 0 && !writePsiPrefix()) {
+        fail("failed to write HLS PAT/PMT prefix");
+        return false;
+    }
     return true;
 }
 
