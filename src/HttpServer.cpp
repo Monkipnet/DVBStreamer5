@@ -2349,6 +2349,8 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
            ((outputType == "http" || outputType == "hls") ? configManager.config.httpPort : 5000))));
     int basePort = std::clamp(request.get("base_port", defaultPort).asInt(), 1, 65535);
     const std::string interfaceAddress = request.get("interface_address", "").asString();
+    std::string activationMode = toLower(request.get("activation_mode", "online").asString());
+    if (activationMode != "ondemand") activationMode = "online";
     const bool autoStart = request.get("auto_start", false).asBool();
 
     bool cbr = request.get("cbr", outputType == "udp-cbr").asBool();
@@ -2365,6 +2367,11 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
     if (srtPbKeyLen != 16 && srtPbKeyLen != 24 && srtPbKeyLen != 32) srtPbKeyLen = 16;
 
     const bool sharedHttpPort = outputType == "http" || outputType == "hls";
+    if (activationMode == "ondemand" && !sharedHttpPort) {
+        response["error"] = "OnDemand requires HTTP or HLS output";
+        Json::StreamWriterBuilder writer;
+        return Json::writeString(writer, response);
+    }
     const std::string conditionalAccessClient = request.get("conditional_access_client", "").asString();
     bool hasScrambledSelection = false;
     for (const auto& selected : request["channels"]) {
@@ -2425,7 +2432,8 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
         config.inputUri = inputUri;
         config.inputMode = "auto";
         config.testPattern = false;
-        config.autoStart = autoStart;
+        config.activationMode = activationMode;
+        config.autoStart = autoStart && activationMode == "online";
         config.outputType = outputType;
         config.outputMode = outputMode;
         config.outputHost = outputHost;
@@ -2479,12 +2487,28 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
 
 bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target) {
     std::string id;
-    if (!resolveHttpMpegTsTarget(configManager.config.streams, target, id)) {
+    const bool publicHttp = resolveHttpMpegTsTarget(configManager.config.streams, target, id);
+    if (!publicHttp) {
         if (!resolvePrivatePreviewTarget(target, id) ||
             !findStreamConfigById(configManager.config.streams, id) ||
             !streamManager.isStreamActive(id)) return false;
     }
     if (id.empty()) return false;
+    if (publicHttp) {
+        std::string demandError;
+        if (!streamManager.ensureOnDemandStream(id, "http", &demandError)) {
+            const std::string body = "On-demand stream unavailable\n";
+            const std::string unavailable =
+                "HTTP/1.1 503 Service Unavailable\\r\\n"
+                "Server: DVBStreamer5\\r\\n"
+                "Content-Type: text/plain; charset=utf-8\\r\\n"
+                "Retry-After: 1\\r\\n"
+                "Connection: close\\r\\n"
+                "Content-Length: " + std::to_string(body.size()) + "\\r\\n\\r\\n" + body;
+            boost::asio::write(socket, boost::asio::buffer(unavailable));
+            return true;
+        }
+    }
 
     const std::string header =
         "HTTP/1.1 200 OK\r\n"
@@ -2519,8 +2543,21 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
 
     const StreamConfig* cfg = findStreamConfigById(configManager.config.streams, id);
     if (!cfg) return false;
+    std::string demandError;
+    if (!streamManager.ensureOnDemandStream(id, "hls", &demandError)) {
+        res.result(http::status::service_unavailable);
+        res.set(http::field::content_type, "text/plain");
+        res.set("Retry-After", "1");
+        res.body() = "On-demand stream unavailable";
+        return true;
+    }
     const std::filesystem::path filePath = hlsStorageDirectory(*cfg) / fileName;
     const std::string archivePlaylist = buildHlsArchivePlaylist(*cfg, fileName);
+    if (archivePlaylist.empty() && cfg->activationMode == "ondemand" && filePath.extension() == ".m3u8") {
+        for (int attempt = 0; attempt < 30 && !std::filesystem::exists(filePath); ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
     if (!archivePlaylist.empty()) {
         res.body() = archivePlaylist;
     } else {
@@ -2943,6 +2980,14 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     for (auto& stream : nextConfig.streams) {
         stream.srtVpsVdsOptimization = nextConfig.srtVpsVdsOptimization;
     }
+    for (const auto& stream : nextConfig.streams) {
+        if (stream.activationMode == "ondemand" &&
+            !hasOutputType(stream, "http") && !hasOutputType(stream, "hls")) {
+            Json::Value response; response["result"] = "error";
+            response["error"] = "OnDemand stream requires at least one HTTP or HLS output: " + stream.id;
+            Json::StreamWriterBuilder writer; return Json::writeString(writer, response);
+        }
+    }
 
     std::string listenerError;
     if (!validateHttpPortsForConfig(nextConfig, listenerError)) {
@@ -2962,7 +3007,8 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
         }
         const auto previous = previousStreams.find(id);
         if (previous == previousStreams.end() || !sameStreamConfig(previous->second, next->second)) {
-            streamsToRestart.push_back(next->second);
+            if (next->second.activationMode == "ondemand") streamsToStop.push_back(id);
+            else streamsToRestart.push_back(next->second);
         }
     }
 
@@ -2972,7 +3018,7 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     refreshHttpPorts();
 
     for (const auto& id : streamsToStop) {
-        std::cerr << "Stopping removed stream after config save: " << id << std::endl;
+        std::cerr << "Stopping stream after config save: " << id << std::endl;
         streamManager.stopStream(id);
     }
     for (const auto& stream : streamsToRestart) {
@@ -4589,6 +4635,7 @@ function streamTileStructureSignature(stream) {
     input_service_id: stream.input_service_id,
     service_id: stream.service_id,
     conditional_access_client: stream.conditional_access_client,
+    activation_mode: stream.activation_mode || 'online',
     cbr: stream.cbr,
     outputs: outputConfigsForStream(stream),
     links: streamLinks(stream)
@@ -4654,7 +4701,7 @@ function updateStreamTile(tile, stream) {
   const statusPill = tile.querySelector('[data-role="status-pill"]');
   if (statusPill) {
     statusPill.className = `status-pill ${stream.active ? 'active' : 'stopped'}`;
-    statusPill.textContent = stream.active ? (stream.using_backup ? 'Backup' : 'Online') : 'Offline';
+    statusPill.textContent = stream.active ? (stream.using_backup ? 'Backup' : 'Online') : ((stream.activation_mode || 'online') === 'ondemand' ? 'OnDemand' : 'Offline');
   }
   const runtimeStatus = tile.querySelector('[data-role="runtime-status"]');
   if (runtimeStatus) {
@@ -6086,6 +6133,13 @@ async function saveSelectedSatelliteChannels() {
   }
   const saveButton = document.getElementById('satSaveButton');
   if (saveButton) saveButton.disabled = true;
+  const activationMode = document.getElementById('satActivationMode')?.value === 'ondemand' ? 'ondemand' : 'online';
+  const satelliteOutputType = document.getElementById('satOutputType')?.value || 'udp-vbr';
+  if (activationMode === 'ondemand' && !['http','hls'].includes(String(satelliteOutputType).toLowerCase())) {
+    alert('OnDemand требует выход HTTP или HLS. Для UDP/RTP/SRT/RTSP/RTMP выберите Online.');
+    if (saveButton) saveButton.disabled = false;
+    return;
+  }
   const payload = {
     channels:selected,
     output_type:document.getElementById('satOutputType')?.value || 'udp-vbr',
@@ -6100,7 +6154,8 @@ async function saveSelectedSatelliteChannels() {
     srt_streamid:document.getElementById('satSrtStreamId')?.value || '',
     srt_pbkeylen:Number(document.getElementById('satSrtPbKeyLen')?.value || 16),
     conditional_access_client:document.getElementById('satCamClientSelect')?.value || '',
-    auto_start:document.getElementById('satAutoStart')?.checked === true
+    activation_mode:activationMode,
+    auto_start:activationMode === 'online' && document.getElementById('satAutoStart')?.checked === true
   };
   try {
     const response = await fetch('/api/dvb-add-channels', {
@@ -6167,6 +6222,7 @@ function openAddChannelModal() {
         <div class="sat-field"><label>SRT Passphrase</label><input id="satSrtPassphrase" type="password" autocomplete="new-password" placeholder="10–79 chars, optional" /></div>
       </div>
       <div class="sat-field"><label>Выходной интерфейс</label><select id="satOutputInterface"><option value="">Авто (системный маршрут)</option>${(state.interfaces||[]).map(i=>`<option value="${satEscape(i.address)}">${satEscape(i.name)} (${satEscape(i.address)})</option>`).join('')}</select></div>
+      <div class="sat-field wide"><label>Режим каналов транспондера</label><select id="satActivationMode" onchange="const a=document.getElementById('satAutoStart');if(a){a.disabled=this.value==='ondemand';if(this.value==='ondemand')a.checked=false;}"><option value="online">Online</option><option value="ondemand">OnDemand</option></select><small>Глобально для всех выбранных каналов. OnDemand запускает поток и CAM только при HTTP/HLS клиенте; UDP/RTP/SRT/RTSP/RTMP не могут определить пассивного получателя.</small></div>
       <div class="sat-field wide"><label>Автозапуск</label><div class="checkbox-inline"><input id="satAutoStart" type="checkbox" /><span>Запускать созданные каналы после перезапуска</span></div></div>
     </div>
     <div class="modal-actions">
@@ -6186,7 +6242,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', additional_outputs:[]
   });
 }
@@ -6458,7 +6514,8 @@ function openStreamForm(stream) {
         <div class="form-row full"><label>HLS архив (DVR)</label><div class="row-inline compact-row"><label class="checkbox-inline"><input id="streamHlsArchiveEnabled" type="checkbox" ${stream.hls_archive_enabled?'checked':''} /><span>Записывать архив</span></label><input id="streamHlsArchiveHours" type="number" min="1" max="168" value="${stream.hls_archive_hours||24}" style="max-width:110px" /><span>часов</span><input id="streamHlsArchivePath" value="${stream.hls_archive_path||'/var/lib/dvbstreamer5/archive'}" placeholder="/var/lib/dvbstreamer5/archive" /></div><small>Архив сохраняет HLS TS-сегменты на диск. Совместимые URL: /КАНАЛ/archive-UTC-ДЛИТЕЛЬНОСТЬ.m3u8, /КАНАЛ/rewind-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_rel-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_abs-UTC.m3u8.</small></div>
         <div class="form-row full"><label>HLS контейнер / шифрование</label><div class="row-inline compact-row"><select id="streamHlsContainer"><option value="mpegts" ${(stream.hls_container||'mpegts')==='mpegts'?'selected':''}>MPEG-TS</option><option value="cmaf" ${stream.hls_container==='cmaf'?'selected':''}>fMP4 / CMAF + EXT-X-MAP</option></select><select id="streamHlsEncryption"><option value="none" ${(!stream.hls_encryption||stream.hls_encryption==='none')?'selected':''}>Без шифрования</option><option value="aes-128" ${stream.hls_encryption==='aes-128'?'selected':''}>AES-128</option><option value="sample-aes" ${stream.hls_encryption==='sample-aes'?'selected':''}>SAMPLE-AES (TS/CMAF)</option></select><input id="streamHlsEncryptionKeyUri" value="${stream.hls_encryption_key_uri||'key.bin'}" placeholder="key.bin" /><input id="streamHlsEncryptionKeyHex" value="${stream.hls_encryption_key_hex||''}" autocomplete="off" placeholder="32 hex; пусто = сгенерировать" /></div><small>CMAF создаёт init.mp4 и .m4s и публикует EXT-X-MAP. SAMPLE-AES работает для MPEG-TS и CMAF/cbcs; AES-128 whole-segment — только MPEG-TS HLS.</small></div>
         <div class="form-row full" id="streamTranscodeControls" style="display:${(stream.transcode_enabled && transcoderAvailable)?'block':'none'}"><label>Параметры транскодирования</label><div class="row-inline compact-row"><select id="streamTranscodeVideoCodec" onchange="updateTranscodeVideoControls()"><option value="h264" ${(stream.transcode_video_codec||'h264')==='h264'?'selected':''}>Видео: H.264 транскодирование</option><option value="hevc" ${stream.transcode_video_codec==='hevc'?'selected':''} ${transcoderInfo.hevc_video_encoder?'':'disabled'}>Видео: H.265 / HEVC транскодирование${transcoderInfo.hevc_video_encoder?'':' (недоступно)'}</option><option value="copy" ${stream.transcode_video_codec==='copy'?'selected':''}>Видео: проброс оригинального потока</option></select><select id="streamTranscodeVideoEncoder" onchange="updateTranscodeVideoControls()"><option value="auto" ${(!stream.transcode_video_encoder||stream.transcode_video_encoder==='auto')?'selected':''}>Кодировщик: Auto (NVENC → QSV/VAAPI → CPU)</option><option value="nvenc" ${stream.transcode_video_encoder==='nvenc'?'selected':''} ${transcoderInfo.nvenc_available?'':'disabled'}>Кодировщик: NVIDIA NVENC${transcoderInfo.nvenc_available?'':' (недоступен)'}</option><option value="qsv" ${stream.transcode_video_encoder==='qsv'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Кодировщик: Intel QSV / oneVPL${transcoderInfo.intel_available ? ` (${transcoderInfo.intel_encoder})` : ' (недоступен)'}</option><option value="vaapi" ${stream.transcode_video_encoder==='vaapi'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Кодировщик: Intel VAAPI direct${transcoderInfo.intel_available ? ` (${transcoderInfo.intel_encoder})` : ' (недоступен)'}</option><option value="cpu" ${stream.transcode_video_encoder==='cpu'?'selected':''} ${transcoderInfo.x264_available?'':'disabled'}>Кодировщик: CPU (OpenH264 / Kvazaar)${transcoderInfo.x264_available?'':' (недоступен)'}</option></select><select id="streamTranscodeResolution" onchange="applyRecommendedTranscodeBitrate()"><option value="3840x2160" ${stream.transcode_resolution==='3840x2160'?'selected':''}>3840×2160 (4K UHD)</option><option value="3200x1800" ${stream.transcode_resolution==='3200x1800'?'selected':''}>3200×1800 (3K)</option><option value="2560x1440" ${stream.transcode_resolution==='2560x1440'?'selected':''}>2560×1440 (2K QHD)</option><option value="1920x1080" ${(!stream.transcode_resolution||stream.transcode_resolution==='1920x1080')?'selected':''}>1920×1080 (Full HD)</option><option value="1280x720" ${stream.transcode_resolution==='1280x720'?'selected':''}>1280×720 (HD)</option><option value="1024x576" ${stream.transcode_resolution==='1024x576'?'selected':''}>1024×576 (SD 16:9, квадратный пиксель)</option><option value="720x576_16_9" ${stream.transcode_resolution==='720x576_16_9'?'selected':''}>720×576 (SD 16:9, анаморфный)</option><option value="720x576" ${stream.transcode_resolution==='720x576'?'selected':''}>720×576 (PAL SD, прежний режим)</option></select><input id="streamTranscodeBitrate" type="number" min="500" max="100000" step="100" value="${Math.round((stream.transcode_video_bitrate||6000000)/1000)}" placeholder="6000" /><span>кбит/с CBR</span></div><div class="row-inline compact-row" style="margin-top:8px"><select id="streamTranscodeAudioCodec" onchange="updateTranscodeAudioControls()"><option value="copy" ${stream.transcode_audio_codec==='copy'?'selected':''}>Аудио: проброс оригинальной дорожки</option><option value="aac" ${(stream.transcode_audio_codec||'aac')==='aac'?'selected':''} ${transcoderInfo.aac_encoder?'':'disabled'}>Аудио: AAC-LC${transcoderInfo.aac_encoder?'':' (недоступен)'}</option><option value="mp3" ${stream.transcode_audio_codec==='mp3'?'selected':''} ${transcoderInfo.mp3_encoder?'':'disabled'}>Аудио: MP3${transcoderInfo.mp3_encoder?'':' (недоступен)'}</option><option value="mp2" ${stream.transcode_audio_codec==='mp2'?'selected':''} ${transcoderInfo.mp2_encoder_available?'':'disabled'}>Аудио: MP2 (MPEG-1 Layer II)${transcoderInfo.mp2_encoder_available?'':' (недоступен)'}</option></select><select id="streamTranscodeAudioBitrate" ${stream.transcode_audio_codec==='copy'?'disabled':''}><option value="96000" ${(stream.transcode_audio_bitrate||192000)===96000?'selected':''}>96 кбит/с</option><option value="128000" ${(stream.transcode_audio_bitrate||192000)===128000?'selected':''}>128 кбит/с</option><option value="160000" ${(stream.transcode_audio_bitrate||192000)===160000?'selected':''}>160 кбит/с</option><option value="192000" ${(stream.transcode_audio_bitrate||192000)===192000?'selected':''}>192 кбит/с</option><option value="256000" ${(stream.transcode_audio_bitrate||192000)===256000?'selected':''}>256 кбит/с</option><option value="320000" ${(stream.transcode_audio_bitrate||192000)===320000?'selected':''}>320 кбит/с</option></select><span>аудио</span></div><div class="row-inline compact-row" style="margin-top:8px"><label class="checkbox-inline"><input id="streamTranscodeMultibitrate" type="checkbox" ${stream.transcode_multibitrate_enabled?'checked':''} /><span>Мультибитрейт HLS (ABR)</span></label></div><small>MP2 uses the in-tree TwoLAME encoder. H.264/HEVC: direct NVENC, Intel QSV/oneVPL→VAAPI и CPU OpenH264/Kvazaar; без FFmpeg/GStreamer/libav. HLS ABR создаёт master.m3u8 и до трёх дополнительных профилей. Интерлейс 576i/1080i деинтерлейсится YADIF по всем полям с сохранением 50 Гц движения; SPS/PPS повторяются на каждом IDR.</small></div>
-        <div class="form-row full"><label>Автозапуск</label><div class="checkbox-inline"><input id="streamAutoStart" type="checkbox" ${stream.auto_start ? 'checked' : ''} /><span>Запускать после перезапуска программы</span></div></div>
+        <div class="form-row full"><label>Online / OnDemand</label><select id="streamActivationMode" onchange="const a=document.getElementById('streamAutoStart');if(a){a.disabled=this.value==='ondemand';if(this.value==='ondemand')a.checked=false;}"><option value="online" ${(stream.activation_mode||'online')==='online'?'selected':''}>Online</option><option value="ondemand" ${stream.activation_mode==='ondemand'?'selected':''}>OnDemand</option></select><small>OnDemand: вход, декодирование/CAM и выход запускаются по первому HTTP/HLS клиенту и останавливаются при отсутствии клиентов. Для UDP/RTP/SRT/RTSP/RTMP используйте Online.</small></div>
+        <div class="form-row full"><label>Автозапуск</label><div class="checkbox-inline"><input id="streamAutoStart" type="checkbox" ${stream.auto_start ? 'checked' : ''} ${stream.activation_mode==='ondemand' ? 'disabled' : ''} /><span>Запускать после перезапуска программы</span></div></div>
         <div class="form-row full" id="streamCbrRow"><label>Включить CBR</label><div class="checkbox-inline"><input id="streamCbr" type="checkbox" ${stream.cbr ? 'checked' : ''} onchange="syncUdpCbrModeFromCheckbox()" /><span>CBR</span></div><small>CBR поддерживается для UDP, HTTP, HLS и SRT.</small></div>
         <div class="form-row full"><label>Включить Remap</label><div class="checkbox-inline"><input id="streamRemapEnabled" type="checkbox" ${stream.remap_enabled ? 'checked' : ''} /><span>Remap PID / Service</span></div><small>Для MPEG-TS: SID входа 0 = автоопределение программы из PAT; ненулевой SID выбирает конкретный входной канал. SID выхода всегда задаётся отдельно и используется для Remap в PAT/PMT/SDT. V-PID и A-PID задают выходные PID.</small></div>
       </div>
@@ -6703,6 +6760,11 @@ function saveStream(id) {
     ? true
     : (selectedOutputType === 'udp-vbr' ? false : Boolean(cbrCheckbox?.checked));
   const selectedInputMode = document.getElementById('streamInputMode').value;
+  const activationMode = document.getElementById('streamActivationMode')?.value === 'ondemand' ? 'ondemand' : 'online';
+  if (activationMode === 'ondemand' && !outputs.some(output => ['http','hls'].includes(String(output.output_type || '').toLowerCase()))) {
+    uiError('OnDemand требует хотя бы один выход HTTP или HLS, где сервер может определить подключение клиента.');
+    return;
+  }
   const payload = {
     id: id,
     name: document.getElementById('streamName').value,
@@ -6733,7 +6795,8 @@ function saveStream(id) {
     hls_slow_pcr_assist: selectedInputMode === 'hls' && document.getElementById('streamHlsSlowPcrAssist')?.checked === true,
     hls_pcr_phase_pacing: selectedInputMode === 'hls' && document.getElementById('streamHlsPcrPhasePacing')?.checked === true,
     test_pattern: document.getElementById('streamTestPattern').checked,
-    auto_start: document.getElementById('streamAutoStart').checked,
+    activation_mode: activationMode,
+    auto_start: activationMode === 'online' && document.getElementById('streamAutoStart').checked,
     remap_enabled: document.getElementById('streamRemapEnabled').checked,
     cbr: selectedCbr,
     target_bitrate: Number(document.getElementById('streamBitrate').value) * 1000,
