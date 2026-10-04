@@ -152,6 +152,20 @@ process owns an established TCP socket on the configured upstream port. Startup 
 authentication errors are derived from the bundled Newcamd client log messages; local
 mouse/Phoenix/PCSC card status handling is unchanged.
 
+## DVBStreamer5 CAM listener synchronization
+
+V10.8.66 synchronizes loopback Newcamd CAM clients with OSCam-mini downstream
+listeners. A CAM client such as `127.0.0.1:4004` is matched to the enabled Remote
+Newcamd reader `remote_<cam-client-id>`; OSCam-mini then creates/updates the local
+listener/account on that same port using the reader CAID/provider/group. The CAM
+client DES key becomes the shared downstream OSCam Newcamd key. Multiple loopback
+CAM clients therefore must use the same downstream DES key. Direct remote CAM
+clients are left unchanged.
+
+Synchronization runs at DVBStreamer5 startup, after CAM-client configuration
+changes, and again when OSCam-mini settings are saved. This prevents a saved CAM
+endpoint from silently pointing at a port that OSCam-mini does not listen on.
+
 ## Remote Newcamd readers
 
 Choose **Remote Newcamd** in a reader row and configure the upstream endpoint.

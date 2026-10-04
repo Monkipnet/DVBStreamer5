@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+struct CamClientConfig;
+
 class OscamMiniManager {
 public:
     static OscamMiniManager& instance();
@@ -18,6 +20,7 @@ public:
     std::string saveSettingsJson(const std::string& body);
     std::string serviceActionJson(const std::string& body);
     std::string renderPage();
+    bool synchronizeCamClients(const std::vector<CamClientConfig>& clients, std::string& error);
 
 private:
     OscamMiniManager() = default;
@@ -63,6 +66,8 @@ private:
     };
 
     Settings loadLocked();
+    bool mergeCamClientsLocked(Settings& settings, const std::vector<CamClientConfig>& clients,
+                               std::string& error, bool& changed);
     bool saveLocked(const Settings& settings, std::string& error);
     Json::Value statusLocked();
 

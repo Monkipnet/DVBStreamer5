@@ -1,6 +1,7 @@
 #include "CardManager.h"
 
 #include "CaBackend.h"
+#include "OscamMiniManager.h"
 
 #include <algorithm>
 #include <ctime>
@@ -50,6 +51,10 @@ void CardManager::configure(const std::vector<CamClientConfig>& clients) {
         std::lock_guard<std::mutex> lock(configMutex_);
         clients_ = std::move(normalized);
         configured = clients_;
+    }
+    std::string oscamSyncError;
+    if (!OscamMiniManager::instance().synchronizeCamClients(configured, oscamSyncError)) {
+        std::cerr << "OSCam-mini CAM listener synchronization failed: " << oscamSyncError << std::endl;
     }
     CaBackendManager::instance().configure(configured);
 }
