@@ -83,6 +83,9 @@ struct StreamConfig {
     // adjacent PCR anchors are known before packets enter the token sender. Off by default.
     bool hlsPcrPhasePacing = false;
     bool testPattern = false;
+    // V10.8.71: channel activation policy. Online keeps the full media/CA
+    // pipeline running; OnDemand starts it only for an observable client.
+    std::string activationMode = "online"; // online | ondemand
     bool autoStart = false;
     bool remapEnabled = false;
     bool cbr = true;

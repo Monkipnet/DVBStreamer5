@@ -176,9 +176,12 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     : configManager(cfg), telegramNotifier(notifier),
       mptsOutputManager(std::make_unique<MptsOutputManager>()) {
     configureMptsOutputs();
+    onDemandMonitorThread = std::thread(&StreamManager::monitorOnDemandStreams, this);
 }
 
 StreamManager::~StreamManager() {
+    onDemandMonitorStop.store(true, std::memory_order_release);
+    if (onDemandMonitorThread.joinable()) onDemandMonitorThread.join();
     stopAll();
 }
 
@@ -1343,6 +1346,100 @@ bool StreamManager::isStreamActive(const std::string& id) {
     std::lock_guard<std::mutex> lock(managerMutex);
     const auto it = streams.find(id);
     return it != streams.end() && it->second->active.load();
+}
+
+bool StreamManager::ensureOnDemandStream(const std::string& id, const std::string& source,
+                                         std::string* error) {
+    if (error) error->clear();
+    StreamConfig cfg;
+    bool found = false;
+    for (const auto& candidate : configManager.config.streams) {
+        if (candidate.id == id) {
+            cfg = candidate;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        if (error) *error = "stream is not configured";
+        return false;
+    }
+    if (toLower(cfg.activationMode) != "ondemand") return true;
+
+    std::lock_guard<std::mutex> demandLock(onDemandMutex);
+    onDemandLastActivity[id] = std::chrono::steady_clock::now();
+    if (isStreamActive(id)) return true;
+
+    std::string startError;
+    if (!startStream(cfg, &startError)) {
+        // A manual start may win the race between the pre-check and startStream().
+        if (isStreamActive(id)) return true;
+        if (error) *error = startError.empty() ? "failed to start on-demand stream" : startError;
+        std::cerr << "ONDEMAND ACTIVATE FAILED stream=" << id
+                  << " source=" << source << std::endl;
+        return false;
+    }
+    onDemandStartedStreams.insert(id);
+    std::cerr << "ONDEMAND ACTIVATE stream=" << id
+              << " source=" << source
+              << " ca=" << (cfg.conditionalAccessClient.empty() ? "fta" : "managed")
+              << std::endl;
+    return true;
+}
+
+void StreamManager::monitorOnDemandStreams() {
+    constexpr auto kIdleGrace = std::chrono::seconds(10);
+    while (!onDemandMonitorStop.load(std::memory_order_acquire)) {
+        for (int i = 0; i < 4 && !onDemandMonitorStop.load(std::memory_order_acquire); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        if (onDemandMonitorStop.load(std::memory_order_acquire)) break;
+
+        std::lock_guard<std::mutex> demandLock(onDemandMutex);
+        const auto now = std::chrono::steady_clock::now();
+        for (auto it = onDemandStartedStreams.begin(); it != onDemandStartedStreams.end();) {
+            const std::string id = *it;
+            bool stillOnDemand = false;
+            for (const auto& cfg : configManager.config.streams) {
+                if (cfg.id == id) {
+                    stillOnDemand = toLower(cfg.activationMode) == "ondemand";
+                    break;
+                }
+            }
+            if (!stillOnDemand) {
+                onDemandLastActivity.erase(id);
+                it = onDemandStartedStreams.erase(it);
+                continue;
+            }
+
+            bool hasHttpClient = false;
+            {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                for (const auto& [fd, session] : httpClients) {
+                    (void)fd;
+                    if (session.streamId == id && session.previewSession.empty()) {
+                        hasHttpClient = true;
+                        break;
+                    }
+                }
+            }
+            const auto activity = onDemandLastActivity.find(id);
+            const bool recentActivity = activity != onDemandLastActivity.end() &&
+                now - activity->second < kIdleGrace;
+            if (hasHttpClient || recentActivity) {
+                ++it;
+                continue;
+            }
+
+            it = onDemandStartedStreams.erase(it);
+            onDemandLastActivity.erase(id);
+            if (isStreamActive(id)) {
+                std::cerr << "ONDEMAND DEACTIVATE stream=" << id
+                          << " reason=no-clients idle_s=10" << std::endl;
+                stopStream(id);
+            }
+        }
+    }
 }
 
 std::vector<std::string> StreamManager::activeStreams() {

@@ -413,6 +413,8 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     // interval pacing wins if an old API client accidentally submits both flags.
     if (config.hlsPcrPhasePacing) config.hlsSlowPcrAssist = false;
     config.testPattern = root.get("test_pattern", false).asBool();
+    config.activationMode = toLower(root.get("activation_mode", "online").asString());
+    if (config.activationMode != "ondemand") config.activationMode = "online";
     config.autoStart = root.get("auto_start", false).asBool();
     config.remapEnabled = root.get("remap_enabled", false).asBool();
     config.cbr = root.get("cbr", true).asBool();
@@ -530,6 +532,7 @@ Json::Value StreamConfig::toJson() const {
     root["hls_slow_pcr_assist"] = hlsSlowPcrAssist;
     root["hls_pcr_phase_pacing"] = hlsPcrPhasePacing;
     root["test_pattern"] = testPattern;
+    root["activation_mode"] = activationMode == "ondemand" ? "ondemand" : "online";
     root["auto_start"] = autoStart;
     root["remap_enabled"] = remapEnabled;
     root["cbr"] = cbr;

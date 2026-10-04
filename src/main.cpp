@@ -52,7 +52,12 @@ int main() {
 
     std::cerr << "HTTP server started" << std::endl;
     for (const auto& stream : configManager.config.streams) {
-        if (!stream.autoStart) continue;
+        if (!stream.autoStart || stream.activationMode == "ondemand") {
+            if (stream.autoStart && stream.activationMode == "ondemand") {
+                std::cerr << "On-demand stream kept idle at startup: " << stream.id << std::endl;
+            }
+            continue;
+        }
         std::cerr << "Auto-starting stream: " << stream.id << std::endl;
         try {
             std::string startError;

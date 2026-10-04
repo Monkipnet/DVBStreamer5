@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <utility>
@@ -278,6 +279,8 @@ public:
     bool stopStreamAsync(const std::string& id);
     void stopAll();
     bool isStreamActive(const std::string& id);
+    bool ensureOnDemandStream(const std::string& id, const std::string& source,
+                              std::string* error = nullptr);
     std::vector<std::string> activeStreams();
     std::map<std::string, StreamState*> snapshot();
 
@@ -324,6 +327,7 @@ private:
     static bool isNativeInputSupported(const StreamConfig& cfg, std::string& reason);
     static bool isNativeOutputSupported(const std::string& type, std::string& reason);
     void monitorNativeStream(StreamState* state);
+    void monitorOnDemandStreams();
 
     ConfigManager& configManager;
     TelegramNotifier& telegramNotifier;
@@ -333,5 +337,10 @@ private:
     std::map<int, HttpClientSession> httpClients;
     std::map<std::string, HttpClientSession> adHocSessions;
     mutable std::mutex managerMutex;
+    std::mutex onDemandMutex;
+    std::set<std::string> onDemandStartedStreams;
+    std::map<std::string, std::chrono::steady_clock::time_point> onDemandLastActivity;
+    std::atomic<bool> onDemandMonitorStop{false};
+    std::thread onDemandMonitorThread;
     std::atomic<uint64_t> nextSessionId{0};
 };
