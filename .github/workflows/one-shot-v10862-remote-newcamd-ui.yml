@@ -1,0 +1,301 @@
+name: V10.8.62 Remote Newcamd reader UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-v10862-remote-newcamd-ui.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply Remote Newcamd reader UI
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def rep(text, old, new, label, count=1):
+              n = text.count(old)
+              if n != count:
+                  raise SystemExit(f'{label}: expected {count} match(es), got {n}')
+              return text.replace(old, new, count)
+
+          # Header: persist Remote Newcamd endpoint/account fields independently
+          # from local serial/PCSC device fields.
+          p = Path('src/OscamMiniManager.h')
+          s = p.read_text()
+          s = rep(s,
+              '        std::string protocol = "mouse";\n        std::string device;\n        std::string caid;\n',
+              '        std::string protocol = "mouse";\n        std::string device;\n        std::string remoteHost;\n        int remotePort = 0;\n        std::string remoteUser;\n        std::string remotePassword;\n        std::string remoteKey;\n        std::string caid;\n',
+              'Reader remote fields')
+          p.write_text(s)
+
+          p = Path('src/OscamMiniManager.cpp')
+          s = p.read_text()
+
+          # Load an existing manually-created protocol=newcamd reader without
+          # destroying it when the page is opened/saved.
+          s = rep(s,
+              '        reader.device = getValue(entry, "device", "");\n        reader.caid = getValue(entry, "caid", "");\n',
+              '''        reader.device = getValue(entry, "device", "");
+        reader.remoteUser = getValue(entry, "user", "");
+        reader.remotePassword = getValue(entry, "password", "");
+        reader.remoteKey = getValue(entry, "key", "");
+        if (reader.protocol == "newcamd") {
+            const auto comma = reader.device.rfind(',');
+            if (comma != std::string::npos) {
+                reader.remoteHost = trimLocal(reader.device.substr(0, comma));
+                try {
+                    reader.remotePort = std::stoi(trimLocal(reader.device.substr(comma + 1)));
+                } catch (...) {
+                    reader.remotePort = 0;
+                }
+            }
+        }
+        reader.caid = getValue(entry, "caid", "");
+''',
+              'load remote Newcamd')
+
+          # Validation: local readers keep their strict device rules; remote
+          # Newcamd validates host/port/account/DES separately.
+          s = rep(s,
+              '        const bool pcsc = reader.protocol == "pcsc";\n',
+              '        const bool pcsc = reader.protocol == "pcsc";\n        const bool remoteNewcamd = reader.protocol == "newcamd";\n',
+              'remote protocol flag')
+          s = rep(s,
+              '        if ((pcsc && !pcscIndex) || (!pcsc && !serialDevice)) {\n',
+              '        if (!remoteNewcamd && ((pcsc && !pcscIndex) || (!pcsc && !serialDevice))) {\n',
+              'local device validation gate')
+          device_error_end = '''            return false;
+        }
+        if (!isHex(reader.caid, 4)) {'''
+          remote_validation = '''            return false;
+        }
+        if (remoteNewcamd) {
+            const bool hostOk = !reader.remoteHost.empty() && reader.remoteHost.size() <= 255 &&
+                reader.remoteHost.find_first_of("\\r\\n,;# \\t") == std::string::npos;
+            if (!hostOk || reader.remotePort < 1 || reader.remotePort > 65535) {
+                error = "Для Remote Newcamd укажите корректные Host и Port: " + reader.label;
+                return false;
+            }
+            if (reader.remoteUser.empty() || reader.remoteUser.size() > 128 ||
+                reader.remoteUser.find_first_of("\\r\\n;#") != std::string::npos ||
+                reader.remotePassword.empty() || reader.remotePassword.size() > 256 ||
+                reader.remotePassword.find_first_of("\\r\\n") != std::string::npos) {
+                error = "Для Remote Newcamd укажите корректные User и Password: " + reader.label;
+                return false;
+            }
+            if (!isHex(reader.remoteKey, 28)) {
+                error = "DES key Remote Newcamd ридера " + reader.label + " должен содержать 28 HEX-символов";
+                return false;
+            }
+        }
+        if (!isHex(reader.caid, 4)) {'''
+          s = rep(s, device_error_end, remote_validation, 'remote validation insertion')
+
+          s = rep(s,
+              '        if (reader.mhz < 100 || reader.mhz > 2000 || reader.cardmhz < 100 || reader.cardmhz > 2000) {\n',
+              '        if (!remoteNewcamd && (reader.mhz < 100 || reader.mhz > 2000 || reader.cardmhz < 100 || reader.cardmhz > 2000)) {\n',
+              'skip remote clock validation')
+
+          old_protocol_check = '''        if (reader.protocol != "mouse" && reader.protocol != "phoenix" &&
+            reader.protocol != "pcsc") {'''
+          new_protocol_check = '''        if (reader.protocol != "mouse" && reader.protocol != "phoenix" &&
+            reader.protocol != "pcsc" && reader.protocol != "newcamd") {'''
+          s = rep(s, old_protocol_check, new_protocol_check, 'allow newcamd protocol')
+
+          # Write protocol=newcamd using OSCam's native proxy-reader syntax.
+          s = rep(s,
+              '        server << "[reader]\\n"\n',
+              '        const std::string outputDevice = remoteNewcamd ? (reader.remoteHost + "," + std::to_string(reader.remotePort)) : reader.device;\n        server << "[reader]\\n"\n',
+              'output device')
+          s = rep(s,
+              '               << "device = " << safeIni(reader.device) << "\\n"\n               << "caid = " << safeIni(reader.caid) << "\\n";\n',
+              '''               << "device = " << safeIni(outputDevice) << "\\n"
+               << "caid = " << safeIni(reader.caid) << "\\n";
+        if (remoteNewcamd) {
+            server << "user = " << safeIni(reader.remoteUser) << "\\n"
+                   << "password = " << safeIni(reader.remotePassword) << "\\n"
+                   << "key = " << safeIni(reader.remoteKey) << "\\n"
+                   << "connectoninit = 1\\n";
+        }
+''',
+              'remote auth config')
+          s = rep(s,
+              '        server << "detect = " << (pcsc ? "none" : safeIni(reader.detect)) << "\\n";\n',
+              '        if (!remoteNewcamd) server << "detect = " << (pcsc ? "none" : safeIni(reader.detect)) << "\\n";\n',
+              'skip remote detect')
+          s = rep(s,
+              '        if (!pcsc) {\n            server << "mhz = " << reader.mhz << "\\n"\n',
+              '        if (!pcsc && !remoteNewcamd) {\n            server << "mhz = " << reader.mhz << "\\n"\n',
+              'skip remote clocks')
+
+          # Settings JSON round-trip.
+          s = rep(s,
+              '        value["device"] = reader.device;\n        value["caid"] = reader.caid;\n',
+              '''        value["device"] = reader.device;
+        value["remote_host"] = reader.remoteHost;
+        value["remote_port"] = reader.remotePort;
+        value["remote_user"] = reader.remoteUser;
+        value["remote_password"] = reader.remotePassword;
+        value["remote_key"] = reader.remoteKey;
+        value["caid"] = reader.caid;
+''',
+              'settings remote JSON')
+          s = rep(s,
+              '            reader.device = item.get("device", "").asString();\n            reader.caid = item.get("caid", "0652").asString();\n',
+              '''            reader.device = item.get("device", "").asString();
+            reader.remoteHost = item.get("remote_host", "").asString();
+            reader.remotePort = item.get("remote_port", 0).asInt();
+            reader.remoteUser = item.get("remote_user", "").asString();
+            reader.remotePassword = item.get("remote_password", "").asString();
+            reader.remoteKey = item.get("remote_key", "").asString();
+            reader.caid = item.get("caid", "0652").asString();
+''',
+              'save request remote JSON')
+
+          # Status dot: a successfully initialized Newcamd proxy is green; a
+          # connection attempt is yellow while it is coming up.
+          ready_old = '''            const bool ready = log.find(readyNeedle) != std::string::npos
+                || log.find(readyMouseNeedle) != std::string::npos;'''
+          ready_new = '''            const bool ready = log.find(readyNeedle) != std::string::npos
+                || log.find(readyMouseNeedle) != std::string::npos
+                || log.find(reader.label + " [newcamd] proxy initialized") != std::string::npos;'''
+          s = rep(s, ready_old, ready_new, 'remote status ready')
+          init_tail = '''                || log.find(reader.label + " [pcsc] found card system") != std::string::npos;'''
+          init_new = '''                || log.find(reader.label + " [pcsc] found card system") != std::string::npos
+                || log.find(reader.label + " [newcamd] connecting to ") != std::string::npos;'''
+          s = rep(s, init_tail, init_new, 'remote status connecting')
+
+          # Web UI: protocol option + endpoint/account fields. Keep local device
+          # controls untouched and switch the visible field group dynamically.
+          s = rep(s,
+              '<label>Найденный ридер<select class="reader-detected" onchange="chooseDetectedReader(this)">${detectedReaderOptions(r)}</select></label>\n<label>Устройство / индекс PC/SC<input class="reader-device" value="${esc(r.device||\'\')}" placeholder="/dev/serial/by-id/... или 0"></label>\n',
+              '<label class="reader-local">Найденный ридер<select class="reader-detected" onchange="chooseDetectedReader(this)">${detectedReaderOptions(r)}</select></label>\n<label class="reader-local">Устройство / индекс PC/SC<input class="reader-device" value="${esc(r.device||\'\')}" placeholder="/dev/serial/by-id/... или 0"></label>\n',
+              'mark local UI fields')
+          s = rep(s,
+              '<label>Протокол<select class="reader-protocol"><option value="mouse" ${r.protocol===\'mouse\'?\'selected\':\'\'}>mouse</option><option value="phoenix" ${r.protocol===\'phoenix\'?\'selected\':\'\'}>phoenix</option><option value="pcsc" ${r.protocol===\'pcsc\'?\'selected\':\'\'}>PC/SC (OMNIKEY)</option></select></label>\n',
+              '<label>Протокол<select class="reader-protocol" onchange="readerProtocolChanged(this)"><option value="mouse" ${r.protocol===\'mouse\'?\'selected\':\'\'}>mouse</option><option value="phoenix" ${r.protocol===\'phoenix\'?\'selected\':\'\'}>phoenix</option><option value="pcsc" ${r.protocol===\'pcsc\'?\'selected\':\'\'}>PC/SC (OMNIKEY)</option><option value="newcamd" ${r.protocol===\'newcamd\'?\'selected\':\'\'}>Remote Newcamd</option></select></label>\n<label class="reader-remote">Remote Host<input class="reader-remote-host" value="${esc(r.remote_host||\'\')}" placeholder="10.110.15.252"></label>\n<label class="reader-remote">Remote Port<input class="reader-remote-port" type="number" min="1" max="65535" value="${esc(r.remote_port||15000)}"></label>\n<label class="reader-remote">Remote User<input class="reader-remote-user" value="${esc(r.remote_user||\'\')}" autocomplete="off"></label>\n<label class="reader-remote">Remote Password<input class="reader-remote-password" type="password" value="${esc(r.remote_password||\'\')}" autocomplete="new-password"></label>\n<label class="reader-remote" style="grid-column:1/-1">Remote DES key<input class="reader-remote-key" maxlength="28" value="${esc(r.remote_key||\'\')}" autocomplete="off" placeholder="28 HEX"></label>\n',
+              'remote UI fields')
+          s = rep(s,
+              '<label>MHz (Phoenix)<input class="reader-mhz" type="number" value="${esc(r.mhz||600)}"></label>\n<label>Card MHz<input class="reader-cardmhz" type="number" value="${esc(r.cardmhz||600)}"></label>\n',
+              '<label class="reader-local">MHz (Phoenix)<input class="reader-mhz" type="number" value="${esc(r.mhz||600)}"></label>\n<label class="reader-local">Card MHz<input class="reader-cardmhz" type="number" value="${esc(r.cardmhz||600)}"></label>\n',
+              'local clock UI')
+          s = rep(s,
+              '<label>BoxKey<input class="reader-boxkey" autocomplete="off" value="${esc(r.boxkey||\'\')}" placeholder="16 HEX"></label>\n',
+              '<label class="reader-local">BoxKey<input class="reader-boxkey" autocomplete="off" value="${esc(r.boxkey||\'\')}" placeholder="16 HEX"></label>\n',
+              'local boxkey UI')
+          s = rep(s,
+              '<label>AU Provider<input class="reader-auprovid" maxlength="6" value="${esc(r.auprovid||\'\')}" placeholder="000652"></label>\n<label>EMM cache<input class="reader-emmcache" value="${esc(r.emmcache||\'1,3,2,0\')}" placeholder="1,3,2,0"></label>\n<label style="grid-column:1/-1">RSAKey<input class="reader-rsakey" autocomplete="off" value="${esc(r.rsakey||\'\')}" placeholder="HEX RSA key"></label>\n',
+              '<label class="reader-local">AU Provider<input class="reader-auprovid" maxlength="6" value="${esc(r.auprovid||\'\')}" placeholder="000652"></label>\n<label class="reader-local">EMM cache<input class="reader-emmcache" value="${esc(r.emmcache||\'1,3,2,0\')}" placeholder="1,3,2,0"></label>\n<label class="reader-local" style="grid-column:1/-1">RSAKey<input class="reader-rsakey" autocomplete="off" value="${esc(r.rsakey||\'\')}" placeholder="HEX RSA key"></label>\n',
+              'local advanced UI')
+
+          add_old = '''function addReader(r={}){const box=document.createElement('div');box.innerHTML=readerHtml(r,document.querySelectorAll('.reader').length);readers.append(...box.childNodes);applyActivity(lastStatus)}'''
+          add_new = '''function readerProtocolChanged(sel){const row=sel.closest('.reader');if(!row)return;const remote=sel.value==='newcamd';row.querySelectorAll('.reader-remote').forEach(e=>e.style.display=remote?'flex':'none');row.querySelectorAll('.reader-local').forEach(e=>e.style.display=remote?'none':'flex');const summary=row.querySelector('.reader-summary-device');if(summary)summary.textContent=remote?((row.querySelector('.reader-remote-host')?.value||'remote')+':'+(row.querySelector('.reader-remote-port')?.value||'')):(row.querySelector('.reader-device')?.value||'устройство не выбрано')}
+function addReader(r={}){const box=document.createElement('div');box.innerHTML=readerHtml(r,document.querySelectorAll('.reader').length);const node=box.firstElementChild;if(node){readers.append(node);readerProtocolChanged(node.querySelector('.reader-protocol'))}applyActivity(lastStatus)}'''
+          s = rep(s, add_old, add_new, 'reader mode JS')
+
+          save_old = '''protocol:e.querySelector('.reader-protocol').value,detect:'cd',mhz:+e.querySelector('.reader-mhz').value'''
+          save_new = '''protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),detect:'cd',mhz:+e.querySelector('.reader-mhz').value'''
+          s = rep(s, save_old, save_new, 'save remote fields')
+
+          # Update the card subtitle live when endpoint values change by relying
+          # on protocol-change refresh after a save/load; no secret is displayed.
+          p.write_text(s)
+
+          # Documentation.
+          p = Path('OSCAM_MINI.md')
+          d = p.read_text()
+          d = rep(d,
+              'The web interface\'s `oscam.server` editor supports `mouse`, `phoenix`, and\n`pcsc` physical readers and the listed CAID/card families. It continues to\nmanage **only the Newcamd server protocol**, not CCcam/Camd35/Radegast server\nlisteners. Their configuration is not generated by this UI.\n',
+              '''The web interface's `oscam.server` editor supports local `mouse`, `phoenix`,
+and `pcsc` physical readers plus **Remote Newcamd** proxy readers. Remote
+Newcamd fields are host, port, username, password, 14-byte DES key, CAID,
+Ident/Provider and group; DVBStreamer5 writes OSCam's native `protocol = newcamd`
+reader syntax and preserves manually-created Newcamd readers when loading the UI.
+The page still manages **only the Newcamd server protocol** for downstream
+clients, not CCcam/Camd35/Radegast server listeners.
+''',
+              'docs reader support')
+          marker = '## Web UI\n'
+          remote_doc = '''## Remote Newcamd readers
+
+Choose **Remote Newcamd** in a reader row and configure the upstream endpoint.
+The generated `oscam.server` entry is equivalent to:
+
+```ini
+[reader]
+label = remote_example
+protocol = newcamd
+device = 10.0.0.10,15000
+user = upstream_user
+password = upstream_password
+key = 0102030405060708091011121314
+caid = 0B00
+ident = 0B00:000000
+group = 1
+connectoninit = 1
+```
+
+The activity dot turns green when OSCam logs `proxy initialized` for the reader
+and yellow while the proxy is connecting. Local Phoenix/PCSC fields are hidden
+for Remote Newcamd rows.
+
+'''
+          if remote_doc not in d:
+              d = d.replace(marker, remote_doc + marker, 1)
+          p.write_text(d)
+
+          # Version.
+          p = Path('src/AppVersion.h')
+          v = p.read_text()
+          v = rep(v, 'kProgramVersion = "10.8.61"', 'kProgramVersion = "10.8.62"', 'version')
+          p.write_text(v)
+
+          # Static assertions: reject partial integrations.
+          h = Path('src/OscamMiniManager.h').read_text()
+          c = Path('src/OscamMiniManager.cpp').read_text()
+          assert 'std::string remoteHost;' in h
+          assert 'reader.protocol == "newcamd"' in c
+          assert 'connectoninit = 1' in c
+          assert 'Remote Newcamd' in c
+          assert 'reader.remotePassword' in c
+          assert '[newcamd] proxy initialized' in c
+          assert 'kProgramVersion = "10.8.62"' in Path('src/AppVersion.h').read_text()
+          PY
+
+          git diff --check
+
+          # Syntax-check the manager itself and the embedded JavaScript.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libjsoncpp-dev
+          g++ -std=c++17 -fsyntax-only -Isrc -I/usr/include/jsoncpp src/OscamMiniManager.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path('src/OscamMiniManager.cpp').read_text()
+          js = s.split('<script>', 1)[1].split('</script>', 1)[0]
+          Path('/tmp/oscam-mini-ui.js').write_text(js)
+          PY
+          node --check /tmp/oscam-mini-ui.js
+
+          # One-shot workflow removes itself from the production tree.
+          rm -f .github/workflows/one-shot-v10862-remote-newcamd-ui.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name Monkipnet
+          git config user.email monkipnet@yandex.ru
+          git add -A
+          git status --short
+          git commit -m 'V10.8.62 add Remote Newcamd readers to OSCam-mini UI'
+          git push origin HEAD:main
