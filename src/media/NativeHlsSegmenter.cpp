@@ -88,8 +88,14 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
         if (RAND_bytes(config_.key.data(), static_cast<int>(config_.key.size())) != 1) { error = "cannot generate HLS encryption key"; return false; }
         config_.hasKey = true;
     }
-    config_.targetDurationSeconds = std::clamp(config_.targetDurationSeconds, 1.0, 10.0);
-    config_.liveWindowSegments = std::clamp<std::size_t>(config_.liveWindowSegments, 3, 30);
+    // V10.8.76: keep more media buffered in the live manifest and make each
+    // MPEG-TS segment larger.  The StreamManager still supplies the historical
+    // 2 s / 6 segment values, so enforce the new stability floor here for the
+    // primary rendition and all ABR variants without touching HTTP/CAM paths.
+    config_.targetDurationSeconds = std::clamp(
+        std::max(config_.targetDurationSeconds, 4.0), 1.0, 10.0);
+    config_.liveWindowSegments = std::clamp<std::size_t>(
+        std::max<std::size_t>(config_.liveWindowSegments, 8U), 3U, 30U);
     std::error_code ec;
     std::filesystem::create_directories(config_.directory, ec);
     if (ec) { error = "cannot create HLS directory: " + ec.message(); return false; }
