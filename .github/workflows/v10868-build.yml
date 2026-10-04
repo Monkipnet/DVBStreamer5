@@ -1,0 +1,39 @@
+name: V10.8.68 Newcamd build
+
+on:
+  push:
+    branches:
+      - v10.8.68-csa-verify
+
+permissions:
+  contents: write
+
+jobs:
+  build-newcamd:
+    if: github.event.head_commit.message != 'chore: remove V10.8.68 build workflow'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v10.8.68-csa-verify
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcrypt-dev
+
+      - name: Configure and build Newcamd plugin
+        run: |
+          cmake -S . -B build-v10868 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-v10868 --target dvbstreamer5_ca_newcamd --parallel 2
+
+      - name: Remove temporary workflow
+        if: success()
+        run: |
+          rm -f .github/workflows/v10868-build.yml
+          git config user.name "Monkipnet automation"
+          git config user.email "actions@users.noreply.github.com"
+          git add .github/workflows/v10868-build.yml
+          git commit -m "chore: remove V10.8.68 build workflow"
+          git push origin HEAD:v10.8.68-csa-verify
