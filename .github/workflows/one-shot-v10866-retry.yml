@@ -1,0 +1,63 @@
+name: V10.8.66 retry listener sync
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/one-shot-v10866-retry.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Apply patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/apply_v10866_cam_oscam_sync.py')
+          s=p.read_text().replace(r'password.find_first_of("\\r\\n;#")',r'password.find_first_of("\r\n;#")')
+          p.write_text(s)
+          PY
+          python3 scripts/apply_v10866_cam_oscam_sync.py
+          git diff --check
+      - name: Validate
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential libjsoncpp-dev
+          g++ -std=c++17 -fsyntax-only -Isrc -I/usr/include/jsoncpp src/OscamMiniManager.cpp
+          g++ -std=c++17 -fsyntax-only -Isrc -I/usr/include/jsoncpp src/CardManager.cpp
+          grep -q 'kProgramVersion = "10.8.66"' src/AppVersion.h
+          cat >/tmp/t.cpp <<'CPP'
+          #include "OscamMiniManager.h"
+          #include "ConfigManager.h"
+          #include <cstdlib>
+          #include <filesystem>
+          #include <fstream>
+          #include <sstream>
+          #include <iostream>
+          CamClientConfig CamClientConfig::fromJson(const Json::Value&){ return {}; }
+          static void w(const std::string&p,const std::string&s){std::ofstream f(p);f<<s;}
+          static std::string r(const std::string&p){std::ifstream f(p);std::ostringstream o;o<<f.rdbuf();return o.str();}
+          static std::string b(const char*u,int p){Json::Value j;j["host"]="127.0.0.1";j["port"]=p;j["user"]=u;j["pass"]="p";j["des"]="0102030405060708091011121314";Json::StreamWriterBuilder x;x["indentation"]="";return Json::writeString(x,j);}
+          int main(){
+            std::string d="/tmp/os66";std::filesystem::remove_all(d);std::filesystem::create_directories(d);setenv("DVBSTREAMER5_OSCAM_CONFIG_DIR",d.c_str(),1);
+            w(d+"/oscam.conf","[global]\nlogfile = stdout\n\n[newcamd]\nserverip = 127.0.0.1\nport = 11220@0652:000000\nkey = 0102030405060708091011121314\nkeepalive = 1\n");
+            w(d+"/oscam.user","[account]\nuser = legacy\npwd = legacy\ngroup = 1\nau = 1\ncaid = 0652\nident = 0652:000000\nallowedprotocols = newcamd\n");
+            w(d+"/oscam.server","[reader]\nlabel = remote_1cent_kontinent\nprotocol = newcamd\ndevice = 10.0.0.1,15000\nuser = u1\npassword = p1\nkey = 0102030405060708091011121314\ncaid = 0B00\nident = 0B00:000000\ngroup = 1\n\n[reader]\nlabel = remote_turkmenalem_conax\nprotocol = newcamd\ndevice = 10.0.0.2,15000\nuser = u2\npassword = p2\nkey = 0102030405060708091011121314\ncaid = 0604\nident = 0604:000000\ngroup = 2\n");
+            CamClientConfig a;a.id="1cent_kontinent";a.backendId="newcamd";a.backendConfig=b("local1",4004);CamClientConfig c;c.id="turkmenalem_conax";c.backendId="newcamd";c.backendConfig=b("local2",4405);std::string e;
+            if(!OscamMiniManager::instance().synchronizeCamClients({a,c},e)){std::cerr<<e;return 1;}auto q=r(d+"/oscam.conf");if(q.find("4004@0B00:000000")==std::string::npos||q.find("4405@0604:000000")==std::string::npos)return 2;return 0;
+          }
+          CPP
+          g++ -std=c++17 -Isrc -I/usr/include/jsoncpp /tmp/t.cpp src/OscamMiniManager.cpp -ljsoncpp -pthread -o /tmp/t
+          /tmp/t
+      - name: Commit final V10.8.66
+        run: |
+          rm -f .github/workflows/one-shot-v10866-cam-oscam-sync.yml .github/workflows/one-shot-v10866-retry.yml scripts/apply_v10866_cam_oscam_sync.py
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+          git config user.name Monkipnet
+          git config user.email monkipnet@yandex.ru
+          git add -A
+          git commit -m 'V10.8.66 synchronize DVBStreamer5 CAM clients with OSCam-mini Newcamd listeners'
+          git push origin HEAD:main
