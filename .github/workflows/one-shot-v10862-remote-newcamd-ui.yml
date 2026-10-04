@@ -18,7 +18,10 @@ jobs:
           fetch-depth: 0
 
       - name: Apply source changes
-        run: python3 scripts/apply_v10862_remote_newcamd_ui.py
+        shell: bash
+        run: |
+          python3 scripts/patch_v10862_status_pattern.py
+          python3 scripts/apply_v10862_remote_newcamd_ui.py
 
       - name: Validate source and embedded UI
         shell: bash
@@ -34,7 +37,7 @@ jobs:
         shell: bash
         run: |
           rm -f .github/workflows/one-shot-v10862-remote-newcamd-ui.yml
-          rm -f scripts/apply_v10862_remote_newcamd_ui.py
+          rm -f scripts/apply_v10862_remote_newcamd_ui.py scripts/patch_v10862_status_pattern.py
           rmdir .github/workflows 2>/dev/null || true
           rmdir .github 2>/dev/null || true
           git config user.name Monkipnet
