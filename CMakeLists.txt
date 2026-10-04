@@ -13,6 +13,10 @@ dvbstreamer5_generate_embedded_web_assets(
 
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
+find_library(DVBSTREAMER5_CRYPT_LIBRARY NAMES crypt)
+if(NOT DVBSTREAMER5_CRYPT_LIBRARY)
+    message(FATAL_ERROR "libcrypt is required by the imported Newcamd backend (install libcrypt-dev)")
+endif()
 
 enable_testing()
 
@@ -262,6 +266,7 @@ target_link_libraries(dvbstreamer5_ca_newcamd PRIVATE
     dvbstreamer5_jsoncpp
     dvbstreamer5_dvbcsa
     OpenSSL::Crypto
+    ${DVBSTREAMER5_CRYPT_LIBRARY}
     Threads::Threads
 )
 set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES

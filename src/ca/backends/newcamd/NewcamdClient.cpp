@@ -1,7 +1,11 @@
 #include "NewcamdClient.h"
 
 #include <openssl/des.h>
-#include <openssl/evp.h>
+#if __has_include(<crypt.h>)
+#include <crypt.h>
+#else
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -24,93 +28,6 @@ constexpr uint16_t kClientId = 0x8888;
 constexpr size_t kHeaderSize = 12;
 constexpr size_t kMaxMessageSize = 2048;
 constexpr size_t kMaxPendingEcms = 1;
-
-using Md5Digest = std::array<uint8_t, 16>;
-
-void append_bytes(std::vector<uint8_t>& out, const void* data, size_t size) {
-    if (size == 0) return;
-    const auto* bytes = static_cast<const uint8_t*>(data);
-    out.insert(out.end(), bytes, bytes + size);
-}
-
-void append_string(std::vector<uint8_t>& out, const std::string& value) {
-    append_bytes(out, value.data(), value.size());
-}
-
-bool md5_digest(const std::vector<uint8_t>& input, Md5Digest& digest) {
-    EVP_MD_CTX* context = EVP_MD_CTX_new();
-    if (!context) return false;
-    unsigned int size = 0;
-    const bool ok = EVP_DigestInit_ex(context, EVP_md5(), nullptr) == 1 &&
-        EVP_DigestUpdate(context, input.data(), input.size()) == 1 &&
-        EVP_DigestFinal_ex(context, digest.data(), &size) == 1 &&
-        size == digest.size();
-    EVP_MD_CTX_free(context);
-    return ok;
-}
-
-void append_crypt_base64(std::string& output, uint8_t high, uint8_t middle,
-                         uint8_t low, int count) {
-    static constexpr char alphabet[] =
-        "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    uint32_t value = (static_cast<uint32_t>(high) << 16) |
-        (static_cast<uint32_t>(middle) << 8) | low;
-    while (count-- > 0) {
-        output.push_back(alphabet[value & 0x3FU]);
-        value >>= 6;
-    }
-}
-
-std::string md5_crypt(const std::string& password, const std::string& rawSalt) {
-    constexpr const char* magic = "$1$";
-    std::string salt = rawSalt;
-    if (salt.rfind(magic, 0) == 0) salt.erase(0, 3);
-    if (const size_t end = salt.find('$'); end != std::string::npos) salt.resize(end);
-    if (salt.size() > 8) salt.resize(8);
-
-    std::vector<uint8_t> alternateInput;
-    append_string(alternateInput, password);
-    append_string(alternateInput, salt);
-    append_string(alternateInput, password);
-    Md5Digest alternate{};
-    if (!md5_digest(alternateInput, alternate)) return {};
-
-    std::vector<uint8_t> initial;
-    append_string(initial, password);
-    append_string(initial, magic);
-    append_string(initial, salt);
-    for (size_t remaining = password.size(); remaining > 0;) {
-        const size_t count = std::min(remaining, alternate.size());
-        append_bytes(initial, alternate.data(), count);
-        remaining -= count;
-    }
-    for (size_t length = password.size(); length != 0; length >>= 1) {
-        const uint8_t byte = (length & 1U) ? 0 : static_cast<uint8_t>(password.front());
-        initial.push_back(byte);
-    }
-
-    Md5Digest digest{};
-    if (!md5_digest(initial, digest)) return {};
-    for (int round = 0; round < 1000; ++round) {
-        std::vector<uint8_t> input;
-        if (round & 1) append_string(input, password);
-        else append_bytes(input, digest.data(), digest.size());
-        if (round % 3 != 0) append_string(input, salt);
-        if (round % 7 != 0) append_string(input, password);
-        if (round & 1) append_bytes(input, digest.data(), digest.size());
-        else append_string(input, password);
-        if (!md5_digest(input, digest)) return {};
-    }
-
-    std::string output = std::string(magic) + salt + '$';
-    append_crypt_base64(output, digest[0], digest[6], digest[12], 4);
-    append_crypt_base64(output, digest[1], digest[7], digest[13], 4);
-    append_crypt_base64(output, digest[2], digest[8], digest[14], 4);
-    append_crypt_base64(output, digest[3], digest[9], digest[15], 4);
-    append_crypt_base64(output, digest[4], digest[10], digest[5], 4);
-    append_crypt_base64(output, 0, 0, digest[11], 2);
-    return output;
-}
 
 uint8_t hex_value(char ch) {
     if (ch >= '0' && ch <= '9') return static_cast<uint8_t>(ch - '0');
@@ -229,7 +146,10 @@ bool NewcamdClient::derive_key_from_seed(const uint8_t* seed, size_t seed_size) 
 }
 
 std::string NewcamdClient::md5_crypt_password() const {
-    return md5_crypt(pass_, "abcdefgh");
+    static std::mutex cryptMutex;
+    std::lock_guard<std::mutex> lock(cryptMutex);
+    char* value = crypt(pass_.c_str(), "$1$abcdefgh$");
+    return value ? std::string(value) : std::string();
 }
 
 bool NewcamdClient::connect() {
@@ -391,8 +311,6 @@ bool NewcamdClient::receive_message(Message& message, bool check_msg_id) {
 }
 
 bool NewcamdClient::login() {
-    msg_id_ = 0;
-    authenticated_ = false;
     if (!socket_ || !socket_->is_open()) {
         set_error("Newcamd socket is not open");
         return false;
@@ -409,7 +327,7 @@ bool NewcamdClient::login() {
 
         const std::string cryptPass = md5_crypt_password();
         if (cryptPass.empty()) {
-            set_error("Newcamd password MD5-crypt failed");
+            set_error("Newcamd password crypt() failed");
             return false;
         }
 
@@ -419,8 +337,7 @@ bool NewcamdClient::login() {
         loginPayload.push_back(0);
         loginPayload.insert(loginPayload.end(), cryptPass.begin(), cryptPass.end());
         loginPayload.push_back(0);
-        // OSCam Newcamd sends the login packet with message-id 0.
-        if (!send_message(std::move(loginPayload), kClientId, 0, 0, false)) return false;
+        if (!send_message(std::move(loginPayload), kClientId, 0, 0, true)) return false;
 
         Message answer;
         if (!receive_message(answer, false) || answer.payload.empty()) return false;
@@ -439,11 +356,9 @@ bool NewcamdClient::login() {
         }
 
         std::vector<uint8_t> cardReq{ kMsgCardDataReq, 0, 0 };
-        uint16_t cardReqId = 0;
-        // After LOGIN_ACK OSCam increments the client message id for CARD_DATA_REQ.
-        if (!send_message(std::move(cardReq), 0, 0, 0, true, &cardReqId)) return false;
+        if (!send_message(std::move(cardReq), 0, 0, 0, false)) return false;
         Message cardData;
-        if (!receive_message(cardData, true) || cardData.payload.empty()) return false;
+        if (!receive_message(cardData, false) || cardData.payload.empty()) return false;
         if (cardData.payload[0] != kMsgCardData) {
             set_error("Newcamd CARD_DATA_REQ expected CARD_DATA, got " + command_name(cardData.payload[0]));
             return false;
@@ -477,13 +392,6 @@ bool NewcamdClient::login() {
         }
 
         authenticated_ = true;
-        std::cerr << "NEWCAMD LOGIN OK host=" << host_
-                  << " port=" << port_
-                  << " user=" << user_
-                  << " card_caid=0x" << std::hex << card_caid_ << std::dec
-                  << " providers=" << providers_.size()
-                  << " au=" << (au_enabled_ ? 1 : 0)
-                  << std::endl;
         set_error({});
         return true;
     } catch (const std::exception& ex) {
@@ -641,8 +549,6 @@ void NewcamdClient::disconnect() {
     running_ = false;
     authenticated_ = false;
     pending_ecms_ = 0;
-    msg_id_ = 0;
-    session_key_ready_ = false;
     au_enabled_ = false;
     card_caid_ = 0;
     card_ua_.fill(0);

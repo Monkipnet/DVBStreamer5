@@ -1,6 +1,8 @@
+// Imported from Monkipnet/Tvstreamer_sat@f9af8f699455c9f16076734785b224d73eea5b23.
+// Changes here are limited to the DVBStreamer5 CA ABI/name adaptation
+// and removal of the artificial per-reader service-session limit.
 #include "../../CaBackendPluginApi.h"
 #include "NewcamdClient.h"
-#include "NewcamdBuiltin.h"
 extern "C" {
 #include <dvbcsa/dvbcsa.h>
 }
