@@ -460,6 +460,20 @@ OscamMiniManager::Settings OscamMiniManager::loadLocked() {
         reader.label = getValue(entry, "label", "Reader");
         reader.protocol = getValue(entry, "protocol", "mouse");
         reader.device = getValue(entry, "device", "");
+        reader.remoteUser = getValue(entry, "user", "");
+        reader.remotePassword = getValue(entry, "password", "");
+        reader.remoteKey = getValue(entry, "key", "");
+        if (reader.protocol == "newcamd") {
+            const auto comma = reader.device.rfind(',');
+            if (comma != std::string::npos) {
+                reader.remoteHost = trimLocal(reader.device.substr(0, comma));
+                try {
+                    reader.remotePort = std::stoi(trimLocal(reader.device.substr(comma + 1)));
+                } catch (...) {
+                    reader.remotePort = 0;
+                }
+            }
+        }
         reader.caid = getValue(entry, "caid", "");
         reader.detect = getValue(entry, "detect", "cd");
         reader.mhz = getInt(entry, "mhz", 600);
@@ -562,6 +576,7 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
             return false;
         }
         const bool pcsc = reader.protocol == "pcsc";
+        const bool remoteNewcamd = reader.protocol == "newcamd";
         const bool serialDevice = reader.device.rfind("/dev/", 0) == 0 &&
             reader.device.size() > 5 && reader.device.size() <= 256 &&
             reader.device.find_first_of("\r\n;#") == std::string::npos;
@@ -571,10 +586,29 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
             std::all_of(reader.device.begin(), reader.device.end(), [](unsigned char c) {
                 return std::isdigit(c) != 0;
             }) && std::stoul(reader.device) <= 999;
-        if ((pcsc && !pcscIndex) || (!pcsc && !serialDevice)) {
+        if (!remoteNewcamd && ((pcsc && !pcscIndex) || (!pcsc && !serialDevice))) {
             error = pcsc ? "Для PC/SC укажите индекс ридера (0, 1, ...): " + reader.label
                          : "Некорректное устройство ридера " + reader.label;
             return false;
+        }
+        if (remoteNewcamd) {
+            const bool hostOk = !reader.remoteHost.empty() && reader.remoteHost.size() <= 255 &&
+                reader.remoteHost.find_first_of("\r\n,;# \t") == std::string::npos;
+            if (!hostOk || reader.remotePort < 1 || reader.remotePort > 65535) {
+                error = "Для Remote Newcamd укажите корректные Host и Port: " + reader.label;
+                return false;
+            }
+            if (reader.remoteUser.empty() || reader.remoteUser.size() > 128 ||
+                reader.remoteUser.find_first_of("\r\n;#") != std::string::npos ||
+                reader.remotePassword.empty() || reader.remotePassword.size() > 256 ||
+                reader.remotePassword.find_first_of("\r\n") != std::string::npos) {
+                error = "Для Remote Newcamd укажите корректные User и Password: " + reader.label;
+                return false;
+            }
+            if (!isHex(reader.remoteKey, 28)) {
+                error = "DES key Remote Newcamd ридера " + reader.label + " должен содержать 28 HEX-символов";
+                return false;
+            }
         }
         if (!isHex(reader.caid, 4)) {
             error = "CAID ридера " + reader.label + " должен содержать 4 HEX-символа";
@@ -584,12 +618,12 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
             error = "Некорректная группа ридера " + reader.label;
             return false;
         }
-        if (reader.mhz < 100 || reader.mhz > 2000 || reader.cardmhz < 100 || reader.cardmhz > 2000) {
+        if (!remoteNewcamd && (reader.mhz < 100 || reader.mhz > 2000 || reader.cardmhz < 100 || reader.cardmhz > 2000)) {
             error = "Некорректная частота ридера " + reader.label;
             return false;
         }
         if (reader.protocol != "mouse" && reader.protocol != "phoenix" &&
-            reader.protocol != "pcsc") {
+            reader.protocol != "pcsc" && reader.protocol != "newcamd") {
             error = "Поддерживаются mouse/phoenix/pcsc: " + reader.label;
             return false;
         }
@@ -606,21 +640,28 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
             return false;
         }
 
+        const std::string outputDevice = remoteNewcamd ? (reader.remoteHost + "," + std::to_string(reader.remotePort)) : reader.device;
         server << "[reader]\n"
                << "label = " << safeIni(reader.label) << "\n"
                << "protocol = " << safeIni(reader.protocol) << "\n"
-               << "device = " << safeIni(reader.device) << "\n"
+               << "device = " << safeIni(outputDevice) << "\n"
                << "caid = " << safeIni(reader.caid) << "\n";
+        if (remoteNewcamd) {
+            server << "user = " << safeIni(reader.remoteUser) << "\n"
+                   << "password = " << safeIni(reader.remotePassword) << "\n"
+                   << "key = " << safeIni(reader.remoteKey) << "\n"
+                   << "connectoninit = 1\n";
+        }
         if (!reader.boxkey.empty()) {
             server << "boxkey = " << safeIni(reader.boxkey) << "\n";
         }
         if (!reader.rsakey.empty()) {
             server << "rsakey = " << safeIni(reader.rsakey) << "\n";
         }
-        server << "detect = " << (pcsc ? "none" : safeIni(reader.detect)) << "\n";
+        if (!remoteNewcamd) server << "detect = " << (pcsc ? "none" : safeIni(reader.detect)) << "\n";
         // PC/SC negotiates clock and card parameters through pcscd.  Phoenix
         // settings must not be imposed on USB OMNIKEY readers.
-        if (!pcsc) {
+        if (!pcsc && !remoteNewcamd) {
             server << "mhz = " << reader.mhz << "\n"
                    << "cardmhz = " << reader.cardmhz << "\n";
         }
@@ -728,14 +769,16 @@ Json::Value OscamMiniManager::statusLocked() {
             const std::string readyNeedle = reader.label + " [irdeto] ready for requests";
             const std::string readyMouseNeedle = reader.label + " [mouse] ready for requests";
             const bool ready = log.find(readyNeedle) != std::string::npos
-                || log.find(readyMouseNeedle) != std::string::npos;
+                || log.find(readyMouseNeedle) != std::string::npos
+                || log.find(reader.label + " [newcamd] proxy initialized") != std::string::npos;
             const bool initializing =
                 log.find(reader.label + " [mouse] card detected") != std::string::npos
                 || log.find(reader.label + " [mouse] detect irdeto card") != std::string::npos
                 || log.find(reader.label + " [mouse] found card system") != std::string::npos
                 || log.find(reader.label + " [pcsc] card detected") != std::string::npos
                 || log.find(reader.label + " [pcsc] found card system") != std::string::npos
-                || log.find(reader.label + " [irdeto] THIS WAS A SUCCESSFUL START ATTEMPT") != std::string::npos;
+                || log.find(reader.label + " [irdeto] THIS WAS A SUCCESSFUL START ATTEMPT") != std::string::npos
+                || log.find(reader.label + " [newcamd] connecting to ") != std::string::npos;
             const bool error =
                 log.find(reader.label + " [mouse] Error activating card") != std::string::npos
                 || log.find(reader.label + " [mouse] ERROR") != std::string::npos
@@ -801,6 +844,11 @@ std::string OscamMiniManager::settingsJson() {
         value["label"] = reader.label;
         value["protocol"] = reader.protocol;
         value["device"] = reader.device;
+        value["remote_host"] = reader.remoteHost;
+        value["remote_port"] = reader.remotePort;
+        value["remote_user"] = reader.remoteUser;
+        value["remote_password"] = reader.remotePassword;
+        value["remote_key"] = reader.remoteKey;
         value["caid"] = reader.caid;
         value["detect"] = reader.detect;
         value["mhz"] = reader.mhz;
@@ -868,6 +916,11 @@ std::string OscamMiniManager::saveSettingsJson(const std::string& body) {
             reader.label = item.get("label", "Reader").asString();
             reader.protocol = item.get("protocol", "mouse").asString();
             reader.device = item.get("device", "").asString();
+            reader.remoteHost = item.get("remote_host", "").asString();
+            reader.remotePort = item.get("remote_port", 0).asInt();
+            reader.remoteUser = item.get("remote_user", "").asString();
+            reader.remotePassword = item.get("remote_password", "").asString();
+            reader.remoteKey = item.get("remote_key", "").asString();
             reader.caid = item.get("caid", "0652").asString();
             reader.detect = item.get("detect", "cd").asString();
             reader.mhz = item.get("mhz", 600).asInt();
@@ -995,20 +1048,26 @@ function readerHtml(r={},i=0){const label=r.label||('Reader'+(i+1));return `<div
 </button>
 <div class="compact-body"><div class="g">
 <label>Имя<input class="reader-label" value="${esc(label)}"></label>
-<label>Найденный ридер<select class="reader-detected" onchange="chooseDetectedReader(this)">${detectedReaderOptions(r)}</select></label>
-<label>Устройство / индекс PC/SC<input class="reader-device" value="${esc(r.device||'')}" placeholder="/dev/serial/by-id/... или 0"></label>
+<label class="reader-local">Найденный ридер<select class="reader-detected" onchange="chooseDetectedReader(this)">${detectedReaderOptions(r)}</select></label>
+<label class="reader-local">Устройство / индекс PC/SC<input class="reader-device" value="${esc(r.device||'')}" placeholder="/dev/serial/by-id/... или 0"></label>
 <label>CAID<input class="reader-caid" maxlength="4" value="${esc(r.caid||'0652')}"></label>
-<label>Протокол<select class="reader-protocol"><option value="mouse" ${r.protocol==='mouse'?'selected':''}>mouse</option><option value="phoenix" ${r.protocol==='phoenix'?'selected':''}>phoenix</option><option value="pcsc" ${r.protocol==='pcsc'?'selected':''}>PC/SC (OMNIKEY)</option></select></label>
-<label>MHz (Phoenix)<input class="reader-mhz" type="number" value="${esc(r.mhz||600)}"></label>
-<label>Card MHz<input class="reader-cardmhz" type="number" value="${esc(r.cardmhz||600)}"></label>
+<label>Протокол<select class="reader-protocol" onchange="readerProtocolChanged(this)"><option value="mouse" ${r.protocol==='mouse'?'selected':''}>mouse</option><option value="phoenix" ${r.protocol==='phoenix'?'selected':''}>phoenix</option><option value="pcsc" ${r.protocol==='pcsc'?'selected':''}>PC/SC (OMNIKEY)</option><option value="newcamd" ${r.protocol==='newcamd'?'selected':''}>Remote Newcamd</option></select></label>
+<label class="reader-remote">Remote Host<input class="reader-remote-host" value="${esc(r.remote_host||'')}" placeholder="10.110.15.252"></label>
+<label class="reader-remote">Remote Port<input class="reader-remote-port" type="number" min="1" max="65535" value="${esc(r.remote_port||15000)}"></label>
+<label class="reader-remote">Remote User<input class="reader-remote-user" value="${esc(r.remote_user||'')}" autocomplete="off"></label>
+<label class="reader-remote">Remote Password<input class="reader-remote-password" type="password" value="${esc(r.remote_password||'')}" autocomplete="new-password"></label>
+<label class="reader-remote" style="grid-column:1/-1">Remote DES key<input class="reader-remote-key" maxlength="28" value="${esc(r.remote_key||'')}" autocomplete="off" placeholder="28 HEX"></label>
+<label class="reader-local">MHz (Phoenix)<input class="reader-mhz" type="number" value="${esc(r.mhz||600)}"></label>
+<label class="reader-local">Card MHz<input class="reader-cardmhz" type="number" value="${esc(r.cardmhz||600)}"></label>
 <label>Group<input class="reader-group" type="number" min="1" max="64" value="${esc(r.group||1)}"></label>
 <label>Ident<input class="reader-ident" value="${esc(r.ident||'')}"></label>
-<label>BoxKey<input class="reader-boxkey" autocomplete="off" value="${esc(r.boxkey||'')}" placeholder="16 HEX"></label>
-<label>AU Provider<input class="reader-auprovid" maxlength="6" value="${esc(r.auprovid||'')}" placeholder="000652"></label>
-<label>EMM cache<input class="reader-emmcache" value="${esc(r.emmcache||'1,3,2,0')}" placeholder="1,3,2,0"></label>
-<label style="grid-column:1/-1">RSAKey<input class="reader-rsakey" autocomplete="off" value="${esc(r.rsakey||'')}" placeholder="HEX RSA key"></label>
+<label class="reader-local">BoxKey<input class="reader-boxkey" autocomplete="off" value="${esc(r.boxkey||'')}" placeholder="16 HEX"></label>
+<label class="reader-local">AU Provider<input class="reader-auprovid" maxlength="6" value="${esc(r.auprovid||'')}" placeholder="000652"></label>
+<label class="reader-local">EMM cache<input class="reader-emmcache" value="${esc(r.emmcache||'1,3,2,0')}" placeholder="1,3,2,0"></label>
+<label class="reader-local" style="grid-column:1/-1">RSAKey<input class="reader-rsakey" autocomplete="off" value="${esc(r.rsakey||'')}" placeholder="HEX RSA key"></label>
 </div><div class="row" style="margin-top:10px"><button class="danger" onclick="this.closest('.reader').remove()">Удалить ридер</button></div></div></div>`}
-function addReader(r={}){const box=document.createElement('div');box.innerHTML=readerHtml(r,document.querySelectorAll('.reader').length);readers.append(...box.childNodes);applyActivity(lastStatus)}
+function readerProtocolChanged(sel){const row=sel.closest('.reader');if(!row)return;const remote=sel.value==='newcamd';row.querySelectorAll('.reader-remote').forEach(e=>e.style.display=remote?'flex':'none');row.querySelectorAll('.reader-local').forEach(e=>e.style.display=remote?'none':'flex');const summary=row.querySelector('.reader-summary-device');if(summary)summary.textContent=remote?((row.querySelector('.reader-remote-host')?.value||'remote')+':'+(row.querySelector('.reader-remote-port')?.value||'')):(row.querySelector('.reader-device')?.value||'устройство не выбрано')}
+function addReader(r={}){const box=document.createElement('div');box.innerHTML=readerHtml(r,document.querySelectorAll('.reader').length);const node=box.firstElementChild;if(node){readers.append(node);readerProtocolChanged(node.querySelector('.reader-protocol'))}applyActivity(lastStatus)}
 
 function setActivity(el,info){if(!el)return;const s=stateClass(info?.state||'down');const dot=el.querySelector('.activity-dot');const txt=el.querySelector('.activity-text');if(dot)dot.innerHTML=activityDot(s);if(txt){txt.textContent=info?.detail||'неактивен';txt.className=`compact-status hide-small activity-text activity-${s}`}}
 function applyActivity(st){lastStatus=st||{};document.querySelectorAll('.user').forEach(el=>setActivity(el,(st.user_activity||{})[el.dataset.user]));document.querySelectorAll('.reader').forEach(el=>setActivity(el,(st.reader_activity||{})[el.dataset.reader]))}
@@ -1016,7 +1075,7 @@ async function refreshStatus(){try{const st=await api('/api/oscam-mini/status');
 
 async function loadAll(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;devices=st.devices||[];state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';const s=await api('/api/oscam-mini/settings');detectedReaders=s.detected_readers||[];bind_ip.value=s.bind_ip||'127.0.0.1';key.value=s.key||'';users.innerHTML='';(s.users||[]).forEach(addUser);readers.innerHTML='';(s.readers||[]).forEach(addReader);readerScan.textContent='Найдено ридеров: '+detectedReaders.length;applyActivity(st)}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
-async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),key:key.value.trim(),keepalive:true,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error||'Ошибка');msg.className=x.ok?'msg success':'msg error';await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
+async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),key:key.value.trim(),keepalive:true,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error||'Ошибка');msg.className=x.ok?'msg success':'msg error';await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
 async function act(action){try{const x=await api('/api/oscam-mini/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if(!x.ok){msg.textContent=x.error||'Ошибка';msg.className='msg error'}await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 loadAll();

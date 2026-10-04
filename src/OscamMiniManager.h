@@ -36,6 +36,11 @@ private:
         std::string label;
         std::string protocol = "mouse";
         std::string device;
+        std::string remoteHost;
+        int remotePort = 0;
+        std::string remoteUser;
+        std::string remotePassword;
+        std::string remoteKey;
         std::string caid;
         std::string detect = "cd";
         std::string ident;
