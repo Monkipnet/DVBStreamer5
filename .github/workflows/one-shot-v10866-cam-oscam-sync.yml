@@ -1,0 +1,153 @@
+name: V10.8.66 synchronize CAM and OSCam Newcamd listeners
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-shot-v10866-cam-oscam-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply V10.8.66 synchronization
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_v10866_cam_oscam_sync.py')
+          s = p.read_text()
+          s = s.replace(r'password.find_first_of("\\r\\n;#")', r'password.find_first_of("\r\n;#")')
+          p.write_text(s)
+          PY
+          python3 scripts/apply_v10866_cam_oscam_sync.py
+          git diff --check
+
+      - name: Install validation dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential libjsoncpp-dev
+
+      - name: Compile affected C++ units
+        shell: bash
+        run: |
+          g++ -std=c++17 -fsyntax-only -Isrc -I/usr/include/jsoncpp src/OscamMiniManager.cpp
+          g++ -std=c++17 -fsyntax-only -Isrc -I/usr/include/jsoncpp src/CardManager.cpp
+          grep -q 'kProgramVersion = "10.8.66"' src/AppVersion.h
+
+      - name: Functional listener synchronization test
+        shell: bash
+        run: |
+          cat >/tmp/v10866_sync_test.cpp <<'CPP'
+          #include "OscamMiniManager.h"
+          #include "ConfigManager.h"
+          #include <cstdlib>
+          #include <filesystem>
+          #include <fstream>
+          #include <iostream>
+          #include <sstream>
+          #include <string>
+          #include <vector>
+
+          static void writeFile(const std::string& path, const std::string& text) {
+              std::ofstream f(path, std::ios::trunc);
+              f << text;
+          }
+          static std::string readFile(const std::string& path) {
+              std::ifstream f(path);
+              std::ostringstream out;
+              out << f.rdbuf();
+              return out.str();
+          }
+          static std::string backend(const std::string& user, int port) {
+              Json::Value cfg;
+              cfg["host"] = "127.0.0.1";
+              cfg["port"] = port;
+              cfg["user"] = user;
+              cfg["pass"] = "testpass";
+              cfg["des"] = "0102030405060708091011121314";
+              Json::StreamWriterBuilder w;
+              w["indentation"] = "";
+              return Json::writeString(w, cfg);
+          }
+
+          int main() {
+              const std::string dir = "/tmp/v10866-oscam";
+              std::filesystem::remove_all(dir);
+              std::filesystem::create_directories(dir);
+              setenv("DVBSTREAMER5_OSCAM_CONFIG_DIR", dir.c_str(), 1);
+
+              writeFile(dir + "/oscam.conf",
+                  "[global]\nlogfile = stdout\n\n[newcamd]\nserverip = 127.0.0.1\n"
+                  "port = 11220@0652:000000\nkey = 0102030405060708091011121314\nkeepalive = 1\n");
+              writeFile(dir + "/oscam.user",
+                  "[account]\nuser = legacy\npwd = legacy\ngroup = 1\nau = 1\n"
+                  "caid = 0652\nident = 0652:000000\nallowedprotocols = newcamd\n");
+              writeFile(dir + "/oscam.server",
+                  "[reader]\nlabel = remote_1cent_kontinent\nprotocol = newcamd\n"
+                  "device = 10.0.0.1,15000\nuser = upstream1\npassword = upstream1\n"
+                  "key = 0102030405060708091011121314\ncaid = 0B00\nident = 0B00:000000\n"
+                  "group = 1\nconnectoninit = 1\n\n"
+                  "[reader]\nlabel = remote_turkmenalem_conax\nprotocol = newcamd\n"
+                  "device = 10.0.0.2,15000\nuser = upstream2\npassword = upstream2\n"
+                  "key = 0102030405060708091011121314\ncaid = 0604\nident = 0604:000000\n"
+                  "group = 2\nconnectoninit = 1\n");
+
+              CamClientConfig a;
+              a.id = "1cent_kontinent";
+              a.name = "1cent_kontinent";
+              a.backendId = "newcamd";
+              a.backendConfig = backend("local1", 4004);
+              CamClientConfig b;
+              b.id = "turkmenalem_conax";
+              b.name = "turkmenalem_conax";
+              b.backendId = "newcamd";
+              b.backendConfig = backend("local2", 4405);
+
+              std::string error;
+              if (!OscamMiniManager::instance().synchronizeCamClients({a, b}, error)) {
+                  std::cerr << error << std::endl;
+                  return 1;
+              }
+
+              const std::string conf = readFile(dir + "/oscam.conf");
+              const std::string users = readFile(dir + "/oscam.user");
+              if (conf.find("4004@0B00:000000") == std::string::npos ||
+                  conf.find("4405@0604:000000") == std::string::npos ||
+                  users.find("user = local1") == std::string::npos ||
+                  users.find("user = local2") == std::string::npos ||
+                  users.find("group = 2") == std::string::npos) {
+                  std::cerr << "synchronized config did not contain expected listeners/accounts\n";
+                  std::cerr << conf << '\n' << users << std::endl;
+                  return 2;
+              }
+              std::cout << "V10.8.66 listener synchronization functional test passed\n";
+              return 0;
+          }
+          CPP
+          g++ -std=c++17 -Isrc -I/usr/include/jsoncpp \
+            /tmp/v10866_sync_test.cpp src/OscamMiniManager.cpp src/ConfigManager.cpp \
+            -ljsoncpp -pthread -o /tmp/v10866_sync_test
+          /tmp/v10866_sync_test
+
+      - name: Commit V10.8.66
+        shell: bash
+        run: |
+          rm -f .github/workflows/one-shot-v10866-cam-oscam-sync.yml
+          rm -f scripts/apply_v10866_cam_oscam_sync.py
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+          git config user.name Monkipnet
+          git config user.email monkipnet@yandex.ru
+          git add -A
+          git status --short
+          git commit -m 'V10.8.66 synchronize DVBStreamer5 CAM clients with OSCam-mini Newcamd listeners'
+          git push origin HEAD:main
