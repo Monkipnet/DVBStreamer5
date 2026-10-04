@@ -19,6 +19,21 @@ jobs:
           fetch-depth: 0
           ref: staging/v10.8.71-ondemand
 
+      - name: Repair patch-script C++ escapes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_v10_8_71_ondemand.py')
+          s = p.read_text()
+          marker = "    '''bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target) {\n"
+          first = s.find(marker)
+          second = s.find(marker, first + 1) if first >= 0 else -1
+          if second < 0:
+              raise SystemExit('second handleHttpStream replacement string not found')
+          s = s[:second] + "    r'''bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target) {\n" + s[second + len(marker):]
+          p.write_text(s)
+          PY
+
       - name: Apply source patch
         run: python3 scripts/apply_v10_8_71_ondemand.py
 
