@@ -1,4 +1,4 @@
-name: V10.8.68 Newcamd build
+name: V10.8.68 Newcamd build diagnostics
 
 on:
   push:
@@ -23,16 +23,27 @@ jobs:
           sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcrypt-dev
 
       - name: Configure and build Newcamd plugin
+        shell: bash
         run: |
-          cmake -S . -B build-v10868 -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-v10868 --target dvbstreamer5_ca_newcamd --parallel 2
+          set +e
+          cmake -S . -B build-v10868 -DCMAKE_BUILD_TYPE=Release > /tmp/v10868-build.log 2>&1
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            cmake --build build-v10868 --target dvbstreamer5_ca_newcamd --parallel 2 >> /tmp/v10868-build.log 2>&1
+            rc=$?
+          fi
+          {
+            echo "BUILD_RC=$rc"
+            echo "===== LAST 240 LINES ====="
+            tail -n 240 /tmp/v10868-build.log
+          } > V10868_BUILD_RESULT.txt
+          exit 0
 
-      - name: Remove temporary workflow
-        if: success()
+      - name: Save diagnostics and remove temporary workflow
         run: |
           rm -f .github/workflows/v10868-build.yml
           git config user.name "Monkipnet automation"
           git config user.email "actions@users.noreply.github.com"
-          git add .github/workflows/v10868-build.yml
-          git commit -m "chore: remove V10.8.68 build workflow"
+          git add V10868_BUILD_RESULT.txt .github/workflows/v10868-build.yml
+          git commit -m "chore: record V10.8.68 build diagnostics"
           git push origin HEAD:v10.8.68-csa-verify
