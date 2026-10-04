@@ -732,7 +732,7 @@ static int8_t newcamd_auth_client(IN_ADDR_T ip, uint8_t *deskey)
 {
 	int32_t i, ok, rc, sid_list;
 	uchar *usr = NULL, *pwd = NULL;
-	struct s_auth *account;
+	struct s_auth *account, *matched_account = NULL;
 	uchar buf[14];
 	uchar key[16];
 	uchar passwdcrypt[120];
@@ -762,14 +762,34 @@ static int8_t newcamd_auth_client(IN_ADDR_T ip, uint8_t *deskey)
 	i = process_input(mbuf, sizeof(mbuf), cfg.cmaxidle);
 	if(i > 0)
 	{
-		if(mbuf[2] != MSG_CLIENT_2_SERVER_LOGIN)
+		if(i <= 5 || mbuf[2] != MSG_CLIENT_2_SERVER_LOGIN)
 		{
-			cs_log_dbg(D_CLIENT, "expected MSG_CLIENT_2_SERVER_LOGIN (%02X), received %02X",
-						  MSG_CLIENT_2_SERVER_LOGIN, mbuf[2]);
+			cs_log_dbg(D_CLIENT, "expected valid MSG_CLIENT_2_SERVER_LOGIN (%02X), received cmd=%02X len=%d",
+						  MSG_CLIENT_2_SERVER_LOGIN, (i > 2) ? mbuf[2] : 0, i);
 			return -1;
 		}
+
+		uchar *login_end = mbuf + i;
 		usr = mbuf + 5;
-		pwd = usr + strlen((char *)usr) + 1;
+		uchar *usr_end = (uchar *)memchr(usr, 0, (size_t)(login_end - usr));
+		if(!usr_end || usr_end == usr)
+		{
+			cs_log("rejecting malformed newcamd login: invalid username field");
+			return -1;
+		}
+
+		pwd = usr_end + 1;
+		if(pwd >= login_end)
+		{
+			cs_log("rejecting malformed newcamd login: missing password field");
+			return -1;
+		}
+		uchar *pwd_end = (uchar *)memchr(pwd, 0, (size_t)(login_end - pwd));
+		if(!pwd_end || pwd_end == pwd)
+		{
+			cs_log("rejecting malformed newcamd login: invalid password field");
+			return -1;
+		}
 	}
 	else
 	{
@@ -797,45 +817,46 @@ static int8_t newcamd_auth_client(IN_ADDR_T ip, uint8_t *deskey)
 		sid_list = 1;
 	}
 
-	for(ok = 0, account = cfg.account; (usr) && (account) && (!ok); account = account->next)
+	ok = 0;
+	for(account = cfg.account; usr && account; account = account->next)
 	{
-		cs_log_dbg(D_CLIENT, "account->usr=%s", account->usr);
-		if(strcmp((char *)usr, account->usr) == 0)
+		if(strcmp((char *)usr, account->usr) != 0)
+			{ continue; }
+
+		matched_account = account;
+		__md5_crypt(ESTR(account->pwd), "$1$abcdefgh$", (char *)passwdcrypt);
+		if(strcmp((char *)pwd, (const char *)passwdcrypt) != 0)
 		{
-			__md5_crypt(ESTR(account->pwd), "$1$abcdefgh$", (char *)passwdcrypt);
-			cs_log_dbg(D_CLIENT, "account->pwd=%s", passwdcrypt);
-			if(strcmp((char *)pwd, (const char *)passwdcrypt) == 0)
-			{
-				cl->crypted = 1;
-				char e_txt[20];
-				snprintf(e_txt, 20, "%s:%d", "newcamd", cfg.ncd_ptab.ports[cl->port_idx].s_port);
-				if((rc = cs_auth_client(cl, account, e_txt)) == 2)
-				{
-					cs_log("hostname or ip mismatch for user %s (%s)", usr, client_name);
-					break;
-				}
-				else if(rc != 0)
-				{
-					cs_log("account is invalid for user %s (%s)", usr, client_name);
-					break;
-				}
-				else
-				{
-					cs_log("user %s authenticated successfully (%s)", usr, client_name);
-					ok = 1;
-					break;
-				}
-			}
-			else
-				{ cs_log("user %s is providing a wrong password (%s)", usr, client_name); }
+			cs_log("newcamd authentication rejected for user %s: invalid credentials (%s)", usr, client_name);
+			break;
 		}
+
+		cl->crypted = 1;
+		char e_txt[20];
+		snprintf(e_txt, 20, "%s:%d", "newcamd", cfg.ncd_ptab.ports[cl->port_idx].s_port);
+		rc = cs_auth_client(cl, account, e_txt);
+		if(rc == 2)
+		{
+			cs_log("newcamd authentication rejected for user %s: hostname or ip mismatch (%s)", usr, client_name);
+			break;
+		}
+		if(rc != 0)
+		{
+			cs_log("newcamd authentication rejected for user %s: account policy (%s)", usr, client_name);
+			break;
+		}
+
+		cs_log("user %s authenticated successfully (%s)", usr, client_name);
+		ok = 1;
+		break;
 	}
 
-	if(!ok && !account)
+	if(!matched_account)
 	{
-		cs_log("user %s is trying to connect but doesnt exist ! (%s)", usr, client_name);
-		usr = 0;
+		cs_log("newcamd authentication rejected: unknown user %s (%s)", usr, client_name);
 	}
+	if(!ok)
+		{ cl->crypted = 0; }
 
 	// check for non ready reader and reject client
 	for(rdr = first_active_reader; rdr ; rdr = rdr->next)

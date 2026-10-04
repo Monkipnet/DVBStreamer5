@@ -508,7 +508,7 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
             error = "Некорректное имя пользователя: " + user.user;
             return false;
         }
-        if (user.password.empty() || user.password.size() > 64 || user.password.find('\n') != std::string::npos || user.password.find('\r') != std::string::npos) {
+        if (user.password.empty() || user.password.size() > 64 || user.password.find_first_of("\r\n;#") != std::string::npos) {
             error = "Некорректный пароль пользователя " + user.user;
             return false;
         }
@@ -601,7 +601,7 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
             if (reader.remoteUser.empty() || reader.remoteUser.size() > 128 ||
                 reader.remoteUser.find_first_of("\r\n;#") != std::string::npos ||
                 reader.remotePassword.empty() || reader.remotePassword.size() > 256 ||
-                reader.remotePassword.find_first_of("\r\n") != std::string::npos) {
+                reader.remotePassword.find_first_of("\r\n;#") != std::string::npos) {
                 error = "Для Remote Newcamd укажите корректные User и Password: " + reader.label;
                 return false;
             }
@@ -624,7 +624,7 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
         }
         if (reader.protocol != "mouse" && reader.protocol != "phoenix" &&
             reader.protocol != "pcsc" && reader.protocol != "newcamd") {
-            error = "Поддерживаются mouse/phoenix/pcsc: " + reader.label;
+            error = "Поддерживаются mouse/phoenix/pcsc/newcamd: " + reader.label;
             return false;
         }
         if (!reader.boxkey.empty() && !isHex(reader.boxkey, 16)) {

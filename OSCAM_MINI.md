@@ -135,6 +135,16 @@ Important OSCam detail: Newcamd listening ports are server endpoints, while OSCa
 
 Legacy single-account configurations are read automatically and shown as the first user entry; additional port definitions are also imported into the UI.
 
+## Newcamd authentication hardening
+
+OSCam-mini validates the complete Newcamd login payload before reading the username
+or password hash. Unknown users, invalid credentials and account-policy rejection are
+handled separately and password hashes are not written to the debug log. Passwords
+entered through the DVBStreamer5 OSCam-mini page must not contain `#` or `;`, because
+those characters are OSCam/INI comment delimiters and cannot be round-tripped safely.
+The Newcamd MD5-crypt wire format and the fixed `$1$abcdefgh$` salt remain protocol-
+compatible with standard OSCam/Newcamd clients.
+
 ## Remote Newcamd readers
 
 Choose **Remote Newcamd** in a reader row and configure the upstream endpoint.
