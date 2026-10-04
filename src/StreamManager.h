@@ -220,10 +220,10 @@ struct StreamState {
 
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
-    // Private browser preview is always H.264/AAC MPEG-TS. The lazy handle
-    // starts its native workers only while preview.ts is actively consuming
-    // transport and tears them down after the short idle grace period.
-    LazyPreviewTranscoderHandle nativePreviewTranscoder;
+    // V10.8.69: browser preview uses the direct V10.8.41 pipeline again.
+    // It stays initialized for the stream lifetime and is isolated from the
+    // production transcoder. Output is fixed H.264/AAC 1280x720 square-pixel 16:9.
+    std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativePreviewTranscoder;
     std::atomic<bool> previewTranscodeFailed{false};
     struct HlsAbrVariantRuntime {
         std::string name;
