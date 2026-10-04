@@ -34,7 +34,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential libjsoncpp-dev
+          sudo apt-get install -y -qq build-essential libjsoncpp-dev libssl-dev
 
       - name: Compile affected C++ units
         shell: bash
@@ -134,8 +134,8 @@ jobs:
           }
           CPP
           g++ -std=c++17 -Isrc -I/usr/include/jsoncpp \
-            /tmp/v10866_sync_test.cpp src/OscamMiniManager.cpp src/ConfigManager.cpp \
-            -ljsoncpp -pthread -o /tmp/v10866_sync_test
+            /tmp/v10866_sync_test.cpp src/OscamMiniManager.cpp src/ConfigManager.cpp src/utils.cpp \
+            -ljsoncpp -lssl -lcrypto -pthread -o /tmp/v10866_sync_test
           /tmp/v10866_sync_test
 
       - name: Commit V10.8.66
