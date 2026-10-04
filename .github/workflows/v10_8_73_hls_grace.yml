@@ -1,0 +1,43 @@
+name: V10.8.73 HLS grace
+
+on:
+  push:
+    branches:
+      - staging/v10.8.73-hls-grace
+    paths:
+      - .github/workflows/v10_8_73_hls_grace.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: staging/v10.8.73-hls-grace
+
+      - name: Apply source patch
+        run: python3 scripts/apply_v10_8_73_hls_grace.py
+
+      - name: Install syntax-check dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ libssl-dev libcrypt-dev libjsoncpp-dev
+
+      - name: Validate source
+        run: |
+          git diff --check
+          g++ -std=c++17 -pthread -fsyntax-only -Isrc -Ithird_party -Ithird_party/boost src/media/NativeHlsSegmenter.cpp
+          g++ -std=c++17 -pthread -fsyntax-only -Isrc -Ithird_party -Ithird_party/boost src/StreamManager.cpp
+
+      - name: Commit validated source patch
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AppVersion.h src/StreamManager.cpp src/media/NativeHlsSegmenter.h src/media/NativeHlsSegmenter.cpp
+          git diff --cached --check
+          git commit -m "V10.8.73 keep stale HLS segments and restore 5s OnDemand idle"
+          git push origin HEAD:staging/v10.8.73-hls-grace
