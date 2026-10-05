@@ -511,13 +511,73 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
             ? std::min(config_.targetDurationSeconds, 1.0)
             : config_.targetDurationSeconds;
         const bool targetReached = segmentHasPackets_ && elapsed >= segmentTarget;
-        // DVB passthrough encoders do not always set random_access_indicator.
-        // Prefer a PCR-bearing PES boundary instead of waiting six seconds
-        // and then cutting at an arbitrary PCR in the middle of transport.
-        const bool passthroughPesBoundary = !config_.independentSegments && info.payloadUnitStart;
-        const bool hardLimit = !config_.independentSegments &&
+
+        // V10.8.89: an H.264/H.265 HLS segment must not start on an arbitrary
+        // audio/video PES boundary. A fresh demuxer may parse each .ts file
+        // independently, so cut AVC/HEVC only immediately before a decoder-safe
+        // random-access PES carrying the required parameter sets. This extends
+        // V10.8.88's clean first segment rule to every steady-state segment.
+        const bool hasH26xVideo = std::any_of(
+            elementaryStreamType_.begin(), elementaryStreamType_.end(),
+            [](std::uint8_t type) { return type == 0x1bU || type == 0x24U; });
+        bool h26xSafeBoundary = false;
+        if (hasH26xVideo && info.payloadUnitStart && !info.scrambled &&
+            info.pid < elementaryStreamType_.size()) {
+            const std::uint8_t streamType = elementaryStreamType_[info.pid];
+            if (streamType == 0x1bU || streamType == 0x24U) {
+                const std::size_t off = info.payloadOffset;
+                if (off + 9U <= packet.size() &&
+                    packet[off] == 0x00U && packet[off + 1U] == 0x00U &&
+                    packet[off + 2U] == 0x01U &&
+                    packet[off + 3U] >= 0xe0U && packet[off + 3U] <= 0xefU) {
+                    const std::size_t elementary =
+                        off + 9U + static_cast<std::size_t>(packet[off + 8U]);
+                    if (elementary + 4U <= packet.size()) {
+                        bool haveVps = false;
+                        bool haveSps = false;
+                        bool havePps = false;
+                        bool haveRandomAccess = info.randomAccess;
+                        for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
+                            std::size_t nal = packet.size();
+                            if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
+                                packet[pos + 2U] == 0x01U) {
+                                nal = pos + 3U;
+                            } else if (pos + 5U <= packet.size() &&
+                                       packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
+                                       packet[pos + 2U] == 0x00U && packet[pos + 3U] == 0x01U) {
+                                nal = pos + 4U;
+                            }
+                            if (nal >= packet.size()) continue;
+                            if (streamType == 0x1bU) {
+                                const std::uint8_t nalType = packet[nal] & 0x1fU;
+                                if (nalType == 7U) haveSps = true;
+                                else if (nalType == 8U) havePps = true;
+                                else if (nalType == 5U) haveRandomAccess = true;
+                            } else {
+                                const std::uint8_t nalType = (packet[nal] >> 1U) & 0x3fU;
+                                if (nalType == 32U) haveVps = true;
+                                else if (nalType == 33U) haveSps = true;
+                                else if (nalType == 34U) havePps = true;
+                                else if (nalType >= 16U && nalType <= 23U) haveRandomAccess = true;
+                            }
+                        }
+                        h26xSafeBoundary = streamType == 0x1bU
+                            ? (haveSps && havePps && haveRandomAccess)
+                            : (haveVps && haveSps && havePps && haveRandomAccess);
+                    }
+                }
+            }
+        }
+
+        // Legacy MPEG-TS passthrough keeps the established PES-boundary/hard-limit
+        // behaviour. AVC/HEVC deliberately has no arbitrary hard cut: wait for
+        // the next decoder-safe access unit instead of publishing a broken segment.
+        const bool hardLimit = !config_.independentSegments && !hasH26xVideo &&
             segmentHasPackets_ && elapsed >= segmentTarget * 3.0;
-        if (targetReached && (info.randomAccess || passthroughPesBoundary || hardLimit)) {
+        const bool rotateBoundary = config_.independentSegments
+            ? info.randomAccess
+            : (hasH26xVideo ? h26xSafeBoundary : (info.payloadUnitStart || hardLimit));
+        if (targetReached && rotateBoundary) {
             if (!rotate(std::max(0.001, elapsed))) return false;
             firstPcr_ = lastPcr_;
             haveFirstPcr_ = true;
