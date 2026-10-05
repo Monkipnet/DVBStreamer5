@@ -343,8 +343,13 @@ public:
     // video decode or audio transcode work.
     using DecodedVideoObserver =
         std::function<void(std::shared_ptr<const codec::RawVideoFrame>)>;
+    // V10.8.101: carry the actual elementary audio codec with shared ABR
+    // audio.  When the primary output uses audio=copy there is no configured
+    // encoder codec to infer from, so renditions must learn it from the source
+    // PMT before muxing the shared compressed frames.
     using EncodedAudioObserver =
-        std::function<void(const codec::EncodedAudioFrame&, std::uint64_t)>;
+        std::function<void(mpegts::ElementaryCodec,
+                           const codec::EncodedAudioFrame&, std::uint64_t)>;
     void setExternalVideoInput(bool enabled);
     void setDecodedVideoObserver(DecodedVideoObserver observer);
     bool pushDecodedVideoFrame(std::shared_ptr<const codec::RawVideoFrame> frame);
@@ -352,7 +357,8 @@ public:
     std::pair<int,int> configuredOutputGeometry() const;
     void setExternalAudioInput(bool enabled);
     void setEncodedAudioObserver(EncodedAudioObserver observer);
-    bool pushEncodedAudioFrame(const codec::EncodedAudioFrame& frame,
+    bool pushEncodedAudioFrame(mpegts::ElementaryCodec codec,
+                               const codec::EncodedAudioFrame& frame,
                                std::uint64_t duration90k);
     bool pollOutput(std::vector<std::uint8_t>& output, std::string& error);
 
