@@ -1,0 +1,35 @@
+name: Apply V10.8.99 delayed H26x playlist
+on:
+  push:
+    branches:
+      - work/v10.8.99-delay-h26x-first-playlist
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/apply-v10899.py
+      - name: Validate diff
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.99"' src/AppVersion.h
+          grep -q 'V10.8.99: do not publish the initial live manifest' src/media/NativeHlsSegmenter.cpp
+          if grep -q 'V10.8.98: for passthrough AVC/HEVC' src/media/NativeHlsSegmenter.cpp; then
+            echo 'V10.8.98 startup barrier still present'
+            exit 1
+          fi
+      - name: C++ syntax check
+        run: |
+          g++ -std=c++20 -Isrc -fsyntax-only src/media/NativeHlsSegmenter.cpp
+      - name: Commit patched tree
+        run: |
+          git config user.name 'DVBStreamer5 Patch Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/AppVersion.h src/media/NativeHlsSegmenter.cpp
+          git commit -m 'V10.8.99 delay initial H26x HLS playlist'
+          git push
