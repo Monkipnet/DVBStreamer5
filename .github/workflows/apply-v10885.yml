@@ -1,0 +1,90 @@
+name: Apply V10.8.85 codec-aware HLS start
+
+on:
+  push:
+    branches:
+      - work/v10.8.85-h264-hls-start
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, label):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'src/media/NativeHlsSegmenter.h',
+              '''    std::uint16_t pmtPid_ = mpegts::kNullPid;\n    std::uint64_t nextSequence_ = 0;''',
+              '''    std::uint16_t pmtPid_ = mpegts::kNullPid;\n    // V10.8.85: remember PMT stream_type per elementary PID. The clean-start\n    // gate must apply MPEG-2 sequence-header rules only to MPEG-1/2 video, not\n    // to AVC/HEVC PES that use the same 0xE0..0xEF PES stream_id range.\n    std::array<std::uint8_t, 8192> elementaryStreamType_{};\n    std::uint64_t nextSequence_ = 0;''',
+              'segmenter PMT stream type state')
+
+          replace_once(
+              'src/media/NativeHlsSegmenter.cpp',
+              '''bool psiCollectionComplete(const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,\n                           std::uint8_t tableId) {''',
+              '''bool collectPsiSection(\n    const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,\n    std::uint8_t tableId,\n    std::vector<std::uint8_t>& section) {\n    section.clear();\n    std::size_t sectionSize = 0;\n    bool started = false;\n\n    for (const auto& packet : packets) {\n        dvbstreamer5::media::mpegts::PacketInfo info;\n        if (!dvbstreamer5::media::mpegts::inspectPacket(packet.data(), packet.size(), info) ||\n            !info.hasPayload || info.payloadOffset >= dvbstreamer5::media::mpegts::kPacketSize) {\n            continue;\n        }\n\n        std::size_t offset = info.payloadOffset;\n        if (!started) {\n            if (!info.payloadUnitStart) continue;\n            if (offset >= dvbstreamer5::media::mpegts::kPacketSize) return false;\n            const std::size_t pointer = packet[offset];\n            offset += 1U + pointer;\n            if (offset + 3U > dvbstreamer5::media::mpegts::kPacketSize ||\n                packet[offset] != tableId) return false;\n            const std::size_t sectionLength =\n                (static_cast<std::size_t>(packet[offset + 1U] & 0x0fU) << 8U) |\n                static_cast<std::size_t>(packet[offset + 2U]);\n            sectionSize = 3U + sectionLength;\n            section.reserve(sectionSize);\n            started = true;\n        } else if (info.payloadUnitStart) {\n            break;\n        }\n\n        const std::size_t available = dvbstreamer5::media::mpegts::kPacketSize - offset;\n        const std::size_t remaining = sectionSize - section.size();\n        const std::size_t copy = std::min(available, remaining);\n        section.insert(section.end(), packet.begin() + static_cast<std::ptrdiff_t>(offset),\n                       packet.begin() + static_cast<std::ptrdiff_t>(offset + copy));\n        if (section.size() >= sectionSize) return true;\n    }\n    section.clear();\n    return false;\n}\n\nbool parsePmtStreamTypes(\n    const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,\n    std::array<std::uint8_t, 8192>& streamTypes) {\n    std::vector<std::uint8_t> section;\n    if (!collectPsiSection(packets, 0x02U, section) || section.size() < 16U) return false;\n\n    const std::size_t programInfoLength =\n        (static_cast<std::size_t>(section[10] & 0x0fU) << 8U) |\n        static_cast<std::size_t>(section[11]);\n    std::size_t pos = 12U + programInfoLength;\n    if (pos > section.size() - 4U) return false;\n    const std::size_t end = section.size() - 4U;\n\n    std::array<std::uint8_t, 8192> parsed{};\n    while (pos + 5U <= end) {\n        const std::uint8_t streamType = section[pos];\n        const std::uint16_t pid = static_cast<std::uint16_t>(\n            (static_cast<std::uint16_t>(section[pos + 1U] & 0x1fU) << 8U) |\n            section[pos + 2U]);\n        const std::size_t esInfoLength =\n            (static_cast<std::size_t>(section[pos + 3U] & 0x0fU) << 8U) |\n            static_cast<std::size_t>(section[pos + 4U]);\n        if (pos + 5U + esInfoLength > end) return false;\n        if (pid < parsed.size()) parsed[pid] = streamType;\n        pos += 5U + esInfoLength;\n    }\n    streamTypes = parsed;\n    return true;\n}\n\nbool psiCollectionComplete(const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,\n                           std::uint8_t tableId) {''',
+              'PSI collector and PMT parser')
+
+          replace_once(
+              'src/media/NativeHlsSegmenter.cpp',
+              '''    pmtPrefix_.clear();\n    pmtPid_ = mpegts::kNullPid;\n    nextSequence_ = 0;''',
+              '''    pmtPrefix_.clear();\n    pmtPid_ = mpegts::kNullPid;\n    elementaryStreamType_.fill(0);\n    nextSequence_ = 0;''',
+              'reset PMT stream types')
+
+          replace_once(
+              'src/media/NativeHlsSegmenter.cpp',
+              '''                        if (discovered != mpegts::kNullPid && discovered != pmtPid_) {\n                            pmtPid_ = discovered;\n                            pmtCollecting_.clear();\n                            pmtPrefix_.clear();\n                        }''',
+              '''                        if (discovered != mpegts::kNullPid && discovered != pmtPid_) {\n                            pmtPid_ = discovered;\n                            pmtCollecting_.clear();\n                            pmtPrefix_.clear();\n                            elementaryStreamType_.fill(0);\n                        }''',
+              'clear stream types on PMT PID change')
+
+          replace_once(
+              'src/media/NativeHlsSegmenter.cpp',
+              '''        if ((info.payloadUnitStart || !pmtCollecting_.empty()) &&\n            pmtCollecting_.size() < kMaxPsiPackets) {\n            pmtCollecting_.push_back(packet);\n        }\n    }''',
+              '''        if ((info.payloadUnitStart || !pmtCollecting_.empty()) &&\n            pmtCollecting_.size() < kMaxPsiPackets) {\n            pmtCollecting_.push_back(packet);\n            (void)parsePmtStreamTypes(pmtCollecting_, elementaryStreamType_);\n        }\n    }''',
+              'parse PMT stream types')
+
+          replace_once(
+              'src/media/NativeHlsSegmenter.cpp',
+              '''                } else if (streamId >= 0xe0U && streamId <= 0xefU) {\n                    if (off + 9U > packet.size()) return true;\n                    const std::size_t elementary =\n                        off + 9U + static_cast<std::size_t>(packet[off + 8U]);\n                    if (elementary + 4U > packet.size()) return true;\n\n                    bool sequenceHeader = false;\n                    for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {\n                        if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&\n                            packet[pos + 2U] == 0x01U && packet[pos + 3U] == 0xb3U) {\n                            sequenceHeader = true;\n                            break;\n                        }\n                    }\n                    if (!sequenceHeader) return true;\n                }''',
+              '''                } else if (streamId >= 0xe0U && streamId <= 0xefU) {\n                    // V10.8.85: PES stream_id alone does not identify the video\n                    // codec. AVC and HEVC also use 0xE0..0xEF, so requiring the\n                    // MPEG-2 sequence_header_code for every video PID silently\n                    // dropped all H.264/H.265 pictures. Consult PMT stream_type.\n                    const std::uint8_t streamType = info.pid < elementaryStreamType_.size()\n                        ? elementaryStreamType_[info.pid]\n                        : 0U;\n                    const bool mpeg12Video = streamType == 0x01U || streamType == 0x02U;\n                    if (mpeg12Video) {\n                        if (off + 9U > packet.size()) return true;\n                        const std::size_t elementary =\n                            off + 9U + static_cast<std::size_t>(packet[off + 8U]);\n                        if (elementary + 4U > packet.size()) return true;\n\n                        bool sequenceHeader = false;\n                        for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {\n                            if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&\n                                packet[pos + 2U] == 0x01U && packet[pos + 3U] == 0xb3U) {\n                                sequenceHeader = true;\n                                break;\n                            }\n                        }\n                        if (!sequenceHeader) return true;\n                    }\n                }''',
+              'codec-aware video clean-start gate')
+
+          replace_once(
+              'src/AppVersion.h',
+              'inline constexpr const char* kProgramVersion = "10.8.84";',
+              'inline constexpr const char* kProgramVersion = "10.8.85";',
+              'program version')
+          PY
+      - name: Validate patch
+        shell: bash
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.85"' src/AppVersion.h
+          grep -q 'elementaryStreamType_' src/media/NativeHlsSegmenter.h
+          grep -q 'parsePmtStreamTypes' src/media/NativeHlsSegmenter.cpp
+          grep -q 'streamType == 0x01U || streamType == 0x02U' src/media/NativeHlsSegmenter.cpp
+      - name: Commit patched tree
+        shell: bash
+        run: |
+          git config user.name "DVBStreamer5 Patch Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/apply-v10885.yml
+          git add src/media/NativeHlsSegmenter.cpp src/media/NativeHlsSegmenter.h src/AppVersion.h
+          git commit -m "V10.8.85 fix H264 H265 HLS clean start"
+          git push origin HEAD:work/v10.8.85-h264-hls-start
