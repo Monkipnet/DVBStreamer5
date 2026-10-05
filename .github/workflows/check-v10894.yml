@@ -1,0 +1,16 @@
+name: Check V10.8.94 H26x segmenter
+on:
+  push:
+    paths:
+      - '.github/workflows/check-v10894.yml'
+permissions:
+  contents: read
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/v10.8.93-idr-boundaries
+      - name: C++ syntax check
+        run: g++ -std=c++20 -Isrc -fsyntax-only src/media/NativeHlsSegmenter.cpp
