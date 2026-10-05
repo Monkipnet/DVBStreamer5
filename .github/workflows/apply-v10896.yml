@@ -1,0 +1,35 @@
+name: Apply V10.8.96 full H26x config
+on:
+  push:
+    paths:
+      - '.github/apply-v10896.py'
+      - '.github/workflows/apply-v10896.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/v10.8.96-h26x-full-config
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/apply-v10896.py
+      - name: Validate diff
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.96"' src/AppVersion.h
+          grep -q 'h26xConfigProbeActive_' src/media/NativeHlsSegmenter.h
+          grep -q 'terminalNalComplete' src/media/NativeHlsSegmenter.cpp
+          grep -q 'kMaxConfigProbeBytes' src/media/NativeHlsSegmenter.cpp
+      - name: C++ syntax check
+        run: |
+          g++ -std=c++17 -fsyntax-only -Isrc src/media/NativeHlsSegmenter.cpp
+      - name: Commit patched tree
+        run: |
+          git config user.name 'DVBStreamer5 Patch Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/AppVersion.h src/media/NativeHlsSegmenter.h src/media/NativeHlsSegmenter.cpp
+          git commit -m 'V10.8.96 cache complete H26x decoder config PES'
+          git push origin HEAD:work/v10.8.96-h26x-full-config
