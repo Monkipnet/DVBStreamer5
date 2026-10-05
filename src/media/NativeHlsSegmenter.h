@@ -82,6 +82,10 @@ private:
     std::vector<mpegts::Packet> pmtCollecting_;
     std::vector<mpegts::Packet> pmtPrefix_;
     std::uint16_t pmtPid_ = mpegts::kNullPid;
+    // V10.8.85: remember PMT stream_type per elementary PID. The clean-start
+    // gate must apply MPEG-2 sequence-header rules only to MPEG-1/2 video, not
+    // to AVC/HEVC PES that use the same 0xE0..0xEF PES stream_id range.
+    std::array<std::uint8_t, 8192> elementaryStreamType_{};
     std::uint64_t nextSequence_ = 0;
     std::uint64_t completedSegments_ = 0;
     bool running_ = false;
