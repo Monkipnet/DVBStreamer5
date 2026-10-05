@@ -96,6 +96,19 @@ private:
     // PCR-bearing PES boundary, then admit each PID only from its first PUSI.
     bool waitingForCleanStart_ = false;
     std::array<bool, 8192> firstSegmentPidStarted_{};
+    // V10.8.94: once the target duration is reached, hold the beginning of a
+    // passthrough AVC/HEVC PES until its first VCL NAL is known. Broadcast
+    // encoders frequently place the IDR/IRAP NAL in the second or later TS
+    // packet and omit random_access_indicator, so a one-packet probe cannot
+    // choose a decoder-safe segment boundary.
+    bool h26xCutArmed_ = false;
+    bool h26xBoundaryPending_ = false;
+    std::uint16_t h26xBoundaryPid_ = mpegts::kNullPid;
+    std::uint8_t h26xBoundaryStreamType_ = 0;
+    double h26xBoundaryDuration_ = 0.0;
+    std::uint64_t h26xBoundaryPcr_ = 0;
+    std::vector<mpegts::Packet> h26xBoundaryPackets_;
+    std::vector<std::uint8_t> h26xBoundaryElementary_;
     bool haveFirstPcr_ = false;
     std::uint64_t firstPcr_ = 0;
     std::uint64_t lastPcr_ = 0;
