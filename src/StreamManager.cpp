@@ -498,6 +498,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.muxBitrate = streamConfig.cbr ? streamConfig.targetBitrate : 0;
         tc.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
         tc.serviceProvider = streamConfig.serviceProvider;
+        // V10.8.102: keep configured display geometry for HLS ABR. Anamorphic
+        // DVB SD can be coded as 720x576 while its intended display is 16:9;
+        // treating coded pixels as square pixels used to collapse ABR to 4:3.
+        // Scope this to multibitrate HLS so direct/single-bitrate behavior stays
+        // exactly as before.
+        if (hasHlsOutput && streamConfig.transcodeMultibitrateEnabled &&
+            tc.videoCodec != "copy") {
+            tc.lockOutputGeometry = true;
+        }
         std::string transcodeError;
         if (!state->nativeTranscoder->initialize(tc, transcodeError)) {
             CardManager::instance().releaseService(streamConfig.id);
@@ -564,24 +573,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
                                 auto primaryGeometry =
                                     statePtr->nativeTranscoder->configuredOutputGeometry();
-                                const std::uint64_t sourcePixels =
-                                    static_cast<std::uint64_t>(frame->width) *
-                                    static_cast<std::uint64_t>(frame->height);
-                                const std::uint64_t primaryPixelsRequested =
-                                    static_cast<std::uint64_t>(
-                                        std::max(0, primaryGeometry.first)) *
-                                    static_cast<std::uint64_t>(
-                                        std::max(0, primaryGeometry.second));
-
-                                if (sourcePixels > 0 &&
-                                    primaryPixelsRequested > sourcePixels) {
-                                    (void)statePtr->nativeTranscoder
-                                        ->setOutputGeometryIfUnconfigured(
-                                            frame->width, frame->height);
-                                    primaryGeometry =
-                                        statePtr->nativeTranscoder
-                                            ->configuredOutputGeometry();
-                                }
+                                // V10.8.102: keep the configured output geometry.
+                                // Coded source dimensions do not describe display
+                                // aspect for anamorphic DVB (for example 720x576
+                                // carrying 16:9). Replacing the configured raster
+                                // here made ABR advertise/output a 4:3-like stream.
 
                                 statePtr->hlsAbrPrimaryWidth =
                                     primaryGeometry.first;
@@ -822,24 +818,46 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             // V10.8.12: ABR renditions no longer demux/decode the input TS
             // independently. Their video and audio are supplied by the primary
             // pipeline, so this callback only drains each rendition's mux output.
-            std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-            for (auto& variant : statePtr->hlsAbrVariants) {
-                if (!variant || !variant->enabled || variant->failed ||
-                    !variant->transcoder || !variant->segmenter) continue;
+            //
+            // V10.8.102: never hold hlsAbrMutex while pollOutput()/segmenter I/O
+            // runs. The primary audio worker uses the same mutex for shared AAC
+            // fan-out; holding it across playlist/segment writes delayed audio by
+            // hundreds of milliseconds and drove the mux into its 500-ms A/V
+            // envelope (late_audio growth + visible ABR stalls).
+            for (auto& slot : statePtr->hlsAbrVariants) {
+                StreamState::HlsAbrVariantRuntime* variant = nullptr;
+                {
+                    std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+                    if (!slot || !slot->enabled || slot->failed ||
+                        !slot->transcoder || !slot->segmenter) {
+                        continue;
+                    }
+                    variant = slot.get();
+                }
+
                 std::vector<std::uint8_t> encoded;
                 std::string abrError;
                 if (!variant->transcoder->pollOutput(encoded, abrError)) {
-                    variant->failed = true;
-                    variant->lastError = abrError.empty() ? "native ABR output poll failed" : abrError;
+                    const std::string failure = abrError.empty()
+                        ? "native ABR output poll failed" : abrError;
+                    {
+                        std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+                        variant->failed = true;
+                        variant->lastError = failure;
+                    }
                     std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
-                              << " error=" << variant->lastError << std::endl;
+                              << " error=" << failure << std::endl;
                     continue;
                 }
                 if (!encoded.empty() && !variant->segmenter->push(encoded.data(), encoded.size())) {
-                    variant->failed = true;
-                    variant->lastError = variant->segmenter->lastError();
+                    const std::string failure = variant->segmenter->lastError();
+                    {
+                        std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+                        variant->failed = true;
+                        variant->lastError = failure;
+                    }
                     std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
-                              << " error=" << variant->lastError << std::endl;
+                              << " error=" << failure << std::endl;
                 }
             }
         };

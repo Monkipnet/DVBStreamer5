@@ -272,17 +272,19 @@ bool NativeTranscoderPipeline::pushEncodedAudioFrame(
         failed_.load(std::memory_order_acquire) ||
         codec == mpegts::ElementaryCodec::Unknown) return false;
 
-    // Shared ABR audio bypasses this rendition's demux.  In audio=copy mode
-    // initialize the rendition mux from the primary stream's real PMT codec;
-    // otherwise the variant has no audio stream type and silently becomes
-    // video-only even though compressed audio frames are being fanned out.
+    // Shared ABR audio bypasses this rendition's demux. Only audio=copy needs
+    // live codec discovery from the primary PMT. AAC/MP2 transcode renditions
+    // already configured their mux codec during initialize(); taking muxMutex_
+    // and calling setCodec() for every 21/24-ms audio frame needlessly blocks
+    // shared audio behind video packetization on every rendition.
     std::string localError;
-    {
+    if (config_.audioCodec == "copy" && inputAudioCodec_ != codec) {
         std::lock_guard<std::mutex> lock(muxMutex_);
         if (!mux_.setCodec(mpegts::ElementaryKind::Audio, codec, localError)) {
             setFailure(localError);
             return false;
         }
+        inputAudioCodec_ = codec;
     }
     return emitAudio(frame, duration90k, localError);
 }
