@@ -17,266 +17,191 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply V10.8.102 changes
+      - name: Apply and validate V10.8.102
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one match, got {count}")
-              p.write_text(text.replace(old, new, 1))
+          version_path = Path('src/AppVersion.h')
+          stream_path = Path('src/StreamManager.cpp')
+          pipe_path = Path('src/media/NativeTranscoderPipeline.cpp')
 
-          replace_once(
-              "src/AppVersion.h",
-              'inline constexpr const char* kProgramVersion = "10.8.101";',
-              'inline constexpr const char* kProgramVersion = "10.8.102";')
+          # 1) Version.
+          version = version_path.read_text()
+          old_version = 'inline constexpr const char* kProgramVersion = "10.8.101";'
+          new_version = 'inline constexpr const char* kProgramVersion = "10.8.102";'
+          if version.count(old_version) != 1:
+              raise SystemExit('AppVersion.h: expected V10.8.101 exactly once')
+          version_path.write_text(version.replace(old_version, new_version, 1))
 
-          replace_once(
-              "src/StreamManager.cpp",
-              '''        tc.serviceProvider = streamConfig.serviceProvider;
-          std::string transcodeError;
-          ''',
-              '''        tc.serviceProvider = streamConfig.serviceProvider;
-          // V10.8.102: HLS ABR must honor the configured output geometry.
-          // Anamorphic DVB SD can be coded as 720x576 while displaying 16:9;
-          // comparing only coded pixel counts used to clamp a requested
-          // 1280x720/1920x1080 primary back to 720x576 and make it appear 4:3.
-          // Keep the change scoped to multibitrate HLS; direct/single-bitrate
-          // output retains the existing source-size clamp behavior.
-          if (hasHlsOutput && streamConfig.transcodeMultibitrateEnabled &&
-              tc.videoCodec != "copy") {
-              tc.lockOutputGeometry = true;
-          }
-          std::string transcodeError;
-          ''')
+          # 2) HLS ABR geometry: lock the configured output geometry before
+          # initialization. This is scoped to multibitrate HLS only.
+          lines = stream_path.read_text().splitlines(keepends=True)
+          service_matches = [i for i, line in enumerate(lines)
+                             if line.strip() == 'tc.serviceProvider = streamConfig.serviceProvider;']
+          if len(service_matches) != 1:
+              raise SystemExit(f'StreamManager.cpp: serviceProvider anchor count={len(service_matches)}')
+          i = service_matches[0]
+          indent = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+          if i + 1 >= len(lines) or lines[i + 1].strip() != 'std::string transcodeError;':
+              raise SystemExit('StreamManager.cpp: transcodeError anchor not found after serviceProvider')
+          geometry_block = [
+              f'{indent}// V10.8.102: HLS ABR must honor configured display geometry.\n',
+              f'{indent}// Anamorphic DVB SD may be coded as 720x576 while displaying 16:9;\n',
+              f'{indent}// treating coded pixels as square pixels used to turn ABR back into 4:3.\n',
+              f'{indent}// Direct/single-bitrate paths keep their existing geometry behavior.\n',
+              f'{indent}if (hasHlsOutput && streamConfig.transcodeMultibitrateEnabled &&\n',
+              f'{indent}    tc.videoCodec != "copy") {{\n',
+              f'{indent}    tc.lockOutputGeometry = true;\n',
+              f'{indent}}}\n',
+          ]
+          lines[i + 1:i + 1] = geometry_block
 
-          replace_once(
-              "src/StreamManager.cpp",
-              '''                                auto primaryGeometry =
-                                      statePtr->nativeTranscoder->configuredOutputGeometry();
-                                  const std::uint64_t sourcePixels =
-                                      static_cast<std::uint64_t>(frame->width) *
-                                      static_cast<std::uint64_t>(frame->height);
-                                  const std::uint64_t primaryPixelsRequested =
-                                      static_cast<std::uint64_t>(
-                                          std::max(0, primaryGeometry.first)) *
-                                      static_cast<std::uint64_t>(
-                                          std::max(0, primaryGeometry.second));
+          # Remove the second ABR-only source-pixel clamp in the decoded-frame
+          # observer. The pipeline is now explicitly locked for ABR before init.
+          starts = [j for j, line in enumerate(lines)
+                    if line.strip() == 'const std::uint64_t sourcePixels =']
+          if len(starts) != 1:
+              raise SystemExit(f'StreamManager.cpp: sourcePixels anchor count={len(starts)}')
+          start = starts[0]
+          if_line = None
+          for j in range(start, min(start + 30, len(lines))):
+              if lines[j].strip().startswith('if (sourcePixels > 0 &&'):
+                  if_line = j
+                  break
+          if if_line is None:
+              raise SystemExit('StreamManager.cpp: sourcePixels if block not found')
+          depth = 0
+          end = None
+          for j in range(if_line, min(if_line + 30, len(lines))):
+              depth += lines[j].count('{') - lines[j].count('}')
+              if j > if_line and depth == 0:
+                  end = j
+                  break
+          if end is None:
+              raise SystemExit('StreamManager.cpp: sourcePixels if closing brace not found')
+          # Include one trailing blank line to keep formatting tidy.
+          remove_end = end + 1
+          if remove_end < len(lines) and lines[remove_end].strip() == '':
+              remove_end += 1
+          del lines[start:remove_end]
 
-                                  if (sourcePixels > 0 &&
-                                      primaryPixelsRequested > sourcePixels) {
-                                      (void)statePtr->nativeTranscoder
-                                          ->setOutputGeometryIfUnconfigured(
-                                              frame->width, frame->height);
-                                      primaryGeometry =
-                                          statePtr->nativeTranscoder
-                                              ->configuredOutputGeometry();
-                                  }
+          # 3) ABR output draining: snapshot active variants while holding the
+          # small state lock, but never hold it across pollOutput/segmenter I/O.
+          start_matches = [j for j, line in enumerate(lines)
+                           if 'relay.observeInputTransport = [statePtr](const std::uint8_t*, std::size_t) {' in line]
+          if len(start_matches) != 1:
+              raise SystemExit(f'StreamManager.cpp: ABR output callback count={len(start_matches)}')
+          cb_start = start_matches[0]
+          cb_indent = lines[cb_start][:len(lines[cb_start]) - len(lines[cb_start].lstrip())]
+          depth = 0
+          cb_end = None
+          for j in range(cb_start, len(lines)):
+              depth += lines[j].count('{') - lines[j].count('}')
+              if j > cb_start and depth == 0 and lines[j].strip() == '};':
+                  cb_end = j
+                  break
+          if cb_end is None:
+              raise SystemExit('StreamManager.cpp: ABR output callback end not found')
+          I = cb_indent
+          replacement = f'''{I}relay.observeInputTransport = [statePtr](const std::uint8_t*, std::size_t) {{
+{I}    if (!statePtr) return;
+{I}    // V10.8.102: never hold hlsAbrMutex across mux draining or HLS file I/O.
+{I}    // The primary audio worker uses the same mutex for shared encoded audio;
+{I}    // segment rotation under this lock could make AAC arrive hundreds of ms late.
+{I}    std::vector<StreamState::HlsAbrVariantRuntime*> targets;
+{I}    {{
+{I}        std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+{I}        for (auto& variant : statePtr->hlsAbrVariants) {{
+{I}            if (!variant || !variant->enabled || variant->failed ||
+{I}                !variant->transcoder || !variant->segmenter) continue;
+{I}            targets.push_back(variant.get());
+{I}        }}
+{I}    }}
+{I}    for (auto* variant : targets) {{
+{I}        std::vector<std::uint8_t> encoded;
+{I}        std::string abrError;
+{I}        if (!variant->transcoder->pollOutput(encoded, abrError)) {{
+{I}            const std::string message = abrError.empty()
+{I}                ? "native ABR output poll failed" : abrError;
+{I}            {{
+{I}                std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+{I}                variant->failed = true;
+{I}                variant->lastError = message;
+{I}            }}
+{I}            std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
+{I}                      << " error=" << message << std::endl;
+{I}            continue;
+{I}        }}
+{I}        if (!encoded.empty() &&
+{I}            !variant->segmenter->push(encoded.data(), encoded.size())) {{
+{I}            const std::string message = variant->segmenter->lastError();
+{I}            {{
+{I}                std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
+{I}                variant->failed = true;
+{I}                variant->lastError = message;
+{I}            }}
+{I}            std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
+{I}                      << " error=" << message << std::endl;
+{I}        }}
+{I}    }}
+{I}}};
+'''.splitlines(keepends=True)
+          lines[cb_start:cb_end + 1] = replacement
+          stream_path.write_text(''.join(lines))
 
-          ''',
-              '''                                auto primaryGeometry =
-                                      statePtr->nativeTranscoder->configuredOutputGeometry();
-                                  // V10.8.102: the primary ABR geometry is locked
-                                  // before transcoder initialization.  Do not clamp
-                                  // it again from the decoded coded raster here;
-                                  // 720x576 broadcast video can legitimately be 16:9.
+          # 4) Shared encoded audio: V10.8.101 needs dynamic codec discovery only
+          # for audio=copy. AAC/MP2 are already configured at initialize().
+          plines = pipe_path.read_text().splitlines(keepends=True)
+          fn_matches = [j for j, line in enumerate(plines)
+                        if line.startswith('bool NativeTranscoderPipeline::pushEncodedAudioFrame(')]
+          if len(fn_matches) != 1:
+              raise SystemExit(f'NativeTranscoderPipeline.cpp: pushEncodedAudioFrame count={len(fn_matches)}')
+          fn_start = fn_matches[0]
+          next_matches = [j for j in range(fn_start + 1, len(plines))
+                          if plines[j].startswith('bool NativeTranscoderPipeline::pollOutput(')]
+          if not next_matches:
+              raise SystemExit('NativeTranscoderPipeline.cpp: pollOutput anchor missing')
+          fn_end = next_matches[0]
+          new_fn = '''bool NativeTranscoderPipeline::pushEncodedAudioFrame(
+    mpegts::ElementaryCodec codec,
+    const codec::EncodedAudioFrame& frame, std::uint64_t duration90k) {
+    if (!externalAudioInput_.load(std::memory_order_acquire) ||
+        failed_.load(std::memory_order_acquire) ||
+        codec == mpegts::ElementaryCodec::Unknown) return false;
 
-          ''')
+    // V10.8.102: shared ABR audio bypasses this rendition's demux. Only
+    // audio=copy must learn the elementary codec dynamically from the primary
+    // PMT. AAC/MP2 outputs configure their mux codec during initialize(), so
+    // taking muxMutex_ for every 20-24 ms frame only creates avoidable latency.
+    std::string localError;
+    if (config_.audioCodec == "copy") {
+        std::lock_guard<std::mutex> lock(muxMutex_);
+        if (!mux_.setCodec(mpegts::ElementaryKind::Audio, codec, localError)) {
+            setFailure(localError);
+            return false;
+        }
+    }
+    return emitAudio(frame, duration90k, localError);
+}
 
-          replace_once(
-              "src/StreamManager.cpp",
-              '''                        if (!statePtr || !frame) return;
+'''.splitlines(keepends=True)
+          plines[fn_start:fn_end] = new_fn
+          pipe_path.write_text(''.join(plines))
 
-                          {
-          ''',
-              '''                        if (!statePtr || !frame) return;
-
-                          std::vector<dvbstreamer5::media::transcode::NativeTranscoderPipeline*>
-                              videoTargets;
-                          {
-          ''')
-
-          replace_once(
-              "src/StreamManager.cpp",
-              '''                            for (auto& variant : statePtr->hlsAbrVariants) {
-                                  if (!variant || !variant->enabled ||
-                                      !variant->transcoder)
-                                      continue;
-                                  (void)variant->transcoder
-                                      ->pushDecodedVideoFrame(frame);
-                              }
-                          }
-                      });
-          ''',
-              '''                            for (auto& variant : statePtr->hlsAbrVariants) {
-                                  if (!variant || !variant->enabled ||
-                                      !variant->transcoder)
-                                      continue;
-                                  videoTargets.push_back(variant->transcoder.get());
-                              }
-                          }
-                          // Do not hold the shared ABR state mutex while feeding
-                          // rendition queues.  Audio uses the same state and must
-                          // never wait behind video fan-out work.
-                          for (auto* target : videoTargets) {
-                              (void)target->pushDecodedVideoFrame(frame);
-                          }
-                      });
-          ''')
-
-          replace_once(
-              "src/StreamManager.cpp",
-              '''                        if (!statePtr) return;
-                          std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-                          for (auto& variant : statePtr->hlsAbrVariants) {
-                              if (!variant || !variant->enabled ||
-                                  !variant->transcoder)
-                                  continue;
-                              (void)variant->transcoder
-                                  ->pushEncodedAudioFrame(codec, frame, duration90k);
-                          }
-          ''',
-              '''                        if (!statePtr) return;
-                          std::vector<dvbstreamer5::media::transcode::NativeTranscoderPipeline*>
-                              audioTargets;
-                          {
-                              std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-                              for (auto& variant : statePtr->hlsAbrVariants) {
-                                  if (!variant || !variant->enabled ||
-                                      !variant->transcoder)
-                                      continue;
-                                  audioTargets.push_back(variant->transcoder.get());
-                              }
-                          }
-                          // Shared AAC/MP2 fan-out runs synchronously in the
-                          // primary audio worker.  Keep filesystem/segment work
-                          // and other rendition activity out of this critical path.
-                          for (auto* target : audioTargets) {
-                              (void)target->pushEncodedAudioFrame(
-                                  codec, frame, duration90k);
-                          }
-          ''')
-
-          replace_once(
-              "src/StreamManager.cpp",
-              '''        relay.observeInputTransport = [statePtr](const std::uint8_t*, std::size_t) {
-              if (!statePtr) return;
-              // V10.8.12: ABR renditions no longer demux/decode the input TS
-              // independently. Their video and audio are supplied by the primary
-              // pipeline, so this callback only drains each rendition's mux output.
-              std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-              for (auto& variant : statePtr->hlsAbrVariants) {
-                  if (!variant || !variant->enabled || variant->failed ||
-                      !variant->transcoder || !variant->segmenter) continue;
-                  std::vector<std::uint8_t> encoded;
-                  std::string abrError;
-                  if (!variant->transcoder->pollOutput(encoded, abrError)) {
-                      variant->failed = true;
-                      variant->lastError = abrError.empty() ? "native ABR output poll failed" : abrError;
-                      std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
-                                << " error=" << variant->lastError << std::endl;
-                      continue;
-                  }
-                  if (!encoded.empty() && !variant->segmenter->push(encoded.data(), encoded.size())) {
-                      variant->failed = true;
-                      variant->lastError = variant->segmenter->lastError();
-                      std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
-                                << " error=" << variant->lastError << std::endl;
-                  }
-              }
-          };
-          ''',
-              '''        relay.observeInputTransport = [statePtr](const std::uint8_t*, std::size_t) {
-              if (!statePtr) return;
-              // V10.8.102: snapshot active renditions under the small state lock,
-              // then drain/mux/segment outside it. NativeHlsSegmenter::push() can
-              // rotate and publish files; holding hlsAbrMutex across that I/O used
-              // to block the synchronous shared-audio callback and make audio late.
-              std::vector<StreamState::HlsAbrVariantRuntime*> targets;
-              {
-                  std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-                  for (auto& variant : statePtr->hlsAbrVariants) {
-                      if (!variant || !variant->enabled || variant->failed ||
-                          !variant->transcoder || !variant->segmenter) continue;
-                      targets.push_back(variant.get());
-                  }
-              }
-              for (auto* variant : targets) {
-                  std::vector<std::uint8_t> encoded;
-                  std::string abrError;
-                  if (!variant->transcoder->pollOutput(encoded, abrError)) {
-                      const std::string message = abrError.empty()
-                          ? "native ABR output poll failed" : abrError;
-                      {
-                          std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-                          variant->failed = true;
-                          variant->lastError = message;
-                      }
-                      std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
-                                << " error=" << message << std::endl;
-                      continue;
-                  }
-                  if (!encoded.empty() &&
-                      !variant->segmenter->push(encoded.data(), encoded.size())) {
-                      const std::string message = variant->segmenter->lastError();
-                      {
-                          std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
-                          variant->failed = true;
-                          variant->lastError = message;
-                      }
-                      std::cerr << "NATIVE HLS ABR ERROR name=" << variant->name
-                                << " error=" << message << std::endl;
-                  }
-              }
-          };
-          ''')
-
-          replace_once(
-              "src/media/NativeTranscoderPipeline.cpp",
-              '''    // Shared ABR audio bypasses this rendition's demux.  In audio=copy mode
-              // initialize the rendition mux from the primary stream's real PMT codec;
-              // otherwise the variant has no audio stream type and silently becomes
-              // video-only even though compressed audio frames are being fanned out.
-              std::string localError;
-              {
-                  std::lock_guard<std::mutex> lock(muxMutex_);
-                  if (!mux_.setCodec(mpegts::ElementaryKind::Audio, codec, localError)) {
-                      setFailure(localError);
-                      return false;
-                  }
-              }
-              return emitAudio(frame, duration90k, localError);
-          ''',
-              '''    // Shared ABR audio bypasses this rendition's demux.  Only
-              // audio=copy needs to learn the elementary codec dynamically from
-              // the primary PMT. AAC/MP2 transcode outputs configure the mux at
-              // initialize(), so taking muxMutex_ for every 20-24 ms audio frame
-              // only adds contention and can make audio arrive late behind video.
-              std::string localError;
-              if (config_.audioCodec == "copy") {
-                  std::lock_guard<std::mutex> lock(muxMutex_);
-                  if (!mux_.setCodec(mpegts::ElementaryKind::Audio, codec, localError)) {
-                      setFailure(localError);
-                      return false;
-                  }
-              }
-              return emitAudio(frame, duration90k, localError);
-          ''')
-
-          stream = Path("src/StreamManager.cpp").read_text()
-          pipe = Path("src/media/NativeTranscoderPipeline.cpp").read_text()
-          version = Path("src/AppVersion.h").read_text()
+          # Structural guards: fail before commit if any expected property is absent.
+          stream = stream_path.read_text()
+          pipe = pipe_path.read_text()
           checks = [
-              ('10.8.102' in version, 'version bump missing'),
-              ('tc.lockOutputGeometry = true;' in stream, 'ABR geometry lock missing'),
+              ('10.8.102' in version_path.read_text(), 'version bump missing'),
+              (stream.count('tc.lockOutputGeometry = true;') >= 2,
+               'ABR geometry lock missing (preview + ABR expected)'),
               ('primaryPixelsRequested' not in stream, 'old ABR geometry clamp remains'),
-              ('NativeHlsSegmenter::push() can' in stream, 'ABR segment lock fix missing'),
-              ('config_.audioCodec == "copy"' in pipe, 'shared audio codec lock fix missing'),
+              ('never hold hlsAbrMutex across mux draining or HLS file I/O' in stream,
+               'ABR output lock fix missing'),
+              ('if (config_.audioCodec == "copy")' in pipe,
+               'audio=copy codec gate missing'),
           ]
           for ok, message in checks:
               if not ok:
@@ -285,11 +210,11 @@ jobs:
 
           git diff --check
           grep -n 'kProgramVersion' src/AppVersion.h
-          grep -n 'lockOutputGeometry = true' src/StreamManager.cpp
-          grep -n 'NativeHlsSegmenter::push() can' src/StreamManager.cpp
-          grep -n 'config_.audioCodec == "copy"' src/media/NativeTranscoderPipeline.cpp
+          grep -n 'HLS ABR must honor configured display geometry' src/StreamManager.cpp
+          grep -n 'never hold hlsAbrMutex' src/StreamManager.cpp
+          grep -n 'if (config_.audioCodec == "copy")' src/media/NativeTranscoderPipeline.cpp
 
-      - name: Commit and push
+      - name: Commit and push V10.8.102
         shell: bash
         run: |
           rm -f .github/workflows/v108102-hotfix.yml
