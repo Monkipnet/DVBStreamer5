@@ -114,3 +114,10 @@ private:
     std::unordered_map<std::string, int64_t> qualityLastCompaction;
     std::unordered_map<std::string, std::function<void(const boost::asio::ip::tcp::socket&)>> endpointHandlers;
 };
+
+// V10.8.77: HttpServer.cpp already probes StreamManager::isStreamActive() in
+// every private browser-preview path (manifest, HEAD, GET and TS hand-off).
+// Redirect only those call sites to the preview-aware probe without changing
+// StreamManager::isStreamActive() globally; this lets an idle OnDemand DVB/SAT
+// service tune itself before the browser tests whether preview.ts is available.
+#define isStreamActive(...) isStreamActiveForHttpPreview(__VA_ARGS__)
