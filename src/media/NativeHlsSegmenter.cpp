@@ -311,15 +311,43 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         programTime_ = std::chrono::system_clock::now();
     }
 
-    if (completedSegments_ == 0 && !waitingForCleanStart_) {
+    // V10.8.81: keep each elementary PID muted until it reaches a clear PES
+    // start. MPEG audio PES (stream_id 0xC0..0xDF) is accepted only when the
+    // elementary payload in that PES begins with a valid MPEG-audio frame sync.
+    // This removes the one truncated MP2 access unit seen at HLS cold start.
+    if (!waitingForCleanStart_) {
         const bool psi = info.pid == 0x0000U || info.pid == pmtPid_;
         const bool nullPacket = info.pid == mpegts::kNullPid;
         if (!psi && !nullPacket && info.hasPayload &&
-            info.pid < firstSegmentPidStarted_.size()) {
-            if (!firstSegmentPidStarted_[info.pid]) {
-                if (!info.payloadUnitStart) return true;
-                firstSegmentPidStarted_[info.pid] = true;
+            info.pid < firstSegmentPidStarted_.size() &&
+            !firstSegmentPidStarted_[info.pid]) {
+            if (!info.payloadUnitStart || info.scrambled) return true;
+
+            const std::size_t off = info.payloadOffset;
+            if (off + 6U <= packet.size() &&
+                packet[off] == 0x00U && packet[off + 1U] == 0x00U && packet[off + 2U] == 0x01U) {
+                const std::uint8_t streamId = packet[off + 3U];
+                if (streamId >= 0xc0U && streamId <= 0xdfU) {
+                    // DVB MPEG-1/2 audio normally uses the MPEG-2 PES optional
+                    // header layout. If the first frame header is not completely
+                    // inside this TS packet, reject this PES and try the next one.
+                    if (off + 9U > packet.size()) return true;
+                    const std::size_t elementary =
+                        off + 9U + static_cast<std::size_t>(packet[off + 8U]);
+                    if (elementary + 3U > packet.size()) return true;
+
+                    const std::uint8_t b0 = packet[elementary];
+                    const std::uint8_t b1 = packet[elementary + 1U];
+                    const std::uint8_t b2 = packet[elementary + 2U];
+                    const bool sync = b0 == 0xffU && (b1 & 0xe0U) == 0xe0U;
+                    const bool versionOk = (b1 & 0x18U) != 0x08U;
+                    const bool layerOk = (b1 & 0x06U) != 0x00U;
+                    const bool bitrateOk = (b2 & 0xf0U) != 0x00U && (b2 & 0xf0U) != 0xf0U;
+                    const bool sampleRateOk = (b2 & 0x0cU) != 0x0cU;
+                    if (!(sync && versionOk && layerOk && bitrateOk && sampleRateOk)) return true;
+                }
             }
+            firstSegmentPidStarted_[info.pid] = true;
         }
     }
 
