@@ -116,6 +116,13 @@ private:
     std::uint16_t h26xConfigPid_ = mpegts::kNullPid;
     std::uint8_t h26xConfigStreamType_ = 0;
     std::vector<std::uint8_t> h26xParameterSets_;
+    // V10.8.96: collect one complete source video PES at a time before caching
+    // decoder configuration. Merely seeing a PPS NAL header in the first TS
+    // packet is insufficient because the PPS body may continue in later packets.
+    bool h26xConfigProbeActive_ = false;
+    std::uint16_t h26xConfigProbePid_ = mpegts::kNullPid;
+    std::uint8_t h26xConfigProbeStreamType_ = 0;
+    std::vector<std::uint8_t> h26xConfigProbeElementary_;
     bool haveFirstPcr_ = false;
     std::uint64_t firstPcr_ = 0;
     std::uint64_t lastPcr_ = 0;
