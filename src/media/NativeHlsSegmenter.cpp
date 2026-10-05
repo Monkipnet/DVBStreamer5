@@ -134,6 +134,8 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     haveFirstPcr_ = false;
     segmentHasPackets_ = false;
     waitingForIndependentStart_ = config_.independentSegments;
+    waitingForCleanStart_ = !config_.independentSegments;
+    firstSegmentPidStarted_.fill(false);
     lastError_.clear();
     programTime_ = std::chrono::system_clock::now();
     running_ = true;
@@ -247,6 +249,34 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         programTime_ = std::chrono::system_clock::now();
     }
 
+    // V10.8.79: a live passthrough subscriber can join the shared DVB bus in
+    // the middle of existing video/audio PES packets.  Publishing those tails
+    // made ffmpeg report "Invalid frame dimensions" and "MP2 Header missing"
+    // on segment0000000000.ts.  Wait until complete PAT/PMT are cached and a
+    // PCR-bearing PES boundary arrives, then let every payload PID enter the
+    // first segment only from its own payload_unit_start packet.
+    if (waitingForCleanStart_) {
+        if (patPrefix_.empty() || pmtPrefix_.empty()) return true;
+        if (!(info.hasPcr && info.payloadUnitStart)) return true;
+        waitingForCleanStart_ = false;
+        firstPcr_ = info.pcrBase90k;
+        lastPcr_ = info.pcrBase90k;
+        haveFirstPcr_ = true;
+        programTime_ = std::chrono::system_clock::now();
+    }
+
+    if (completedSegments_ == 0 && !waitingForCleanStart_) {
+        const bool psi = info.pid == 0x0000U || info.pid == pmtPid_;
+        const bool nullPacket = info.pid == mpegts::kNullPid;
+        if (!psi && !nullPacket && info.hasPayload &&
+            info.pid < firstSegmentPidStarted_.size()) {
+            if (!firstSegmentPidStarted_[info.pid]) {
+                if (!info.payloadUnitStart) return true;
+                firstSegmentPidStarted_[info.pid] = true;
+            }
+        }
+    }
+
     if (info.hasPcr) {
         lastPcr_ = info.pcrBase90k;
         if (!haveFirstPcr_) { firstPcr_ = lastPcr_; haveFirstPcr_ = true; }
@@ -284,10 +314,10 @@ bool NativeHlsSegmenter::openSegment() {
     segmentPath_ = config_.directory / name.str();
     segment_.open(segmentPath_, std::ios::binary | std::ios::trunc);
     if (!segment_.is_open()) { fail("failed to create HLS segment " + segmentPath_.string()); return false; }
-    // The first segment naturally starts with remapper PSI. For every later
-    // segment prepend the last complete PAT/PMT repetition so a fresh HLS
-    // demuxer never sees audio/video packets before program metadata.
-    if (completedSegments_ > 0 && !writePsiPrefix()) {
+    // V10.8.79: the clean-start gate deliberately discards the original PSI
+    // packets received before the first complete PES boundary. Prefix the first
+    // segment as well as later segments with the latest complete PAT/PMT.
+    if ((!patPrefix_.empty() || !pmtPrefix_.empty()) && !writePsiPrefix()) {
         fail("failed to write HLS PAT/PMT prefix");
         return false;
     }
