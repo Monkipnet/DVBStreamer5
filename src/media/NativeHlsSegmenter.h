@@ -109,6 +109,13 @@ private:
     std::uint64_t h26xBoundaryPcr_ = 0;
     std::vector<mpegts::Packet> h26xBoundaryPackets_;
     std::vector<std::uint8_t> h26xBoundaryElementary_;
+    // V10.8.95: cache only Annex-B decoder configuration NAL units from the
+    // source (SPS/PPS for AVC, VPS/SPS/PPS for HEVC). Some broadcast encoders
+    // do not repeat these before later IDR/IRAP frames, so fresh HLS segments
+    // otherwise expose a video PID but no width/height to a new decoder.
+    std::uint16_t h26xConfigPid_ = mpegts::kNullPid;
+    std::uint8_t h26xConfigStreamType_ = 0;
+    std::vector<std::uint8_t> h26xParameterSets_;
     bool haveFirstPcr_ = false;
     std::uint64_t firstPcr_ = 0;
     std::uint64_t lastPcr_ = 0;
