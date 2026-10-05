@@ -523,37 +523,6 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         programTime_ = std::chrono::system_clock::now();
     }
 
-    // V10.8.98: for passthrough AVC/HEVC, do not let audio/SI open the very
-    // first media segment before decoder-safe video has arrived. A standalone
-    // TS can recover from an audio lead, but a live HLS demuxer may finish its
-    // initial stream-info probe with MP2 known and H.264/H.265 still lacking
-    // width/height. Keep PSI and H.26x flowing until the first safe video PES;
-    // other elementary PIDs join from their next normal clean PES start.
-    bool waitingForFirstH26xMedia = false;
-    if (!config_.independentSegments) {
-        bool haveH26x = false;
-        bool h26xStarted = false;
-        for (std::size_t pid = 0; pid < elementaryStreamType_.size(); ++pid) {
-            const std::uint8_t type = elementaryStreamType_[pid];
-            if (type != 0x1bU && type != 0x24U) continue;
-            haveH26x = true;
-            if (firstSegmentPidStarted_[pid]) {
-                h26xStarted = true;
-                break;
-            }
-        }
-        waitingForFirstH26xMedia = haveH26x && !h26xStarted;
-        if (waitingForFirstH26xMedia) {
-            const bool psi = info.pid == 0x0000U || info.pid == pmtPid_;
-            const bool nullPacket = info.pid == mpegts::kNullPid;
-            const std::uint8_t type = info.pid < elementaryStreamType_.size()
-                ? elementaryStreamType_[info.pid]
-                : 0U;
-            const bool h26xVideo = type == 0x1bU || type == 0x24U;
-            if (!psi && !nullPacket && !h26xVideo) return true;
-        }
-    }
-
     // V10.8.82: keep each elementary PID muted until it reaches a decoder-safe
     // PES start. V10.8.81 already required MPEG audio to begin on a real frame.
     // MPEG-2 video now additionally waits for a sequence_header_code (0x000001B3)
@@ -666,24 +635,6 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
             }
             firstSegmentPidStarted_[info.pid] = true;
         }
-    }
-
-    // The global H.26x startup barrier may have been released by this packet.
-    // Reset the segment clock origin to accepted media instead of retaining a
-    // PCR captured from the packet that merely ended waitingForCleanStart_.
-    if (waitingForFirstH26xMedia &&
-        info.pid < elementaryStreamType_.size() &&
-        (elementaryStreamType_[info.pid] == 0x1bU ||
-         elementaryStreamType_[info.pid] == 0x24U) &&
-        firstSegmentPidStarted_[info.pid]) {
-        if (info.hasPcr) {
-            firstPcr_ = info.pcrBase90k;
-            lastPcr_ = info.pcrBase90k;
-            haveFirstPcr_ = true;
-        } else {
-            haveFirstPcr_ = false;
-        }
-        programTime_ = std::chrono::system_clock::now();
     }
 
     // V10.8.96: cache decoder configuration only from a complete H.26x PES.
@@ -1065,6 +1016,19 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     segmentHasPackets_ = false;
     segmentPath_.clear();
     prune();
+
+    // V10.8.99: do not publish the initial live manifest for passthrough
+    // H.264/H.265 after only one completed segment. FFmpeg's live HLS stream
+    // probe can lock codec parameters from that first startup segment before
+    // the next decoder-safe segment exists, even though the same two files are
+    // decoded correctly when they are already listed together in a static HLS
+    // playlist. Wait for two finalized H.26x segments before making video.m3u8
+    // visible; later rotations keep the normal rolling playlist cadence.
+    const bool passthroughH26x = !config_.independentSegments &&
+        std::any_of(elementaryStreamType_.begin(), elementaryStreamType_.end(),
+                    [](std::uint8_t type) { return type == 0x1bU || type == 0x24U; });
+    if (passthroughH26x && completedSegments_ < 2U) return true;
+
     if (!writePlaylist(false)) return false;
     return true;
 }
