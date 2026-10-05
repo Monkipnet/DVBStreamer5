@@ -16,50 +16,17 @@ jobs:
           ref: main
           fetch-depth: 0
       - name: Apply patch
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/HttpServer.cpp')
-          s = p.read_text()
-          old = '''    if (archivePlaylist.empty() && cfg->activationMode == "ondemand" && filePath.extension() == ".m3u8") {
-        for (int attempt = 0; attempt < 30 && !std::filesystem::exists(filePath); ++attempt) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
-'''
-          new = '''    if (archivePlaylist.empty() && cfg->activationMode == "ondemand" && filePath.extension() == ".m3u8") {
-        // V10.8.90: decoder-safe H.264/H.265 segment boundaries may need to wait
-        // for the next IDR/IRAP before the first live playlist can be published.
-        // Keep the initial HTTP request open long enough for that safe boundary
-        // instead of returning a premature 404 after the historical 3 seconds.
-        for (int attempt = 0; attempt < 120 && !std::filesystem::exists(filePath); ++attempt) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
-'''
-          if old not in s:
-              raise SystemExit('HLS startup wait block not found')
-          p.write_text(s.replace(old, new, 1))
-
-          vp = Path('src/AppVersion.h')
-          v = vp.read_text()
-          if 'kProgramVersion = "10.8.89"' not in v:
-              raise SystemExit('version anchor not found')
-          vp.write_text(v.replace('kProgramVersion = "10.8.89"', 'kProgramVersion = "10.8.90"', 1))
-          PY
+        run: python3 scripts/apply_v10890_temp.py
       - name: Validate
-        shell: bash
         run: |
           git diff --check
           grep -n 'attempt < 120' src/HttpServer.cpp
           grep -n 'kProgramVersion = "10.8.90"' src/AppVersion.h
       - name: Commit clean result
-        shell: bash
         run: |
           git config user.name 'DVBStreamer5 Patch Bot'
           git config user.email 'actions@users.noreply.github.com'
-          git rm .github/workflows/apply-v10890-main.yml
+          git rm .github/workflows/apply-v10890-main.yml scripts/apply_v10890_temp.py
           git add src/HttpServer.cpp src/AppVersion.h
           git commit -m 'V10.8.90 wait longer for decoder-safe OnDemand HLS startup'
           git push origin HEAD:main
