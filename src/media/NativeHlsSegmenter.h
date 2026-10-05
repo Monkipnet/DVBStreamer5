@@ -87,6 +87,11 @@ private:
     bool running_ = false;
     bool segmentHasPackets_ = false;
     bool waitingForIndependentStart_ = false;
+    // V10.8.79: passthrough/live MPEG-TS must not publish a first segment that
+    // starts in the middle of video/audio PES. Wait for complete PSI plus a
+    // PCR-bearing PES boundary, then admit each PID only from its first PUSI.
+    bool waitingForCleanStart_ = false;
+    std::array<bool, 8192> firstSegmentPidStarted_{};
     bool haveFirstPcr_ = false;
     std::uint64_t firstPcr_ = 0;
     std::uint64_t lastPcr_ = 0;
