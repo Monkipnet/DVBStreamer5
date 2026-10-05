@@ -1,0 +1,42 @@
+name: Apply V10.8.100 runtime reconfigure fix
+
+on:
+  push:
+    branches:
+      - work/v10.8.100-idempotent-runtime-reconfigure
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'Add V10.8.100 workflow'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/v10.8.100-idempotent-runtime-reconfigure
+          fetch-depth: 0
+
+      - name: Apply production patch
+        run: python3 .github/apply-v108100.py
+
+      - name: Validate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.100"' src/AppVersion.h
+          grep -F 'const auto desiredPorts = configuredHttpPorts();' src/HttpServer.cpp
+          grep -F 'if (camClientsChanged)' src/HttpServer.cpp
+          grep -F 'CardManager::instance().configure(configManager.config.camClients);' src/HttpServer.cpp
+
+      - name: Commit production files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/AppVersion.h src/HttpServer.cpp
+          git commit -m 'V10.8.100 make runtime reconfigure idempotent'
+          git push origin HEAD:work/v10.8.100-idempotent-runtime-reconfigure
