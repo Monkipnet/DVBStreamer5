@@ -1,0 +1,32 @@
+name: Apply V10.8.91 HLS generation guard
+on:
+  push:
+    branches:
+      - work/v10.8.91-hls-generation-guard
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/v10.8.91-hls-generation-guard
+          fetch-depth: 0
+      - name: Apply patch
+        shell: bash
+        run: python3 .github/apply-v10891.py
+      - name: Validate
+        shell: bash
+        run: |
+          git diff --check
+          grep -q 'livePlaylistReady' src/HttpServer.cpp
+          grep -q 'kProgramVersion = "10.8.91"' src/AppVersion.h
+      - name: Commit patched tree
+        shell: bash
+        run: |
+          git config user.name 'DVBStreamer5 Patch Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/HttpServer.cpp src/AppVersion.h
+          git commit -m 'V10.8.91 reject stale OnDemand HLS playlists'
+          git push origin HEAD:work/v10.8.91-hls-generation-guard
