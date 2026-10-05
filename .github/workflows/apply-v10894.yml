@@ -1,0 +1,32 @@
+name: Apply V10.8.94 multi-packet H26x boundaries
+on:
+  push:
+    paths:
+      - '.github/apply-v10894.py'
+      - '.github/workflows/apply-v10894.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/v10.8.93-idr-boundaries
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/apply-v10894.py
+      - name: Validate
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.94"' src/AppVersion.h
+          grep -q 'h26xBoundaryPending_' src/media/NativeHlsSegmenter.h
+          grep -q 'classifyH26xAccessUnit' src/media/NativeHlsSegmenter.cpp
+          grep -q 'V10.8.94' src/media/NativeHlsSegmenter.cpp
+      - name: Commit patched tree
+        run: |
+          git config user.name 'DVBStreamer5 Patch Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/AppVersion.h src/media/NativeHlsSegmenter.h src/media/NativeHlsSegmenter.cpp
+          git commit -m 'V10.8.94 detect H26x keyframes across TS packets'
+          git push origin HEAD:work/v10.8.93-idr-boundaries
