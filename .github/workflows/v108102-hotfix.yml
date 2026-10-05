@@ -1,0 +1,41 @@
+name: V10.8.102 ABR hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v108102-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate and apply V10.8.102
+        shell: bash
+        run: |
+          git apply --check --recount .github/v108102.patch
+          git apply --recount .github/v108102.patch
+          git diff --check
+          grep -n 'kProgramVersion = "10.8.102"' src/AppVersion.h
+          grep -n 'tc.lockOutputGeometry = true' src/StreamManager.cpp
+          ! grep -q 'primaryPixelsRequested' src/StreamManager.cpp
+          grep -n 'never hold hlsAbrMutex' src/StreamManager.cpp
+          grep -n 'config_.audioCodec == "copy"' src/media/NativeTranscoderPipeline.cpp
+
+      - name: Commit and push V10.8.102
+        shell: bash
+        run: |
+          rm -f .github/v108102.patch .github/workflows/v108102-hotfix.yml
+          git config user.name 'Monkipnet'
+          git config user.email 'monkipnet@yandex.ru'
+          git add -A
+          git diff --cached --check
+          git commit -m 'V10.8.102 stabilize ABR audio and preserve 16:9 geometry'
+          git push origin HEAD:main
