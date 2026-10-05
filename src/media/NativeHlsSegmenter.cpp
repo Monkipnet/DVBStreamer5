@@ -230,7 +230,8 @@ H26xAccessUnitKind classifyH26xAccessUnit(
 
 std::vector<std::uint8_t> extractH26xParameterSets(
     const std::vector<std::uint8_t>& elementary,
-    std::uint8_t streamType) {
+    std::uint8_t streamType,
+    bool terminalNalComplete) {
     std::vector<std::uint8_t> out;
     bool haveVps = false;
     bool haveSps = false;
@@ -264,11 +265,20 @@ std::vector<std::uint8_t> extractH26xParameterSets(
         if (nal >= elementary.size()) break;
 
         std::size_t next = nal + 1U;
+        bool foundNext = false;
         for (; next + 3U <= elementary.size(); ++next) {
             std::size_t nextPrefix = 0;
-            if (startCode(next, nextPrefix)) break;
+            if (startCode(next, nextPrefix)) {
+                foundNext = true;
+                break;
+            }
         }
-        if (next > elementary.size()) next = elementary.size();
+        if (!foundNext) {
+            // The caller may be probing a still-growing TS/PES buffer. The
+            // terminal NAL is not cacheable until the PES boundary is known.
+            if (!terminalNalComplete) break;
+            next = elementary.size();
+        }
 
         bool wanted = false;
         if (streamType == 0x1bU) {
@@ -371,6 +381,10 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     h26xConfigPid_ = mpegts::kNullPid;
     h26xConfigStreamType_ = 0;
     h26xParameterSets_.clear();
+    h26xConfigProbeActive_ = false;
+    h26xConfigProbePid_ = mpegts::kNullPid;
+    h26xConfigProbeStreamType_ = 0;
+    h26xConfigProbeElementary_.clear();
     lastError_.clear();
     programTime_ = std::chrono::system_clock::now();
     running_ = true;
@@ -616,23 +630,74 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                             : (haveVps && haveSps && havePps && haveRandomAccess);
                         if (!decoderConfigReady) return true;
 
-                        // V10.8.95: retain the source's decoder configuration
-                        // separately from the IDR/IRAP picture. Later HLS segments
-                        // can replay only VPS/SPS/PPS without duplicating an old
-                        // frame or timestamp.
-                        std::vector<std::uint8_t> firstElementary(
-                            packet.begin() + static_cast<std::ptrdiff_t>(elementary),
-                            packet.end());
-                        auto parameterSets = extractH26xParameterSets(firstElementary, streamType);
-                        if (!parameterSets.empty()) {
-                            h26xConfigPid_ = info.pid;
-                            h26xConfigStreamType_ = streamType;
-                            h26xParameterSets_ = std::move(parameterSets);
-                        }
                     }
                 }
             }
             firstSegmentPidStarted_[info.pid] = true;
+        }
+    }
+
+    // V10.8.96: cache decoder configuration only from a complete H.26x PES.
+    // SPS/PPS/VPS NAL units frequently cross a 188-byte TS packet boundary;
+    // V10.8.95 could therefore replay a truncated PPS even though its NAL type
+    // byte had already been visible in the first packet.
+    const std::uint8_t observedStreamType = info.pid < elementaryStreamType_.size()
+        ? elementaryStreamType_[info.pid]
+        : 0U;
+    const bool observedH26x = observedStreamType == 0x1bU || observedStreamType == 0x24U;
+    if (!config_.independentSegments && observedH26x && info.hasPayload && !info.scrambled) {
+        constexpr std::size_t kMaxConfigProbeBytes = 128U * 1024U;
+
+        auto commitConfigProbe = [this]() {
+            if (!h26xConfigProbeActive_ || h26xConfigProbeElementary_.empty()) return;
+            auto parameterSets = extractH26xParameterSets(
+                h26xConfigProbeElementary_, h26xConfigProbeStreamType_, true);
+            if (!parameterSets.empty()) {
+                h26xConfigPid_ = h26xConfigProbePid_;
+                h26xConfigStreamType_ = h26xConfigProbeStreamType_;
+                h26xParameterSets_ = std::move(parameterSets);
+            }
+        };
+
+        if (info.payloadUnitStart) {
+            if (h26xConfigProbeActive_ && info.pid == h26xConfigProbePid_) {
+                commitConfigProbe();
+            }
+            h26xConfigProbeActive_ = false;
+            h26xConfigProbePid_ = mpegts::kNullPid;
+            h26xConfigProbeStreamType_ = 0;
+            h26xConfigProbeElementary_.clear();
+
+            const std::size_t off = info.payloadOffset;
+            if (off + 9U <= packet.size() &&
+                packet[off] == 0x00U && packet[off + 1U] == 0x00U &&
+                packet[off + 2U] == 0x01U &&
+                packet[off + 3U] >= 0xe0U && packet[off + 3U] <= 0xefU) {
+                const std::size_t begin =
+                    off + 9U + static_cast<std::size_t>(packet[off + 8U]);
+                if (begin <= packet.size()) {
+                    h26xConfigProbeActive_ = true;
+                    h26xConfigProbePid_ = info.pid;
+                    h26xConfigProbeStreamType_ = observedStreamType;
+                    const std::size_t count = std::min(
+                        kMaxConfigProbeBytes, packet.size() - begin);
+                    h26xConfigProbeElementary_.insert(
+                        h26xConfigProbeElementary_.end(),
+                        packet.begin() + static_cast<std::ptrdiff_t>(begin),
+                        packet.begin() + static_cast<std::ptrdiff_t>(begin + count));
+                }
+            }
+        } else if (h26xConfigProbeActive_ && info.pid == h26xConfigProbePid_ &&
+                   info.payloadOffset < packet.size() &&
+                   h26xConfigProbeElementary_.size() < kMaxConfigProbeBytes) {
+            const std::size_t remaining =
+                kMaxConfigProbeBytes - h26xConfigProbeElementary_.size();
+            const std::size_t count = std::min(
+                remaining, packet.size() - info.payloadOffset);
+            h26xConfigProbeElementary_.insert(
+                h26xConfigProbeElementary_.end(),
+                packet.begin() + static_cast<std::ptrdiff_t>(info.payloadOffset),
+                packet.begin() + static_cast<std::ptrdiff_t>(info.payloadOffset + count));
         }
     }
 
@@ -758,7 +823,7 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         bool candidateCarriesConfig = false;
         if (randomAccess) {
             auto currentConfig = extractH26xParameterSets(
-                h26xBoundaryElementary_, h26xBoundaryStreamType_);
+                h26xBoundaryElementary_, h26xBoundaryStreamType_, false);
             if (!currentConfig.empty()) {
                 h26xConfigPid_ = h26xBoundaryPid_;
                 h26xConfigStreamType_ = h26xBoundaryStreamType_;
