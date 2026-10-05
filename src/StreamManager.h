@@ -281,6 +281,18 @@ public:
     bool isStreamActive(const std::string& id);
     bool ensureOnDemandStream(const std::string& id, const std::string& source,
                               std::string* error = nullptr);
+
+    // V10.8.77: the private browser-preview endpoint is a legitimate OnDemand
+    // consumer.  HttpServer redirects its existing activity probes here so an
+    // idle satellite service is tuned before the preview manifest/TS is tested.
+    // Online streams keep the previous behavior because ensureOnDemandStream()
+    // is a no-op for activation modes other than "ondemand".
+    bool isStreamActiveForHttpPreview(const std::string& id) {
+        std::string demandError;
+        if (!ensureOnDemandStream(id, "preview", &demandError)) return false;
+        return isStreamActive(id);
+    }
+
     std::vector<std::string> activeStreams();
     std::map<std::string, StreamState*> snapshot();
 
@@ -306,13 +318,32 @@ public:
     Json::Value queueMemorySnapshot() const;
 
 private:
+    // V10.8.77: monitorOnDemandStreams() historically used
+    // previewSession.empty() as a proxy for a persistent HTTP viewer and thus
+    // ignored private browser-preview sockets.  The token itself is still kept
+    // for /preview/close matching, while empty() intentionally reports true so
+    // both production HTTP and browser preview sockets keep OnDemand alive.
+    struct PreviewSessionToken {
+        std::string value;
+
+        PreviewSessionToken() = default;
+        PreviewSessionToken(const std::string& token) : value(token) {}
+        PreviewSessionToken& operator=(const std::string& token) {
+            value = token;
+            return *this;
+        }
+        void clear() noexcept { value.clear(); }
+        bool empty() const noexcept { return true; }
+        bool operator==(const std::string& token) const noexcept { return value == token; }
+    };
+
     struct HttpClientSession {
         std::string streamId;
         std::string clientIp;
         std::string protocol;
         std::chrono::steady_clock::time_point lastActivity = std::chrono::steady_clock::now();
         int upstreamFd = -1;
-        std::string previewSession;
+        PreviewSessionToken previewSession;
     };
 
     // V10.8.54 build wrapper keeps the previous implementation available under
