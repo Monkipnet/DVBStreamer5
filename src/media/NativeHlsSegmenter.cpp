@@ -39,6 +39,80 @@ bool atomicReplace(const std::filesystem::path& temp,
     return false;
 }
 
+bool collectPsiSection(
+    const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,
+    std::uint8_t tableId,
+    std::vector<std::uint8_t>& section) {
+    section.clear();
+    std::size_t sectionSize = 0;
+    bool started = false;
+
+    for (const auto& packet : packets) {
+        dvbstreamer5::media::mpegts::PacketInfo info;
+        if (!dvbstreamer5::media::mpegts::inspectPacket(packet.data(), packet.size(), info) ||
+            !info.hasPayload || info.payloadOffset >= dvbstreamer5::media::mpegts::kPacketSize) {
+            continue;
+        }
+
+        std::size_t offset = info.payloadOffset;
+        if (!started) {
+            if (!info.payloadUnitStart) continue;
+            if (offset >= dvbstreamer5::media::mpegts::kPacketSize) return false;
+            const std::size_t pointer = packet[offset];
+            offset += 1U + pointer;
+            if (offset + 3U > dvbstreamer5::media::mpegts::kPacketSize ||
+                packet[offset] != tableId) return false;
+            const std::size_t sectionLength =
+                (static_cast<std::size_t>(packet[offset + 1U] & 0x0fU) << 8U) |
+                static_cast<std::size_t>(packet[offset + 2U]);
+            sectionSize = 3U + sectionLength;
+            section.reserve(sectionSize);
+            started = true;
+        } else if (info.payloadUnitStart) {
+            break;
+        }
+
+        const std::size_t available = dvbstreamer5::media::mpegts::kPacketSize - offset;
+        const std::size_t remaining = sectionSize - section.size();
+        const std::size_t copy = std::min(available, remaining);
+        section.insert(section.end(), packet.begin() + static_cast<std::ptrdiff_t>(offset),
+                       packet.begin() + static_cast<std::ptrdiff_t>(offset + copy));
+        if (section.size() >= sectionSize) return true;
+    }
+    section.clear();
+    return false;
+}
+
+bool parsePmtStreamTypes(
+    const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,
+    std::array<std::uint8_t, 8192>& streamTypes) {
+    std::vector<std::uint8_t> section;
+    if (!collectPsiSection(packets, 0x02U, section) || section.size() < 16U) return false;
+
+    const std::size_t programInfoLength =
+        (static_cast<std::size_t>(section[10] & 0x0fU) << 8U) |
+        static_cast<std::size_t>(section[11]);
+    std::size_t pos = 12U + programInfoLength;
+    if (pos > section.size() - 4U) return false;
+    const std::size_t end = section.size() - 4U;
+
+    std::array<std::uint8_t, 8192> parsed{};
+    while (pos + 5U <= end) {
+        const std::uint8_t streamType = section[pos];
+        const std::uint16_t pid = static_cast<std::uint16_t>(
+            (static_cast<std::uint16_t>(section[pos + 1U] & 0x1fU) << 8U) |
+            section[pos + 2U]);
+        const std::size_t esInfoLength =
+            (static_cast<std::size_t>(section[pos + 3U] & 0x0fU) << 8U) |
+            static_cast<std::size_t>(section[pos + 4U]);
+        if (pos + 5U + esInfoLength > end) return false;
+        if (pid < parsed.size()) parsed[pid] = streamType;
+        pos += 5U + esInfoLength;
+    }
+    streamTypes = parsed;
+    return true;
+}
+
 bool psiCollectionComplete(const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,
                            std::uint8_t tableId) {
     if (packets.empty()) return false;
@@ -168,6 +242,7 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     pmtCollecting_.clear();
     pmtPrefix_.clear();
     pmtPid_ = mpegts::kNullPid;
+    elementaryStreamType_.fill(0);
     nextSequence_ = 0;
     completedSegments_ = 0;
     haveFirstPcr_ = false;
@@ -233,6 +308,7 @@ void NativeHlsSegmenter::observePsi(const mpegts::Packet& packet,
                             pmtPid_ = discovered;
                             pmtCollecting_.clear();
                             pmtPrefix_.clear();
+                            elementaryStreamType_.fill(0);
                         }
                     }
                 }
@@ -253,6 +329,7 @@ void NativeHlsSegmenter::observePsi(const mpegts::Packet& packet,
         if ((info.payloadUnitStart || !pmtCollecting_.empty()) &&
             pmtCollecting_.size() < kMaxPsiPackets) {
             pmtCollecting_.push_back(packet);
+            (void)parsePmtStreamTypes(pmtCollecting_, elementaryStreamType_);
         }
     }
 }
@@ -344,20 +421,30 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                     const bool sampleRateOk = (b2 & 0x0cU) != 0x0cU;
                     if (!(sync && versionOk && layerOk && bitrateOk && sampleRateOk)) return true;
                 } else if (streamId >= 0xe0U && streamId <= 0xefU) {
-                    if (off + 9U > packet.size()) return true;
-                    const std::size_t elementary =
-                        off + 9U + static_cast<std::size_t>(packet[off + 8U]);
-                    if (elementary + 4U > packet.size()) return true;
+                    // V10.8.85: PES stream_id alone does not identify the video
+                    // codec. AVC and HEVC also use 0xE0..0xEF, so requiring the
+                    // MPEG-2 sequence_header_code for every video PID silently
+                    // dropped all H.264/H.265 pictures. Consult PMT stream_type.
+                    const std::uint8_t streamType = info.pid < elementaryStreamType_.size()
+                        ? elementaryStreamType_[info.pid]
+                        : 0U;
+                    const bool mpeg12Video = streamType == 0x01U || streamType == 0x02U;
+                    if (mpeg12Video) {
+                        if (off + 9U > packet.size()) return true;
+                        const std::size_t elementary =
+                            off + 9U + static_cast<std::size_t>(packet[off + 8U]);
+                        if (elementary + 4U > packet.size()) return true;
 
-                    bool sequenceHeader = false;
-                    for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
-                        if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
-                            packet[pos + 2U] == 0x01U && packet[pos + 3U] == 0xb3U) {
-                            sequenceHeader = true;
-                            break;
+                        bool sequenceHeader = false;
+                        for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
+                            if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
+                                packet[pos + 2U] == 0x01U && packet[pos + 3U] == 0xb3U) {
+                                sequenceHeader = true;
+                                break;
+                            }
                         }
+                        if (!sequenceHeader) return true;
                     }
-                    if (!sequenceHeader) return true;
                 }
             }
             firstSegmentPidStarted_[info.pid] = true;
