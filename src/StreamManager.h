@@ -371,9 +371,6 @@ private:
     std::mutex onDemandMutex;
     std::set<std::string> onDemandStartedStreams;
     std::map<std::string, std::chrono::steady_clock::time_point> onDemandLastActivity;
-    // V10.8.84: keep a distinct activation timestamp so a slow IP/HLS source
-    // gets a startup grace without extending the normal post-view idle timeout.
-    std::map<std::string, std::chrono::steady_clock::time_point> onDemandStartedAt;
     std::atomic<bool> onDemandMonitorStop{false};
     std::thread onDemandMonitorThread;
     std::atomic<uint64_t> nextSessionId{0};

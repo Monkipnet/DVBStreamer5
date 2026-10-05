@@ -405,20 +405,7 @@ void NativeHlsInput::run() {
     };
 
     Playlist playlist;
-    // V10.8.84: an OnDemand upstream can itself need time to wake and publish
-    // its first media playlist. Keep retrying while it warms instead of
-    // declaring the relay dead after the normal 15-second online timeout.
-    const bool onDemandStartup = lower(config_.activationMode) == "ondemand";
-    const auto startupGrace = onDemandStartup
-        ? std::chrono::seconds(45)
-        : std::chrono::seconds(15);
-    const auto startupDeadline = Clock::now() + startupGrace;
-    if (onDemandStartup) {
-        std::cerr << "NATIVE HLS INPUT STARTUP"
-                  << " stream=" << config_.name
-                  << " mode=ondemand grace_s=" << startupGrace.count()
-                  << std::endl;
-    }
+    const auto startupDeadline = Clock::now() + std::chrono::seconds(15);
     while (!stopping_.load() && !loadPlaylist(playlist)) {
         if (Clock::now() >= startupDeadline) {
             fail("native HLS playlist load failed: " + error);
