@@ -457,6 +457,7 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                         bool haveVps = false;
                         bool haveSps = false;
                         bool havePps = false;
+                        bool haveRandomAccess = info.randomAccess;
                         for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
                             std::size_t nal = packet.size();
                             if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
@@ -473,17 +474,25 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                                 const std::uint8_t nalType = packet[nal] & 0x1fU;
                                 if (nalType == 7U) haveSps = true;
                                 else if (nalType == 8U) havePps = true;
+                                else if (nalType == 5U) haveRandomAccess = true;
                             } else {
                                 const std::uint8_t nalType = (packet[nal] >> 1U) & 0x3fU;
                                 if (nalType == 32U) haveVps = true;
                                 else if (nalType == 33U) haveSps = true;
                                 else if (nalType == 34U) havePps = true;
+                                else if (nalType >= 16U && nalType <= 23U) haveRandomAccess = true;
                             }
                         }
 
+                        // V10.8.88: parameter sets alone are not enough for a fresh
+                        // decoder.  The first admitted AVC/HEVC PES must also be a
+                        // random-access access unit (IDR for AVC, IRAP for HEVC).
+                        // Prefer an explicit Annex-B NAL, while also accepting the
+                        // TS random_access_indicator when the key NAL starts in a
+                        // later TS packet of the same PES.
                         const bool decoderConfigReady = streamType == 0x1bU
-                            ? (haveSps && havePps)
-                            : (haveVps && haveSps && havePps);
+                            ? (haveSps && havePps && haveRandomAccess)
+                            : (haveVps && haveSps && havePps && haveRandomAccess);
                         if (!decoderConfigReady) return true;
                     }
                 }
