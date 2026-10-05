@@ -109,9 +109,14 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     for (const auto& entry : std::filesystem::directory_iterator(config_.directory, ec)) {
         if (ec) break;
         const auto name = entry.path().filename().string();
-        if (entry.is_regular_file() && (name == "video.m3u8" || name == "video.m3u8.tmp" ||
-            (name.rfind("segment", 0) == 0 && entry.path().extension() == ".ts"))) {
-            if (!config_.archiveEnabled) std::filesystem::remove(entry.path(), ec);
+        if (!entry.is_regular_file()) continue;
+        const bool playlistFile = name == "video.m3u8" || name == "video.m3u8.tmp";
+        const bool segmentFile = name.rfind("segment", 0) == 0 && entry.path().extension() == ".ts";
+        // V10.8.78: a previous live playlist must never survive a new OnDemand
+        // generation, even when archive retention keeps the old media files.
+        // Otherwise the first request can observe stale sequence numbers.
+        if (playlistFile || (segmentFile && !config_.archiveEnabled)) {
+            std::filesystem::remove(entry.path(), ec);
             ec.clear();
         }
     }
@@ -132,7 +137,10 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     lastError_.clear();
     programTime_ = std::chrono::system_clock::now();
     running_ = true;
-    if (!writePlaylist(false)) { error = lastError_; running_ = false; return false; }
+    // V10.8.78: do not publish an empty 200-OK manifest here.  HttpServer's
+    // OnDemand startup wait checks for video.m3u8; create it only after rotate()
+    // has finalized the first real media segment so ffmpeg/VLC cannot cache an
+    // empty playlist and abort before DVB tune/CAM startup completes.
     error.clear();
     return true;
 }
@@ -243,13 +251,20 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         lastPcr_ = info.pcrBase90k;
         if (!haveFirstPcr_) { firstPcr_ = lastPcr_; haveFirstPcr_ = true; }
         const double elapsed = pcrDeltaSeconds(firstPcr_, lastPcr_);
-        const bool targetReached = segmentHasPackets_ && elapsed >= config_.targetDurationSeconds;
+        // V10.8.78: only the first segment is deliberately short.  The live
+        // stream keeps the V10.8.76 4-second steady-state chunks, while a fresh
+        // OnDemand request gets real media within HttpServer's existing 3-second
+        // startup wait instead of an empty manifest.
+        const double segmentTarget = completedSegments_ == 0
+            ? std::min(config_.targetDurationSeconds, 2.0)
+            : config_.targetDurationSeconds;
+        const bool targetReached = segmentHasPackets_ && elapsed >= segmentTarget;
         // DVB passthrough encoders do not always set random_access_indicator.
         // Prefer a PCR-bearing PES boundary instead of waiting six seconds
         // and then cutting at an arbitrary PCR in the middle of transport.
         const bool passthroughPesBoundary = !config_.independentSegments && info.payloadUnitStart;
         const bool hardLimit = !config_.independentSegments &&
-            segmentHasPackets_ && elapsed >= config_.targetDurationSeconds * 3.0;
+            segmentHasPackets_ && elapsed >= segmentTarget * 3.0;
         if (targetReached && (info.randomAccess || passthroughPesBoundary || hardLimit)) {
             if (!rotate(std::max(0.001, elapsed))) return false;
             firstPcr_ = lastPcr_;
