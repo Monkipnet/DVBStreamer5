@@ -2586,6 +2586,21 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
         // Keep the V10.8.90 12-second startup budget, but spend it waiting for a
         // coherent playlist+first-media pair rather than for the manifest alone.
         for (int attempt = 0; attempt < 120 && !livePlaylistReady(); ++attempt) {
+            // V10.8.92: this HTTP request itself is an active OnDemand viewer.
+            // The decoder-safe first H.264/H.265 segment can legitimately take
+            // longer than the normal 10 s idle window. Refresh OnDemand activity
+            // while the request is blocked here so the monitor cannot stop the
+            // stream underneath the pending playlist request. Once the request
+            // completes, normal HLS playlist/segment requests keep activity alive
+            // and the historical 10 s post-view idle shutdown remains unchanged.
+            if ((attempt % 10) == 0) {
+                std::string startupKeepaliveError;
+                if (!streamManager.ensureOnDemandStream(
+                        id, "hls-startup-wait", &startupKeepaliveError)) {
+                    demandError = startupKeepaliveError;
+                    break;
+                }
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
