@@ -533,9 +533,14 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                     const std::size_t elementary =
                         off + 9U + static_cast<std::size_t>(packet[off + 8U]);
                     if (elementary + 4U <= packet.size()) {
-                        bool haveVps = false;
-                        bool haveSps = false;
-                        bool havePps = false;
+                        // V10.8.93: codec parameter sets are mandatory only for the
+                        // initial cold-start gate above. Many broadcast AVC/HEVC
+                        // encoders send SPS/PPS (and VPS for HEVC) once at startup
+                        // rather than before every keyframe. Requiring them on every
+                        // rotation can therefore prevent segment0 from ever closing.
+                        // After the first segment has established decoder config,
+                        // rotate only on a random-access access unit: IDR for AVC,
+                        // IRAP for HEVC, or the TS random_access_indicator.
                         bool haveRandomAccess = info.randomAccess;
                         for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
                             std::size_t nal = packet.size();
@@ -549,21 +554,13 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                             }
                             if (nal >= packet.size()) continue;
                             if (streamType == 0x1bU) {
-                                const std::uint8_t nalType = packet[nal] & 0x1fU;
-                                if (nalType == 7U) haveSps = true;
-                                else if (nalType == 8U) havePps = true;
-                                else if (nalType == 5U) haveRandomAccess = true;
+                                if ((packet[nal] & 0x1fU) == 5U) haveRandomAccess = true;
                             } else {
                                 const std::uint8_t nalType = (packet[nal] >> 1U) & 0x3fU;
-                                if (nalType == 32U) haveVps = true;
-                                else if (nalType == 33U) haveSps = true;
-                                else if (nalType == 34U) havePps = true;
-                                else if (nalType >= 16U && nalType <= 23U) haveRandomAccess = true;
+                                if (nalType >= 16U && nalType <= 23U) haveRandomAccess = true;
                             }
                         }
-                        h26xSafeBoundary = streamType == 0x1bU
-                            ? (haveSps && havePps && haveRandomAccess)
-                            : (haveVps && haveSps && havePps && haveRandomAccess);
+                        h26xSafeBoundary = haveRandomAccess;
                     }
                 }
             }
