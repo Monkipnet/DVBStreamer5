@@ -1,0 +1,60 @@
+name: Apply V10.8.88 H26x IDR clean start
+on:
+  push:
+    branches:
+      - work/v10.8.87-h26x-clean-start
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/v10.8.87-h26x-clean-start
+      - name: Apply patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/media/NativeHlsSegmenter.cpp')
+          s = p.read_text()
+          old = '''                        bool haveVps = false;\n                        bool haveSps = false;\n                        bool havePps = false;\n'''
+          new = '''                        bool haveVps = false;\n                        bool haveSps = false;\n                        bool havePps = false;\n                        bool haveRandomAccess = info.randomAccess;\n'''
+          if old not in s:
+              raise SystemExit('parameter-set state block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''                            if (streamType == 0x1bU) {\n                                const std::uint8_t nalType = packet[nal] & 0x1fU;\n                                if (nalType == 7U) haveSps = true;\n                                else if (nalType == 8U) havePps = true;\n                            } else {\n                                const std::uint8_t nalType = (packet[nal] >> 1U) & 0x3fU;\n                                if (nalType == 32U) haveVps = true;\n                                else if (nalType == 33U) haveSps = true;\n                                else if (nalType == 34U) havePps = true;\n                            }\n'''
+          new = '''                            if (streamType == 0x1bU) {\n                                const std::uint8_t nalType = packet[nal] & 0x1fU;\n                                if (nalType == 7U) haveSps = true;\n                                else if (nalType == 8U) havePps = true;\n                                else if (nalType == 5U) haveRandomAccess = true;\n                            } else {\n                                const std::uint8_t nalType = (packet[nal] >> 1U) & 0x3fU;\n                                if (nalType == 32U) haveVps = true;\n                                else if (nalType == 33U) haveSps = true;\n                                else if (nalType == 34U) havePps = true;\n                                else if (nalType >= 16U && nalType <= 23U) haveRandomAccess = true;\n                            }\n'''
+          if old not in s:
+              raise SystemExit('NAL type block not found')
+          s = s.replace(old, new, 1)
+
+          old = '''                        const bool decoderConfigReady = streamType == 0x1bU\n                            ? (haveSps && havePps)\n                            : (haveVps && haveSps && havePps);\n'''
+          new = '''                        // V10.8.88: parameter sets alone are not enough for a fresh\n                        // decoder.  The first admitted AVC/HEVC PES must also be a\n                        // random-access access unit (IDR for AVC, IRAP for HEVC).\n                        // Prefer an explicit Annex-B NAL, while also accepting the\n                        // TS random_access_indicator when the key NAL starts in a\n                        // later TS packet of the same PES.\n                        const bool decoderConfigReady = streamType == 0x1bU\n                            ? (haveSps && havePps && haveRandomAccess)\n                            : (haveVps && haveSps && havePps && haveRandomAccess);\n'''
+          if old not in s:
+              raise SystemExit('decoderConfigReady block not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          v = Path('src/AppVersion.h')
+          t = v.read_text()
+          if 'kProgramVersion = "10.8.87"' not in t:
+              raise SystemExit('version 10.8.87 not found')
+          v.write_text(t.replace('kProgramVersion = "10.8.87"', 'kProgramVersion = "10.8.88"', 1))
+          PY
+      - name: Validate patch
+        shell: bash
+        run: |
+          git diff --check
+          grep -n 'haveRandomAccess' src/media/NativeHlsSegmenter.cpp
+          grep -n 'kProgramVersion = "10.8.88"' src/AppVersion.h
+      - name: Commit patched tree
+        shell: bash
+        run: |
+          git config user.name 'DVBStreamer5 Patch Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add src/media/NativeHlsSegmenter.cpp src/AppVersion.h
+          git commit -m 'V10.8.88 require IDR IRAP at HLS cold start'
+          git push origin HEAD:work/v10.8.87-h26x-clean-start
