@@ -444,6 +444,47 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                             }
                         }
                         if (!sequenceHeader) return true;
+                    } else if (streamType == 0x1bU || streamType == 0x24U) {
+                        // V10.8.87: AVC/HEVC must not start the first HLS segment
+                        // on slices that reference parameter sets the fresh decoder
+                        // has never seen. Admit the first PES only when its first
+                        // TS packet carries the codec parameter sets in Annex-B form.
+                        if (off + 9U > packet.size()) return true;
+                        const std::size_t elementary =
+                            off + 9U + static_cast<std::size_t>(packet[off + 8U]);
+                        if (elementary + 4U > packet.size()) return true;
+
+                        bool haveVps = false;
+                        bool haveSps = false;
+                        bool havePps = false;
+                        for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
+                            std::size_t nal = packet.size();
+                            if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
+                                packet[pos + 2U] == 0x01U) {
+                                nal = pos + 3U;
+                            } else if (pos + 5U <= packet.size() &&
+                                       packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
+                                       packet[pos + 2U] == 0x00U && packet[pos + 3U] == 0x01U) {
+                                nal = pos + 4U;
+                            }
+                            if (nal >= packet.size()) continue;
+
+                            if (streamType == 0x1bU) {
+                                const std::uint8_t nalType = packet[nal] & 0x1fU;
+                                if (nalType == 7U) haveSps = true;
+                                else if (nalType == 8U) havePps = true;
+                            } else {
+                                const std::uint8_t nalType = (packet[nal] >> 1U) & 0x3fU;
+                                if (nalType == 32U) haveVps = true;
+                                else if (nalType == 33U) haveSps = true;
+                                else if (nalType == 34U) havePps = true;
+                            }
+                        }
+
+                        const bool decoderConfigReady = streamType == 0x1bU
+                            ? (haveSps && havePps)
+                            : (haveVps && haveSps && havePps);
+                        if (!decoderConfigReady) return true;
                     }
                 }
             }
