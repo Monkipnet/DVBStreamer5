@@ -1,0 +1,40 @@
+name: V10.8.103 AAC HLS clean-start fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v108103-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate and apply V10.8.103
+        shell: bash
+        run: |
+          git apply --check --recount .github/v108103.patch
+          git apply --recount .github/v108103.patch
+          git diff --check
+          grep -n 'kProgramVersion = "10.8.103"' src/AppVersion.h
+          grep -n 'V10.8.103: audio PES stream_id' src/media/NativeHlsSegmenter.cpp
+          grep -n 'streamType == 0x0fU' src/media/NativeHlsSegmenter.cpp
+          grep -n 'streamType == 0x11U' src/media/NativeHlsSegmenter.cpp
+
+      - name: Commit and push V10.8.103
+        shell: bash
+        run: |
+          rm -f .github/v108103.patch .github/workflows/v108103-hotfix.yml
+          git config user.name 'Monkipnet'
+          git config user.email 'monkipnet@yandex.ru'
+          git add -A
+          git diff --cached --check
+          git commit -m 'V10.8.103 fix AAC audio admission in HLS segments'
+          git push origin HEAD:main
