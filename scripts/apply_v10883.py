@@ -1,0 +1,555 @@
+from pathlib import Path
+
+
+def replace_once(path, old, new, label):
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly 1 match, found {count}")
+    p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+# --- StreamManager.cpp: lightweight codec detection + lazy preview transcoder ---
+replace_once(
+    "src/StreamManager.cpp",
+    '#include "media/NativeSampleAes.h"\n',
+    '#include "media/NativeSampleAes.h"\n#include "media/NativeTsDemux.h"\n',
+    "NativeTsDemux include",
+)
+
+old_anchor = '''bool startsWith(const std::string& value, const char* prefix) {
+    return value.rfind(prefix, 0) == 0;
+}
+
+struct AbrProfile {'''
+new_anchor = '''bool startsWith(const std::string& value, const char* prefix) {
+    return value.rfind(prefix, 0) == 0;
+}
+
+const char* browserPreviewCodecName(
+    dvbstreamer5::media::mpegts::ElementaryCodec codec) {
+    using dvbstreamer5::media::mpegts::ElementaryCodec;
+    switch (codec) {
+        case ElementaryCodec::Mpeg2Video: return "mpeg2video";
+        case ElementaryCodec::H264: return "h264";
+        case ElementaryCodec::H265: return "h265";
+        case ElementaryCodec::AacAdts: return "aac-adts";
+        case ElementaryCodec::AacLatm: return "aac-latm";
+        case ElementaryCodec::MpegAudio: return "mpeg-audio";
+        case ElementaryCodec::Ac3: return "ac3";
+        case ElementaryCodec::Eac3: return "eac3";
+        default: return "unknown";
+    }
+}
+
+class BrowserPreviewCodecSelector {
+public:
+    enum class Mode { Detecting, Passthrough, Transcode };
+
+    BrowserPreviewCodecSelector() {
+        demux_.setProgramCallback(
+            [this](const std::vector<dvbstreamer5::media::mpegts::DemuxStreamInfo>& streams) {
+                onProgram(streams);
+            });
+        demux_.setSampleCallback(
+            [](dvbstreamer5::media::mpegts::DemuxSample&&) {});
+    }
+
+    Mode inspect(const std::uint8_t* data, std::size_t size, std::string& error) {
+        error.clear();
+        if (mode_ != Mode::Detecting || !data || size == 0) return mode_;
+        if (!demux_.push(data, size, error)) {
+            if (error.empty()) error = "preview codec detection failed";
+            mode_ = Mode::Transcode;
+        }
+        return mode_;
+    }
+
+    bool takeResolvedLog() {
+        if (mode_ == Mode::Detecting || resolvedLogged_) return false;
+        resolvedLogged_ = true;
+        return true;
+    }
+
+    const char* videoCodecName() const {
+        return browserPreviewCodecName(videoCodec_);
+    }
+
+    const char* audioCodecName() const {
+        return hasAudio_ ? browserPreviewCodecName(audioCodec_) : "none";
+    }
+
+private:
+    void onProgram(
+        const std::vector<dvbstreamer5::media::mpegts::DemuxStreamInfo>& streams) {
+        using dvbstreamer5::media::mpegts::ElementaryCodec;
+        using dvbstreamer5::media::mpegts::ElementaryKind;
+
+        bool haveVideo = false;
+        bool haveAudio = false;
+        ElementaryCodec videoCodec = ElementaryCodec::Unknown;
+        ElementaryCodec audioCodec = ElementaryCodec::Unknown;
+        for (const auto& stream : streams) {
+            if (!haveVideo && stream.kind == ElementaryKind::Video) {
+                haveVideo = true;
+                videoCodec = stream.codec;
+            } else if (!haveAudio && stream.kind == ElementaryKind::Audio) {
+                haveAudio = true;
+                audioCodec = stream.codec;
+            }
+        }
+        if (!haveVideo) return;
+
+        videoCodec_ = videoCodec;
+        audioCodec_ = audioCodec;
+        hasAudio_ = haveAudio;
+
+        // mpegts.js/MediaSource can consume the source TS directly only for the
+        // reliable browser combination AVC + ADTS AAC. Other DVB combinations
+        // (MPEG-2, HEVC, LATM, MP2, AC-3/E-AC-3) use the H.264/AAC fallback.
+        const bool browserVideo = videoCodec == ElementaryCodec::H264;
+        const bool browserAudio = !haveAudio || audioCodec == ElementaryCodec::AacAdts;
+        mode_ = browserVideo && browserAudio
+            ? Mode::Passthrough
+            : Mode::Transcode;
+    }
+
+    dvbstreamer5::media::mpegts::NativeTsDemux demux_;
+    Mode mode_ = Mode::Detecting;
+    dvbstreamer5::media::mpegts::ElementaryCodec videoCodec_ =
+        dvbstreamer5::media::mpegts::ElementaryCodec::Unknown;
+    dvbstreamer5::media::mpegts::ElementaryCodec audioCodec_ =
+        dvbstreamer5::media::mpegts::ElementaryCodec::Unknown;
+    bool hasAudio_ = false;
+    bool resolvedLogged_ = false;
+};
+
+struct AbrProfile {'''
+replace_once(
+    "src/StreamManager.cpp",
+    old_anchor,
+    new_anchor,
+    "browser preview codec selector",
+)
+
+old_preview_init = '''    // Browser preview must not depend on the production codec. mpegts.js /
+    // MediaSource playback is reliable with AVC + AAC, while DVB services can
+    // legitimately carry MPEG-2, HEVC, MP2 or AC-3. Keep a dedicated,
+    // low-bitrate CPU pipeline whose output is used only by preview.ts.
+    // V10.8.69 restores the proven V10.8.41 preview path; production transcoding
+    // remains independent and may still use hardware acceleration.
+    state->nativePreviewTranscoder =
+        std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
+    {
+        dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
+        previewTc.videoCodec = "h264";
+        previewTc.videoEncoder = "cpu";
+        previewTc.audioCodec = "aac";
+        previewTc.width = 1280;
+        previewTc.height = 720;
+        previewTc.fps = 25.0;
+        previewTc.videoBitrate = 1800000ULL;
+        previewTc.audioBitrate = 128000ULL;
+        previewTc.deinterlace = true;
+        // Browser preview is square-pixel AVC. Keep 1280x720 for
+        // anamorphic DVB MPEG-2 instead of reverting to 720x576.
+        previewTc.lockOutputGeometry = true;
+        previewTc.serviceId = static_cast<std::uint16_t>(
+            streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff
+                ? streamConfig.serviceId
+                : (streamConfig.inputServiceId > 0 && streamConfig.inputServiceId <= 0xffff
+                    ? streamConfig.inputServiceId : 1));
+        previewTc.videoPid = 0x0100;
+        previewTc.audioPid = 0x0101;
+        previewTc.muxBitrate = 0;
+        previewTc.serviceName =
+            streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+        previewTc.serviceProvider =
+            streamConfig.serviceProvider.empty() ? "DVBStreamer5" : streamConfig.serviceProvider;
+
+        std::string previewError;
+        if (!state->nativePreviewTranscoder->initialize(previewTc, previewError)) {
+            std::cerr << "NATIVE BROWSER PREVIEW disabled stream="
+                      << streamConfig.name
+                      << " error=" << (previewError.empty()
+                          ? "preview transcoder initialization failed" : previewError)
+                      << std::endl;
+            state->nativePreviewTranscoder.reset();
+        } else {
+            std::cerr << "NATIVE BROWSER PREVIEW ready stream="
+                      << streamConfig.name
+                      << " codec=h264/aac size=1280x720 dar=16:9"
+                      << " encoder=cpu video_kbps=1800 audio_kbps=128"
+                      << std::endl;
+        }
+    }
+'''
+new_preview_init = '''    // V10.8.83: browser preview is adaptive. Do not start decoder/encoder
+    // worker threads for streams that mpegts.js can consume directly. The
+    // H.264/AAC CPU transcoder is constructed lazily only after PMT probing says
+    // that the source A/V combination is not browser-safe.
+    dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
+    previewTc.videoCodec = "h264";
+    previewTc.videoEncoder = "cpu";
+    previewTc.audioCodec = "aac";
+    previewTc.width = 1280;
+    previewTc.height = 720;
+    previewTc.fps = 25.0;
+    previewTc.videoBitrate = 1800000ULL;
+    previewTc.audioBitrate = 128000ULL;
+    previewTc.deinterlace = true;
+    previewTc.lockOutputGeometry = true;
+    previewTc.serviceId = static_cast<std::uint16_t>(
+        streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff
+            ? streamConfig.serviceId
+            : (streamConfig.inputServiceId > 0 && streamConfig.inputServiceId <= 0xffff
+                ? streamConfig.inputServiceId : 1));
+    previewTc.videoPid = 0x0100;
+    previewTc.audioPid = 0x0101;
+    previewTc.muxBitrate = 0;
+    previewTc.serviceName =
+        streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+    previewTc.serviceProvider =
+        streamConfig.serviceProvider.empty() ? "DVBStreamer5" : streamConfig.serviceProvider;
+    std::cerr << "NATIVE BROWSER PREVIEW adaptive ready stream="
+              << streamConfig.name
+              << " direct=h264/aac fallback=h264/aac"
+              << " size=1280x720 encoder=cpu"
+              << std::endl;
+'''
+replace_once(
+    "src/StreamManager.cpp",
+    old_preview_init,
+    new_preview_init,
+    "lazy preview initialization",
+)
+
+old_preview_observer = '''    if (state->nativePreviewTranscoder) {
+        auto previousInputObserver = relay.observeInputTransport;
+        auto* previewTranscoder = state->nativePreviewTranscoder.get();
+        auto previewHubForTranscode = state->nativePreviewHub;
+        StreamState* previewState = state.get();
+        relay.observeInputTransport =
+            [previousInputObserver, previewTranscoder, previewHubForTranscode, previewState](
+                const std::uint8_t* data, std::size_t size) {
+                if (previousInputObserver) previousInputObserver(data, size);
+                if (!previewTranscoder || !previewHubForTranscode || !previewState ||
+                    previewState->previewTranscodeFailed.load(std::memory_order_acquire) ||
+                    previewHubForTranscode->subscriberCount() == 0) {
+                    return;
+                }
+
+                std::vector<std::uint8_t> browserTs;
+                std::string previewError;
+                if (!previewTranscoder->process(data, size, browserTs, previewError)) {
+                    previewState->previewTranscodeFailed.store(
+                        true, std::memory_order_release);
+                    std::cerr << "NATIVE BROWSER PREVIEW ERROR stream="
+                              << previewState->config.name
+                              << " error=" << (previewError.empty()
+                                  ? "H.264/AAC preview transcode failed" : previewError)
+                              << std::endl;
+                    return;
+                }
+                if (!browserTs.empty()) {
+                    previewHubForTranscode->publish(
+                        browserTs.data(), browserTs.size());
+                }
+            };
+    }
+'''
+new_preview_observer = '''    {
+        auto previousInputObserver = relay.observeInputTransport;
+        auto previewHubForBrowser = state->nativePreviewHub;
+        StreamState* previewState = state.get();
+        auto previewSelector = std::make_shared<BrowserPreviewCodecSelector>();
+        const auto previewTranscodeConfig = previewTc;
+        relay.observeInputTransport =
+            [previousInputObserver, previewHubForBrowser, previewState,
+             previewSelector, previewTranscodeConfig](
+                const std::uint8_t* data, std::size_t size) mutable {
+                if (previousInputObserver) previousInputObserver(data, size);
+                if (!previewHubForBrowser || !previewState ||
+                    previewHubForBrowser->subscriberCount() == 0) {
+                    return;
+                }
+
+                std::string previewProbeError;
+                const auto previewMode =
+                    previewSelector->inspect(data, size, previewProbeError);
+                if (previewMode == BrowserPreviewCodecSelector::Mode::Detecting) {
+                    return;
+                }
+
+                if (previewSelector->takeResolvedLog()) {
+                    std::cerr << "NATIVE BROWSER PREVIEW route="
+                              << (previewMode == BrowserPreviewCodecSelector::Mode::Passthrough
+                                  ? "passthrough" : "transcode")
+                              << " stream=" << previewState->config.name
+                              << " input_video=" << previewSelector->videoCodecName()
+                              << " input_audio=" << previewSelector->audioCodecName();
+                    if (!previewProbeError.empty()) {
+                        std::cerr << " probe_error=" << previewProbeError;
+                    }
+                    std::cerr << std::endl;
+                }
+
+                if (previewMode == BrowserPreviewCodecSelector::Mode::Passthrough) {
+                    previewHubForBrowser->publish(data, size);
+                    return;
+                }
+
+                if (previewState->previewTranscodeFailed.load(
+                        std::memory_order_acquire)) {
+                    return;
+                }
+
+                if (!previewState->nativePreviewTranscoder) {
+                    auto transcoder = std::make_unique<
+                        dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
+                    std::string previewInitError;
+                    if (!transcoder->initialize(
+                            previewTranscodeConfig, previewInitError)) {
+                        previewState->previewTranscodeFailed.store(
+                            true, std::memory_order_release);
+                        std::cerr << "NATIVE BROWSER PREVIEW ERROR stream="
+                                  << previewState->config.name
+                                  << " error=" << (previewInitError.empty()
+                                      ? "preview transcoder initialization failed"
+                                      : previewInitError)
+                                  << std::endl;
+                        return;
+                    }
+                    previewState->nativePreviewTranscoder = std::move(transcoder);
+                    std::cerr << "NATIVE BROWSER PREVIEW transcoder-start stream="
+                              << previewState->config.name
+                              << " codec=h264/aac size=1280x720"
+                              << " video_kbps=1800 audio_kbps=128"
+                              << std::endl;
+                }
+
+                std::vector<std::uint8_t> browserTs;
+                std::string previewError;
+                if (!previewState->nativePreviewTranscoder->process(
+                        data, size, browserTs, previewError)) {
+                    previewState->previewTranscodeFailed.store(
+                        true, std::memory_order_release);
+                    std::cerr << "NATIVE BROWSER PREVIEW ERROR stream="
+                              << previewState->config.name
+                              << " error=" << (previewError.empty()
+                                  ? "H.264/AAC preview transcode failed" : previewError)
+                              << std::endl;
+                    return;
+                }
+                if (!browserTs.empty()) {
+                    previewHubForBrowser->publish(
+                        browserTs.data(), browserTs.size());
+                }
+            };
+    }
+'''
+replace_once(
+    "src/StreamManager.cpp",
+    old_preview_observer,
+    new_preview_observer,
+    "adaptive preview observer",
+)
+
+replace_once(
+    "src/StreamManager.cpp",
+    '''    auto httpHub = state->nativeHttpHub;
+    auto previewHub = state->nativePreviewHub;
+    const bool previewPassthrough = !state->nativePreviewTranscoder;
+''',
+    '''    auto httpHub = state->nativeHttpHub;
+''',
+    "remove production preview passthrough variables",
+)
+
+replace_once(
+    "src/StreamManager.cpp",
+    "    relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {\n",
+    "    relay.observeTransport = [httpHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {\n",
+    "remove preview hub from production observer capture",
+)
+
+replace_once(
+    "src/StreamManager.cpp",
+    '''        // Normal HTTP MPEG-TS clients consume the finished production transport.
+        // They must never subscribe to the browser-preview hub because doing so
+        // would wake the dedicated H.264/AAC preview transcoder.
+        if (httpHub) httpHub->publish(data, size);
+        if (previewPassthrough && previewHub) previewHub->publish(data, size);
+''',
+    '''        // Normal HTTP MPEG-TS clients consume the finished production transport.
+        // Browser preview is fed earlier from the post-remap/post-CA input tap:
+        // compatible H.264/AAC goes straight to the browser, while unsupported
+        // codecs use the lazy H.264/AAC preview transcoder.
+        if (httpHub) httpHub->publish(data, size);
+''',
+    "production preview publish removal",
+)
+
+
+# --- HttpServer.cpp: Playlist toolbar button + selection modal ---
+replace_once(
+    "src/HttpServer.cpp",
+    '<button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>\n',
+    '<button class="button-secondary" onclick="openPlaylistModal()" data-i18n="playlist">VLC playlist</button>\n<button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>\n',
+    "playlist toolbar button",
+)
+
+replace_once(
+    "src/HttpServer.cpp",
+    "  streamNumber:'Stream'\n});\n",
+    "  streamNumber:'Stream',\n  playlistSelectAll:'Select all',\n  playlistDeselectAll:'Deselect all',\n  playlistDownload:'Download VLC playlist',\n  playlistNoSelection:'Select at least one channel for the playlist',\n  playlistNoPlayableLinks:'The selected channels do not have VLC playback links',\n  playlistChannels:'Channels for playlist',\n  playlistSelected:'Selected'\n});\n",
+    "playlist English translations",
+)
+
+replace_once(
+    "src/HttpServer.cpp",
+    "  streamNumber:'\\u041f\\u043e\\u0442\\u043e\\u043a'\n});\n",
+    "  streamNumber:'\\u041f\\u043e\\u0442\\u043e\\u043a',\n  playlistSelectAll:'\\u0412\\u044b\\u0431\\u0440\\u0430\\u0442\\u044c \\u0432\\u0441\\u0435',\n  playlistDeselectAll:'\\u0421\\u043d\\u044f\\u0442\\u044c \\u0432\\u044b\\u0431\\u043e\\u0440 \\u0441\\u043e \\u0432\\u0441\\u0435\\u0445',\n  playlistDownload:'\\u0421\\u043a\\u0430\\u0447\\u0430\\u0442\\u044c \\u043f\\u043b\\u0435\\u0439\\u043b\\u0438\\u0441\\u0442 VLC',\n  playlistNoSelection:'\\u0412\\u044b\\u0431\\u0435\\u0440\\u0438\\u0442\\u0435 \\u0445\\u043e\\u0442\\u044f \\u0431\\u044b \\u043e\\u0434\\u0438\\u043d \\u043a\\u0430\\u043d\\u0430\\u043b \\u0434\\u043b\\u044f \\u043f\\u043b\\u0435\\u0439\\u043b\\u0438\\u0441\\u0442\\u0430',\n  playlistNoPlayableLinks:'\\u0423 \\u0432\\u044b\\u0431\\u0440\\u0430\\u043d\\u043d\\u044b\\u0445 \\u043a\\u0430\\u043d\\u0430\\u043b\\u043e\\u0432 \\u043d\\u0435\\u0442 VLC-\\u0441\\u0441\\u044b\\u043b\\u043e\\u043a \\u0434\\u043b\\u044f \\u0432\\u043e\\u0441\\u043f\\u0440\\u043e\\u0438\\u0437\\u0432\\u0435\\u0434\\u0435\\u043d\\u0438\\u044f',\n  playlistChannels:'\\u041a\\u0430\\u043d\\u0430\\u043b\\u044b \\u0434\\u043b\\u044f \\u043f\\u043b\\u0435\\u0439\\u043b\\u0438\\u0441\\u0442\\u0430',\n  playlistSelected:'\\u0412\\u044b\\u0431\\u0440\\u0430\\u043d\\u043e'\n});\n",
+    "playlist Russian translations",
+)
+
+old_playlist = '''function downloadVlcPlaylist() {
+  const entries = (state.streams || [])
+    .flatMap(stream => {
+      const links = streamLinks(stream);
+      return links.map(link => {
+        const suffix = links.length > 1 && link.output_type ? ` ${String(link.output_type).toUpperCase()}` : '';
+        const name = String((stream.name || stream.id) + suffix).replace(/[\\r\\n]/g, ' ').trim();
+        return `#EXTINF:-1,${name}\\n${link.url}`;
+      });
+    });
+  const content = `#EXTM3U\\n${entries.join('\\n')}\\n`;
+  const blob = new Blob([content], {type:'audio/x-mpegurl;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'dvbstreamer5-playlist.m3u';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}'''
+new_playlist = '''function playlistCheckboxes() {
+  return [...document.querySelectorAll('.playlist-stream-checkbox')];
+}
+function updatePlaylistSelectionState() {
+  const boxes = playlistCheckboxes();
+  const selected = boxes.filter(box => box.checked).length;
+  const master = document.getElementById('playlistSelectAll');
+  const masterLabel = document.getElementById('playlistSelectAllLabel');
+  const counter = document.getElementById('playlistSelectionCount');
+  if (master) {
+    master.checked = boxes.length > 0 && selected === boxes.length;
+    master.indeterminate = selected > 0 && selected < boxes.length;
+  }
+  if (masterLabel) {
+    masterLabel.textContent = selected === boxes.length && boxes.length > 0
+      ? t('playlistDeselectAll') : t('playlistSelectAll');
+  }
+  if (counter) counter.textContent = `${t('playlistSelected')}: ${selected}/${boxes.length}`;
+}
+function togglePlaylistAll(checked) {
+  playlistCheckboxes().forEach(box => { box.checked = !!checked; });
+  updatePlaylistSelectionState();
+}
+function playlistSelectedStreams() {
+  const streams = state.streams || [];
+  return playlistCheckboxes()
+    .filter(box => box.checked)
+    .map(box => streams[Number(box.dataset.streamIndex)])
+    .filter(Boolean);
+}
+function openPlaylistModal() {
+  const streams = state.streams || [];
+  if (!streams.length) {
+    uiError(t('noStreams'));
+    return;
+  }
+  const rows = streams.map((stream, index) => {
+    const name = escapeHtmlValue(stream.name || stream.id || `#${index + 1}`);
+    const id = escapeHtmlValue(stream.id || '');
+    const outputCount = streamLinks(stream).length;
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:rgba(255,255,255,.025);cursor:pointer">
+        <input type="checkbox" class="playlist-stream-checkbox" data-stream-index="${index}" checked onchange="updatePlaylistSelectionState()" style="width:17px;height:17px;flex:0 0 auto">
+        <span style="min-width:0;flex:1"><strong style="display:block;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</strong><span style="display:block;color:#8f99aa;font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${id}</span></span>
+        <span style="color:#9aa3b1;font-size:.72rem;white-space:nowrap">${outputCount} OUT</span>
+      </label>`;
+  }).join('');
+  openModal(`
+    <h2>${t('playlist')}</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:10px 0 12px">
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+        <input id="playlistSelectAll" type="checkbox" checked onchange="togglePlaylistAll(this.checked)" style="width:17px;height:17px">
+        <strong id="playlistSelectAllLabel">${t('playlistDeselectAll')}</strong>
+      </label>
+      <span id="playlistSelectionCount" style="color:#9aa3b1;font-size:.76rem"></span>
+    </div>
+    <div style="color:#9aa3b1;font-size:.76rem;margin-bottom:8px">${t('playlistChannels')}</div>
+    <div style="display:grid;gap:7px;max-height:52vh;overflow:auto;padding-right:4px">${rows}</div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="button-secondary" onclick="closeModal()">${t('cancel')}</button>
+      <button class="button-primary" onclick="downloadSelectedVlcPlaylist()">${t('playlistDownload')}</button>
+    </div>`);
+  updatePlaylistSelectionState();
+}
+function downloadVlcPlaylist(streams = state.streams || []) {
+  const entries = streams.flatMap(stream => {
+    const links = streamLinks(stream);
+    return links.map(link => {
+      const suffix = links.length > 1 && link.output_type ? ` ${String(link.output_type).toUpperCase()}` : '';
+      const name = String((stream.name || stream.id) + suffix).replace(/[\\r\\n]/g, ' ').trim();
+      return `#EXTINF:-1,${name}\\n${link.url}`;
+    });
+  });
+  if (!entries.length) {
+    uiError(t('playlistNoPlayableLinks'));
+    return false;
+  }
+  const content = `#EXTM3U\\n${entries.join('\\n')}\\n`;
+  const blob = new Blob([content], {type:'audio/x-mpegurl;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'dvbstreamer5-playlist.m3u';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return true;
+}
+function downloadSelectedVlcPlaylist() {
+  const streams = playlistSelectedStreams();
+  if (!streams.length) {
+    uiError(t('playlistNoSelection'));
+    return;
+  }
+  if (downloadVlcPlaylist(streams)) closeModal();
+}'''
+replace_once(
+    "src/HttpServer.cpp",
+    old_playlist,
+    new_playlist,
+    "playlist selection modal",
+)
+
+replace_once(
+    "src/AppVersion.h",
+    'inline constexpr const char* kProgramVersion = "10.8.82";',
+    'inline constexpr const char* kProgramVersion = "10.8.83";',
+    "program version",
+)
+
+# The final feature tree must not contain temporary patch machinery.
+for temporary in (
+    Path("scripts/apply_v10883.py"),
+    Path(".github/workflows/apply-v10883.yml"),
+):
+    if temporary.exists():
+        temporary.unlink()
