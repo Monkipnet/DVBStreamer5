@@ -8,6 +8,7 @@
 #include "protocols/SrtVpsProfile.h"
 #include "utils.h"
 #include "media/NativeSampleAes.h"
+#include "media/NativeTsDemux.h"
 
 #include <algorithm>
 #include <array>
@@ -48,6 +49,104 @@ std::string cleanInterface(std::string value) {
 bool startsWith(const std::string& value, const char* prefix) {
     return value.rfind(prefix, 0) == 0;
 }
+
+const char* browserPreviewCodecName(
+    dvbstreamer5::media::mpegts::ElementaryCodec codec) {
+    using dvbstreamer5::media::mpegts::ElementaryCodec;
+    switch (codec) {
+        case ElementaryCodec::Mpeg2Video: return "mpeg2video";
+        case ElementaryCodec::H264: return "h264";
+        case ElementaryCodec::H265: return "h265";
+        case ElementaryCodec::AacAdts: return "aac-adts";
+        case ElementaryCodec::AacLatm: return "aac-latm";
+        case ElementaryCodec::MpegAudio: return "mpeg-audio";
+        case ElementaryCodec::Ac3: return "ac3";
+        case ElementaryCodec::Eac3: return "eac3";
+        default: return "unknown";
+    }
+}
+
+class BrowserPreviewCodecSelector {
+public:
+    enum class Mode { Detecting, Passthrough, Transcode };
+
+    BrowserPreviewCodecSelector() {
+        demux_.setProgramCallback(
+            [this](const std::vector<dvbstreamer5::media::mpegts::DemuxStreamInfo>& streams) {
+                onProgram(streams);
+            });
+        demux_.setSampleCallback(
+            [](dvbstreamer5::media::mpegts::DemuxSample&&) {});
+    }
+
+    Mode inspect(const std::uint8_t* data, std::size_t size, std::string& error) {
+        error.clear();
+        if (mode_ != Mode::Detecting || !data || size == 0) return mode_;
+        if (!demux_.push(data, size, error)) {
+            if (error.empty()) error = "preview codec detection failed";
+            mode_ = Mode::Transcode;
+        }
+        return mode_;
+    }
+
+    bool takeResolvedLog() {
+        if (mode_ == Mode::Detecting || resolvedLogged_) return false;
+        resolvedLogged_ = true;
+        return true;
+    }
+
+    const char* videoCodecName() const {
+        return browserPreviewCodecName(videoCodec_);
+    }
+
+    const char* audioCodecName() const {
+        return hasAudio_ ? browserPreviewCodecName(audioCodec_) : "none";
+    }
+
+private:
+    void onProgram(
+        const std::vector<dvbstreamer5::media::mpegts::DemuxStreamInfo>& streams) {
+        using dvbstreamer5::media::mpegts::ElementaryCodec;
+        using dvbstreamer5::media::mpegts::ElementaryKind;
+
+        bool haveVideo = false;
+        bool haveAudio = false;
+        ElementaryCodec videoCodec = ElementaryCodec::Unknown;
+        ElementaryCodec audioCodec = ElementaryCodec::Unknown;
+        for (const auto& stream : streams) {
+            if (!haveVideo && stream.kind == ElementaryKind::Video) {
+                haveVideo = true;
+                videoCodec = stream.codec;
+            } else if (!haveAudio && stream.kind == ElementaryKind::Audio) {
+                haveAudio = true;
+                audioCodec = stream.codec;
+            }
+        }
+        if (!haveVideo) return;
+
+        videoCodec_ = videoCodec;
+        audioCodec_ = audioCodec;
+        hasAudio_ = haveAudio;
+
+        // mpegts.js/MediaSource can consume the source TS directly only for the
+        // reliable browser combination AVC + ADTS AAC. Other DVB combinations
+        // (MPEG-2, HEVC, LATM, MP2, AC-3/E-AC-3) use the H.264/AAC fallback.
+        const bool browserVideo = videoCodec == ElementaryCodec::H264;
+        const bool browserAudio = !haveAudio || audioCodec == ElementaryCodec::AacAdts;
+        mode_ = browserVideo && browserAudio
+            ? Mode::Passthrough
+            : Mode::Transcode;
+    }
+
+    dvbstreamer5::media::mpegts::NativeTsDemux demux_;
+    Mode mode_ = Mode::Detecting;
+    dvbstreamer5::media::mpegts::ElementaryCodec videoCodec_ =
+        dvbstreamer5::media::mpegts::ElementaryCodec::Unknown;
+    dvbstreamer5::media::mpegts::ElementaryCodec audioCodec_ =
+        dvbstreamer5::media::mpegts::ElementaryCodec::Unknown;
+    bool hasAudio_ = false;
+    bool resolvedLogged_ = false;
+};
 
 struct AbrProfile {
     std::string name;
@@ -314,57 +413,38 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
 
-    // Browser preview must not depend on the production codec. mpegts.js /
-    // MediaSource playback is reliable with AVC + AAC, while DVB services can
-    // legitimately carry MPEG-2, HEVC, MP2 or AC-3. Keep a dedicated,
-    // low-bitrate CPU pipeline whose output is used only by preview.ts.
-    // V10.8.69 restores the proven V10.8.41 preview path; production transcoding
-    // remains independent and may still use hardware acceleration.
-    state->nativePreviewTranscoder =
-        std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
-    {
-        dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
-        previewTc.videoCodec = "h264";
-        previewTc.videoEncoder = "cpu";
-        previewTc.audioCodec = "aac";
-        previewTc.width = 1280;
-        previewTc.height = 720;
-        previewTc.fps = 25.0;
-        previewTc.videoBitrate = 1800000ULL;
-        previewTc.audioBitrate = 128000ULL;
-        previewTc.deinterlace = true;
-        // Browser preview is square-pixel AVC. Keep 1280x720 for
-        // anamorphic DVB MPEG-2 instead of reverting to 720x576.
-        previewTc.lockOutputGeometry = true;
-        previewTc.serviceId = static_cast<std::uint16_t>(
-            streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff
-                ? streamConfig.serviceId
-                : (streamConfig.inputServiceId > 0 && streamConfig.inputServiceId <= 0xffff
-                    ? streamConfig.inputServiceId : 1));
-        previewTc.videoPid = 0x0100;
-        previewTc.audioPid = 0x0101;
-        previewTc.muxBitrate = 0;
-        previewTc.serviceName =
-            streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
-        previewTc.serviceProvider =
-            streamConfig.serviceProvider.empty() ? "DVBStreamer5" : streamConfig.serviceProvider;
-
-        std::string previewError;
-        if (!state->nativePreviewTranscoder->initialize(previewTc, previewError)) {
-            std::cerr << "NATIVE BROWSER PREVIEW disabled stream="
-                      << streamConfig.name
-                      << " error=" << (previewError.empty()
-                          ? "preview transcoder initialization failed" : previewError)
-                      << std::endl;
-            state->nativePreviewTranscoder.reset();
-        } else {
-            std::cerr << "NATIVE BROWSER PREVIEW ready stream="
-                      << streamConfig.name
-                      << " codec=h264/aac size=1280x720 dar=16:9"
-                      << " encoder=cpu video_kbps=1800 audio_kbps=128"
-                      << std::endl;
-        }
-    }
+    // V10.8.83: browser preview is adaptive. Do not start decoder/encoder
+    // worker threads for streams that mpegts.js can consume directly. The
+    // H.264/AAC CPU transcoder is constructed lazily only after PMT probing says
+    // that the source A/V combination is not browser-safe.
+    dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
+    previewTc.videoCodec = "h264";
+    previewTc.videoEncoder = "cpu";
+    previewTc.audioCodec = "aac";
+    previewTc.width = 1280;
+    previewTc.height = 720;
+    previewTc.fps = 25.0;
+    previewTc.videoBitrate = 1800000ULL;
+    previewTc.audioBitrate = 128000ULL;
+    previewTc.deinterlace = true;
+    previewTc.lockOutputGeometry = true;
+    previewTc.serviceId = static_cast<std::uint16_t>(
+        streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff
+            ? streamConfig.serviceId
+            : (streamConfig.inputServiceId > 0 && streamConfig.inputServiceId <= 0xffff
+                ? streamConfig.inputServiceId : 1));
+    previewTc.videoPid = 0x0100;
+    previewTc.audioPid = 0x0101;
+    previewTc.muxBitrate = 0;
+    previewTc.serviceName =
+        streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+    previewTc.serviceProvider =
+        streamConfig.serviceProvider.empty() ? "DVBStreamer5" : streamConfig.serviceProvider;
+    std::cerr << "NATIVE BROWSER PREVIEW adaptive ready stream="
+              << streamConfig.name
+              << " direct=h264/aac fallback=h264/aac"
+              << " size=1280x720 encoder=cpu"
+              << std::endl;
 
     if (streamConfig.transcodeEnabled) {
         state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
@@ -757,24 +837,80 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         };
     }
-    if (state->nativePreviewTranscoder) {
+    {
         auto previousInputObserver = relay.observeInputTransport;
-        auto* previewTranscoder = state->nativePreviewTranscoder.get();
-        auto previewHubForTranscode = state->nativePreviewHub;
+        auto previewHubForBrowser = state->nativePreviewHub;
         StreamState* previewState = state.get();
+        auto previewSelector = std::make_shared<BrowserPreviewCodecSelector>();
+        const auto previewTranscodeConfig = previewTc;
         relay.observeInputTransport =
-            [previousInputObserver, previewTranscoder, previewHubForTranscode, previewState](
-                const std::uint8_t* data, std::size_t size) {
+            [previousInputObserver, previewHubForBrowser, previewState,
+             previewSelector, previewTranscodeConfig](
+                const std::uint8_t* data, std::size_t size) mutable {
                 if (previousInputObserver) previousInputObserver(data, size);
-                if (!previewTranscoder || !previewHubForTranscode || !previewState ||
-                    previewState->previewTranscodeFailed.load(std::memory_order_acquire) ||
-                    previewHubForTranscode->subscriberCount() == 0) {
+                if (!previewHubForBrowser || !previewState ||
+                    previewHubForBrowser->subscriberCount() == 0) {
                     return;
+                }
+
+                std::string previewProbeError;
+                const auto previewMode =
+                    previewSelector->inspect(data, size, previewProbeError);
+                if (previewMode == BrowserPreviewCodecSelector::Mode::Detecting) {
+                    return;
+                }
+
+                if (previewSelector->takeResolvedLog()) {
+                    std::cerr << "NATIVE BROWSER PREVIEW route="
+                              << (previewMode == BrowserPreviewCodecSelector::Mode::Passthrough
+                                  ? "passthrough" : "transcode")
+                              << " stream=" << previewState->config.name
+                              << " input_video=" << previewSelector->videoCodecName()
+                              << " input_audio=" << previewSelector->audioCodecName();
+                    if (!previewProbeError.empty()) {
+                        std::cerr << " probe_error=" << previewProbeError;
+                    }
+                    std::cerr << std::endl;
+                }
+
+                if (previewMode == BrowserPreviewCodecSelector::Mode::Passthrough) {
+                    previewHubForBrowser->publish(data, size);
+                    return;
+                }
+
+                if (previewState->previewTranscodeFailed.load(
+                        std::memory_order_acquire)) {
+                    return;
+                }
+
+                if (!previewState->nativePreviewTranscoder) {
+                    auto transcoder = std::make_unique<
+                        dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
+                    std::string previewInitError;
+                    if (!transcoder->initialize(
+                            previewTranscodeConfig, previewInitError)) {
+                        previewState->previewTranscodeFailed.store(
+                            true, std::memory_order_release);
+                        std::cerr << "NATIVE BROWSER PREVIEW ERROR stream="
+                                  << previewState->config.name
+                                  << " error=" << (previewInitError.empty()
+                                      ? "preview transcoder initialization failed"
+                                      : previewInitError)
+                                  << std::endl;
+                        return;
+                    }
+                    previewState->nativePreviewTranscoder = std::move(transcoder);
+                    std::cerr << "NATIVE BROWSER PREVIEW transcoder-start stream="
+                              << previewState->config.name
+                              << " codec=h264/aac size=1280x720"
+                              << " video_kbps=1800 audio_kbps=128"
+                              << std::endl;
                 }
 
                 std::vector<std::uint8_t> browserTs;
                 std::string previewError;
-                if (!previewTranscoder->process(data, size, browserTs, previewError)) {
+                if (!previewState->nativePreviewTranscoder->process(
+                        data, size, browserTs, previewError)) {
                     previewState->previewTranscodeFailed.store(
                         true, std::memory_order_release);
                     std::cerr << "NATIVE BROWSER PREVIEW ERROR stream="
@@ -785,7 +921,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     return;
                 }
                 if (!browserTs.empty()) {
-                    previewHubForTranscode->publish(
+                    previewHubForBrowser->publish(
                         browserTs.data(), browserTs.size());
                 }
             };
@@ -800,8 +936,6 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     auto httpHub = state->nativeHttpHub;
-    auto previewHub = state->nativePreviewHub;
-    const bool previewPassthrough = !state->nativePreviewTranscoder;
     auto* hlsSegmenter = state->nativeHlsSegmenter.get();
     auto* cmafSegmenter = state->nativeCmafSegmenter.get();
     auto* mpts = mptsOutputManager.get();
@@ -810,7 +944,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
     StreamState* outputStatsState = state.get();
-    relay.observeTransport = [httpHub, previewHub, previewPassthrough, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [httpHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {
         // V10.8.70: dashboard decode state must describe the transport that
         // clients actually receive. Count payload/scrambling/PES only here,
         // after remap + CA descrambling + optional production transcoding.
@@ -872,10 +1006,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         for (auto* output : rtspOutputs) if (output) output->push(data, size);
         for (auto* output : rtmpOutputs) if (output) output->push(data, size);
         // Normal HTTP MPEG-TS clients consume the finished production transport.
-        // They must never subscribe to the browser-preview hub because doing so
-        // would wake the dedicated H.264/AAC preview transcoder.
+        // Browser preview is fed earlier from the post-remap/post-CA input tap:
+        // compatible H.264/AAC goes straight to the browser, while unsupported
+        // codecs use the lazy H.264/AAC preview transcoder.
         if (httpHub) httpHub->publish(data, size);
-        if (previewPassthrough && previewHub) previewHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
     };
 

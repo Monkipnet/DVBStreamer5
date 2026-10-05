@@ -3817,6 +3817,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
 </div>
 </details>
+<button class="button-secondary" onclick="openPlaylistModal()" data-i18n="playlist">VLC playlist</button>
 <button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>
 <button class="button-secondary" onclick="openAddChannelModal()" data-i18n="addChannel">+ Add channel</button>
 <button class="button-primary" onclick="openStreamModal()" data-i18n="addStream">+ Add stream</button>
@@ -3860,7 +3861,14 @@ Object.assign(translations.en, {
   blockedIps:'Blocked IPs',
   unblockClient:'Unblock',
   noUnknownConnections:'No unregistered connections',
-  streamNumber:'Stream'
+  streamNumber:'Stream',
+  playlistSelectAll:'Select all',
+  playlistDeselectAll:'Deselect all',
+  playlistDownload:'Download VLC playlist',
+  playlistNoSelection:'Select at least one channel for the playlist',
+  playlistNoPlayableLinks:'The selected channels do not have VLC playback links',
+  playlistChannels:'Channels for playlist',
+  playlistSelected:'Selected'
 });
 Object.assign(translations.ru, {
   connectionMonitoring:'\u041d\u0435\u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u044f',
@@ -3874,7 +3882,14 @@ Object.assign(translations.ru, {
   blockedIps:'\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0435 IP',
   unblockClient:'\u0420\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c',
   noUnknownConnections:'\u041d\u0435\u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0445 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0439 \u043d\u0435\u0442',
-  streamNumber:'\u041f\u043e\u0442\u043e\u043a'
+  streamNumber:'\u041f\u043e\u0442\u043e\u043a',
+  playlistSelectAll:'\u0412\u044b\u0431\u0440\u0430\u0442\u044c \u0432\u0441\u0435',
+  playlistDeselectAll:'\u0421\u043d\u044f\u0442\u044c \u0432\u044b\u0431\u043e\u0440 \u0441\u043e \u0432\u0441\u0435\u0445',
+  playlistDownload:'\u0421\u043a\u0430\u0447\u0430\u0442\u044c \u043f\u043b\u0435\u0439\u043b\u0438\u0441\u0442 VLC',
+  playlistNoSelection:'\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u0438\u043d \u043a\u0430\u043d\u0430\u043b \u0434\u043b\u044f \u043f\u043b\u0435\u0439\u043b\u0438\u0441\u0442\u0430',
+  playlistNoPlayableLinks:'\u0423 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u043a\u0430\u043d\u0430\u043b\u043e\u0432 \u043d\u0435\u0442 VLC-\u0441\u0441\u044b\u043b\u043e\u043a \u0434\u043b\u044f \u0432\u043e\u0441\u043f\u0440\u043e\u0438\u0437\u0432\u0435\u0434\u0435\u043d\u0438\u044f',
+  playlistChannels:'\u041a\u0430\u043d\u0430\u043b\u044b \u0434\u043b\u044f \u043f\u043b\u0435\u0439\u043b\u0438\u0441\u0442\u0430',
+  playlistSelected:'\u0412\u044b\u0431\u0440\u0430\u043d\u043e'
 });
 function normalizeLanguage(value) {
   return value === 'ru' ? 'ru' : 'en';
@@ -4527,16 +4542,83 @@ async function metricsPollLoop() {
   clearTimeout(metricsPollTimer);
   metricsPollTimer = setTimeout(metricsPollLoop, 3000);
 }
-function downloadVlcPlaylist() {
-  const entries = (state.streams || [])
-    .flatMap(stream => {
-      const links = streamLinks(stream);
-      return links.map(link => {
-        const suffix = links.length > 1 && link.output_type ? ` ${String(link.output_type).toUpperCase()}` : '';
-        const name = String((stream.name || stream.id) + suffix).replace(/[\r\n]/g, ' ').trim();
-        return `#EXTINF:-1,${name}\n${link.url}`;
-      });
+function playlistCheckboxes() {
+  return [...document.querySelectorAll('.playlist-stream-checkbox')];
+}
+function updatePlaylistSelectionState() {
+  const boxes = playlistCheckboxes();
+  const selected = boxes.filter(box => box.checked).length;
+  const master = document.getElementById('playlistSelectAll');
+  const masterLabel = document.getElementById('playlistSelectAllLabel');
+  const counter = document.getElementById('playlistSelectionCount');
+  if (master) {
+    master.checked = boxes.length > 0 && selected === boxes.length;
+    master.indeterminate = selected > 0 && selected < boxes.length;
+  }
+  if (masterLabel) {
+    masterLabel.textContent = selected === boxes.length && boxes.length > 0
+      ? t('playlistDeselectAll') : t('playlistSelectAll');
+  }
+  if (counter) counter.textContent = `${t('playlistSelected')}: ${selected}/${boxes.length}`;
+}
+function togglePlaylistAll(checked) {
+  playlistCheckboxes().forEach(box => { box.checked = !!checked; });
+  updatePlaylistSelectionState();
+}
+function playlistSelectedStreams() {
+  const streams = state.streams || [];
+  return playlistCheckboxes()
+    .filter(box => box.checked)
+    .map(box => streams[Number(box.dataset.streamIndex)])
+    .filter(Boolean);
+}
+function openPlaylistModal() {
+  const streams = state.streams || [];
+  if (!streams.length) {
+    uiError(t('noStreams'));
+    return;
+  }
+  const rows = streams.map((stream, index) => {
+    const name = escapeHtmlValue(stream.name || stream.id || `#${index + 1}`);
+    const id = escapeHtmlValue(stream.id || '');
+    const outputCount = streamLinks(stream).length;
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:9px;background:rgba(255,255,255,.025);cursor:pointer">
+        <input type="checkbox" class="playlist-stream-checkbox" data-stream-index="${index}" checked onchange="updatePlaylistSelectionState()" style="width:17px;height:17px;flex:0 0 auto">
+        <span style="min-width:0;flex:1"><strong style="display:block;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</strong><span style="display:block;color:#8f99aa;font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${id}</span></span>
+        <span style="color:#9aa3b1;font-size:.72rem;white-space:nowrap">${outputCount} OUT</span>
+      </label>`;
+  }).join('');
+  openModal(`
+    <h2>${t('playlist')}</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:10px 0 12px">
+      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+        <input id="playlistSelectAll" type="checkbox" checked onchange="togglePlaylistAll(this.checked)" style="width:17px;height:17px">
+        <strong id="playlistSelectAllLabel">${t('playlistDeselectAll')}</strong>
+      </label>
+      <span id="playlistSelectionCount" style="color:#9aa3b1;font-size:.76rem"></span>
+    </div>
+    <div style="color:#9aa3b1;font-size:.76rem;margin-bottom:8px">${t('playlistChannels')}</div>
+    <div style="display:grid;gap:7px;max-height:52vh;overflow:auto;padding-right:4px">${rows}</div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="button-secondary" onclick="closeModal()">${t('cancel')}</button>
+      <button class="button-primary" onclick="downloadSelectedVlcPlaylist()">${t('playlistDownload')}</button>
+    </div>`);
+  updatePlaylistSelectionState();
+}
+function downloadVlcPlaylist(streams = state.streams || []) {
+  const entries = streams.flatMap(stream => {
+    const links = streamLinks(stream);
+    return links.map(link => {
+      const suffix = links.length > 1 && link.output_type ? ` ${String(link.output_type).toUpperCase()}` : '';
+      const name = String((stream.name || stream.id) + suffix).replace(/[\r\n]/g, ' ').trim();
+      return `#EXTINF:-1,${name}\n${link.url}`;
     });
+  });
+  if (!entries.length) {
+    uiError(t('playlistNoPlayableLinks'));
+    return false;
+  }
   const content = `#EXTM3U\n${entries.join('\n')}\n`;
   const blob = new Blob([content], {type:'audio/x-mpegurl;charset=utf-8'});
   const url = URL.createObjectURL(blob);
@@ -4547,6 +4629,15 @@ function downloadVlcPlaylist() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+  return true;
+}
+function downloadSelectedVlcPlaylist() {
+  const streams = playlistSelectedStreams();
+  if (!streams.length) {
+    uiError(t('playlistNoSelection'));
+    return;
+  }
+  if (downloadVlcPlaylist(streams)) closeModal();
 }
 function updateHeaderHeight() {
   const header = document.querySelector('header');
