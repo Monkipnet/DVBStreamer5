@@ -22,7 +22,7 @@ jobs:
           grep -q 'kProgramVersion = "10.8.94"' src/AppVersion.h
           grep -q 'h26xBoundaryPending_' src/media/NativeHlsSegmenter.h
           grep -q 'classifyH26xAccessUnit' src/media/NativeHlsSegmenter.cpp
-          grep -q 'V10.8.94' src/media/NativeHlsSegmenter.cpp
+          grep -q 'h26xBoundaryPackets_' src/media/NativeHlsSegmenter.cpp
       - name: Commit patched tree
         run: |
           git config user.name 'DVBStreamer5 Patch Bot'
