@@ -549,12 +549,41 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                     const std::uint8_t b0 = packet[elementary];
                     const std::uint8_t b1 = packet[elementary + 1U];
                     const std::uint8_t b2 = packet[elementary + 2U];
-                    const bool sync = b0 == 0xffU && (b1 & 0xe0U) == 0xe0U;
-                    const bool versionOk = (b1 & 0x18U) != 0x08U;
-                    const bool layerOk = (b1 & 0x06U) != 0x00U;
-                    const bool bitrateOk = (b2 & 0xf0U) != 0x00U && (b2 & 0xf0U) != 0xf0U;
-                    const bool sampleRateOk = (b2 & 0x0cU) != 0x0cU;
-                    if (!(sync && versionOk && layerOk && bitrateOk && sampleRateOk)) return true;
+                    const std::uint8_t streamType =
+                        info.pid < elementaryStreamType_.size()
+                            ? elementaryStreamType_[info.pid]
+                            : 0U;
+
+                    // V10.8.103: audio PES stream_id (0xC0..0xDF) is shared by
+                    // MPEG audio and AAC. The old clean-start gate always parsed
+                    // those bytes as an MPEG Layer header. ADTS deliberately has
+                    // layer=00, so valid transcoded AAC was rejected forever:
+                    // PMT advertised stream_type 0x0F and VLC showed "ADTS", but
+                    // no AAC payload was ever written to the first HLS segment.
+                    if (streamType == 0x0fU) {
+                        const bool adtsSync =
+                            b0 == 0xffU && (b1 & 0xf0U) == 0xf0U;
+                        const bool adtsLayerZero = (b1 & 0x06U) == 0x00U;
+                        const bool adtsSampleRateOk =
+                            (b2 & 0x3cU) != 0x3cU;
+                        if (!(adtsSync && adtsLayerZero && adtsSampleRateOk))
+                            return true;
+                    } else if (streamType == 0x11U) {
+                        // MPEG-4 LATM in TS normally uses LOAS syncword 0x2B7.
+                        const bool loasSync =
+                            b0 == 0x56U && (b1 & 0xe0U) == 0xe0U;
+                        if (!loasSync) return true;
+                    } else if (streamType == 0x03U || streamType == 0x04U ||
+                               streamType == 0x00U) {
+                        const bool sync = b0 == 0xffU && (b1 & 0xe0U) == 0xe0U;
+                        const bool versionOk = (b1 & 0x18U) != 0x08U;
+                        const bool layerOk = (b1 & 0x06U) != 0x00U;
+                        const bool bitrateOk = (b2 & 0xf0U) != 0x00U &&
+                                               (b2 & 0xf0U) != 0xf0U;
+                        const bool sampleRateOk = (b2 & 0x0cU) != 0x0cU;
+                        if (!(sync && versionOk && layerOk && bitrateOk && sampleRateOk))
+                            return true;
+                    }
                 } else if (streamId >= 0xe0U && streamId <= 0xefU) {
                     // V10.8.85: PES stream_id alone does not identify the video
                     // codec. AVC and HEVC also use 0xE0..0xEF, so requiring the
