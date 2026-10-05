@@ -1,0 +1,42 @@
+name: apply-v108101
+
+on:
+  push:
+    branches:
+      - work/v10.8.101-abr-audio
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'V10.8.101 share copy audio with ABR renditions') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply focused ABR patch
+        run: python3 .github/apply-v108101.py
+
+      - name: Validate patch
+        run: |
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.101"' src/AppVersion.h
+          grep -q 'observer(sample.stream.codec, frame, 1920)' src/media/NativeTranscoderPipeline.cpp
+          grep -q 'pushEncodedAudioFrame(codec, frame, duration90k)' src/StreamManager.cpp
+          grep -q 'if (advertiseCodecs)' src/StreamManager.cpp
+
+      - name: Syntax-check native pipeline
+        run: g++ -std=c++20 -pthread -Isrc -fsyntax-only src/media/NativeTranscoderPipeline.cpp
+
+      - name: Commit patched project files
+        run: |
+          git config user.name "OpenAI Patch Bot"
+          git config user.email "openai-patch-bot@users.noreply.github.com"
+          git add src/AppVersion.h src/StreamManager.cpp \
+                  src/media/NativeTranscoderPipeline.h \
+                  src/media/NativeTranscoderPipeline.cpp
+          git commit -m "V10.8.101 share copy audio with ABR renditions"
+          git push origin HEAD:work/v10.8.101-abr-audio
