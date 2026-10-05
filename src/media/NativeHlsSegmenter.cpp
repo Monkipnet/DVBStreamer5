@@ -39,6 +39,45 @@ bool atomicReplace(const std::filesystem::path& temp,
     return false;
 }
 
+bool psiCollectionComplete(const std::vector<dvbstreamer5::media::mpegts::Packet>& packets,
+                           std::uint8_t tableId) {
+    if (packets.empty()) return false;
+    std::size_t sectionSize = 0;
+    std::size_t collected = 0;
+    bool firstPacket = true;
+
+    for (const auto& packet : packets) {
+        dvbstreamer5::media::mpegts::PacketInfo info;
+        if (!dvbstreamer5::media::mpegts::inspectPacket(packet.data(), packet.size(), info) ||
+            !info.hasPayload || info.payloadOffset >= dvbstreamer5::media::mpegts::kPacketSize) {
+            continue;
+        }
+
+        std::size_t offset = info.payloadOffset;
+        if (firstPacket) {
+            if (!info.payloadUnitStart) return false;
+            const std::size_t payloadSize = dvbstreamer5::media::mpegts::kPacketSize - offset;
+            if (payloadSize < 1U) return false;
+            const std::size_t pointer = packet[offset];
+            offset += 1U + pointer;
+            if (offset + 3U > dvbstreamer5::media::mpegts::kPacketSize || packet[offset] != tableId) {
+                return false;
+            }
+            const std::size_t sectionLength =
+                (static_cast<std::size_t>(packet[offset + 1U] & 0x0fU) << 8U) |
+                static_cast<std::size_t>(packet[offset + 2U]);
+            sectionSize = 3U + sectionLength;
+            firstPacket = false;
+        }
+
+        if (offset < dvbstreamer5::media::mpegts::kPacketSize) {
+            collected += dvbstreamer5::media::mpegts::kPacketSize - offset;
+        }
+        if (sectionSize > 0 && collected >= sectionSize) return true;
+    }
+    return false;
+}
+
 std::array<std::uint8_t,16> sequenceIv(std::uint64_t seq) {
     std::array<std::uint8_t,16> iv{};
     for(int i=15;i>=8;--i){iv[static_cast<std::size_t>(i)]=static_cast<std::uint8_t>(seq&0xffU);seq>>=8;}
@@ -227,8 +266,15 @@ bool NativeHlsSegmenter::writePsiPrefix() {
         }
         return true;
     };
-    if (!patPrefix_.empty() && !writePackets(patPrefix_)) return false;
-    if (!pmtPrefix_.empty() && !writePackets(pmtPrefix_)) return false;
+
+    // V10.8.80: do not wait for the next PSI repetition just to promote the
+    // current collection into *Prefix_.  If the current section is already
+    // complete, it is just as valid and avoids pushing cold-start beyond the
+    // HTTP startup window.
+    const auto& pat = !patPrefix_.empty() ? patPrefix_ : patCollecting_;
+    const auto& pmt = !pmtPrefix_.empty() ? pmtPrefix_ : pmtCollecting_;
+    if (!pat.empty() && !writePackets(pat)) return false;
+    if (!pmt.empty() && !writePackets(pmt)) return false;
     return true;
 }
 
@@ -249,14 +295,14 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         programTime_ = std::chrono::system_clock::now();
     }
 
-    // V10.8.79: a live passthrough subscriber can join the shared DVB bus in
-    // the middle of existing video/audio PES packets.  Publishing those tails
-    // made ffmpeg report "Invalid frame dimensions" and "MP2 Header missing"
-    // on segment0000000000.ts.  Wait until complete PAT/PMT are cached and a
-    // PCR-bearing PES boundary arrives, then let every payload PID enter the
-    // first segment only from its own payload_unit_start packet.
+    // V10.8.80: keep V10.8.79's clean PES start, but recognize a complete PSI
+    // section as soon as its bytes have arrived. V10.8.79 waited for the next
+    // PAT/PMT PUSI to copy the collection into *Prefix_, which could exceed the
+    // HTTP cold-start wait and return 404 even though usable PSI was present.
     if (waitingForCleanStart_) {
-        if (patPrefix_.empty() || pmtPrefix_.empty()) return true;
+        const bool havePat = !patPrefix_.empty() || psiCollectionComplete(patCollecting_, 0x00U);
+        const bool havePmt = !pmtPrefix_.empty() || psiCollectionComplete(pmtCollecting_, 0x02U);
+        if (!havePat || !havePmt) return true;
         if (!(info.hasPcr && info.payloadUnitStart)) return true;
         waitingForCleanStart_ = false;
         firstPcr_ = info.pcrBase90k;
@@ -281,12 +327,10 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         lastPcr_ = info.pcrBase90k;
         if (!haveFirstPcr_) { firstPcr_ = lastPcr_; haveFirstPcr_ = true; }
         const double elapsed = pcrDeltaSeconds(firstPcr_, lastPcr_);
-        // V10.8.78: only the first segment is deliberately short.  The live
-        // stream keeps the V10.8.76 4-second steady-state chunks, while a fresh
-        // OnDemand request gets real media within HttpServer's existing 3-second
-        // startup wait instead of an empty manifest.
+        // V10.8.80: publish only the first cold-start segment at ~1 second.
+        // Steady-state live HLS remains at the V10.8.76 4-second target.
         const double segmentTarget = completedSegments_ == 0
-            ? std::min(config_.targetDurationSeconds, 2.0)
+            ? std::min(config_.targetDurationSeconds, 1.0)
             : config_.targetDurationSeconds;
         const bool targetReached = segmentHasPackets_ && elapsed >= segmentTarget;
         // DVB passthrough encoders do not always set random_access_indicator.
@@ -314,10 +358,10 @@ bool NativeHlsSegmenter::openSegment() {
     segmentPath_ = config_.directory / name.str();
     segment_.open(segmentPath_, std::ios::binary | std::ios::trunc);
     if (!segment_.is_open()) { fail("failed to create HLS segment " + segmentPath_.string()); return false; }
-    // V10.8.79: the clean-start gate deliberately discards the original PSI
-    // packets received before the first complete PES boundary. Prefix the first
-    // segment as well as later segments with the latest complete PAT/PMT.
-    if ((!patPrefix_.empty() || !pmtPrefix_.empty()) && !writePsiPrefix()) {
+    // The clean-start gate discards pre-boundary PSI/media. Prefix every
+    // segment with the newest usable PAT/PMT so a fresh demuxer is self-contained.
+    if ((!patPrefix_.empty() || !patCollecting_.empty() ||
+         !pmtPrefix_.empty() || !pmtCollecting_.empty()) && !writePsiPrefix()) {
         fail("failed to write HLS PAT/PMT prefix");
         return false;
     }
