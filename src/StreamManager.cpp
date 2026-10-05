@@ -1514,6 +1514,7 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
         return false;
     }
     onDemandStartedStreams.insert(id);
+    onDemandStartedAt[id] = std::chrono::steady_clock::now();
     std::cerr << "ONDEMAND ACTIVATE stream=" << id
               << " source=" << source
               << " ca=" << (cfg.conditionalAccessClient.empty() ? "fta" : "managed")
@@ -1523,9 +1524,10 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
 
 void StreamManager::monitorOnDemandStreams() {
     // HLS clients fetch short-lived playlist/segment resources rather than keeping
-    // a persistent socket open. Ten seconds was too aggressive and could stop an
-    // actively watched channel between requests, producing visible HLS stalls.
+    // a persistent socket open. Keep the normal 10-second post-view idle timeout,
+    // but protect a newly activated OnDemand IP source while its upstream wakes.
     constexpr auto kIdleGrace = std::chrono::seconds(10);
+    constexpr auto kStartupGrace = std::chrono::seconds(45);
     while (!onDemandMonitorStop.load(std::memory_order_acquire)) {
         for (int i = 0; i < 4 && !onDemandMonitorStop.load(std::memory_order_acquire); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -1545,6 +1547,7 @@ void StreamManager::monitorOnDemandStreams() {
             }
             if (!stillOnDemand) {
                 onDemandLastActivity.erase(id);
+                onDemandStartedAt.erase(id);
                 it = onDemandStartedStreams.erase(it);
                 continue;
             }
@@ -1563,16 +1566,20 @@ void StreamManager::monitorOnDemandStreams() {
             const auto activity = onDemandLastActivity.find(id);
             const bool recentActivity = activity != onDemandLastActivity.end() &&
                 now - activity->second < kIdleGrace;
-            if (hasHttpClient || recentActivity) {
+            const auto started = onDemandStartedAt.find(id);
+            const bool startupProtected = started != onDemandStartedAt.end() &&
+                now - started->second < kStartupGrace;
+            if (hasHttpClient || recentActivity || startupProtected) {
                 ++it;
                 continue;
             }
 
             it = onDemandStartedStreams.erase(it);
             onDemandLastActivity.erase(id);
+            onDemandStartedAt.erase(id);
             if (isStreamActive(id)) {
                 std::cerr << "ONDEMAND DEACTIVATE stream=" << id
-                          << " reason=no-clients idle_s=10" << std::endl;
+                          << " reason=no-clients idle_s=10 startup_grace_s=45" << std::endl;
                 stopStream(id);
             }
         }
