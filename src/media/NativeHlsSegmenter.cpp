@@ -311,10 +311,11 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         programTime_ = std::chrono::system_clock::now();
     }
 
-    // V10.8.81: keep each elementary PID muted until it reaches a clear PES
-    // start. MPEG audio PES (stream_id 0xC0..0xDF) is accepted only when the
-    // elementary payload in that PES begins with a valid MPEG-audio frame sync.
-    // This removes the one truncated MP2 access unit seen at HLS cold start.
+    // V10.8.82: keep each elementary PID muted until it reaches a decoder-safe
+    // PES start. V10.8.81 already required MPEG audio to begin on a real frame.
+    // MPEG-2 video now additionally waits for a sequence_header_code (0x000001B3)
+    // in the first TS packet of its PES so a fresh decoder knows width/height
+    // before it sees picture data.
     if (!waitingForCleanStart_) {
         const bool psi = info.pid == 0x0000U || info.pid == pmtPid_;
         const bool nullPacket = info.pid == mpegts::kNullPid;
@@ -328,9 +329,6 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                 packet[off] == 0x00U && packet[off + 1U] == 0x00U && packet[off + 2U] == 0x01U) {
                 const std::uint8_t streamId = packet[off + 3U];
                 if (streamId >= 0xc0U && streamId <= 0xdfU) {
-                    // DVB MPEG-1/2 audio normally uses the MPEG-2 PES optional
-                    // header layout. If the first frame header is not completely
-                    // inside this TS packet, reject this PES and try the next one.
                     if (off + 9U > packet.size()) return true;
                     const std::size_t elementary =
                         off + 9U + static_cast<std::size_t>(packet[off + 8U]);
@@ -345,6 +343,21 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
                     const bool bitrateOk = (b2 & 0xf0U) != 0x00U && (b2 & 0xf0U) != 0xf0U;
                     const bool sampleRateOk = (b2 & 0x0cU) != 0x0cU;
                     if (!(sync && versionOk && layerOk && bitrateOk && sampleRateOk)) return true;
+                } else if (streamId >= 0xe0U && streamId <= 0xefU) {
+                    if (off + 9U > packet.size()) return true;
+                    const std::size_t elementary =
+                        off + 9U + static_cast<std::size_t>(packet[off + 8U]);
+                    if (elementary + 4U > packet.size()) return true;
+
+                    bool sequenceHeader = false;
+                    for (std::size_t pos = elementary; pos + 4U <= packet.size(); ++pos) {
+                        if (packet[pos] == 0x00U && packet[pos + 1U] == 0x00U &&
+                            packet[pos + 2U] == 0x01U && packet[pos + 3U] == 0xb3U) {
+                            sequenceHeader = true;
+                            break;
+                        }
+                    }
+                    if (!sequenceHeader) return true;
                 }
             }
             firstSegmentPidStarted_[info.pid] = true;
