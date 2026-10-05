@@ -229,12 +229,12 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     if (!out) { error = "cannot create HLS ABR master playlist"; return false; }
     const std::uint64_t audio = cfg.transcodeAudioCodec == "copy" ? 192000ULL : cfg.transcodeAudioBitrate;
-    auto codecs = [&cfg]() {
+    const std::string abrAudioCodec = toLower(cfg.transcodeAudioCodec);
+    const bool advertiseCodecs = abrAudioCodec == "aac";
+    auto codecs = [&cfg, &abrAudioCodec]() {
         const std::string v = toLower(cfg.transcodeVideoCodec);
-        const std::string a = toLower(cfg.transcodeAudioCodec);
         std::string c = (v == "hevc" || v == "h265") ? "hvc1.1.6.L120.B0" : "avc1.640028";
-        if (a == "aac") c += ",mp4a.40.2";
-        else if (a == "mp3") c += ",mp4a.6B";
+        if (abrAudioCodec == "aac") c += ",mp4a.40.2";
         return c;
     }();
     auto emit = [&](int w, int h, std::uint64_t vb, std::uint64_t transportBitrate,
@@ -247,7 +247,13 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
         out << "#EXT-X-STREAM-INF:BANDWIDTH=" << bandwidth
             << ",AVERAGE-BANDWIDTH=" << std::min(bandwidth, average)
             << ",RESOLUTION=" << w << "x" << h
-            << ",FRAME-RATE=25.000,CODECS=\"" << codecs << "\"\n";
+            << ",FRAME-RATE=25.000";
+        // For audio=copy/MP2 the source codec is learned only from the live PMT.
+        // Advertising a video-only CODECS list tells some HLS clients that the
+        // rendition has no audio.  Omit the optional attribute unless the full
+        // A/V codec list is known (AAC transcode); clients then probe the TS PMT.
+        if (advertiseCodecs) out << ",CODECS=\"" << codecs << "\"";
+        out << "\n";
         out << uri << "\n";
     };
     out << "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-INDEPENDENT-SEGMENTS\n# DVBStreamer5 native ABR\n";
@@ -643,7 +649,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                         }
                     });
                 state->nativeTranscoder->setEncodedAudioObserver(
-                    [statePtr](const dvbstreamer5::media::codec::EncodedAudioFrame& frame,
+                    [statePtr](dvbstreamer5::media::mpegts::ElementaryCodec codec,
+                               const dvbstreamer5::media::codec::EncodedAudioFrame& frame,
                                std::uint64_t duration90k) {
                         if (!statePtr) return;
                         std::lock_guard<std::mutex> abrLock(statePtr->hlsAbrMutex);
@@ -652,7 +659,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                                 !variant->transcoder)
                                 continue;
                             (void)variant->transcoder
-                                ->pushEncodedAudioFrame(frame, duration90k);
+                                ->pushEncodedAudioFrame(codec, frame, duration90k);
                         }
                     });
                 std::cerr << "NATIVE HLS ABR shared_decode=1 shared_audio=1 source_demuxers=1 renditions="
