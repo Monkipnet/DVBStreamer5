@@ -768,7 +768,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.inputUri = "external://dvb-shared";
         relay.externallyFedInput = true;
         relay.dvbInputSource = false;
-        relay.paceObservedTransport = false;
+        // V10.8.105: keep paceObservedTransport enabled when CBR is selected.
+        // Shared DVB only changes how input arrives; SRT/HTTP/HLS still require
+        // the output CBR shaper to insert NULL packets up to targetBitrate.
         relay.dvbTuneConfig.adapter = dvbParams.adapter;
         relay.dvbTuneConfig.frontend = dvbParams.frontend;
         relay.dvbTuneConfig.frequencyKHz = dvbParams.frequencyKHz;

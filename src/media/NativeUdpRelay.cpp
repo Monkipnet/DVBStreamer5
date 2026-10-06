@@ -716,49 +716,103 @@ void NativeUdpRelay::run() {
         ++seed;
     }
 
-    // observeTransport consumers such as SRT/RTSP/RTMP receive the already
-    // muxed transport stream.  Do not put that stream through CbrTsPacer:
-    // the transcoder mux has already inserted the configured CBR null packets,
-    // and a second packet queue both double-stuffs the stream and can overflow
-    // after timestamp catch-up bursts.  Instead apply wall-clock backpressure
-    // directly while delivering the existing packets.
-    bool observedPacingStarted = false;
-    std::chrono::steady_clock::time_point observedNextDeadline {};
-    std::uint64_t observedPacingRemainder = 0;
+    // V10.8.105: observeTransport feeds SRT/HTTP/HLS/RTSP/RTMP.  The old
+    // implementation only slept between already-existing TS packets, so when
+    // payload bitrate was below target it remained VBR and CBR Out simply
+    // followed the source.  Give these consumers their own CbrTsPacer: it emits
+    // the configured number of TS packets per second and fills missing capacity
+    // with PID 0x1fff NULL packets, exactly like native UDP-CBR.
+    std::unique_ptr<dvbstreamer5::media::mpegts::CbrTsPacer> observedCbrPacer;
+    std::mutex observedCbrMutex;
+    std::condition_variable observedCbrCondition;
+    bool observedCbrStop = false;
+    std::thread observedCbrWorker;
+
+    if (config_.paceObservedTransport && config_.targetBitrate > 0) {
+        try {
+            observedCbrPacer =
+                std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
+                    config_.targetBitrate);
+            observedCbrWorker = std::thread([&] {
+                while (true) {
+                    dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram {};
+                    bool ready = false;
+                    {
+                        std::unique_lock<std::mutex> lock(observedCbrMutex);
+                        observedCbrCondition.wait(lock, [&] {
+                            return observedCbrStop ||
+                                (observedCbrPacer && observedCbrPacer->started());
+                        });
+                        if (observedCbrStop) break;
+
+                        const auto deadline = observedCbrPacer->nextDeadline();
+                        if (observedCbrCondition.wait_until(
+                                lock, deadline, [&] { return observedCbrStop; })) {
+                            break;
+                        }
+                        if (observedCbrStop) break;
+
+                        ready = observedCbrPacer->nextDatagram(
+                            std::chrono::steady_clock::now(), cbrDatagram);
+                    }
+                    if (!ready) continue;
+
+                    std::array<std::uint8_t,
+                        dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
+                            dvbstreamer5::media::mpegts::kPacketSize> bytes {};
+                    for (std::size_t index = 0; index < cbrDatagram.size(); ++index) {
+                        std::memcpy(
+                            bytes.data() +
+                                index * dvbstreamer5::media::mpegts::kPacketSize,
+                            cbrDatagram[index].data(),
+                            dvbstreamer5::media::mpegts::kPacketSize);
+                    }
+                    config_.observeTransport(bytes.data(), bytes.size());
+                }
+            });
+            std::cerr << "NATIVE OBSERVED CBR start target_kbps="
+                      << (config_.targetBitrate / 1000ULL) << std::endl;
+        } catch (const std::exception& exception) {
+            {
+                std::lock_guard<std::mutex> lock(errorMutex_);
+                lastError_ = std::string("native observed CBR setup failed: ") +
+                    exception.what();
+            }
+            running_.store(false, std::memory_order_release);
+            httpQueueCondition_.notify_all();
+            return;
+        }
+    }
 
     auto observePackets = [&](
         const std::vector<dvbstreamer5::media::mpegts::Packet>& observedPackets) -> bool {
         if (!config_.observeTransport || observedPackets.empty()) return true;
 
-        constexpr std::size_t kObservedPacketsPerBatch = 7;
-        constexpr std::uint64_t kNanosecondsPerSecond = 1000000000ULL;
-        const bool paced = config_.paceObservedTransport && config_.targetBitrate > 0;
+        if (observedCbrPacer) {
+            {
+                std::lock_guard<std::mutex> lock(observedCbrMutex);
+                for (const auto& packet : observedPackets) {
+                    if (!observedCbrPacer->enqueue(packet)) {
+                        std::lock_guard<std::mutex> errorLock(errorMutex_);
+                        lastError_ =
+                            "observed CBR input exceeded the bounded 2 MiB pacing queue; "
+                            "increase target bitrate";
+                        running_.store(false, std::memory_order_release);
+                        httpQueueCondition_.notify_all();
+                        return false;
+                    }
+                }
+            }
+            observedCbrCondition.notify_one();
+            return true;
+        }
 
+        constexpr std::size_t kObservedPacketsPerBatch = 7;
         for (std::size_t first = 0; first < observedPackets.size();
              first += kObservedPacketsPerBatch) {
             if (!running_.load(std::memory_order_acquire)) return false;
-
             const std::size_t count = (std::min)(
                 kObservedPacketsPerBatch, observedPackets.size() - first);
-
-            if (paced) {
-                auto now = std::chrono::steady_clock::now();
-                if (!observedPacingStarted) {
-                    observedPacingStarted = true;
-                    observedNextDeadline = now;
-                }
-                if (observedNextDeadline > now) {
-                    std::this_thread::sleep_until(observedNextDeadline);
-                    now = std::chrono::steady_clock::now();
-                }
-                // If the process was suspended or the source jumped far ahead,
-                // do not attempt a long high-speed catch-up burst.
-                if (now - observedNextDeadline > std::chrono::milliseconds(250)) {
-                    observedNextDeadline = now;
-                    observedPacingRemainder = 0;
-                }
-            }
-
             std::array<std::uint8_t,
                 kObservedPacketsPerBatch * dvbstreamer5::media::mpegts::kPacketSize> bytes {};
             for (std::size_t index = 0; index < count; ++index) {
@@ -769,21 +823,9 @@ void NativeUdpRelay::run() {
             }
             config_.observeTransport(
                 bytes.data(), count * dvbstreamer5::media::mpegts::kPacketSize);
-
-            if (paced) {
-                const std::uint64_t bits =
-                    static_cast<std::uint64_t>(count) *
-                    dvbstreamer5::media::mpegts::kPacketSize * 8ULL;
-                const std::uint64_t numerator =
-                    bits * kNanosecondsPerSecond + observedPacingRemainder;
-                const std::uint64_t nanoseconds = numerator / config_.targetBitrate;
-                observedPacingRemainder = numerator % config_.targetBitrate;
-                observedNextDeadline += std::chrono::nanoseconds(nanoseconds);
-            }
         }
         return true;
     };
-
     std::array<std::uint8_t, 65536> datagram {};
     std::string error;
 
@@ -1174,6 +1216,15 @@ void NativeUdpRelay::run() {
             lastError_ = error;
             break;
         }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(observedCbrMutex);
+        observedCbrStop = true;
+    }
+    observedCbrCondition.notify_all();
+    if (observedCbrWorker.joinable()) {
+        observedCbrWorker.join();
     }
 
     running_.store(false, std::memory_order_release);
