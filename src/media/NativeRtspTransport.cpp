@@ -104,36 +104,71 @@ std::vector<std::uint8_t> decodeBase64(std::string value) {
     return out;
 }
 
-int connectTcp(const Url& url, int timeoutMs, std::atomic<bool>* stopping, std::string& error) {
+int connectTcp(const Url& url, const std::string& bindAddress, int timeoutMs,
+               std::atomic<bool>* stopping, std::string& error) {
     addrinfo hints{}; hints.ai_socktype = SOCK_STREAM; hints.ai_family = AF_UNSPEC;
     addrinfo* list = nullptr;
     const int rc = ::getaddrinfo(url.host.c_str(), std::to_string(url.port).c_str(), &hints, &list);
     if (rc != 0) { error = std::string("RTSP DNS failed: ") + gai_strerror(rc); return -1; }
+
+    sockaddr_storage local{};
+    socklen_t localLen = 0;
+    int bindFamily = AF_UNSPEC;
+    const bool useBind = !bindAddress.empty() && bindAddress != "0.0.0.0" && bindAddress != "::";
+    if (useBind) {
+        sockaddr_in v4{}; v4.sin_family = AF_INET; v4.sin_port = 0;
+        sockaddr_in6 v6{}; v6.sin6_family = AF_INET6; v6.sin6_port = 0;
+        if (::inet_pton(AF_INET, bindAddress.c_str(), &v4.sin_addr) == 1) {
+            std::memcpy(&local, &v4, sizeof(v4)); localLen = sizeof(v4); bindFamily = AF_INET;
+        } else if (::inet_pton(AF_INET6, bindAddress.c_str(), &v6.sin6_addr) == 1) {
+            std::memcpy(&local, &v6, sizeof(v6)); localLen = sizeof(v6); bindFamily = AF_INET6;
+        } else {
+            ::freeaddrinfo(list); error = "invalid RTSP local bind address"; return -1;
+        }
+    }
+
     int fd = -1;
+    bool matchingFamily = !useBind;
+    bool bindSucceeded = !useBind;
+    int bindError = 0;
     for (auto* ai = list; ai && fd < 0; ai = ai->ai_next) {
-        int s = ::socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
-        if (s < 0) continue;
-        const int flags = ::fcntl(s, F_GETFL, 0);
-        ::fcntl(s, F_SETFL, flags | O_NONBLOCK);
-        if (::connect(s, ai->ai_addr, ai->ai_addrlen) == 0) fd = s;
+        if (useBind && ai->ai_family != bindFamily) continue;
+        matchingFamily = true;
+        int sock = ::socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
+        if (sock < 0) continue;
+        if (useBind) {
+            if (::bind(sock, reinterpret_cast<const sockaddr*>(&local), localLen) != 0) {
+                bindError = errno; ::close(sock); continue;
+            }
+            bindSucceeded = true;
+        }
+        const int flags = ::fcntl(sock, F_GETFL, 0);
+        ::fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        if (::connect(sock, ai->ai_addr, ai->ai_addrlen) == 0) fd = sock;
         else if (errno == EINPROGRESS) {
-            pollfd p{s, POLLOUT, 0};
+            pollfd poll{sock, POLLOUT, 0};
             int left = timeoutMs;
             while (left > 0 && !(stopping && stopping->load())) {
                 const int slice = std::min(left, 200);
-                const int pr = ::poll(&p, 1, slice); left -= slice;
+                const int pr = ::poll(&poll, 1, slice); left -= slice;
                 if (pr > 0) {
-                    int so = 0; socklen_t sl = sizeof(so); ::getsockopt(s, SOL_SOCKET, SO_ERROR, &so, &sl);
-                    if (so == 0) fd = s;
+                    int so = 0; socklen_t sl = sizeof(so);
+                    ::getsockopt(sock, SOL_SOCKET, SO_ERROR, &so, &sl);
+                    if (so == 0) fd = sock;
                     break;
                 }
                 if (pr < 0 && errno != EINTR) break;
             }
         }
-        if (fd < 0) ::close(s);
+        if (fd < 0) ::close(sock);
     }
     ::freeaddrinfo(list);
-    if (fd < 0) { error = "RTSP TCP connect failed"; return -1; }
+    if (fd < 0) {
+        if (useBind && !matchingFamily) error = "RTSP local bind address family does not match destination";
+        else if (useBind && !bindSucceeded && bindError) error = std::string("RTSP local bind failed: ") + std::strerror(bindError);
+        else error = "RTSP TCP connect failed";
+        return -1;
+    }
     const int flags = ::fcntl(fd, F_GETFL, 0); ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
     return fd;
 }
@@ -364,7 +399,7 @@ void NativeRtspInput::setError(const std::string& v) { std::lock_guard<std::mute
 
 void NativeRtspInput::run() {
     Url url; std::string error; if (!parseUrl(config_.uri,url)) { setError("invalid RTSP URL"); running_.store(false); return; }
-    int fd = connectTcp(url, config_.connectTimeoutMs, &stopping_, error); if (fd<0) { setError(error); if(status_)status_(error); running_.store(false); return; }
+    int fd = connectTcp(url, config_.bindAddress, config_.connectTimeoutMs, &stopping_, error); if (fd<0) { setError(error); if(status_)status_(error); running_.store(false); return; }
     auto closeAll = [&](std::vector<Track>& tracks){ for(auto& t:tracks){ if(t.rtpFd>=0)::close(t.rtpFd); if(t.rtcpFd>=0)::close(t.rtcpFd); t.rtpFd=t.rtcpFd=-1;} ::close(fd); };
     int cseq=1; std::string pending; RtspResponse resp;
     const std::string root = url.scheme + "://" + url.host + ":" + std::to_string(url.port) + url.path;

@@ -390,9 +390,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         int latency = 120; std::string passphrase; std::string streamId; int pbkeylen = 16;
     };
     std::vector<SrtOutputSpec> srtOutputSpecs;
-    struct RtspOutputSpec { std::string host; int port=8554; };
+    struct RtspOutputSpec { std::string host; int port=8554; std::string iface; };
     std::vector<RtspOutputSpec> rtspOutputSpecs;
-    struct RtmpOutputSpec { std::string uri; };
+    struct RtmpOutputSpec { std::string uri; std::string iface; };
     std::vector<RtmpOutputSpec> rtmpOutputSpecs;
     bool hasHttpOutput = false;
     bool hasHlsOutput = false;
@@ -412,13 +412,13 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                                       srtLatency, srtPassphrase, srtStreamId, srtPbKeyLen});
             return true;
         }
-        if (type == "rtsp") { rtspOutputSpecs.push_back({host, port > 0 ? port : 8554}); return true; }
+        if (type == "rtsp") { rtspOutputSpecs.push_back({host, port > 0 ? port : 8554, cleanInterface(iface)}); return true; }
         if (type == "rtmp" || type == "youtube") {
             std::string uri = host;
             const std::string lo = toLower(uri);
             if (type == "youtube" && lo.rfind("rtmp",0) != 0) uri = "rtmp://a.rtmp.youtube.com/live2/" + host;
             else if (type == "rtmp" && lo.rfind("rtmp",0) != 0) uri = "rtmp://" + host + ":" + std::to_string(port > 0 ? port : 1935) + "/live/" + streamConfig.id;
-            rtmpOutputSpecs.push_back({uri}); return true;
+            rtmpOutputSpecs.push_back({uri, cleanInterface(iface)}); return true;
         }
         nativeOutputs.push_back({type, host, port, cleanInterface(iface)});
         return true;
@@ -747,6 +747,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // Apply VPS/VDS tuning last so the normal per-output latency cannot
         // overwrite the optimization profile after URI parsing.
         srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
+        std::cerr << "SRT OUT route stream=" << streamConfig.id
+                  << " mode=" << srtConfig.mode
+                  << " local_bind=" << (srtConfig.bindAddress.empty() ? std::string("auto") : srtConfig.bindAddress)
+                  << " host=" << srtConfig.host
+                  << " port=" << srtConfig.port << std::endl;
         if (streamConfig.srtVpsVdsOptimization) {
             std::cerr << "SRT VPS/VDS effective OUT stream=" << streamConfig.id
                       << " mode=" << srtConfig.mode
@@ -782,18 +787,24 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
     for (const auto& spec : rtspOutputSpecs) {
         auto output = std::make_unique<dvbstreamer5::media::rtsp::NativeRtspOutput>();
-        dvbstreamer5::media::rtsp::OutputConfig cfg; cfg.bindAddress=cleanInterface(spec.host); if(cfg.bindAddress.empty())cfg.bindAddress="0.0.0.0"; cfg.port=spec.port; cfg.streamName=streamConfig.id;
+        dvbstreamer5::media::rtsp::OutputConfig cfg; cfg.bindAddress=cleanInterface(spec.iface); if(cfg.bindAddress.empty())cfg.bindAddress=cleanInterface(spec.host); if(cfg.bindAddress.empty())cfg.bindAddress="0.0.0.0"; cfg.port=spec.port; cfg.streamName=streamConfig.id;
         std::string e; const std::string currentStreamId=streamConfig.id;
         if(!output->start(cfg,[this,currentStreamId](const std::string&ip){return isClientAllowedForStream(currentStreamId,ip);},
             [this,currentStreamId](const std::string&ip){if(!ip.empty())addStreamSession(currentStreamId,ip,"rtsp");},
             [this,currentStreamId](const std::string&ip){if(!ip.empty())removeStreamSession(currentStreamId,ip,"rtsp");},e)) {
             CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTSP output failed":e; return false;
         }
+        std::cerr << "RTSP OUT effective stream=" << streamConfig.id
+                  << " local_bind=" << cfg.bindAddress
+                  << " port=" << cfg.port << std::endl;
         state->nativeRtspOutputs.push_back(std::move(output));
     }
     for (const auto& spec : rtmpOutputSpecs) {
-        auto output=std::make_unique<dvbstreamer5::media::rtmp::NativeRtmpOutput>(); dvbstreamer5::media::rtmp::EndpointConfig cfg; cfg.uri=spec.uri; cfg.bindAddress=cleanInterface(streamConfig.interfaceAddress);
+        auto output=std::make_unique<dvbstreamer5::media::rtmp::NativeRtmpOutput>(); dvbstreamer5::media::rtmp::EndpointConfig cfg; cfg.uri=spec.uri; cfg.bindAddress=cleanInterface(spec.iface);
         std::string e; if(!output->start(cfg,[statePtr=state.get()](const std::string&st){if(statePtr)statePtr->statusMessage="RTMP "+st;},e)) { CardManager::instance().releaseService(streamConfig.id); if(error)*error=e.empty()?"native RTMP output failed":e; return false; }
+        std::cerr << "RTMP OUT effective stream=" << streamConfig.id
+                  << " local_bind=" << (cfg.bindAddress.empty() ? std::string("auto") : cfg.bindAddress)
+                  << std::endl;
         state->nativeRtmpOutputs.push_back(std::move(output));
     }
     if (hasHlsOutput) {

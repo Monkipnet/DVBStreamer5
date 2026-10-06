@@ -44,11 +44,79 @@ bool parseUrl(const std::string& uri, Url& u){
 class Io {
 public:
     ~Io(){close();}
-    bool connect(const Url& u,int timeout,std::atomic<bool>*stop,std::string&error){
-        close();addrinfo h{};h.ai_socktype=SOCK_STREAM;h.ai_family=AF_UNSPEC;addrinfo*l=nullptr;const int rc=::getaddrinfo(u.host.c_str(),std::to_string(u.port).c_str(),&h,&l);if(rc){error=gai_strerror(rc);return false;}
-        for(auto*ai=l;ai&&fd_<0;ai=ai->ai_next){int s=::socket(ai->ai_family,SOCK_STREAM|SOCK_CLOEXEC,ai->ai_protocol);if(s<0)continue;const int f=::fcntl(s,F_GETFL,0);::fcntl(s,F_SETFL,f|O_NONBLOCK);if(::connect(s,ai->ai_addr,ai->ai_addrlen)==0)fd_=s;else if(errno==EINPROGRESS){int left=timeout;while(left>0&&!(stop&&stop->load())){pollfd p{s,POLLOUT,0};const int slice=std::min(left,200);const int pr=::poll(&p,1,slice);left-=slice;if(pr>0){int so=0;socklen_t sl=sizeof(so);::getsockopt(s,SOL_SOCKET,SO_ERROR,&so,&sl);if(!so)fd_=s;break;}if(pr<0&&errno!=EINTR)break;}}if(fd_<0)::close(s);}
-        ::freeaddrinfo(l);if(fd_<0){error="RTMP connect failed";return false;}const int f=::fcntl(fd_,F_GETFL,0);::fcntl(fd_,F_SETFL,f&~O_NONBLOCK);
-        if(u.tls){ctx_=SSL_CTX_new(TLS_client_method());if(!ctx_){error="RTMPS SSL_CTX failed";close();return false;}SSL_CTX_set_default_verify_paths(ctx_);ssl_=SSL_new(ctx_);SSL_set_fd(ssl_,fd_);SSL_set_tlsext_host_name(ssl_,u.host.c_str());if(SSL_connect(ssl_)!=1){error="RTMPS TLS handshake failed";close();return false;}}
+    bool connect(const Url& u, const std::string& bindAddress, int timeout,
+                 std::atomic<bool>* stop, std::string& error) {
+        close();
+        addrinfo h{}; h.ai_socktype = SOCK_STREAM; h.ai_family = AF_UNSPEC;
+        addrinfo* l = nullptr;
+        const int rc = ::getaddrinfo(u.host.c_str(), std::to_string(u.port).c_str(), &h, &l);
+        if (rc) { error = gai_strerror(rc); return false; }
+
+        sockaddr_storage local{};
+        socklen_t localLen = 0;
+        int bindFamily = AF_UNSPEC;
+        const bool useBind = !bindAddress.empty() && bindAddress != "0.0.0.0" && bindAddress != "::";
+        if (useBind) {
+            sockaddr_in v4{}; v4.sin_family = AF_INET; v4.sin_port = 0;
+            sockaddr_in6 v6{}; v6.sin6_family = AF_INET6; v6.sin6_port = 0;
+            if (::inet_pton(AF_INET, bindAddress.c_str(), &v4.sin_addr) == 1) {
+                std::memcpy(&local, &v4, sizeof(v4)); localLen = sizeof(v4); bindFamily = AF_INET;
+            } else if (::inet_pton(AF_INET6, bindAddress.c_str(), &v6.sin6_addr) == 1) {
+                std::memcpy(&local, &v6, sizeof(v6)); localLen = sizeof(v6); bindFamily = AF_INET6;
+            } else {
+                ::freeaddrinfo(l); error = "invalid RTMP local bind address"; return false;
+            }
+        }
+
+        bool matchingFamily = !useBind;
+        bool bindSucceeded = !useBind;
+        int bindError = 0;
+        for (auto* ai = l; ai && fd_ < 0; ai = ai->ai_next) {
+            if (useBind && ai->ai_family != bindFamily) continue;
+            matchingFamily = true;
+            int sock = ::socket(ai->ai_family, SOCK_STREAM | SOCK_CLOEXEC, ai->ai_protocol);
+            if (sock < 0) continue;
+            if (useBind) {
+                if (::bind(sock, reinterpret_cast<const sockaddr*>(&local), localLen) != 0) {
+                    bindError = errno; ::close(sock); continue;
+                }
+                bindSucceeded = true;
+            }
+            const int f = ::fcntl(sock, F_GETFL, 0);
+            ::fcntl(sock, F_SETFL, f | O_NONBLOCK);
+            if (::connect(sock, ai->ai_addr, ai->ai_addrlen) == 0) fd_ = sock;
+            else if (errno == EINPROGRESS) {
+                int left = timeout;
+                while (left > 0 && !(stop && stop->load())) {
+                    pollfd poll{sock, POLLOUT, 0};
+                    const int slice = std::min(left, 200);
+                    const int pr = ::poll(&poll, 1, slice); left -= slice;
+                    if (pr > 0) {
+                        int so = 0; socklen_t sl = sizeof(so);
+                        ::getsockopt(sock, SOL_SOCKET, SO_ERROR, &so, &sl);
+                        if (!so) fd_ = sock;
+                        break;
+                    }
+                    if (pr < 0 && errno != EINTR) break;
+                }
+            }
+            if (fd_ < 0) ::close(sock);
+        }
+        ::freeaddrinfo(l);
+        if (fd_ < 0) {
+            if (useBind && !matchingFamily) error = "RTMP local bind address family does not match destination";
+            else if (useBind && !bindSucceeded && bindError) error = std::string("RTMP local bind failed: ") + std::strerror(bindError);
+            else error = "RTMP connect failed";
+            return false;
+        }
+        const int f = ::fcntl(fd_, F_GETFL, 0); ::fcntl(fd_, F_SETFL, f & ~O_NONBLOCK);
+        if (u.tls) {
+            ctx_ = SSL_CTX_new(TLS_client_method());
+            if (!ctx_) { error = "RTMPS SSL_CTX failed"; close(); return false; }
+            SSL_CTX_set_default_verify_paths(ctx_); ssl_ = SSL_new(ctx_); SSL_set_fd(ssl_, fd_);
+            SSL_set_tlsext_host_name(ssl_, u.host.c_str());
+            if (SSL_connect(ssl_) != 1) { error = "RTMPS TLS handshake failed"; close(); return false; }
+        }
         return true;
     }
     void close(){if(ssl_){SSL_shutdown(ssl_);SSL_free(ssl_);ssl_=nullptr;}if(ctx_){SSL_CTX_free(ctx_);ctx_=nullptr;}if(fd_>=0){::shutdown(fd_,SHUT_RDWR);::close(fd_);fd_=-1;}}
@@ -140,7 +208,7 @@ NativeRtmpOutput::NativeRtmpOutput():impl_(std::make_unique<Impl>()){}
 NativeRtmpOutput::~NativeRtmpOutput(){stop();}
 std::string NativeRtmpOutput::lastError()const{std::lock_guard<std::mutex>l(errorMutex_);return lastError_;}void NativeRtmpOutput::setError(const std::string&v){std::lock_guard<std::mutex>l(errorMutex_);lastError_=v;}
 
-bool NativeRtmpOutput::start(const EndpointConfig&config,StatusCallback status,std::string&error){stop();Url u;if(!parseUrl(config.uri,u)){error="invalid RTMP URL";return false;}config_=config;status_=std::move(status);impl_=std::make_unique<Impl>();if(!impl_->io.connect(u,config.connectTimeoutMs,&impl_->stopping,error))return false;impl_->chunks=std::make_unique<ChunkSession>(impl_->io);if(!establish(impl_->io,*impl_->chunks,u,true,&impl_->stopping,impl_->streamId,error)){impl_->io.close();return false;}impl_->demux.setSampleCallback([this](mpegts::DemuxSample&&s){if(!running_.load()||!impl_||!impl_->chunks)return;std::lock_guard<std::mutex>lock(impl_->sendMutex);const std::uint32_t dtsMs=static_cast<std::uint32_t>((s.hasDts?s.dts90k:s.pts90k)/90);const std::uint32_t ptsMs=static_cast<std::uint32_t>((s.hasPts?s.pts90k:s.dts90k)/90);if(s.stream.codec==mpegts::ElementaryCodec::H264){auto nals=annexBNals(s.data);for(const auto&[p,n]:nals){const auto t=p[0]&0x1fU;if(t==7)impl_->avc.sps.assign(p,p+n);else if(t==8)impl_->avc.pps.assign(p,p+n);}if(!impl_->avc.sent){auto cfg=avcConfigRecord(impl_->avc);if(!cfg.empty()){std::vector<std::uint8_t>b{0x17,0,0,0,0};b.insert(b.end(),cfg.begin(),cfg.end());impl_->chunks->send(6,9,impl_->streamId,dtsMs,b);impl_->avc.sent=true;}}std::vector<std::uint8_t>b{static_cast<std::uint8_t>(s.randomAccess?0x17:0x27),1};std::int32_t comp=static_cast<std::int32_t>(ptsMs-dtsMs);b.push_back(static_cast<std::uint8_t>(comp>>16));b.push_back(static_cast<std::uint8_t>(comp>>8));b.push_back(static_cast<std::uint8_t>(comp));for(const auto&[p,n]:nals){if((p[0]&0x1fU)==7||(p[0]&0x1fU)==8||(p[0]&0x1fU)==9)continue;be32(b,static_cast<std::uint32_t>(n));b.insert(b.end(),p,p+n);}if(b.size()>5){impl_->chunks->send(6,9,impl_->streamId,dtsMs,b);sentBytes_.fetch_add(b.size());}}
+bool NativeRtmpOutput::start(const EndpointConfig&config,StatusCallback status,std::string&error){stop();Url u;if(!parseUrl(config.uri,u)){error="invalid RTMP URL";return false;}config_=config;status_=std::move(status);impl_=std::make_unique<Impl>();if(!impl_->io.connect(u,config.bindAddress,config.connectTimeoutMs,&impl_->stopping,error))return false;impl_->chunks=std::make_unique<ChunkSession>(impl_->io);if(!establish(impl_->io,*impl_->chunks,u,true,&impl_->stopping,impl_->streamId,error)){impl_->io.close();return false;}impl_->demux.setSampleCallback([this](mpegts::DemuxSample&&s){if(!running_.load()||!impl_||!impl_->chunks)return;std::lock_guard<std::mutex>lock(impl_->sendMutex);const std::uint32_t dtsMs=static_cast<std::uint32_t>((s.hasDts?s.dts90k:s.pts90k)/90);const std::uint32_t ptsMs=static_cast<std::uint32_t>((s.hasPts?s.pts90k:s.dts90k)/90);if(s.stream.codec==mpegts::ElementaryCodec::H264){auto nals=annexBNals(s.data);for(const auto&[p,n]:nals){const auto t=p[0]&0x1fU;if(t==7)impl_->avc.sps.assign(p,p+n);else if(t==8)impl_->avc.pps.assign(p,p+n);}if(!impl_->avc.sent){auto cfg=avcConfigRecord(impl_->avc);if(!cfg.empty()){std::vector<std::uint8_t>b{0x17,0,0,0,0};b.insert(b.end(),cfg.begin(),cfg.end());impl_->chunks->send(6,9,impl_->streamId,dtsMs,b);impl_->avc.sent=true;}}std::vector<std::uint8_t>b{static_cast<std::uint8_t>(s.randomAccess?0x17:0x27),1};std::int32_t comp=static_cast<std::int32_t>(ptsMs-dtsMs);b.push_back(static_cast<std::uint8_t>(comp>>16));b.push_back(static_cast<std::uint8_t>(comp>>8));b.push_back(static_cast<std::uint8_t>(comp));for(const auto&[p,n]:nals){if((p[0]&0x1fU)==7||(p[0]&0x1fU)==8||(p[0]&0x1fU)==9)continue;be32(b,static_cast<std::uint32_t>(n));b.insert(b.end(),p,p+n);}if(b.size()>5){impl_->chunks->send(6,9,impl_->streamId,dtsMs,b);sentBytes_.fetch_add(b.size());}}
         else if(s.stream.codec==mpegts::ElementaryCodec::H265){auto nals=annexBNals(s.data);for(const auto&[p,n]:nals){if(n<2)continue;const auto t=(p[0]>>1)&0x3fU;if(t==32)impl_->hevc.vps.assign(p,p+n);else if(t==33)impl_->hevc.sps.assign(p,p+n);else if(t==34)impl_->hevc.pps.assign(p,p+n);}if(!impl_->hevc.sent){auto cfg=hevcConfigRecord(impl_->hevc);if(!cfg.empty()){std::vector<std::uint8_t>b{0x90,'h','v','c','1'};b.insert(b.end(),cfg.begin(),cfg.end());if(!impl_->chunks->send(6,9,impl_->streamId,dtsMs,b)){setError("RTMP HEVC sequence header send failed");return;}impl_->hevc.sent=true;}}std::vector<std::uint8_t>b{static_cast<std::uint8_t>((s.randomAccess?0x90:0xa0)|0x01),'h','v','c','1'};std::int32_t comp=static_cast<std::int32_t>(ptsMs-dtsMs);b.push_back(static_cast<std::uint8_t>(comp>>16));b.push_back(static_cast<std::uint8_t>(comp>>8));b.push_back(static_cast<std::uint8_t>(comp));for(const auto&[p,n]:nals){if(n<2)continue;const auto t=(p[0]>>1)&0x3fU;if(t==32||t==33||t==34||t==35)continue;be32(b,static_cast<std::uint32_t>(n));b.insert(b.end(),p,p+n);}if(b.size()>8){if(!impl_->chunks->send(6,9,impl_->streamId,dtsMs,b)){setError("RTMP HEVC frame send failed");return;}sentBytes_.fetch_add(b.size());}}
         else if(s.stream.codec==mpegts::ElementaryCodec::AacAdts){std::size_t off=0;while(off<s.data.size()){std::vector<std::uint8_t>raw,asc;int rate=0,ch=0;if(!parseAdts(s.data,off,raw,rate,ch,asc))break;if(!impl_->aacConfigSent){std::vector<std::uint8_t>cfg{0xaf,0};cfg.insert(cfg.end(),asc.begin(),asc.end());impl_->chunks->send(4,8,impl_->streamId,dtsMs,cfg);impl_->aacConfigSent=true;}std::vector<std::uint8_t>b{0xaf,1};b.insert(b.end(),raw.begin(),raw.end());impl_->chunks->send(4,8,impl_->streamId,dtsMs,b);sentBytes_.fetch_add(b.size());}}
     });running_.store(true);if(status_)status_("publishing");error.clear();return true;}
@@ -152,7 +220,7 @@ NativeRtmpInput::~NativeRtmpInput(){stop();}
 bool NativeRtmpInput::start(const EndpointConfig&config,DataCallback data,StatusCallback status,std::string&error){stop();Url u;if(!parseUrl(config.uri,u)){error="invalid RTMP URL";return false;}config_=config;data_=std::move(data);status_=std::move(status);stopping_.store(false);running_.store(true);receivedBytes_.store(0);setError({});try{worker_=std::thread(&NativeRtmpInput::run,this);}catch(const std::exception&ex){running_.store(false);error=ex.what();return false;}error.clear();return true;}
 void NativeRtmpInput::stop()noexcept{stopping_.store(true);if(worker_.joinable()&&worker_.get_id()!=std::this_thread::get_id())worker_.join();running_.store(false);}std::string NativeRtmpInput::lastError()const{std::lock_guard<std::mutex>l(errorMutex_);return lastError_;}void NativeRtmpInput::setError(const std::string&v){std::lock_guard<std::mutex>l(errorMutex_);lastError_=v;}
 
-void NativeRtmpInput::run(){Url u;std::string error;if(!parseUrl(config_.uri,u)){setError("invalid RTMP URL");running_.store(false);return;}Io io;if(!io.connect(u,config_.connectTimeoutMs,&stopping_,error)){setError(error);running_.store(false);return;}ChunkSession chunks(io);std::uint32_t streamId=0;if(!establish(io,chunks,u,false,&stopping_,streamId,error)){setError(error);io.close();running_.store(false);return;}if(status_)status_("playing");mpegts::NativeMpegTsMux mux;mpegts::NativeMuxConfig mc;mc.serviceName="RTMP";mc.serviceProvider="DVBStreamer5";mux.initialize(mc,error);bool videoSet=false,audioSet=false;AvcConfig avc;std::vector<std::uint8_t>hevcParam;int aacRate=48000,aacChannels=2;auto emit=[&](mpegts::ElementaryKind k,mpegts::ElementaryCodec codec,const std::vector<std::uint8_t>&sample,std::uint64_t pts,std::uint64_t dts,bool key){if(k==mpegts::ElementaryKind::Video&&!videoSet){mux.setCodec(k,codec,error);videoSet=true;}if(k==mpegts::ElementaryKind::Audio&&!audioSet){mux.setCodec(k,codec,error);audioSet=true;}mpegts::ElementarySample es;es.data=sample.data();es.size=sample.size();es.hasPts=es.hasDts=true;es.pts90k=pts;es.dts90k=dts;es.randomAccess=key;std::vector<mpegts::Packet>out;if(!mux.write(k,es,out,error))return;std::vector<std::uint8_t>raw;raw.reserve(out.size()*188);for(auto&p:out)raw.insert(raw.end(),p.begin(),p.end());if(!raw.empty()&&data_&&data_(raw.data(),raw.size()))receivedBytes_.fetch_add(raw.size());};
+void NativeRtmpInput::run(){Url u;std::string error;if(!parseUrl(config_.uri,u)){setError("invalid RTMP URL");running_.store(false);return;}Io io;if(!io.connect(u,config_.bindAddress,config_.connectTimeoutMs,&stopping_,error)){setError(error);running_.store(false);return;}ChunkSession chunks(io);std::uint32_t streamId=0;if(!establish(io,chunks,u,false,&stopping_,streamId,error)){setError(error);io.close();running_.store(false);return;}if(status_)status_("playing");mpegts::NativeMpegTsMux mux;mpegts::NativeMuxConfig mc;mc.serviceName="RTMP";mc.serviceProvider="DVBStreamer5";mux.initialize(mc,error);bool videoSet=false,audioSet=false;AvcConfig avc;std::vector<std::uint8_t>hevcParam;int aacRate=48000,aacChannels=2;auto emit=[&](mpegts::ElementaryKind k,mpegts::ElementaryCodec codec,const std::vector<std::uint8_t>&sample,std::uint64_t pts,std::uint64_t dts,bool key){if(k==mpegts::ElementaryKind::Video&&!videoSet){mux.setCodec(k,codec,error);videoSet=true;}if(k==mpegts::ElementaryKind::Audio&&!audioSet){mux.setCodec(k,codec,error);audioSet=true;}mpegts::ElementarySample es;es.data=sample.data();es.size=sample.size();es.hasPts=es.hasDts=true;es.pts90k=pts;es.dts90k=dts;es.randomAccess=key;std::vector<mpegts::Packet>out;if(!mux.write(k,es,out,error))return;std::vector<std::uint8_t>raw;raw.reserve(out.size()*188);for(auto&p:out)raw.insert(raw.end(),p.begin(),p.end());if(!raw.empty()&&data_&&data_(raw.data(),raw.size()))receivedBytes_.fetch_add(raw.size());};
     while(!stopping_.load()){Message m;if(!chunks.receive(m,config_.ioTimeoutMs,&stopping_,error))break;if(m.type==8&&m.body.size()>=2){const int fmt=m.body[0]>>4;if(fmt!=10)continue;const int pt=m.body[1];if(pt==0&&m.body.size()>=4){const auto*p=m.body.data()+2;const std::uint8_t aot=p[0]>>3;const int idx=((p[0]&7)<<1)|(p[1]>>7);static const int rates[]={96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350};if(idx<13)aacRate=rates[idx];aacChannels=(p[1]>>3)&15;(void)aot;}else if(pt==1){std::array<std::uint8_t,7>h{};if(!adtsHeader(aacRate,aacChannels,m.body.size()-2,h))continue;std::vector<std::uint8_t>s(h.begin(),h.end());s.insert(s.end(),m.body.begin()+2,m.body.end());emit(mpegts::ElementaryKind::Audio,mpegts::ElementaryCodec::AacAdts,s,static_cast<std::uint64_t>(m.timestamp)*90,static_cast<std::uint64_t>(m.timestamp)*90,false);}}
         else if(m.type==9&&m.body.size()>=5){const bool enhanced=(m.body[0]&0x80)!=0;if(!enhanced){const int codec=m.body[0]&15;if(codec!=7)continue;const int pt=m.body[1];std::int32_t comp=(m.body[2]<<16)|(m.body[3]<<8)|m.body[4];if(comp&0x800000)comp|=~0xffffff;if(pt==0&&m.body.size()>10){const auto*p=m.body.data()+5;std::size_t n=m.body.size()-5;if(n<7)continue;std::size_t q=6;const int ns=p[5]&31;for(int i=0;i<ns&&q+2<=n;++i){const std::size_t z=(p[q]<<8)|p[q+1];q+=2;if(q+z>n)break;avc.sps.assign(p+q,p+q+z);q+=z;}if(q<n){const int np=p[q++];for(int i=0;i<np&&q+2<=n;++i){const std::size_t z=(p[q]<<8)|p[q+1];q+=2;if(q+z>n)break;avc.pps.assign(p+q,p+q+z);q+=z;}}}else if(pt==1){std::vector<std::uint8_t>s;if((m.body[0]>>4)==1){if(!avc.sps.empty()){s.insert(s.end(),{0,0,0,1});s.insert(s.end(),avc.sps.begin(),avc.sps.end());}if(!avc.pps.empty()){s.insert(s.end(),{0,0,0,1});s.insert(s.end(),avc.pps.begin(),avc.pps.end());}}std::size_t q=5;while(q+4<=m.body.size()){const std::size_t z=read32(&m.body[q]);q+=4;if(q+z>m.body.size())break;s.insert(s.end(),{0,0,0,1});s.insert(s.end(),m.body.begin()+static_cast<std::ptrdiff_t>(q),m.body.begin()+static_cast<std::ptrdiff_t>(q+z));q+=z;}const std::uint64_t d=static_cast<std::uint64_t>(m.timestamp)*90;const std::int64_t pp=static_cast<std::int64_t>(d)+static_cast<std::int64_t>(comp)*90;emit(mpegts::ElementaryKind::Video,mpegts::ElementaryCodec::H264,s,pp<0?0:static_cast<std::uint64_t>(pp),d,(m.body[0]>>4)==1);}}
             else if(m.body.size()>=6){const int packet=m.body[0]&15;const std::string fourcc(reinterpret_cast<const char*>(m.body.data()+1),4);if(fourcc!="hvc1"&&fourcc!="hev1")continue;if(packet==0){std::vector<std::uint8_t>cfg(m.body.begin()+5,m.body.end());if(!parseHevcConfigRecord(cfg,hevcParam))hevcParam.clear();}else if(packet==1){std::size_t q=5;std::int32_t comp=0;if(m.body.size()>=8){comp=(m.body[5]<<16)|(m.body[6]<<8)|m.body[7];if(comp&0x800000)comp|=~0xffffff;q=8;}const bool key=((m.body[0]>>4)&7)==1;std::vector<std::uint8_t>s;if(key&&!hevcParam.empty())s.insert(s.end(),hevcParam.begin(),hevcParam.end());while(q+4<=m.body.size()){const std::size_t z=read32(&m.body[q]);q+=4;if(q+z>m.body.size())break;s.insert(s.end(),{0,0,0,1});s.insert(s.end(),m.body.begin()+static_cast<std::ptrdiff_t>(q),m.body.begin()+static_cast<std::ptrdiff_t>(q+z));q+=z;}const std::uint64_t d=static_cast<std::uint64_t>(m.timestamp)*90;const std::int64_t pp=static_cast<std::int64_t>(d)+static_cast<std::int64_t>(comp)*90;emit(mpegts::ElementaryKind::Video,mpegts::ElementaryCodec::H265,s,pp<0?0:static_cast<std::uint64_t>(pp),d,key);}}}
