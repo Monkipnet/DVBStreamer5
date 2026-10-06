@@ -61,8 +61,6 @@ new_block = """    // V10.8.105: observeTransport feeds SRT/HTTP/HLS/RTSP/RTMP. 
                             cbrDatagram[index].data(),
                             dvbstreamer5::media::mpegts::kPacketSize);
                     }
-                    // NativeTransportObserver is thread-safe and fans this single,
-                    // already-shaped TS to every configured non-UDP consumer.
                     config_.observeTransport(bytes.data(), bytes.size());
                 }
             });
@@ -125,14 +123,13 @@ new_block = """    // V10.8.105: observeTransport feeds SRT/HTTP/HLS/RTSP/RTMP. 
 """
 text = text[:start] + new_block + text[end:]
 
-footer_old = """    }
-    running_.store(false, std::memory_order_release);
-    httpQueueCondition_.notify_all();
-    if (fileInput_.is_open()) {
-"""
-footer_new = """    }
-
-    {
+# Insert worker shutdown immediately before the final run() shutdown.  There are
+# earlier error paths with the same running_.store() call, so use the last one.
+shutdown_marker = "    running_.store(false, std::memory_order_release);\n    httpQueueCondition_.notify_all();\n"
+shutdown_pos = text.rfind(shutdown_marker)
+if shutdown_pos < end:
+    raise SystemExit("unexpected NativeUdpRelay shutdown layout")
+shutdown = """    {
         std::lock_guard<std::mutex> lock(observedCbrMutex);
         observedCbrStop = true;
     }
@@ -141,13 +138,9 @@ footer_new = """    }
         observedCbrWorker.join();
     }
 
-    running_.store(false, std::memory_order_release);
-    httpQueueCondition_.notify_all();
-    if (fileInput_.is_open()) {
 """
-if text.count(footer_old) != 1:
-    raise SystemExit("unexpected NativeUdpRelay footer layout")
-relay_path.write_text(text.replace(footer_old, footer_new, 1))
+text = text[:shutdown_pos] + shutdown + text[shutdown_pos:]
+relay_path.write_text(text)
 
 manager_path = Path("src/StreamManager.cpp")
 manager = manager_path.read_text()
