@@ -1,4 +1,5 @@
 #include "ConfigManager.h"
+#include "UdpInputFirewall.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -598,6 +599,11 @@ Json::Value AppConfig::toJson() const {
     root["telegram_token"] = telegramToken;
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
+    Json::Value udpFilterInterfaces(Json::arrayValue);
+    for (const auto& address : udpInputFilterInterfaces) {
+        if (!address.empty()) udpFilterInterfaces.append(address);
+    }
+    root["udp_input_filter_interfaces"] = udpFilterInterfaces;
     Json::Value camClientsJson(Json::arrayValue);
     for (const auto& client : camClients) camClientsJson.append(client.toJson());
     root["cam_clients"] = camClientsJson;
@@ -625,6 +631,16 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.telegramToken = root.get("telegram_token", "").asString();
     config.telegramChatId = root.get("telegram_chat_id", "").asString();
     config.srtVpsVdsOptimization = root.get("srt_vps_vds_optimization", false).asBool();
+    if (root.isMember("udp_input_filter_interfaces") && root["udp_input_filter_interfaces"].isArray()) {
+        std::set<std::string> uniqueAddresses;
+        for (const auto& item : root["udp_input_filter_interfaces"]) {
+            if (!item.isString()) continue;
+            const std::string address = item.asString();
+            if (!address.empty() && uniqueAddresses.insert(address).second) {
+                config.udpInputFilterInterfaces.push_back(address);
+            }
+        }
+    }
     if (root.isMember("cam_clients") && root["cam_clients"].isArray()) {
         for (const auto& item : root["cam_clients"]) config.camClients.push_back(CamClientConfig::fromJson(item));
     }
@@ -885,6 +901,12 @@ bool ConfigManager::save() {
         std::cerr << "Unable to write config file " << configPath << ": "
                   << error << std::endl;
         return false;
+    }
+    std::string firewallError;
+    if (!dvbstreamer5::network::UdpInputFirewall::apply(config, firewallError)) {
+        // Configuration remains valid; packet filtering deliberately fails open.
+        std::cerr << "UDP INPUT FILTER rebuild failed (fail-open): "
+                  << firewallError << std::endl;
     }
     return true;
 }

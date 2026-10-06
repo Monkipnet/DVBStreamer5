@@ -268,6 +268,16 @@ log() { printf '\n==> %s\n' "$*"; }
 [[ "$(uname -s)" == Linux ]] || fail "Linux is required"
 [[ "$(uname -m)" == x86_64 ]] || fail "x86_64 is required"
 command -v systemctl >/dev/null 2>&1 || fail "systemd/systemctl is required"
+if ! command -v nft >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        log "Installing nftables for optional per-interface UDP input filtering"
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends nftables || true
+    fi
+fi
+if ! command -v nft >/dev/null 2>&1; then
+    echo "WARNING: nft is unavailable; UDP input filtering will stay fail-open." >&2
+fi
 [[ -x "$BUNDLE_DIR/run.sh" && -x "$BUNDLE_DIR/bin/$APP" ]] || fail "bundle is incomplete"
 
 log "Stopping existing services"

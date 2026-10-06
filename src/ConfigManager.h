@@ -149,6 +149,9 @@ struct AppConfig {
     std::string telegramChatId;
     // Opt-in SRT profile for VPS/VDS/container hosts.
     bool srtVpsVdsOptimization = false;
+    // V10.8.110: IPv4 addresses of interfaces where UDP/RTP ingress filtering is enabled.
+    // Empty by default: upgrades cannot unexpectedly alter host packet filtering.
+    std::vector<std::string> udpInputFilterInterfaces;
     std::vector<StreamConfig> streams;
     std::vector<MptsOutputConfig> mptsOutputs;
     std::vector<CamClientConfig> camClients;

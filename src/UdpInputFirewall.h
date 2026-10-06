@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
+#include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -292,7 +294,7 @@ private:
             // Protect the selected media interface from unrelated multicast
             // storms while leaving all non-media unicast UDP services alone.
             out << "    iifname " << quoted
-                << " ip daddr 224.0.0.0/4 udp drop comment \"DVBStreamer5 reject unconfigured multicast\"\n";
+                << " ip daddr 224.0.0.0/4 meta l4proto udp drop comment \"DVBStreamer5 reject unconfigured multicast\"\n";
             if (!mediaPorts.empty()) {
                 out << "    iifname " << quoted << " udp dport " << portSet(mediaPorts)
                     << " drop comment \"DVBStreamer5 reject wrong media endpoint\"\n";

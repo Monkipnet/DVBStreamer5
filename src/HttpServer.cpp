@@ -8,6 +8,7 @@
 #include "DvbSatellite.h"
 #include "CardManager.h"
 #include "OscamMiniManager.h"
+#include "UdpInputFirewall.h"
 #include "protocols/SrtVpsProfile.h"
 
 #include <boost/beast/core.hpp>
@@ -1069,6 +1070,70 @@ void HttpServer::handleSession(tcp::socket socket) {
                         closingPreviewId, payload["session"].asString());
                     res.body() = closed ? R"({"closed":true})" : R"({"closed":false})";
                 }
+            } else if (target == "/api/network/udp-input-filter") {
+                res.set(http::field::content_type, "application/json");
+                Json::Value payload;
+                Json::CharReaderBuilder builder;
+                std::string parseError;
+                std::istringstream input(req.body());
+                Json::Value reply(Json::objectValue);
+                if (req.body().size() > 4096 ||
+                    !Json::parseFromStream(builder, input, &payload, &parseError) ||
+                    !payload.isObject() || !payload["address"].isString() ||
+                    !payload["enabled"].isBool()) {
+                    res.result(http::status::bad_request);
+                    reply["result"] = "error";
+                    reply["error"] = "Invalid UDP input filter request";
+                } else {
+                    const std::string address = payload["address"].asString();
+                    const bool enabled = payload["enabled"].asBool();
+                    const auto interfaces = enumerateNetworkInterfaces();
+                    const auto iface = std::find_if(interfaces.begin(), interfaces.end(),
+                        [&address](const NetworkInterface& candidate) {
+                            return candidate.address == address && candidate.name != "lo" &&
+                                   candidate.address.rfind("127.", 0) != 0;
+                        });
+                    if (iface == interfaces.end()) {
+                        res.result(http::status::bad_request);
+                        reply["result"] = "error";
+                        reply["error"] = "Network interface is unavailable";
+                    } else {
+                        const auto previous = configManager.config.udpInputFilterInterfaces;
+                        auto next = previous;
+                        next.erase(std::remove(next.begin(), next.end(), address), next.end());
+                        if (enabled) next.push_back(address);
+                        std::sort(next.begin(), next.end());
+                        next.erase(std::unique(next.begin(), next.end()), next.end());
+                        configManager.config.udpInputFilterInterfaces = next;
+
+                        std::string firewallError;
+                        if (!dvbstreamer5::network::UdpInputFirewall::apply(
+                                configManager.config, firewallError)) {
+                            configManager.config.udpInputFilterInterfaces = previous;
+                            std::string rollbackError;
+                            (void)dvbstreamer5::network::UdpInputFirewall::apply(
+                                configManager.config, rollbackError);
+                            res.result(http::status::bad_request);
+                            reply["result"] = "error";
+                            reply["error"] = firewallError;
+                        } else if (!configManager.save()) {
+                            configManager.config.udpInputFilterInterfaces = previous;
+                            std::string rollbackError;
+                            (void)dvbstreamer5::network::UdpInputFirewall::apply(
+                                configManager.config, rollbackError);
+                            res.result(http::status::internal_server_error);
+                            reply["result"] = "error";
+                            reply["error"] = "Unable to save configuration";
+                        } else {
+                            reply["result"] = "ok";
+                            reply["address"] = address;
+                            reply["enabled"] = enabled;
+                        }
+                    }
+                }
+                Json::StreamWriterBuilder writer;
+                writer["indentation"] = "";
+                res.body() = Json::writeString(writer, reply);
             } else if (target == "/api/oscam-mini/save") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = OscamMiniManager::instance().saveSettingsJson(req.body());
@@ -1805,6 +1870,9 @@ std::string HttpServer::listInterfaces() {
         return iface.name == name;
       });
       item["address"] = address == interfaceAddresses.end() ? "" : address->address;
+      item["udp_input_filter"] = address != interfaceAddresses.end() &&
+          dvbstreamer5::network::UdpInputFirewall::enabledFor(
+              configManager.config, address->address);
       item["rx_mbps"] = rxMbps;
       item["tx_mbps"] = txMbps;
       interfaces.append(item);
@@ -4141,7 +4209,7 @@ const translations = {
     interfacesNotFound:'No interfaces found', output:'Output', activeInput:'Active input', primary:'Primary', backup:'Backup', sid:'SID', bitrateIn:'Bitrate In', payloadOut:'Payload Out', bitrateOut:'CBR Out', vbrOut:'Bitrate Out', status:'Status',
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
-    networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', close:'Close',
+    networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', udpInputFilter:'Filter inbound UDP', close:'Close',
     about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset'
   },
   ru: {
@@ -4149,7 +4217,7 @@ const translations = {
     interfacesNotFound:'Интерфейсы не найдены', output:'Вывод', activeInput:'Активный вход', primary:'Основной', backup:'Резерв', sid:'SID', bitrateIn:'Bitrate In', payloadOut:'Payload Out', bitrateOut:'CBR Out', vbrOut:'Bitrate Out', status:'Статус',
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
-    networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', close:'Закрыть',
+    networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', udpInputFilter:'Фильтровать входящий UDP', close:'Закрыть',
     about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить'
   }
 };
@@ -4820,8 +4888,38 @@ function updateSystemLoad(metrics) {
   if (!table) return;
   const interfaces = metrics.interfaces || [];
   table.innerHTML = interfaces.length ? interfaces.map(iface => `
-    <tr><td>${iface.name}${iface.address ? ` (${iface.address})` : ''}</td><td>${Number(iface.rx_mbps || 0).toFixed(2)} Mbps</td><td>${Number(iface.tx_mbps || 0).toFixed(2)} Mbps</td></tr>
-  `).join('') : `<tr><td colspan="3" class="network-empty">${t('interfacesNotFound')}</td></tr>`;
+    <tr>
+      <td>${iface.name}${iface.address ? ` (${iface.address})` : ''}</td>
+      <td>${Number(iface.rx_mbps || 0).toFixed(2)} Mbps</td>
+      <td>${Number(iface.tx_mbps || 0).toFixed(2)} Mbps</td>
+      <td><label><input type="checkbox" data-address="${iface.address || ''}"
+        ${iface.udp_input_filter ? 'checked' : ''}
+        ${!iface.address || iface.name === 'lo' ? 'disabled' : ''}
+        onchange="setUdpInputFilter(this)"> ${t('udpInputFilter')}</label></td>
+    </tr>
+  `).join('') : `<tr><td colspan="4" class="network-empty">${t('interfacesNotFound')}</td></tr>`;
+}
+async function setUdpInputFilter(control) {
+  const address = control.dataset.address || '';
+  const desired = control.checked;
+  control.disabled = true;
+  try {
+    const response = await fetch('/api/network/udp-input-filter', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({address, enabled: desired})
+    });
+    const result = await response.json();
+    if (!response.ok || result.result !== 'ok') {
+      throw new Error(result.error || `HTTP ${response.status}`);
+    }
+    await fetchSystemMetrics();
+  } catch (error) {
+    control.checked = !desired;
+    uiError(error?.message || error);
+  } finally {
+    control.disabled = false;
+  }
 }
 function fetchSystemMetrics() {
   if (metricsFetchPromise) return metricsFetchPromise;
@@ -5500,7 +5598,7 @@ function openNetworkModal() {
   document.getElementById('modalContent').className = 'modal-content network-modal';
   document.getElementById('modalContent').innerHTML = modalCloseButton() + `
     <h2>${t('networkLoad')}</h2>
-    <table class="network-table"><thead><tr><th>${t('interface')}</th><th>${t('incoming')}</th><th>${t('outgoing')}</th></tr></thead><tbody id="networkTableBody"></tbody></table>
+    <table class="network-table"><thead><tr><th>${t('interface')}</th><th>${t('incoming')}</th><th>${t('outgoing')}</th><th>${t('udpInputFilter')}</th></tr></thead><tbody id="networkTableBody"></tbody></table>
     <div class="modal-actions"><button class="button-secondary" onclick="closeNetworkModal()">${t('close')}</button></div>
   `;
   document.getElementById('modal').classList.add('active');

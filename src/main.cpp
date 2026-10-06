@@ -5,6 +5,7 @@
 #endif
 
 #include "ConfigManager.h"
+#include "UdpInputFirewall.h"
 #include "CardManager.h"
 #include "TelegramNotifier.h"
 #include "StreamManager.h"
@@ -36,6 +37,12 @@ int main() {
 
     std::cerr << "Config loaded: http_port=" << configManager.config.httpPort
               << " login=" << configManager.config.login << std::endl;
+
+    std::string udpFilterError;
+    if (!dvbstreamer5::network::UdpInputFirewall::apply(configManager.config, udpFilterError)) {
+        std::cerr << "UDP INPUT FILTER startup apply failed (fail-open): "
+                  << udpFilterError << std::endl;
+    }
 
     CardManager::instance().configure(configManager.config.camClients);
 
