@@ -7,6 +7,9 @@
 namespace dvbstreamer5::media::mpegts {
 namespace {
 
+constexpr auto kPatPmtInterval = std::chrono::milliseconds(100);
+constexpr auto kSdtInterval = std::chrono::milliseconds(500);
+
 std::uint32_t sectionCrc32(const std::uint8_t* bytes, std::size_t size) noexcept {
     std::uint32_t crc = 0xffffffffU;
     for (std::size_t index = 0; index < size; ++index) {
@@ -157,6 +160,9 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     catSection_ = {};
     pmtSection_ = {};
     sdtSection_ = {};
+    pmtOutputSection_.clear();
+    nextPatPmtAt_ = {};
+    nextSdtAt_ = {};
     allowedPids_.fill(false);
     caPids_.fill(false);
     remapReady_ = false;
@@ -354,7 +360,10 @@ bool Remapper::processPatSection(
         inputVideoPid_ = 0;
         inputAudioPid_ = 0;
         pmtSection_ = {};
+        pmtOutputSection_.clear();
         pmtOutputContinuity_ = 0;
+        nextPatPmtAt_ = {};
+        nextSdtAt_ = {};
         allowedPids_.fill(false);
         remapReady_ = false;
     }
@@ -400,12 +409,12 @@ bool Remapper::processPmtSection(
     std::vector<std::uint8_t> section,
     std::vector<Packet>& output,
     std::string& error) {
+    (void)output;
     if (section.size() < 16 || section[0] != 0x02 ||
         static_cast<std::uint16_t>((section[3] << 8) | section[4]) != inputServiceId_) {
         return true;
     }
 
-    const bool wasReady = remapReady_;
     std::array<bool, 8192> allowed {};
     allowed[0] = true;
     allowed[0x01] = true;
@@ -511,13 +520,16 @@ bool Remapper::processPmtSection(
     }
 
     allowedPids_ = allowed;
+    pmtOutputSection_ = std::move(section);
+    const bool becameReady = !remapReady_;
     remapReady_ = true;
-    if (!wasReady) {
-        output.push_back(makePat(patOutputContinuity_));
-        patOutputContinuity_ =
-            static_cast<std::uint8_t>((patOutputContinuity_ + 1U) & 0x0fU);
+    if (becameReady) {
+        // Emit a complete PSI/SI set on the very next TS packet, then keep
+        // repeating it from our own monotonic clock. This avoids long gaps
+        // when the provider repeats PAT/PMT/SDT irregularly.
+        nextPatPmtAt_ = {};
+        nextSdtAt_ = {};
     }
-    packetizeSection(pmtPid_, section, pmtOutputContinuity_, output);
     return true;
 }
 
@@ -525,15 +537,39 @@ bool Remapper::processSdtSection(
     const std::vector<std::uint8_t>& section,
     std::vector<Packet>& output,
     std::string& error) {
+    (void)output;
     (void)error;
     if (section.size() < 15 || section[0] != 0x42) return true;
 
     originalNetworkId_ = static_cast<std::uint16_t>(
         (section[8] << 8) | section[9]);
-    output.push_back(makeSdt(sdtOutputContinuity_));
-    sdtOutputContinuity_ =
-        static_cast<std::uint8_t>((sdtOutputContinuity_ + 1U) & 0x0fU);
+    // The regenerated SDT content changed; advertise it promptly instead of
+    // waiting for the normal 500 ms repeat deadline.
+    nextSdtAt_ = {};
     return true;
+}
+
+void Remapper::emitPeriodicPsi(std::vector<Packet>& output) {
+    if (!remapReady_ || pmtPid_ == 0x1fff || pmtOutputSection_.empty()) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (nextPatPmtAt_ == std::chrono::steady_clock::time_point{} ||
+        now >= nextPatPmtAt_) {
+        output.push_back(makePat(patOutputContinuity_));
+        patOutputContinuity_ =
+            static_cast<std::uint8_t>((patOutputContinuity_ + 1U) & 0x0fU);
+        packetizeSection(
+            pmtPid_, pmtOutputSection_, pmtOutputContinuity_, output);
+        nextPatPmtAt_ = now + kPatPmtInterval;
+    }
+
+    if (nextSdtAt_ == std::chrono::steady_clock::time_point{} ||
+        now >= nextSdtAt_) {
+        output.push_back(makeSdt(sdtOutputContinuity_));
+        sdtOutputContinuity_ =
+            static_cast<std::uint8_t>((sdtOutputContinuity_ + 1U) & 0x0fU);
+        nextSdtAt_ = now + kSdtInterval;
+    }
 }
 
 bool Remapper::isAllowed(std::uint16_t pid) const noexcept {
@@ -631,20 +667,18 @@ bool Remapper::process(const Packet& input, std::vector<Packet>& output, std::st
         return false;
     }
 
+    // Keep the service discoverable independently of the provider table
+    // cadence. The CBR pacer downstream absorbs this tiny deterministic PSI
+    // overhead with its normal NULL stuffing; media/PCR handling is untouched.
+    emitPeriodicPsi(output);
+
     std::vector<std::vector<std::uint8_t>> sections;
     if (info.pid == 0x0000) {
         if (!collectSections(input, patSection_, sections, error)) return false;
-        bool sawPat = false;
         for (const auto& section : sections) {
             if (!section.empty() && section[0] == 0x00) {
-                sawPat = true;
                 if (!processPatSection(section, error)) return false;
             }
-        }
-        if (remapReady_ && sawPat) {
-            output.push_back(makePat(patOutputContinuity_));
-            patOutputContinuity_ =
-                static_cast<std::uint8_t>((patOutputContinuity_ + 1U) & 0x0fU);
         }
         return true;
     }

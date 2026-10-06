@@ -3,6 +3,7 @@
 #include "media/TransportStream.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -51,6 +52,7 @@ private:
         const std::vector<std::uint8_t>& section,
         std::uint8_t& continuity,
         std::vector<Packet>& output);
+    void emitPeriodicPsi(std::vector<Packet>& output);
     bool isAllowed(std::uint16_t pid) const noexcept;
     Packet makePat(std::uint8_t continuity) const;
     Packet makeSdt(std::uint8_t continuity) const;
@@ -71,6 +73,9 @@ private:
     PsiSectionState catSection_;
     PsiSectionState pmtSection_;
     PsiSectionState sdtSection_;
+    std::vector<std::uint8_t> pmtOutputSection_;
+    std::chrono::steady_clock::time_point nextPatPmtAt_ {};
+    std::chrono::steady_clock::time_point nextSdtAt_ {};
     bool initialized_ = false;
     bool remapReady_ = false;
 };
