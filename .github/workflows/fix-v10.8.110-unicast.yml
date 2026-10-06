@@ -1,0 +1,73 @@
+name: Verify V10.8.110 unicast UDP filter
+
+on:
+  push:
+    branches: [v10.8.110-udp-input-filter]
+    paths:
+      - '.github/workflows/fix-v10.8.110-unicast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool \
+            libpcsclite-dev pcscd nftables
+      - name: Prepare vendored media dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+      - name: Apply unicast correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/fix_v10_8_110_unicast.py
+          python3 tools/fix_v10_8_110_unicast.py
+          git diff --check
+          grep -q 'parsed.multicast ? parsed.host : iface.address' src/UdpInputFirewall.h
+          grep -q 'ct state established,related accept' src/UdpInputFirewall.h
+      - name: Validate nftables rule syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/dvbstreamer5-nft-test.nft <<'EOF'
+          table inet dvbstreamer5_udp_input_test {
+            chain input {
+              type filter hook input priority -10; policy accept;
+              iifname "lo" ct state established,related accept
+              iifname "lo" udp dport { 7001 } accept
+              iifname "lo" ip daddr 239.1.2.3 udp dport 1234 accept
+              iifname "lo" ip daddr 224.0.0.0/4 meta l4proto udp drop
+              iifname "lo" udp dport { 1234, 1235 } drop
+            }
+          }
+          EOF
+          sudo nft -c -f /tmp/dvbstreamer5-nft-test.nft
+      - name: Configure Release build
+        run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+      - name: Build Release
+        run: cmake --build build-ci --parallel 2
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add src/UdpInputFirewall.h
+          git diff --cached --check
+          git commit -m "V10.8.110 fix unicast UDP filter semantics"
+          git push origin HEAD:v10.8.110-udp-input-filter
