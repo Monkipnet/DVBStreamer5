@@ -50,6 +50,55 @@ bool startsWith(const std::string& value, const char* prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
+std::string telegramEscape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        switch (ch) {
+            case '&': escaped += "&amp;"; break;
+            case '<': escaped += "&lt;"; break;
+            case '>': escaped += "&gt;"; break;
+            case '"': escaped += "&quot;"; break;
+            default: escaped.push_back(ch); break;
+        }
+    }
+    return escaped;
+}
+
+bool telegramUsesEnglish(const ConfigManager& manager) {
+    return toLower(manager.config.language) == "en";
+}
+
+std::string telegramText(const ConfigManager& manager,
+                         const char* ru, const char* en) {
+    return telegramUsesEnglish(manager) ? en : ru;
+}
+
+std::string telegramStreamName(const StreamConfig& cfg) {
+    return cfg.name.empty() ? cfg.id : cfg.name;
+}
+
+void sendTelegramStreamState(TelegramNotifier& notifier,
+                             const ConfigManager& manager,
+                             const StreamConfig& cfg,
+                             const std::string& color,
+                             const std::string& title,
+                             const std::string& details) {
+    const std::string serverName = manager.config.serverName.empty()
+        ? "DVBStreamer5"
+        : manager.config.serverName;
+    const bool english = telegramUsesEnglish(manager);
+    std::ostringstream message;
+    message << color << " <b>" << telegramEscape(title) << "</b>\n"
+            << (english ? "Server" : "Сервер") << ": <b>"
+            << telegramEscape(serverName) << "</b>\n"
+            << (english ? "Channel" : "Канал") << ": <b>"
+            << telegramEscape(telegramStreamName(cfg)) << "</b>\n"
+            << "ID: <code>" << telegramEscape(cfg.id) << "</code>";
+    if (!details.empty()) message << "\n" << telegramEscape(details);
+    notifier.sendMessage(message.str());
+}
+
 const char* browserPreviewCodecName(
     dvbstreamer5::media::mpegts::ElementaryCodec codec) {
     using dvbstreamer5::media::mpegts::ElementaryCodec;
@@ -1305,6 +1354,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (error) *error = std::string("native monitor thread failed: ") + ex.what();
         return false;
     }
+    sendTelegramStreamState(
+        telegramNotifier, configManager, streamConfig, "🟢",
+        telegramText(configManager, "Поток запущен", "Stream started"),
+        telegramText(configManager, "Native media engine работает", "Native media engine is running"));
     return true;
 }
 
@@ -1321,6 +1374,7 @@ void StreamManager::monitorNativeStream(StreamState* state) {
     std::size_t rateWindowIndex = 0;
     std::size_t rateWindowSamples = 0;
     std::uint64_t monitorTicks = 0;
+    bool telegramInputUnavailable = false;
     while (!state->monitorStop.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (state->monitorStop.load()) break;
@@ -1356,10 +1410,17 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const uint64_t payloadRate = (payloadWindowBytes * 8U) / rateWindowSamples;
         state->inputBitrate.store(inputRate);
         const uint64_t outRate = (out - lastOut) * 8;
-        // Outputs such as an SRT listener can have zero sentBytes until a
-        // receiver connects. Never fall back to the raw DVB multiplex rate;
-        // use the channel pipeline bitrate instead.
-        state->outputBitrate.store(outRate ? outRate : payloadRate);
+        // V10.8.106: CBR for HTTP/SRT is produced by the observer pacer and is
+        // independent of whether an HTTP client or SRT peer is currently
+        // connected.  sentBytes therefore is not a valid stream-level CBR
+        // meter.  Once real channel payload has started, show the configured
+        // shaped transport rate in the tile; VBR keeps the measured rate.
+        const bool cbrTransportStarted =
+            state->config.cbr && state->config.targetBitrate > 0 && payloadOut > 0;
+        state->outputBitrate.store(
+            cbrTransportStarted
+                ? state->config.targetBitrate
+                : (outRate ? outRate : payloadRate));
         state->outputPayloadBitrate.store(payloadRate);
         ++monitorTicks;
         if (state->config.transcodeEnabled && (monitorTicks % 5U) == 0U) {
@@ -1378,7 +1439,21 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const std::string relayErrorNow = relay->lastError();
         if (in == 0 && !relayErrorNow.empty()) {
             state->statusMessage = relayErrorNow;
+            if (!telegramInputUnavailable) {
+                sendTelegramStreamState(
+                    telegramNotifier, configManager, state->config, "🔴",
+                    telegramText(configManager, "Входной поток недоступен", "Input stream unavailable"),
+                    relayErrorNow);
+                telegramInputUnavailable = true;
+            }
         } else if (in > 0 && lastIn == 0) {
+            if (telegramInputUnavailable) {
+                sendTelegramStreamState(
+                    telegramNotifier, configManager, state->config, "🟢",
+                    telegramText(configManager, "Входной поток восстановлен", "Input stream recovered"),
+                    telegramText(configManager, "Медиаданные снова поступают", "Media data is flowing again"));
+                telegramInputUnavailable = false;
+            }
             const std::string normalized = normalizeInputUri(state->config.inputUri);
             const std::string mode = toLower(state->config.inputMode);
             const bool hls = mode == "hls" || toLower(normalized).find(".m3u8") != std::string::npos ||
@@ -1424,6 +1499,10 @@ void StreamManager::monitorNativeStream(StreamState* state) {
             state->active.store(false);
             const std::string relayError = relay->lastError();
             state->statusMessage = relayError.empty() ? "native input stopped" : relayError;
+            sendTelegramStreamState(
+                telegramNotifier, configManager, state->config, "🔴",
+                telegramText(configManager, "Поток аварийно остановлен", "Stream stopped unexpectedly"),
+                state->statusMessage);
             break;
         }
     }

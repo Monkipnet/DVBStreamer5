@@ -2,6 +2,7 @@
 #include "NativeHttpClient.h"
 
 #include <chrono>
+#include <cctype>
 #include <exception>
 #include <iostream>
 #include <sstream>
@@ -10,6 +11,32 @@
 namespace {
 constexpr auto kRepeatedStreamEventWindow = std::chrono::minutes(30);
 constexpr std::size_t kTelegramQueueMax = 64;
+
+std::string normalizedTelegramToken(std::string token) {
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())))
+        token.erase(token.begin());
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+        token.pop_back();
+    if (token.rfind("bot", 0) == 0 && token.find(':', 3) != std::string::npos)
+        token.erase(0, 3);
+    return token;
+}
+
+bool telegramTokenPathSafe(const std::string& token) {
+    if (token.empty() || token.find(':') == std::string::npos) return false;
+    for (const unsigned char ch : token) {
+        if (std::isalnum(ch) || ch == ':' || ch == '_' || ch == '-') continue;
+        return false;
+    }
+    return true;
+}
+
+bool telegramApiResponseOk(const dvbstreamer5::http::Response& response) {
+    if (response.body.empty()) return false;
+    const std::string body(response.body.begin(), response.body.end());
+    return body.find("\"ok\":true") != std::string::npos ||
+           body.find("\"ok\": true") != std::string::npos;
+}
 
 std::string extractBetween(
     const std::string& text, const std::string& begin, const std::string& end,
@@ -145,9 +172,16 @@ void TelegramNotifier::sendMessageBlocking(const std::string& text) {
         }
     };
 
+    const std::string botToken = normalizedTelegramToken(config.telegramToken);
+    if (!telegramTokenPathSafe(botToken)) {
+        std::cerr << "Telegram send error: invalid bot token format" << std::endl;
+        rollbackRepeatReservation();
+        return;
+    }
+
     std::ostringstream url;
     url << "https://api.telegram.org/bot"
-        << dvbstreamer5::http::encodeQueryComponent(config.telegramToken)
+        << botToken
         << "/sendMessage?chat_id="
         << dvbstreamer5::http::encodeQueryComponent(config.telegramChatId)
         << "&parse_mode=HTML"
@@ -166,7 +200,17 @@ void TelegramNotifier::sendMessageBlocking(const std::string& text) {
     dvbstreamer5::http::Response response;
     std::string error;
     if (!dvbstreamer5::http::get(requestUrl, options, response, error)) {
-        std::cerr << "Telegram send error: " << error << std::endl;
+        std::cerr << "Telegram send error: " << error
+                  << " status=" << response.status << std::endl;
         rollbackRepeatReservation();
+        return;
     }
+    if (!telegramApiResponseOk(response)) {
+        std::cerr << "Telegram send error: Bot API returned unexpected response"
+                  << " status=" << response.status
+                  << " body_bytes=" << response.body.size() << std::endl;
+        rollbackRepeatReservation();
+        return;
+    }
+    std::cerr << "Telegram send ok: status=" << response.status << std::endl;
 }
