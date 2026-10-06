@@ -4545,7 +4545,22 @@ const uiRuToEn = new Map([
   ['HTTP-предпросмотр потока', 'HTTP stream preview'],
   ['Закрыть предпросмотр', 'Close preview'],
   ['HTTP-предпросмотр', 'HTTP preview'],
-  ['Подключение к HTTP-потоку…', 'Connecting to HTTP stream…']
+  ['Подключение к HTTP-потоку…', 'Connecting to HTTP stream…'],
+  ['Имя абонента, IP адрес, Статус', 'Subscriber name, IP address, Status'],
+  ['HD ПОТОКИ', 'HD STREAMS'],
+  ['HD + SD ПОТОКИ', 'HD + SD STREAMS'],
+  ['SD ПОТОКИ', 'SD STREAMS'],
+  ['БЕЗ МЕТКИ HD/SD', 'WITHOUT HD/SD LABEL'],
+  ['Нативный DVB-S/S2 frontend доступен только в Linux.', 'Native DVB-S/S2 frontend is available only on Linux.'],
+  ['Выходной протокол', 'Output protocol'],
+  ['Режим каналов транспондера', 'Transponder channel mode'],
+  ['Формировать CBR MPEG-TS', 'Generate CBR MPEG-TS'],
+  ['Глобально для всех выбранных каналов. OnDemand запускает поток и CAM только при HTTP/HLS клиенте; UDP/RTP/SRT/RTSP/RTMP не могут определить пассивного получателя.',
+   'Applies to all selected channels. OnDemand starts the stream and CAM only when an HTTP/HLS client connects; UDP/RTP/SRT/RTSP/RTMP cannot detect a passive receiver.'],
+  ['Первый RTP порт', 'First RTP port'],
+  ['Первый SRT порт', 'First SRT port'],
+  ['Первый RTSP порт', 'First RTSP port'],
+  ['Предпросмотр должен выдаваться веб-сервером DVBStreamer (same-origin)', 'Preview must be served by the DVBStreamer web server (same-origin)']
 ]);
 
 const uiOriginalText = new WeakMap();
@@ -4594,7 +4609,7 @@ function translateUiText(value) {
     ['кбит/с', 'kbps'], [' часов', ' hours'], [' или ', ' or '],
     ['входной bitrate', 'input bitrate'], ['входные CC-errors за интервал', 'input CC errors per interval'],
     ['выходные CC-errors за интервал (общий TS)', 'output CC errors per interval (common TS)'],
-    ['нет данных', 'no data'], ['звук включается в плеере', 'audio can be enabled in the player']
+    ['нет данных', 'no data'], ['звук включается в плеере', 'audio can be enabled in the player'], ['уровень ', 'level ']
   ];
   for (const [from, to] of phrases) text = text.split(from).join(to);
 
@@ -4602,6 +4617,13 @@ function translateUiText(value) {
     text = text.replace(/\bда\b/g, 'yes').replace(/\bнет\b/g, 'no');
   }
   return lead + text + tail;
+}
+
+function tileRuntimeStatus(value) {
+  return String(value ?? '')
+    .replace(/\bnative\s+/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 function localizeUiTextNode(node) {
@@ -5196,7 +5218,7 @@ function updateStreamTile(tile, stream) {
   }
   const runtimeStatus = tile.querySelector('[data-role="runtime-status"]');
   if (runtimeStatus) {
-    const value = String(stream.status || '').trim();
+    const value = tileRuntimeStatus(stream.status);
     runtimeStatus.textContent = value;
     runtimeStatus.title = value;
   }
@@ -5286,7 +5308,7 @@ function render(force=false) {
           <div class="title">${escapeHtmlValue(stream.name || stream.id)}</div>
           <div class="status-line">
             <div data-role="status-pill" class="status-pill ${stream.active ? 'active' : 'stopped'}">${stream.active ? (stream.using_backup ? 'Backup' : 'Online') : 'Offline'}</div>
-            <span data-role="runtime-status" class="runtime-status" title="${escapeHtmlValue(stream.status || '')}">${escapeHtmlValue(stream.status || '')}</span>
+            <span data-role="runtime-status" class="runtime-status" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>
           </div>
         </div>
       </div>
