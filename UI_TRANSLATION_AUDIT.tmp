@@ -1,0 +1,321 @@
+known uiRuToEn exact entries: 269
+Cyrillic-bearing UI/source lines outside translation declarations: 318
+
+2134: ? "Тест"
+2136: ? (toLower(cfg.backupInputType) == "file" ? "Файл замены" : "Резерв")
+2137: : "Основной");
+2177: item["active_input_label"] = cfg.testPattern ? "Тест" : "Основной";
+2879: std::string message = "Качество в норме";
+2882: message = status == "stopped" ? "Поток остановлен" : "Поток не активен: " + status;
+2887: message = "Ошибка media engine: " + status;
+2890: message = "Нет входного битрейта при активном потоке";
+2893: message = "CC-errors MPEG-TS: вход=" + std::to_string(inputCc) +
+2894: ", выход=" + std::to_string(outputCc);
+2973: sample.message = sample.status == "stopped" ? "Поток остановлен" : "Поток не активен: " + sample.status;
+2978: sample.message = "Ошибка media engine: " + sample.status;
+2981: sample.message = "Нет входного битрейта при активном потоке";
+2984: sample.message = "CC-errors MPEG-TS: вход=" + std::to_string(sample.inputCcErrors) +
+2985: ", выход=" + std::to_string(sample.outputCcErrors);
+2991: sample.message = "Выходной битрейт отклоняется от цели больше чем на 20%";
+2994: sample.message = "Качество в норме";
+2998: sample.message = "Качество в норме";
+3045: compacted.back().message = "CC-errors MPEG-TS за интервал: вход=" +
+3046: std::to_string(inputCcInBucket) + ", выход=" + std::to_string(outputCcInBucket);
+4188: <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()">Конфигурация</button>
+4556: if (language !== 'en' || !/[А-Яа-яЁё]/.test(source)) return source;
+4565: [/^([0-9]+)\/([0-9]+) сервисов$/, '$1/$2 services'],
+4566: [/^Выбран файл: (.+)$/, 'Selected file: $1'],
+4567: [/^Удалить файл «(.+)»\?$/, 'Delete file “$1”?'],
+4568: [/^Удалить (.+)$/, 'Delete $1'],
+4569: [/^Файл загружен: (.+)$/, 'File uploaded: $1'],
+4570: [/^Выбран (\/dev\/dvb\/adapter\d+\/frontend\d+)$/, 'Selected $1'],
+4571: [/^Выбран (\/dev\/dvb\/adapter\d+\/frontend\d+) · доступно: (.+)$/, 'Selected $1 · available: $2'],
+4572: [/^Сканирование (\/dev\/dvb\/adapter\d+\/frontend\d+)( · удержание LOCK)?\.\.\.$/, (_m, dev, lock) => `Scanning ${dev}${lock ? ' · keeping LOCK' : ''}...`],
+4573: [/^Удалить MPTS «(.+)»\?$/, 'Delete MPTS “$1”?'],
+4574: [/^Поток ([^\s]+)$/, 'Stream $1'],
+4575: [/^Выход ([0-9]+):(.*)$/, 'Output $1:$2'],
+4576: [/^Ошибка HLS: (.+)$/, 'HLS error: $1'],
+4577: [/^Ошибка HTTP MPEG-TS: (.+)$/, 'HTTP MPEG-TS error: $1'],
+4578: [/^Не удалось получить HTTP-предпросмотр: (.+)$/, 'Failed to get HTTP preview: $1'],
+4579: [/^Поток не активен: (.+)$/, 'Stream is not active: $1'],
+4580: [/^Ошибка media engine: (.+)$/, 'Media engine error: $1'],
+4581: [/^CC-errors MPEG-TS: вход=([0-9]+), выход=([0-9]+)$/, 'MPEG-TS CC errors: input=$1, output=$2'],
+4582: [/^CC-errors MPEG-TS за интервал: вход=([0-9]+), выход=([0-9]+)$/, 'MPEG-TS CC errors for interval: input=$1, output=$2']
+4588: [' · свободен', ' · free'], [' · занято ', ' · used '], ['Найдено:', 'Found:'], ['Код.:', 'Encrypted:'], [' не готово', ' not ready'],
+4589: ['ОТКРЫТ A/V', 'CLEAR A/V'], ['ЗАКОДИРОВАН A/V', 'SCRAMBLED A/V'],
+4590: ['A/V пакеты идут, но валидный открытый PES не найден', 'A/V packets are present, but no valid clear PES was found'], [' пак.', ' packets'],
+4591: ['Доступно:', 'Available:'], ['Недоступно:', 'Unavailable:'], [' (недоступен)', ' (unavailable)'],
+4592: ['Кодировщик:', 'Encoder:'], ['Видео:', 'Video:'], ['Аудио:', 'Audio:'],
+4593: ['кбит/с', 'kbps'], [' часов', ' hours'], [' или ', ' or '],
+4594: ['входной bitrate', 'input bitrate'], ['входные CC-errors за интервал', 'input CC errors per interval'],
+4595: ['выходные CC-errors за интервал (общий TS)', 'output CC errors per interval (common TS)'],
+4596: ['нет данных', 'no data'], ['звук включается в плеере', 'audio can be enabled in the player']
+4601: text = text.replace(/\bда\b/g, 'yes').replace(/\bнет\b/g, 'no');
+4610: if (/[А-Яа-яЁё]/.test(current)) uiOriginalText.set(node, current);
+4628: if (/[А-Яа-яЁё]/.test(current)) originals.set(name, current);
+5158: if (!Number.isFinite(source) || source < 0) return language === 'en' ? 'Disabled' : 'Отключён';
+5164: return `ISI: ${isi >= 0 ? isi : (language === 'en' ? 'Auto' : 'Авто')} · DiSEqC: ${diseqcSourceLabel(stream?.dvb_diseqc_source)}`;
+5174: if (!stream?.conditional_access_client) return {cls:'offline', text:'FTA', detail:'Не требуется'};
+5180: if (mode === 'clear') return {cls:'clear', text:'ДЕКОД: ОК', detail:`ОТКРЫТ A/V · PES ${clearPes} · scrambled 0/${payload}`};
+5181: if (mode === 'scrambled') return {cls:'scrambled', text:'ДЕКОД: НЕТ', detail:`ЗАКОДИРОВАН A/V · ${percent.toFixed(1)}% (${scrambled}/${payload})`};
+5182: if (mode === 'invalid') return {cls:'scrambled', text:'ДЕКОД: НЕТ', detail:`A/V пакеты идут, но валидный открытый PES не найден (${payload} пак.)`};
+5183: if (mode === 'offline') return {cls:'offline', text:'ДЕКОД: OFF', detail:'Канал остановлен'};
+5184: return {cls:'waiting', text:'ДЕКОД: …', detail:'ОЖИДАНИЕ A/V ПАКЕТОВ'};
+5234: decodePill.title = `${decodeInfo.detail}. Контроль по A/V PID, scrambling_control и валидному PES на выходе.`;
+5281: tile.title = 'Двойной клик — предпросмотр';
+5309: <div class="info-row decode-row"><strong>Декодирование</strong><span data-role="decode-status" class="decode-pill ${caDecodeInfo(stream).cls}" title="Контроль по A/V PID, scrambling_control и валидному PES">${caDecodeInfo(stream).text}</span></div>` : `<div class="info-row placeholder"><strong>CA</strong><span>—</span></div>
+5310: <div class="info-row placeholder decode-row"><strong>Декодирование</strong><span>—</span></div>`}
+5453: <div class="mpts-services">${ready}/${configured} сервисов</div>
+5454: <span class="mpts-state ${active?'on':'off'}">${active?'Работает':'Остановлен'}</span>
+5456: <button class="button-secondary" onclick="mptsActionByIndex(${index},'${active?'stop':'start'}')">${active?'Стоп':'Старт'}</button>
+5457: <button class="button-secondary" onclick="openMptsEditor(${index})">Ред.</button>
+5458: <button class="button-danger" onclick="deleteMptsOutput(${index})">Удалить</button>
+5461: }).join('') : `<div class="mpts-empty">MPTS-выходы ещё не созданы</div>`;
+5464: <div class="mpts-hint">Отдельный пакетный мультиплексор объединяет выбранные выходные SPTS в один MPEG-TS. PCR/PTS/DTS медиапакетов не переписываются; исходные PAT/PMT/SDT заменяются общей таблицей MPTS, null-пакеты отдельных каналов отбрасываются.</div>
+5465: <div class="mpts-toolbar"><strong>MPTS-выходы</strong><button class="button-primary" onclick="openMptsEditor(-1)">+ Добавить MPTS</button></div>
+5495: const runtimeText = runtime ? (runtime.ready ? `готов · SID ${runtime.service_id} · PMT ${runtime.pmt_pid}` : 'ожидание PSI') : '';
+5499: <input class="mpts-service-sid" data-stream-id="${escapeHtmlValue(id)}" type="number" min="0" max="65535" value="${checked ? selected.get(id) : 0}" title="SID MPTS, 0 = автоматически"/>
+5502: }).join('') || `<div class="mpts-empty">Сначала создайте каналы</div>`;
+5504: <h2>${existing?'Редактирование MPTS':'Новый MPTS'}</h2>
+5508: <div class="form-row"><label>Имя</label><input id="mptsName" value="${escapeHtmlValue(output.name)}" /></div>
+5509: <div class="form-row"><label>IP назначения</label><input id="mptsHost" value="${escapeHtmlValue(output.output_host)}" placeholder="239.255.20.1" /></div>
+5510: <div class="form-row"><label>Порт</label><input id="mptsPort" type="number" min="1" max="65535" value="${output.output_port}" /></div>
+5511: <div class="form-row"><label>Интерфейс выхода</label><select id="mptsInterface">${interfaceOptions}</select></div>
+5512: <label class="checkbox-inline"><input id="mptsAutoStart" type="checkbox" ${output.auto_start?'checked':''}/><span>Автозапуск MPTS</span></label>
+5514: <h3>Каналы MPTS</h3>
+5515: <div class="mpts-hint">SID = 0 означает автоматическую нумерацию от базового SID. Порядок сервисов соответствует порядку каналов в конфигурации.</div>
+5517: <details class="mpts-advanced"><summary>Расширенные параметры PSI</summary>
+5521: <div class="form-row"><label>Базовый SID</label><input id="mptsSidBase" type="number" min="1" max="65535" value="${output.service_id_base}" /></div>
+5522: <div class="form-row"><label>Базовый PMT PID</label><input id="mptsPmtBase" type="number" min="32" max="8190" value="${output.pmt_pid_base}" /></div>
+5526: <button class="button-secondary" onclick="renderMptsList()">Назад</button>
+5539: if (!services.length) { uiError('Выберите хотя бы один канал для MPTS'); return; }
+5554: uiError('Укажите корректный IP и порт MPTS'); return;
+5562: if (result.result !== 'ok') throw new Error(result.error || 'Не удалось сохранить MPTS');
+5570: if (!confirm(`Удалить MPTS «${output.name || output.id}»?`)) return;
+5576: if (result.result !== 'ok') throw new Error(result.error || 'Не удалось удалить MPTS');
+5934: ? 'Имя абонента, IP адрес, Статус'
+5937: ? {'HD':'HD ПОТОКИ', 'HD+SD':'HD + SD ПОТОКИ', 'SD':'SD ПОТОКИ', 'OTHER':'БЕЗ МЕТКИ HD/SD'}
+5950: ? (language === 'ru' ? 'онлайн' : 'online')
+5951: : (language === 'ru' ? 'офлайн' : 'offline');
+5978: <div class="about-row"><strong>${t('name')}</strong><span>Лукомский Виталий</span></div>
+5979: <div class="about-row"><strong>${t('country')}</strong><span>Беларусь, г. Борисов</span></div>
+6002: <div class="form-row"><label>Новый пароль</label><input id="password" type="password" placeholder="Оставьте пустым, чтобы не менять" /></div>
+6003: <div class="form-row"><label>Имя сервера</label><input id="serverName" value="${state.server_name||''}" /></div>
+6004: <div class="form-row"><label>Порт web-интерфейса</label><input id="httpPort" type="number" min="1" max="65535" value="${state.http_port||9000}" /></div>
+6005: <div class="form-row full"><label>SRT для VPS/VDS</label><div class="checkbox-inline"><input id="srtVpsVdsOptimization" type="checkbox" ${state.srt_vps_vds_optimization ? 'checked' : ''} /><span>Оптимизация SRT для VPS/VDS/контейнеров</span></div><small>203.67: включает для всех SRT-входов и выходов latency 1500 ms, rcvlatency/peerlatency 1500 ms, SRT RX/TX buffers 16 MiB, FC 32768 пакетов и poll-timeout 2000 ms. Использовать на VPS/VDS с виртуальной сетью; на обычном LAN/физическом сервере оставлять выключенным.</small></div>
+6018: <h2>${configTransferText('Конфигурация', 'Configuration')}</h2>
+6021: <strong>${configTransferText('Экспорт DVBStreamer5', 'Export DVBStreamer5')}</strong>
+6022: <div style="margin:6px 0 10px;color:#9aa3b1;font-size:.78rem">${configTransferText('Один JSON содержит основной конфиг и абонентов. Файл содержит чувствительные параметры (Telegram/CAM/пароль панели) — храните его безопасно.', 'One JSON contains the main config and subscribers. The file contains sensitive settings (Telegram/CAM/panel password) — store it securely.')}</div>
+6023: <button class="button-primary" onclick="exportDvbStreamerConfig()">${configTransferText('Экспортировать backup', 'Export backup')}</button>
+6026: <strong>${configTransferText('Импорт / миграция', 'Import / migration')}</strong>
+6028: <div class="form-row"><label>${configTransferText('Основной JSON', 'Main JSON')}</label><input id="configImportFile" type="file" accept=".json,application/json" /></div>
+6029: <div class="form-row"><label>${configTransferText('Абоненты (необязательно для старого конфига)', 'Subscribers (optional for legacy config)')}</label><input id="configSubscribersFile" type="file" accept=".json,application/json" /></div>
+6032: <button class="button-secondary" onclick="previewConfigImport('dvbstreamer5')">${configTransferText('Проверить DVBStreamer5', 'Preview DVBStreamer5')}</button>
+6033: <button class="button-secondary" onclick="previewConfigImport('tvstreammer5')">${configTransferText('Проверить TVStreammer5', 'Preview TVStreammer5')}</button>
+6040: <button id="configImportApply" class="button-primary" onclick="applyConfigImport()" disabled>${configTransferText('Применить импорт', 'Apply import')}</button>
+6069: if (preview) preview.textContent = configTransferText('Выберите основной JSON.', 'Select the main JSON file.');
+6088: ? configTransferText('Доступ к текущей панели будет сохранён.', 'Current panel access will be preserved.')
+6089: : configTransferText('Backup может восстановить login/password/httpPort.', 'The backup may restore login/password/httpPort.');
+6092: : configTransferText('не изменяются', 'unchanged');
+6095: <div>${configTransferText('Потоки', 'Streams')}: <b>${Number(data.streams||0)}</b> · OUT: <b>${Number(data.outputs||0)}</b> · CAM: <b>${Number(data.cam_clients||0)}</b> · MPTS: <b>${Number(data.mpts_outputs||0)}</b></div>
+6096: <div>${configTransferText('Абоненты', 'Subscribers')}: <b>${escapeHtmlValue(subscribers)}</b></div>
+6100: if (preview) preview.textContent = configTransferText('Ошибка: ', 'Error: ') + (error?.message || error);
+6106: 'Применить импорт? Активные потоки с изменённой конфигурацией будут перезапущены.',
+6119: alert(configTransferText('Конфигурация импортирована.', 'Configuration imported.'));
+6143: <button class="button-secondary" onclick="closeModal()">Отмена</button>
+6144: <button class="button-primary" onclick="saveSettings()">Сохранить</button>
+6354: const tune = consumers > 0 ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}` : ' · свободен';
+6381: : ['мультисвитч', 'прямой / DiSEqC', 'Unicable'];
+6383: const shownPrefix = prefix || (language === 'en' ? 'Selected' : 'Выбран');
+6392: : 'Native Linux DVB недоступен на этом хосте.';
+6395: const yes = language === 'en' ? 'yes' : 'да';
+6396: const no = language === 'en' ? 'no' : 'нет';
+6410: 'Mode 0: multiswitch / quattro или quad LNB; выбор A–D доступен для спутникового входа.',
+6411: 'Mode 1: прямое подключение LNB; DiSEqC A–D передаётся выбранному frontend.',
+6412: 'Mode 2: Unicable; обычный DiSEqC A–D отключён. User Band/SCR должен быть настроен драйвером или внешним оборудованием.'
+6437: return `<option value="${adapter}">Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;
+6496: if (services) services.innerHTML = '<div class="sat-empty">Параметры тюнера изменены. Выполните сканирование заново.</div>';
+6546: if (info && generation === satelliteTuneGeneration) info.textContent = 'Ошибка чтения DVB frontend';
+6576: if (info) info.textContent = 'Нативный DVB-S/S2 frontend доступен только в Linux.';
+6581: if (info) info.textContent = 'DVB frontend не обнаружен в /dev/dvb.';
+6597: if (info) info.textContent = 'Не удалось получить список DVB frontend';
+6606: container.innerHTML = '<div class="sat-empty">Каналы не найдены. Проверьте частоту, Symbol Rate, поляризацию и уровень сигнала.</div>';
+6610: <div class="sat-service-head"><span><input id="satSelectAll" type="checkbox" checked onchange="toggleAllSatelliteServices(this.checked)" /></span><span>Канал</span><span>Провайдер</span><span>Доступ</span><span>SID</span><span>PMT PID</span></div>
+6616: <span><span class="sat-access ${service.scrambled ? 'ca' : (service.pmt_ready===false ? 'unknown' : 'fta')}" title="${service.scrambled ? 'Кодированный канал (CA)' : (service.pmt_ready===false ? 'PMT/PID ещё не получены' : 'Открытый канал (FTA)')}">${service.scrambled ? 'КОД.' : (service.pmt_ready===false ? 'ПРОВ.' : 'FTA')}</span></span>
+6638: if (status) status.textContent = `Сканирование /dev/dvb/adapter${payload.adapter}/frontend${payload.frontend}${holdLock ? ' · удержание LOCK' : ''}...`;
+6661: : `${scanDevice} · ISI: ${payload.stream_id >= 0 ? payload.stream_id : 'Авто'} · DiSEqC: ${diseqcSourceLabel(payload.diseqc_source)} · Найдено: ${satelliteServices.length} · FTA: ${ftaCount} · Код.: ${caCount}${pendingCount ? ` · PMT: ${pendingCount} не готово` : ''}${data.error ? ` (${data.error})` : ''}`;
+6666: if (status) status.textContent = 'Ошибка сканирования DVB-S/S2';
+6705: 'udp-vbr':['239.255.10.1',5000,'Multicast / IP','Первый UDP порт'],
+6706: 'udp-cbr':['239.255.10.1',5000,'Multicast / IP','Первый UDP порт'],
+6707: 'rtp':['239.255.10.1',5000,'RTP IP / multicast','Первый RTP порт'],
+6709: mode === 'caller' ? 'SRT сервер' : 'SRT host / bind','Первый SRT порт'],
+6710: 'http':['127.0.0.1',Number(state.http_port||9000),'Адрес для ссылки','HTTP порт'],
+6711: 'hls':['127.0.0.1',Number(state.http_port||9000),'Адрес для ссылки','HLS порт'],
+6712: 'rtsp':['127.0.0.1',8554,'RTSP сервер','Первый RTSP порт'],
+6713: 'rtmp':['127.0.0.1',1935,'RTMP URL / host','RTMP порт'],
+6714: 'youtube':['',1935,'YouTube key / URL','Порт']
+6727: type === 'youtube' ? 'xxxx-xxxx-xxxx-xxxx или RTMP URL' :
+6728: type === 'rtmp' ? 'rtmp://server/app/key или server.example.com' :
+6729: type === 'rtsp' ? 'rtsp://server/app/name или IP сервера' :
+6730: type === 'srt' && mode === 'caller' ? 'server.example.com или IP' :
+6743: alert('Выберите хотя бы один канал.');
+6751: alert('OnDemand требует выход HTTP или HLS. Для UDP/RTP/SRT/RTSP/RTMP выберите Online.');
+6781: alert(error.message || 'Не удалось сохранить спутниковые каналы');
+6788: <h2>Добавить канал — DVB-S/S2</h2>
+6790: <div class="sat-meter"><div class="sat-meter-head"><span>Сигнал</span><strong id="satSignalValue">0%</strong></div><div class="sat-bar"><span id="satSignalBar"></span></div></div>
+6791: <div class="sat-meter"><div class="sat-meter-head"><span>Качество</span><strong id="satQualityValue">0%</strong></div><div class="sat-bar"><span id="satQualityBar"></span></div></div>
+6797: <div class="sat-field"><label>Частота, MHz</label><input id="satFrequency" type="number" min="900" max="14000" step="0.001" value="11727" onchange="updateSatelliteSignal()" /></div>
+6799: <div class="sat-field"><label>Поляризация</label><select id="satPolarity" onchange="updateSatelliteSignal()"><option value="H">H — Horizontal</option><option value="V">V — Vertical</option></select></div>
+6800: <div class="sat-field"><label>Стандарт</label><select id="satDeliverySystem" onchange="updateSatelliteSignal()"><option value="dvb-s2">DVB-S2</option><option value="dvb-s">DVB-S</option></select></div>
+6801: <div class="sat-field"><label>Модуляция</label><select id="satModulation" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option value="qpsk">QPSK</option><option value="8psk">8PSK</option><option value="16apsk">16APSK</option><option value="32apsk">32APSK</option></select></div>
+6803: <div class="sat-field"><label>DiSEqC source</label><select id="satDiseqc" onchange="updateSatelliteSignal()"><option value="-1">Отключён</option><option value="0">A (1)</option><option value="1">B (2)</option><option value="2">C (3)</option><option value="3">D (4)</option></select></div>
+6808: <div class="sat-field wide"><label>Сканирование</label><div class="checkbox-inline"><input id="satHoldLock" type="checkbox" checked /><span>Удерживать LOCK</span></div></div>
+6810: <div id="satDeviceInfo" class="sat-scan-status" style="margin-top:8px">Поиск DVB frontend...</div>
+6812: <div id="satDvbInfo" class="sat-scan-status" style="margin-top:4px">Проверка native Linux DVB...</div>
+6819: <button id="satScanButton" class="button-primary" onclick="startSatelliteScan()">Сканировать каналы</button>
+6820: <span id="satScanStatus" class="sat-scan-status">Найдено: <span id="satFoundCount">0</span></span>
+6822: <div id="satServices" class="sat-services"><div class="sat-empty">Нажмите «Сканировать каналы».</div></div>
+6824: <div class="sat-field"><label>Выходной протокол</label><select id="satOutputType" onchange="updateSatelliteOutputHints(true)">${outputTypeOptions('udp-vbr')}</select></div>
+6825: <div id="satOutputModeRow" class="sat-field" style="display:none"><label>SRT режим</label><select id="satOutputMode" onchange="updateSatelliteOutputHints(true)"><option value="listener">Listener</option><option value="caller">Caller</option></select></div>
+6827: <div class="sat-field"><label id="satOutputPortLabel">Первый UDP порт</label><input id="satBasePort" type="number" min="1" max="65535" value="5000" /></div>
+6828: <div class="sat-field"><label>CBR</label><div class="checkbox-inline"><input id="satCbr" type="checkbox" onchange="updateSatelliteOutputHints(false)" /><span>Формировать CBR MPEG-TS</span></div></div>
+6829: <div class="sat-field"><label>CBR bitrate, кбит/с</label><input id="satTargetBitrate" type="number" min="500" max="100000" value="12000" disabled /></div>
+6836: <div class="sat-field"><label>Выходной интерфейс</label><select id="satOutputInterface"><option value="">Авто (системный маршрут)</option>${(state.interfaces||[]).map(i=>`<option value="${satEscape(i.address)}">${satEscape(i.name)} (${satEscape(i.address)})</option>`).join('')}</select></div>
+6837: <div class="sat-field wide"><label>Режим каналов транспондера</label><select id="satActivationMode" onchange="const a=document.getElementById('satAutoStart');if(a){a.disabled=this.value==='ondemand';if(this.value==='ondemand')a.checked=false;}"><option value="online">Online</option><option value="ondemand">OnDemand</option></select><small>Глобально для всех выбранных каналов. OnDemand запускает поток и CAM только при HTTP/HLS клиенте; UDP/RTP/SRT/RTSP/RTMP не могут определить пассивного получателя.</small></div>
+6838: <div class="sat-field wide"><label>Автозапуск</label><div class="checkbox-inline"><input id="satAutoStart" type="checkbox" /><span>Запускать созданные каналы после перезапуска</span></div></div>
+6841: <button class="button-secondary" onclick="closeModal()">Отмена</button>
+6842: <button id="satSaveButton" class="button-primary" onclick="saveSelectedSatelliteChannels()">Сохранить выбранные</button>
+6875: function outputInterfaceOptions(selected, inheritLabel='Как основной') {
+6894: <div class="form-row"><label>${index === 0 ? 'Основной формат' : 'Доп. формат'}</label><select data-output-field="output_type" onchange="updateOutputHints()">${outputTypeOptions(type)}</select></div>
+6895: <div class="form-row"><label>SRT режим</label><select data-output-field="output_mode" onchange="updateOutputHints()"><option value="listener" ${(!output.output_mode || output.output_mode==='listener')?'selected':''}>Listener</option><option value="caller" ${output.output_mode==='caller'?'selected':''}>Caller</option></select></div>
+6896: <div class="form-row"><label data-output-host-label>Адрес выхода</label><input data-output-field="output_host" value="${output.output_host||'239.0.0.1'}" placeholder="239.0.0.1" /></div>
+6897: <div class="form-row"><label data-output-port-label>Порт</label><input data-output-field="output_port" type="number" min="1" max="65535" value="${output.output_port||1234}" placeholder="1234" /></div>
+6898: <div class="form-row"><label>Интерфейс</label><select data-output-field="interface_address" onchange="outputInterfaceChanged(this)" ${index === 0 ? 'disabled' : ''}>${outputInterfaceOptions(interfaceAddress, index === 0 ? 'Основной интерфейс' : 'Как основной')}</select></div>
+6906: <div class="form-row full" style="grid-column:1/-1"><label>URL для плеера</label><input readonly value="${link}" placeholder="Ссылка появится после сохранения" /></div>
+6915: if (label) label.textContent = index === 0 ? 'Основной формат' : 'Доп. формат';
+6968: if (status) status.textContent = name ? `Выбран файл: ${name}` : '';
+6979: loading.textContent = 'Загрузка списка...';
+6987: empty.textContent = result.error || 'Загруженных файлов нет';
+6989: if (button) button.textContent = 'Выбрать ранее загруженный файл';
+7005: remove.title = `Удалить ${file.name}`;
+7014: error.textContent = 'Не удалось загрузить список файлов';
+7019: if (!file?.name || !confirm(`Удалить файл «${file.name}»?`)) return;
+7025: if (result.result !== 'ok') throw new Error(result.error || 'Не удалось удалить файл');
+7030: if (status) status.textContent = 'Выбранный файл удалён';
+7033: }).catch(error=>alert(error.message || 'Ошибка удаления файла'));
+7043: ? '/path/to/replacement.ts или загрузите файл ниже'
+7058: if (status) status.textContent = 'Загрузка...';
+7066: if (status) status.textContent = `Файл загружен: ${result.filename || file.name}`;
+7069: if (status) status.textContent = result.error || 'Не удалось загрузить файл';
+7072: if (status) status.textContent = 'Ошибка загрузки файла';
+7097: ? `Доступно: H.264=${transcoderInfo.video_encoder || 'нет'}, HEVC=${transcoderInfo.hevc_video_encoder || 'нет'}, NVENC ${transcoderInfo.nvenc_available ? 'да' : 'нет'}, Intel ${transcoderInfo.intel_available ? (transcoderInfo.intel_encoder || 'да') : 'нет'}, x264 ${transcoderInfo.x264_available ? 'да' : 'нет'}, x265 ${transcoderInfo.x265_available ? 'да' : 'нет'}, AAC ${transcoderInfo.aac_encoder || 'нет'}, MP3 ${transcoderInfo.mp3_encoder || 'нет'}, MP2 ${transcoderInfo.mp2_encoder_available ? 'TwoLAME' : 'нет'}, deinterlace ${transcoderInfo.deinterlace ? 'да' : 'нет'}`
+7098: : `Недоступно: ${transcoderMissing || transcoderInfo.message || 'native transcoder components are not available'}`;
+7100: <h2>${stream.name ? 'Редактирование трансляции' : 'Настройка трансляции'}</h2>
+7102: <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
+7103: <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234 или https://host/live.m3u8" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility()"><option value="auto" ${(!stream.input_mode || s ...
+7104: <div class="form-row full" id="streamSrtInputRow" style="display:${(stream.input_mode==='caller'||stream.input_mode==='listener'||String(stream.input_uri||'').toLowerCase().startsWith('srt://'))?'':'none'}"><label>SRT вход</label><div class="row-inline compact-row"><input id="streamSrtInputLatency" type="number" min="20" max="60000" value="${Number(stream.srt_input_latency_ms||120)}" placeholder="latency ms" /><select id="streamSrtInputPbKeyLen"><option value="16" ${Number(stream.srt_input_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(stream.srt_input_pbkeylen)= ...
+7105: <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id ...
+7107: <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibr ...
+7108: <div class="form-row full" id="streamBackupFileLoopRow"><label>Зациклить файл замены</label><div class="checkbox-inline"><input id="streamBackupFileLoop" type="checkbox" ${stream.backup_file_loop ? 'checked' : ''} /><span>Повторять до появления основного потока</span></div></div>
+7109: <div class="form-row full"><label>Тестовая таблица</label><div class="checkbox-inline"><input id="streamTestPattern" type="checkbox" ${stream.test_pattern ? 'checked' : ''} /><span>Использовать вместо входных потоков</span></div></div>
+7110: <div class="form-row full"><label>Интерфейс вывода</label><select class="compact" id="streamInterface" onchange="syncOutputHostWithInterface()"><option value="">Auto / все интерфейсы</option>${outputOptions}</select></div>
+7111: <div class="form-row full"><label>Выходные форматы</label><div id="streamOutputs" class="output-list">${renderOutputRows(outputs, links)}</div><button class="button-secondary" type="button" onclick="addStreamOutput()">+ Добавить формат</button></div>
+7113: <div class="form-row"><label>SID входа</label><input class="compact" id="streamInputServiceId" type="number" min="0" max="65535" value="${stream.input_service_id ?? 0}" placeholder="0 = Auto" /><small>0 = автоопределение SID из PAT; значение 1–65535 = выбрать конкретный входной канал.</small></div>
+7114: <div class="form-row"><label>SID выхода</label><input class="compact" id="streamServiceId" type="number" min="1" max="65535" value="${stream.service_id||1}" placeholder="1" /></div>
+7115: <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
+7116: <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.round((stream.target_bitrate||2000000)/1000)}" placeholder="2000" /></div>
+7117: <div class="form-row full"><label>Транскодирование</label><div class="checkbox-inline"><input id="streamTranscodeEnabled" type="checkbox" ${(stream.transcode_enabled && transcoderAvailable) ? 'checked' : ''} ${transcoderAvailable ? '' : 'disabled'} onchange="updateTranscodeControls()" /><span>Обрабатывать видео/аудио: транскодирование или независимый проброс оригинальных потоков</span></div><small style="color:${transcoderAvailable ? '#7ee2a8' : '#ff9f9f'}">${transcoderStatus}</small></div>
+7118: <div class="form-row full"><label>HLS архив (DVR)</label><div class="row-inline compact-row"><label class="checkbox-inline"><input id="streamHlsArchiveEnabled" type="checkbox" ${stream.hls_archive_enabled?'checked':''} /><span>Записывать архив</span></label><input id="streamHlsArchiveHours" type="number" min="1" max="168" value="${stream.hls_archive_hours||24}" style="max-width:110px" /><span>часов</span><input id="streamHlsArchivePath" value="${stream.hls_archive_path||'/var/lib/dvbstreamer5/archive'}" placeholder="/var/lib/dvbstreamer5/archive" /></div><small>Архив сохраняет HLS TS-сегменты  ...
+7119: <div class="form-row full"><label>HLS контейнер / шифрование</label><div class="row-inline compact-row"><select id="streamHlsContainer"><option value="mpegts" ${(stream.hls_container||'mpegts')==='mpegts'?'selected':''}>MPEG-TS</option><option value="cmaf" ${stream.hls_container==='cmaf'?'selected':''}>fMP4 / CMAF + EXT-X-MAP</option></select><select id="streamHlsEncryption"><option value="none" ${(!stream.hls_encryption||stream.hls_encryption==='none')?'selected':''}>Без шифрования</option><option value="aes-128" ${stream.hls_encryption==='aes-128'?'selected':''}>AES-128</option><option value ...
+7120: <div class="form-row full" id="streamTranscodeControls" style="display:${(stream.transcode_enabled && transcoderAvailable)?'block':'none'}"><label>Параметры транскодирования</label><div class="row-inline compact-row"><select id="streamTranscodeVideoCodec" onchange="updateTranscodeVideoControls()"><option value="h264" ${(stream.transcode_video_codec||'h264')==='h264'?'selected':''}>Видео: H.264 транскодирование</option><option value="hevc" ${stream.transcode_video_codec==='hevc'?'selected':''} ${transcoderInfo.hevc_video_encoder?'':'disabled'}>Видео: H.265 / HEVC транскодирование${transcoderInf ...
+7121: <div class="form-row full"><label>Online / OnDemand</label><select id="streamActivationMode" onchange="const a=document.getElementById('streamAutoStart');if(a){a.disabled=this.value==='ondemand';if(this.value==='ondemand')a.checked=false;}"><option value="online" ${(stream.activation_mode||'online')==='online'?'selected':''}>Online</option><option value="ondemand" ${stream.activation_mode==='ondemand'?'selected':''}>OnDemand</option></select><small>OnDemand: вход, декодирование/CAM и выход запускаются по первому HTTP/HLS клиенту и останавливаются при отсутствии клиентов. Для UDP/RTP/SRT/RTSP/R ...
+7122: <div class="form-row full"><label>Автозапуск</label><div class="checkbox-inline"><input id="streamAutoStart" type="checkbox" ${stream.auto_start ? 'checked' : ''} ${stream.activation_mode==='ondemand' ? 'disabled' : ''} /><span>Запускать после перезапуска программы</span></div></div>
+7123: <div class="form-row full" id="streamCbrRow"><label>Включить CBR</label><div class="checkbox-inline"><input id="streamCbr" type="checkbox" ${stream.cbr ? 'checked' : ''} onchange="syncUdpCbrModeFromCheckbox()" /><span>CBR</span></div><small>CBR поддерживается для UDP, HTTP, HLS и SRT.</small></div>
+7124: <div class="form-row full"><label>Включить Remap</label><div class="checkbox-inline"><input id="streamRemapEnabled" type="checkbox" ${stream.remap_enabled ? 'checked' : ''} /><span>Remap PID / Service</span></div><small>Для MPEG-TS: SID входа 0 = автоопределение программы из PAT; ненулевой SID выбирает конкретный входной канал. SID выхода всегда задаётся отдельно и используется для Remap в PAT/PMT/SDT. V-PID и A-PID задают выходные PID.</small></div>
+7127: <button class="button-secondary" onclick="closeModal()">Отмена</button>
+7128: <button class="button-primary" onclick="saveStream('${stream.id}')">Сохранить</button>
+7226: hostLabel.textContent = 'Адрес для ссылки';
+7227: portLabel.textContent = type === 'hls' ? 'HLS порт' : 'HTTP порт';
+7230: host.placeholder = 'IP интерфейса или DNS';
+7232: hostLabel.textContent = 'RTP IP / мультикаст';
+7233: portLabel.textContent = 'RTP порт';
+7237: hostLabel.textContent = outputMode === 'caller' ? 'SRT сервер' : 'SRT host для ссылки';
+7238: portLabel.textContent = 'SRT порт';
+7242: host.placeholder = outputMode === 'caller' ? 'server.example.com или IP' : '0.0.0.0 для listener';
+7249: hostLabel.textContent = 'RTSP сервер';
+7250: portLabel.textContent = 'RTSP порт';
+7252: host.placeholder = 'rtsp://server/app/name или IP сервера';
+7256: portLabel.textContent = 'Порт';
+7258: host.placeholder = 'xxxx-xxxx-xxxx-xxxx или rtmp://a.rtmp.youtube.com/live2/...';
+7261: portLabel.textContent = 'RTMP порт';
+7263: host.placeholder = 'rtmp://server/app/key или server.example.com';
+7265: hostLabel.textContent = 'Мультикаст / UDP IP';
+7266: portLabel.textContent = 'UDP порт';
+7284: ? 'CBR MPEG-TS для HTTP/HLS/SRT: NULL stuffing + PAT/PMT/PCR; HTTP/SRT дополнительно синхронизируются по PCR.'
+7285: : (udpMode ? 'UDP CBR использует StableUdpOutput; UDP VBR следует входному битрейту.' : 'CBR для этого типа выхода не применяется.');
+7369: uiError('OnDemand требует хотя бы один выход HTTP или HLS, где сервер может определить подключение клиента.');
+7502: {label:'Месяц', seconds:2592000},
+7503: {label:'Неделя', seconds:604800},
+7504: {label:'День', seconds:86400},
+7505: {label:'Пол дня', seconds:43200},
+7506: {label:'5 часов', seconds:18000},
+7507: {label:'1 час', seconds:3600},
+7508: {label:'30 минут', seconds:1800},
+7509: {label:'10 минут', seconds:600},
+7510: {label:'Минута', seconds:60}
+7513: {label:'Выкл', ms:0},
+7514: {label:'2 сек', ms:2000},
+7515: {label:'5 сек', ms:5000},
+7516: {label:'10 сек', ms:10000},
+7517: {label:'30 сек', ms:30000}
+7561: return `Выход ${index + 1}: ${type}${endpoint ? ` ${endpoint}` : ''}`;
+7604: <h2>Качество потока</h2>
+7608: <label class="quality-output-select"><span>Исходящий поток</span><select id="qualityOutputSelect" onchange="setQualityOutputIndex(Number(this.value))">${outputOptions}</select></label>
+7610: <label class="quality-refresh"><span>Автообновление</span><select onchange="setQualityAutoRefresh(Number(this.value))">${refreshOptions}</select></label>
+7615: <strong>Расшифровка</strong>
+7616: <span><i class="quality-line quality-input"></i> Зеленый — входной bitrate по левой шкале Mbit/s.</span>
+7617: <span><i class="quality-line quality-output"></i> Синий — bitrate выбранного исходящего потока по левой шкале Mbit/s.</span>
+7618: <span><i class="quality-line quality-input-cc"></i> Оранжевые столбцы — количество входных CC-errors за интервал истории по правой шкале.</span>
+7619: <span><i class="quality-line quality-output-cc"></i> Розовые столбцы — CC-errors общего выходного MPEG-TS до разветвления за интервал истории.</span>
+7620: <span>CC-errors считаются по накопительным счетчикам между соседними точками истории; ошибки внутри 30-секундного интервала больше не теряются.</span>
+7621: <span>Клик по графику копирует картинку графика.</span>
+7627: <button class="button-secondary" onclick="closeModal()">Закрыть</button>
+7684: <span>${index === 0 ? 'Основной выход' : 'Дополнительный выход'}</span>
+7719: const streamName = stream.name || data.id || 'Поток';
+7759: ctx.fillText('История пока пустая. Данные появятся после нескольких обновлений состояния.', width / 2, height / 2);
+7761: details.innerHTML = '<div class="quality-card"><strong>Нет данных</strong>История собирается в памяти во время работы приложения.</div>';
+7914: <div></div><div></div><div class="head">посл</div><div class="head">мин</div><div class="head">сред</div><div class="head">макс</div>
+7915: ${statsRow('quality-input', `${streamName} — входной bitrate`, '[input]', inputBitrateStats, formatMbitValue)}
+7917: ${statsRow('quality-input-cc', `${streamName} — входные CC-errors за интервал`, '[input]', inputCcStats, value => formatMetricNumber(value))}
+7918: ${statsRow('quality-output-cc', `${streamName} — выходные CC-errors за интервал (общий TS)`, '[output]', outputCcStats, value => formatMetricNumber(value))}
+7929: : '<div><span style="color:#17c261">●</span><span>За выбранный период входных и выходных CC-errors и других ошибок нет</span></div>';
+7941: show('Браузер не разрешил копировать картинку графика');
+7951: show('Браузер не поддерживает копирование картинки графика');
+7955: .then(() => show('Картинка графика скопирована в буфер обмена'))
+7956: .catch(() => show('Не удалось скопировать картинку графика'));
+7989: if (!Array.isArray(sources)) throw Error('Ответ preview API должен содержать массив sources');
+8019: catch (_) { throw Error('Некорректный адрес HTTP-предпросмотра'); }
+8021: throw Error('Адрес предпросмотра должен быть HTTP(S)');
+8024: throw Error('Предпросмотр должен выдаваться веб-сервером DVBStreamer (same-origin)');
+8031: throw Error('Браузер не поддерживает безопасный токен HTTP-предпросмотра');
+8063: throw Error('install() запускается только в браузере');
+8138: message('Ошибка HLS: ' + String(data.details || data.type || 'нет данных'), true);
+8146: (level.width && level.height ? (level.width + 'x' + level.height) : ('уровень ' + data.level));
+8154: message('Для HLS необходима поддержка браузера или локальная hls.js.', true);
+8157: message('HLS · ' + source.label + ' · звук включается в плеере');
+8158: Promise.resolve(video.play()).catch(function () { message('Нажмите ▶ для запуска видео.'); });
+8159: } catch (error) { resetMedia(); message('Ошибка HLS: ' + error.message, true); }
+8164: message('Поток остановлен: временный HTTP-предпросмотр недоступен.', true);
+8179: message('Временный HTTP-предпросмотр недоступен для этого канала.', true);
+8196: message('Для HTTP MPEG-TS необходимы локальная mpegts.js и поддержка MediaSource.', true);
+8213: message('Ошибка HTTP MPEG-TS: ' + String(detail || 'нет данных') +
+8214: '. Проверьте кодеки канала и доступность новых видеокадров.', true);
+8220: ' · приватный browser preview: H.264/AAC · звук включается в плеере.');
+8222: if (activeTs === player) message('Нажмите ▶ для запуска видео.');
+8226: message('Ошибка HTTP MPEG-TS: ' + error.message, true);
+8238: dialog.setAttribute('aria-label', 'HTTP-предпросмотр потока');
+8240: var title = element('h2', 'tvp-title', streamName || ('Поток ' + streamId));
+8243: closeBtn.setAttribute('aria-label', 'Закрыть предпросмотр');
+8250: video.setAttribute('aria-label', 'HTTP-предпросмотр');
+8251: status = element('div', 'tvp-status', 'Подключение к HTTP-потоку…');
+8266: message('Не удалось получить HTTP-предпросмотр: ' + error.message, true);
