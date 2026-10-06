@@ -70,6 +70,8 @@ private:
     std::string handleDvbAddChannels(const std::string& body);
     bool handleHttpStream(tcp::socket& socket, const std::string& target);
     bool serveHlsFile(const tcp::socket& socket, const std::string& target, http::response<http::string_body>& res);
+    std::string handleConfigExport();
+    std::string handleConfigImport(const std::string& body);
     std::string handleSaveConfig(const std::string& body);
     std::string handleMptsSave(const std::string& body);
     std::string handleMptsAction(const std::string& body);
