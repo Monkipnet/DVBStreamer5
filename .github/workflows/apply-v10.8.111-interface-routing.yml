@@ -1,0 +1,65 @@
+name: Apply V10.8.111 interface routing
+
+on:
+  push:
+    branches: [v10.8.111-interface-routing]
+    paths:
+      - '.github/workflows/apply-v10.8.111-interface-routing.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool \
+            libpcsclite-dev pcscd
+      - name: Prepare vendored media dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+      - name: Apply V10.8.111
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/apply_v10_8_111_interface_routing.py
+          python3 tools/apply_v10_8_111_interface_routing.py
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.111"' src/AppVersion.h
+          grep -q 'RTSP OUT effective stream=' src/StreamManager.cpp
+          grep -q 'RTMP OUT effective stream=' src/StreamManager.cpp
+          grep -q 'SRT OUT route stream=' src/StreamManager.cpp
+          grep -q 'config.bindAddress,config.connectTimeoutMs' src/media/NativeRtmpTransport.cpp
+          grep -q 'config_.bindAddress,config_.connectTimeoutMs' src/media/NativeRtmpTransport.cpp
+          grep -q 'connectTcp(url, config_.bindAddress' src/media/NativeRtspTransport.cpp
+      - name: Configure Release build
+        run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+      - name: Build Release
+        run: cmake --build build-ci --parallel 2
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add \
+            src/AppVersion.h \
+            src/StreamManager.cpp \
+            src/media/NativeRtmpTransport.cpp \
+            src/media/NativeRtspTransport.cpp
+          git diff --cached --check
+          git commit -m "V10.8.111 route outputs through configured interfaces"
+          git push origin HEAD:v10.8.111-interface-routing
