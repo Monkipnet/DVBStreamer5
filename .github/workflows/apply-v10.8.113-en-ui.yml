@@ -29,7 +29,7 @@ jobs:
           git diff --check
           grep -q 'kProgramVersion = "10.8.113"' src/AppVersion.h
           grep -q 'function tileRuntimeStatus(value)' src/HttpServer.cpp
-          grep -q "replace(/\\\\bnative\\\\s+/gi, '')" src/HttpServer.cpp
+          grep -Fq ".replace(/\\bnative\\s+/gi, '')" src/HttpServer.cpp
           grep -q "Subscriber name, IP address, Status" src/HttpServer.cpp
           grep -q "Transponder channel mode" src/HttpServer.cpp
 
