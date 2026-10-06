@@ -23,6 +23,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+// Stream orchestration layer. It owns per-channel runtime state, selects native input
+// and output transports, wires CA/remap/transcode/HLS observers, and contains failures
+// to one stream. Protocol/socket details stay in src/media and src/protocols.
+
 namespace {
 
 constexpr auto kAdHocSessionTtl = std::chrono::minutes(2);

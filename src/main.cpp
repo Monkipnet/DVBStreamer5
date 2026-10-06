@@ -12,6 +12,10 @@
 #include "HttpServer.h"
 #include "AppVersion.h"
 
+// Process composition: load durable configuration, apply fail-open host networking,
+// initialize CA/notifications/stream orchestration, start the HTTP control plane,
+// auto-start eligible channels, then keep the shared Asio event loop alive.
+
 int main() {
 #if defined(__GLIBC__)
     // Limit glibc allocator arenas for long-running network worker threads.

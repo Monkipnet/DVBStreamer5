@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+// Configuration model and JSON persistence boundary. Keep runtime-only state out of
+// these structures; fromJson() deliberately tolerates unknown legacy keys so old
+// configuration files can be upgraded without carrying dead options forward.
+
 struct StreamOutputConfig {
     std::string outputType = "udp-cbr";
     std::string outputMode = "listener";
@@ -76,12 +80,6 @@ struct StreamConfig {
     std::string hlsAccessKeyName = "Authorization";
     std::string hlsAccessKeyValue;
     std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
-    // Manual per-stream provider-PCR rate clock (203.36). Existing streams default off.
-    bool hlsSlowPcrAssist = false;
-    // 203.40: manual HLS pre-buffered provider-PCR interval pacing. The existing
-    // JSON key is retained for compatibility, but the mode is now feed-forward:
-    // adjacent PCR anchors are known before packets enter the token sender. Off by default.
-    bool hlsPcrPhasePacing = false;
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.

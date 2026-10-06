@@ -23,6 +23,10 @@
 #include <utility>
 #include <vector>
 
+// Native HLS acquisition: resolve playlists, select/prefetch bounded segments, handle
+// encryption, and feed MPEG-TS/CMAF media downstream. Output-rate shaping is not done
+// here; the current runtime uses the common CBR/output transport path instead.
+
 namespace {
 
 using Clock = std::chrono::steady_clock;

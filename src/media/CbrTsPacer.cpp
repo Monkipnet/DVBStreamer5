@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <stdexcept>
 
+// Fixed-rate MPEG-TS sender clock. It emits seven-packet datagrams on a monotonic
+// deadline and fills unused capacity with NULL packets. It deliberately has no
+// provider-PCR feedback/PLL; PCR generation/rewriting belongs to the mux layer.
+
 namespace dvbstreamer5::media::mpegts {
 namespace {
 

@@ -21,6 +21,10 @@
 #include <arpa/inet.h>
 #endif
 
+// Native transport relay: acquire UDP/RTP/HTTP/file/DVB/external input, apply the
+// configured remap/CA/transcode callbacks once, then fan out the processed MPEG-TS to
+// UDP/RTP sockets and observers used by SRT/HTTP/HLS/RTSP/RTMP.
+
 namespace dvbstreamer5::media::network {
 namespace {
 

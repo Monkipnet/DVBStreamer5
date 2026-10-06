@@ -41,6 +41,10 @@
 #include <malloc.h>
 #endif
 
+// HTTP control plane and embedded web UI. This module translates API requests into
+// validated StreamConfig changes and publishes runtime state; media packet processing
+// remains in StreamManager/media modules so UI code cannot become a transport path.
+
 namespace {
 
 
@@ -4420,13 +4424,6 @@ const uiRuToEn = new Map([
   ['Bearer TOKEN / значение ключа', 'Bearer TOKEN / key value'],
   ['Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.',
    'The key is configured per channel. Auto: *.m3u8 URLs are opened as HLS; other HTTP/HTTPS URLs are treated as single-request MPEG-TS. For HLS without .m3u8, select HLS mode manually. For HTTP MPEG-TS the key is applied to the single request; for HLS it is applied to the manifest, variant playlist, segments and EXT-X-KEY. If the key is already present in the URL, select “No key”. For Authorization, enter the complete value, for example Bearer xxxxx.'],
-  ['HLS синхронизация', 'HLS synchronization'],
-  ['Provider PCR clock (ручной режим)', 'Provider PCR clock (manual mode)'],
-  ['Для каналов вроде TV3: после стабилизации provider PCR становится фиксированным media clock. Транспортный PCR остаётся синтетическим 20 ms.',
-   'For channels such as TV3: after stabilization, provider PCR becomes the fixed media clock. Transport PCR remains synthetic at 20 ms.'],
-  ['Provider PCR deadline shaper (ручной режим)', 'Provider PCR deadline shaper (manual mode)'],
-  ['203.41: для HLS с сильными VBR burst между provider PCR. Шейпер держит ограниченный lookahead 750 ms, заранее видит будущие PCR deadlines и распределяет burst по предыдущим свободным CBR-слотам, не превышая полезный потолок выхода. В output-path нет ожидания PCR, нет feedback PLL и catch-up. Внешний UDP остаётся CBR с synthetic PCR 20 ms и NULL stuffing. Не включать вместе с Provider PCR clock.',
-   '203.41: for HLS with strong VBR bursts between provider PCR values. The shaper keeps a limited 750 ms lookahead, sees future PCR deadlines in advance and distributes bursts across preceding free CBR slots without exceeding the useful output ceiling. The output path has no PCR waiting, feedback PLL or catch-up. External UDP remains CBR with synthetic PCR at 20 ms and NULL stuffing. Do not enable together with Provider PCR clock.'],
   ['Резерв / файл замены', 'Backup / replacement file'],
   ['URL резерва', 'Backup URL'],
   ['Зациклить файл замены', 'Loop replacement file'],
@@ -6858,7 +6855,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', hls_slow_pcr_assist:false, hls_pcr_phase_pacing:false, conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', additional_outputs:[]
   });
 }
@@ -7076,15 +7073,8 @@ function uploadBackupReplacementFile(streamId, input) {
     if (status) status.textContent = 'Ошибка загрузки файла';
   });
 }
-function updateHlsSynchronizationVisibility() {
+function updateInputModeVisibility() {
   const mode = document.getElementById('streamInputMode');
-  const row = document.getElementById('streamHlsSynchronizationRow');
-  const isHls = mode?.value === 'hls';
-  if (row) row.style.display = isHls ? '' : 'none';
-  const providerClock = document.getElementById('streamHlsSlowPcrAssist');
-  const deadlineShaper = document.getElementById('streamHlsPcrPhasePacing');
-  if (providerClock) providerClock.disabled = !isHls;
-  if (deadlineShaper) deadlineShaper.disabled = !isHls;
   const srtRow = document.getElementById('streamSrtInputRow');
   const isSrt = mode?.value === 'caller' || mode?.value === 'listener' || String(document.getElementById('streamInput')?.value || '').toLowerCase().startsWith('srt://');
   if (srtRow) srtRow.style.display = isSrt ? '' : 'none';
@@ -7111,10 +7101,9 @@ function openStreamForm(stream) {
       <h2>${stream.name ? 'Редактирование трансляции' : 'Настройка трансляции'}</h2>
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
-        <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234 или https://host/live.m3u8" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateHlsSynchronizationVisibility()"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
+        <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234 или https://host/live.m3u8" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility()"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
         <div class="form-row full" id="streamSrtInputRow" style="display:${(stream.input_mode==='caller'||stream.input_mode==='listener'||String(stream.input_uri||'').toLowerCase().startsWith('srt://'))?'':'none'}"><label>SRT вход</label><div class="row-inline compact-row"><input id="streamSrtInputLatency" type="number" min="20" max="60000" value="${Number(stream.srt_input_latency_ms||120)}" placeholder="latency ms" /><select id="streamSrtInputPbKeyLen"><option value="16" ${Number(stream.srt_input_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(stream.srt_input_pbkeylen)===24?'selected':''}>AES-192</option><option value="32" ${Number(stream.srt_input_pbkeylen)===32?'selected':''}>AES-256</option></select><input id="streamSrtInputStreamId" value="${escapeHtmlValue(stream.srt_input_streamid||'')}" placeholder="Stream ID (optional)" /><input id="streamSrtInputPassphrase" type="password" value="${escapeHtmlValue(stream.srt_input_passphrase||'')}" autocomplete="new-password" placeholder="Passphrase 10–79 chars (optional)" /></div><small>Native SRT Caller/Listener. Passphrase пустой = без шифрования. Для шифрования минимум 10 символов.</small></div>
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
-        <div class="form-row full" id="streamHlsSynchronizationRow" style="display:${stream.input_mode==='hls'?'':'none'}"><label>HLS синхронизация</label><div class="checkbox-inline"><input id="streamHlsSlowPcrAssist" type="checkbox" ${stream.hls_slow_pcr_assist ? 'checked' : ''} onchange="if(this.checked){const x=document.getElementById('streamHlsPcrPhasePacing');if(x)x.checked=false;}" /><span>Provider PCR clock (ручной режим)</span></div><small>Для каналов вроде TV3: после стабилизации provider PCR становится фиксированным media clock. Транспортный PCR остаётся синтетическим 20 ms.</small><div class="checkbox-inline" style="margin-top:8px"><input id="streamHlsPcrPhasePacing" type="checkbox" ${stream.hls_pcr_phase_pacing ? 'checked' : ''} onchange="if(this.checked){const x=document.getElementById('streamHlsSlowPcrAssist');if(x)x.checked=false;}" /><span>Provider PCR deadline shaper (ручной режим)</span></div><small>203.41: для HLS с сильными VBR burst между provider PCR. Шейпер держит ограниченный lookahead 750 ms, заранее видит будущие PCR deadlines и распределяет burst по предыдущим свободным CBR-слотам, не превышая полезный потолок выхода. В output-path нет ожидания PCR, нет feedback PLL и catch-up. Внешний UDP остаётся CBR с synthetic PCR 20 ms и NULL stuffing. Не включать вместе с Provider PCR clock.</small></div>
         <div class="form-row full" id="streamCamRow" style="display:${String(stream.input_uri||'').startsWith('dvb://')?'': 'none'}"><label>CAM client (scrambled DVB)</label><select id="streamConditionalAccessClient">${camOptions}</select><small>Select a CAM/Newcamd client for encrypted DVB services. FTA streams do not use this setting.</small></div>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
         <div class="form-row full" id="streamBackupFileLoopRow"><label>Зациклить файл замены</label><div class="checkbox-inline"><input id="streamBackupFileLoop" type="checkbox" ${stream.backup_file_loop ? 'checked' : ''} /><span>Повторять до появления основного потока</span></div></div>
@@ -7144,7 +7133,7 @@ function openStreamForm(stream) {
     updateHeaderHeight();
     document.getElementById('modal').classList.add('stream-open');
     document.getElementById('streamCbr').checked = outputType === 'udp-cbr' || (outputType !== 'udp-vbr' && stream.cbr);
-    updateHlsSynchronizationVisibility();
+    updateInputModeVisibility();
     updateBackupInputMode();
     updateTranscodeControls();
     loadUploadedBackupFiles();
@@ -7408,8 +7397,6 @@ function saveStream(id) {
     hls_access_key_name: document.getElementById('streamHlsAccessKeyName').value,
     hls_access_key_value: document.getElementById('streamHlsAccessKeyValue').value,
     hls_user_agent: document.getElementById('streamHlsUserAgent').value,
-    hls_slow_pcr_assist: selectedInputMode === 'hls' && document.getElementById('streamHlsSlowPcrAssist')?.checked === true,
-    hls_pcr_phase_pacing: selectedInputMode === 'hls' && document.getElementById('streamHlsPcrPhasePacing')?.checked === true,
     test_pattern: document.getElementById('streamTestPattern').checked,
     activation_mode: activationMode,
     auto_start: activationMode === 'online' && document.getElementById('streamAutoStart').checked,

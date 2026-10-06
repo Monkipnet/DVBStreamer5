@@ -21,6 +21,9 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
+// Persistent configuration handling: normalize endpoints on input, validate bounded
+// numeric fields, protect UI credentials, and serialize only options consumed by the
+// current runtime. Legacy/unknown JSON members are intentionally ignored.
 
 namespace {
 
@@ -408,11 +411,6 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.hlsAccessKeyMode == "query" ? "token" : "Authorization").asString();
     config.hlsAccessKeyValue = root.get("hls_access_key_value", "").asString();
     config.hlsUserAgent = root.get("hls_user_agent", "Mozilla/5.0 DVBStreamer5").asString();
-    config.hlsSlowPcrAssist = root.get("hls_slow_pcr_assist", false).asBool();
-    config.hlsPcrPhasePacing = root.get("hls_pcr_phase_pacing", false).asBool();
-    // The two manual HLS timing modes are mutually exclusive. Pre-buffered PCR
-    // interval pacing wins if an old API client accidentally submits both flags.
-    if (config.hlsPcrPhasePacing) config.hlsSlowPcrAssist = false;
     config.testPattern = root.get("test_pattern", false).asBool();
     config.activationMode = toLower(root.get("activation_mode", "online").asString());
     if (config.activationMode != "ondemand") config.activationMode = "online";
@@ -530,8 +528,6 @@ Json::Value StreamConfig::toJson() const {
     root["hls_access_key_name"] = hlsAccessKeyName;
     root["hls_access_key_value"] = hlsAccessKeyValue;
     root["hls_user_agent"] = hlsUserAgent;
-    root["hls_slow_pcr_assist"] = hlsSlowPcrAssist;
-    root["hls_pcr_phase_pacing"] = hlsPcrPhasePacing;
     root["test_pattern"] = testPattern;
     root["activation_mode"] = activationMode == "ondemand" ? "ondemand" : "online";
     root["auto_start"] = autoStart;
