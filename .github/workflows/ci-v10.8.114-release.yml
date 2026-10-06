@@ -1,0 +1,39 @@
+name: V10.8.114 Release build
+
+on:
+  push:
+    branches:
+      - v10.8.114-stable-psi
+
+jobs:
+  release-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config \
+            libpcsclite-dev libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool
+
+      - name: Vendor locked media dependencies
+        run: |
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+
+      - name: Configure Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build --parallel 2
+
+      - name: Verify primary artifacts
+        run: |
+          test -x build/DVBStreamer5
+          grep -F 'kProgramVersion = "10.8.114"' src/AppVersion.h
+          git diff --check
+          ls -lh build/DVBStreamer5
