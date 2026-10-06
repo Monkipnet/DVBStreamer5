@@ -8,6 +8,7 @@
 #include "DvbSatellite.h"
 #include "CardManager.h"
 #include "OscamMiniManager.h"
+#include "protocols/SrtVpsProfile.h"
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -651,7 +652,8 @@ std::string streamLink(const StreamConfig& cfg, int httpPort) {
         const bool listener = toLower(cfg.outputMode) != "caller";
         std::string link = "srt://" + advertisedHost(cfg, listener) + ":" +
             std::to_string(validPortOrDefault(cfg.outputPort, 7001)) + "?mode=" + mode +
-            "&latency=" + std::to_string(std::clamp(cfg.srtOutputLatencyMs, 20, 60000));
+            "&latency=" + std::to_string(dvbstreamer5::protocols::srt_vps::latencyMs(
+            cfg, std::clamp(cfg.srtOutputLatencyMs, 20, 60000)));
         if (!cfg.srtOutputStreamId.empty() && mode == "caller") {
             link += "&streamid=" + srtQueryEncode(cfg.srtOutputStreamId);
         }

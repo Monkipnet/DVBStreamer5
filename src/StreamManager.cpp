@@ -744,6 +744,22 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         srtConfig.streamId = spec.streamId;
         srtConfig.pbkeylen = spec.pbkeylen;
         srtConfig.bindAddress = cleanInterface(spec.iface);
+        // Apply VPS/VDS tuning last so the normal per-output latency cannot
+        // overwrite the optimization profile after URI parsing.
+        srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
+        if (streamConfig.srtVpsVdsOptimization) {
+            std::cerr << "SRT VPS/VDS effective OUT stream=" << streamConfig.id
+                      << " mode=" << srtConfig.mode
+                      << " latency_ms=" << srtConfig.latencyMs
+                      << " rcvlatency_ms=" << srtConfig.receiveLatencyMs
+                      << " peerlatency_ms=" << srtConfig.peerLatencyMs
+                      << " rcvbuf=" << srtConfig.receiveBufferBytes
+                      << " sndbuf=" << srtConfig.sendBufferBytes
+                      << " fc=" << srtConfig.flightWindowPackets
+                      << " payload=" << srtConfig.payloadSize
+                      << " io_timeout_ms=" << srtConfig.ioTimeoutMs
+                      << std::endl;
+        }
         if (srtConfig.mode == "listener") srtConfig.host = "0.0.0.0";
         const std::string currentStreamId = streamConfig.id;
         if (!output->start(
@@ -1273,6 +1289,19 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         srtConfig.pbkeylen = streamConfig.srtInputPbKeyLen;
         srtConfig.bindAddress = cleanInterface(streamConfig.inputInterfaceAddress);
         srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
+        if (streamConfig.srtVpsVdsOptimization) {
+            std::cerr << "SRT VPS/VDS effective IN stream=" << streamConfig.id
+                      << " mode=" << srtConfig.mode
+                      << " latency_ms=" << srtConfig.latencyMs
+                      << " rcvlatency_ms=" << srtConfig.receiveLatencyMs
+                      << " peerlatency_ms=" << srtConfig.peerLatencyMs
+                      << " rcvbuf=" << srtConfig.receiveBufferBytes
+                      << " sndbuf=" << srtConfig.sendBufferBytes
+                      << " fc=" << srtConfig.flightWindowPackets
+                      << " payload=" << srtConfig.payloadSize
+                      << " io_timeout_ms=" << srtConfig.ioTimeoutMs
+                      << std::endl;
+        }
         if (!state->nativeSrtInput->start(
                 srtConfig,
                 [relayPtr](const std::uint8_t* data, std::size_t size) { return relayPtr->pushInput(data, size); },
