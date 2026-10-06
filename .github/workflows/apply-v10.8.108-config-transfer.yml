@@ -1,0 +1,50 @@
+name: Apply V10.8.108 config transfer
+
+on:
+  push:
+    branches: [v10.8.108-config-ready]
+    paths:
+      - '.github/workflows/apply-v10.8.108-config-transfer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcrypt-dev
+      - name: Apply V10.8.108
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/apply_v10_8_108_config_transfer.py
+          python3 tools/apply_v10_8_108_config_transfer.py
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.108"' src/AppVersion.h
+          grep -q 'handleConfigExport' src/HttpServer.cpp
+          grep -q 'handleConfigImport' src/HttpServer.cpp
+          grep -q 'dvbstreamer5-config-backup' src/HttpServer.cpp
+          grep -q 'TVStreammer5' src/HttpServer.cpp
+          grep -q 'openConfigTransferModal' src/HttpServer.cpp
+      - name: Configure Release build
+        run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+      - name: Build Release
+        run: cmake --build build-ci --parallel 2
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add src/AppVersion.h src/HttpServer.h src/HttpServer.cpp
+          git diff --cached --check
+          git commit -m "V10.8.108 add config export and import"
+          git push origin HEAD:v10.8.108-config-ready
