@@ -37,8 +37,9 @@ jobs:
           set -euo pipefail
           git config user.name "Monkipnet"
           git config user.email "monkipnet@yandex.ru"
-          python3 -m py_compile tools/apply_v10_8_110_udp_filter.py
+          python3 -m py_compile tools/apply_v10_8_110_udp_filter.py tools/fix_v10_8_110_nft.py
           python3 tools/apply_v10_8_110_udp_filter.py
+          python3 tools/fix_v10_8_110_nft.py
           git diff --check
           grep -q 'kProgramVersion = "10.8.110"' src/AppVersion.h
           grep -q 'udp_input_filter_interfaces' src/ConfigManager.cpp
@@ -46,6 +47,7 @@ jobs:
           grep -q '/api/network/udp-input-filter' src/HttpServer.cpp
           grep -q 'Фильтровать входящий UDP' src/HttpServer.cpp
           grep -q 'dvbstreamer5_udp_input' src/UdpInputFirewall.h
+          grep -q 'meta l4proto udp drop' src/UdpInputFirewall.h
       - name: Validate nftables rule syntax
         shell: bash
         run: |
@@ -56,7 +58,7 @@ jobs:
               type filter hook input priority -10; policy accept;
               iifname "lo" udp dport { 7001 } accept
               iifname "lo" ip daddr 239.1.2.3 udp dport 1234 accept
-              iifname "lo" ip daddr 224.0.0.0/4 udp drop
+              iifname "lo" ip daddr 224.0.0.0/4 meta l4proto udp drop
               iifname "lo" udp dport { 1234, 1235 } drop
             }
           }
