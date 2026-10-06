@@ -1,0 +1,58 @@
+name: Apply V10.8.109 SRT VPS profile fix
+
+on:
+  push:
+    branches: [v10.8.109-srt-vps]
+    paths:
+      - '.github/workflows/apply-v10.8.109-srt-vps.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool \
+            libpcsclite-dev pcscd
+      - name: Prepare vendored media dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+      - name: Apply V10.8.109
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/apply_v10_8_109_srt_vps.py
+          python3 tools/apply_v10_8_109_srt_vps.py
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.109"' src/AppVersion.h
+          grep -q 'SRT VPS/VDS effective OUT' src/StreamManager.cpp
+          grep -q 'SRT VPS/VDS effective IN' src/StreamManager.cpp
+          grep -q 'srt_vps::latencyMs' src/HttpServer.cpp
+      - name: Configure Release build
+        run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+      - name: Build Release
+        run: cmake --build build-ci --parallel 2
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add src/AppVersion.h src/StreamManager.cpp src/HttpServer.cpp
+          git diff --cached --check
+          git commit -m "V10.8.109 fix SRT VPS VDS profile ordering"
+          git push origin HEAD:v10.8.109-srt-vps
