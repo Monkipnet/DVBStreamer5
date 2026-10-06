@@ -39,12 +39,10 @@ jobs:
         run: |
           set -euo pipefail
           test -f src/StreamManagerImpl.inc
-          if git grep -n 'StreamManagerImpl.inc' -- ':!src/StreamManagerImpl.inc'; then
-            echo 'StreamManagerImpl.inc is still referenced; refusing to delete it.' >&2
-            exit 1
-          fi
-          if grep -q 'StreamManagerImpl.inc' CMakeLists.txt; then
-            echo 'StreamManagerImpl.inc is still part of CMake.' >&2
+          if git grep -n 'StreamManagerImpl.inc' -- \
+              'src/**' 'CMakeLists.txt' \
+              ':!src/StreamManagerImpl.inc'; then
+            echo 'StreamManagerImpl.inc is still referenced by compiled/project source; refusing to delete it.' >&2
             exit 1
           fi
 
