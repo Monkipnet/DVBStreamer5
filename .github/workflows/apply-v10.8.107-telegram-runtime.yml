@@ -1,0 +1,37 @@
+name: Apply V10.8.107 Telegram runtime fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v10.8.107-telegram-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply and verify V10.8.107
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/apply_v10_8_107_telegram_runtime.py
+          python3 tools/apply_v10_8_107_telegram_runtime.py
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.107"' src/AppVersion.h
+          grep -q 'telegramNoInputSeconds' src/StreamManager.cpp
+          grep -q 'No input media data for more than 5 seconds' src/StreamManager.cpp
+          grep -q 'Stopped by user from control panel' src/StreamManager.cpp
+          grep -q 'bool StreamManager::stopStreamAsync' src/StreamManager.cpp
+          git add src/AppVersion.h src/StreamManager.cpp
+          git diff --cached --check
+          git commit -m "V10.8.107 fix Telegram runtime events"
+          git push origin HEAD:main
