@@ -29,10 +29,7 @@ jobs:
           grep -q 'kProgramVersion = "10.8.105"' src/AppVersion.h
           grep -q 'NATIVE OBSERVED CBR start target_kbps=' src/media/NativeUdpRelay.cpp
           ! grep -q 'relay.paceObservedTransport = false;' src/StreamManager.cpp
-          rm -f tools/apply_v10_8_105.py
-          rm -f patches/v10.8.105-true-observed-cbr.patch
-          rm -f .github/workflows/apply-v10.8.105.yml
-          git add -A
+          git add src/AppVersion.h src/StreamManager.cpp src/media/NativeUdpRelay.cpp
           git diff --cached --check
           git commit -m "V10.8.105 true CBR for SRT HTTP HLS outputs"
           git push origin HEAD:main
