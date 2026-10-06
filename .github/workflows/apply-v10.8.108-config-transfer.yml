@@ -20,7 +20,16 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libcrypt-dev
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool
+      - name: Prepare vendored media dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
       - name: Apply V10.8.108
         shell: bash
         run: |
