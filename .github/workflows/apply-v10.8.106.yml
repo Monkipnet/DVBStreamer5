@@ -1,0 +1,36 @@
+name: Apply V10.8.106 telemetry and Telegram fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v10.8.106.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply and verify V10.8.106
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/apply_v10_8_106.py
+          python3 tools/apply_v10_8_106.py
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.106"' src/AppVersion.h
+          grep -q 'cbrTransportStarted' src/StreamManager.cpp
+          grep -q 'Telegram send ok: status=' src/TelegramNotifier.cpp
+          grep -q 'Входной поток недоступен' src/StreamManager.cpp
+          git add src/AppVersion.h src/StreamManager.cpp src/TelegramNotifier.cpp
+          git diff --cached --check
+          git commit -m "V10.8.106 fix CBR tile and Telegram API"
+          git push origin HEAD:main
