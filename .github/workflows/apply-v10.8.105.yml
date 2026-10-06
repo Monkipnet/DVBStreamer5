@@ -17,19 +17,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply and verify V10.8.105
+      - name: Diagnose transform
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           git config user.name "Monkipnet"
           git config user.email "monkipnet@yandex.ru"
-          python3 -m py_compile tools/apply_v10_8_105.py
-          python3 tools/apply_v10_8_105.py
-          git diff --check
-          grep -q 'kProgramVersion = "10.8.105"' src/AppVersion.h
-          grep -q 'NATIVE OBSERVED CBR start target_kbps=' src/media/NativeUdpRelay.cpp
-          ! grep -q 'relay.paceObservedTransport = false;' src/StreamManager.cpp
-          git add src/AppVersion.h src/StreamManager.cpp src/media/NativeUdpRelay.cpp
-          git diff --cached --check
-          git commit -m "V10.8.105 true CBR for SRT HTTP HLS outputs"
+          set +e
+          python3 -m py_compile tools/apply_v10_8_105.py >/tmp/cbrdiag.txt 2>&1
+          rc1=$?
+          if [ "$rc1" -eq 0 ]; then
+            python3 tools/apply_v10_8_105.py >>/tmp/cbrdiag.txt 2>&1
+            rc2=$?
+          else
+            rc2=99
+          fi
+          set -e
+          {
+            echo "py_compile=$rc1"
+            echo "transform=$rc2"
+            cat /tmp/cbrdiag.txt
+          } > tools/v10_8_105_diagnostic.txt
+          git checkout -- src/AppVersion.h src/StreamManager.cpp src/media/NativeUdpRelay.cpp
+          git add tools/v10_8_105_diagnostic.txt
+          git commit -m "diagnose V10.8.105 transform"
           git push origin HEAD:main
