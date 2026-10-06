@@ -1,0 +1,91 @@
+name: Apply V10.8.112 cleanup
+
+on:
+  push:
+    branches: [v10.8.112-cleanup]
+    paths:
+      - '.github/workflows/apply-v10.8.112-cleanup.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool \
+            libpcsclite-dev pcscd
+
+      - name: Prepare vendored media dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+
+      - name: Verify legacy duplicate is unreferenced
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f src/StreamManagerImpl.inc
+          if git grep -n 'StreamManagerImpl.inc' -- ':!src/StreamManagerImpl.inc'; then
+            echo 'StreamManagerImpl.inc is still referenced; refusing to delete it.' >&2
+            exit 1
+          fi
+          if grep -q 'StreamManagerImpl.inc' CMakeLists.txt; then
+            echo 'StreamManagerImpl.inc is still part of CMake.' >&2
+            exit 1
+          fi
+
+      - name: Apply V10.8.112 cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          python3 -m py_compile tools/apply_v10_8_112_cleanup.py
+          python3 tools/apply_v10_8_112_cleanup.py
+          git diff --check
+
+          grep -q 'kProgramVersion = "10.8.112"' src/AppVersion.h
+          test ! -e src/StreamManagerImpl.inc
+          ! git grep -nE 'hlsSlowPcrAssist|hlsPcrPhasePacing|hls_slow_pcr_assist|hls_pcr_phase_pacing|streamHlsSlowPcrAssist|streamHlsPcrPhasePacing|Provider PCR deadline shaper|Provider PCR clock' -- src
+          ! git grep -n 'updateHlsSynchronizationVisibility' -- src
+          grep -q 'function updateInputModeVisibility()' src/HttpServer.cpp
+          grep -q 'Stream orchestration layer' src/StreamManager.cpp
+          grep -q 'Native HLS acquisition' src/media/NativeHlsInput.cpp
+          grep -q 'Native transport relay' src/media/NativeUdpRelay.cpp
+          grep -q 'Fixed-rate MPEG-TS sender clock' src/media/CbrTsPacer.cpp
+          grep -q '^\*STAGE\*\.md$' .gitignore
+
+          if find . -type f -iname '*stage*.md' -print -quit | grep -q .; then
+            echo 'Historical STAGE markdown files remain after cleanup.' >&2
+            find . -type f -iname '*stage*.md' -print
+            exit 1
+          fi
+
+      - name: Configure Release build
+        run: cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build-ci --parallel 2
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          git commit -m "V10.8.112 remove obsolete PCR controls and clean repository"
+          git push origin HEAD:v10.8.112-cleanup
