@@ -59,13 +59,13 @@ function tileRuntimeStatus(value) {
 function localizeUiTextNode(node) {"""
 s = replace_once(s, translate_tail, helper, 'tile status helper')
 
-old_update = """  const runtimeStatus = tile.querySelector('[data-role=\\\"runtime-status\\\"]');
+old_update = """  const runtimeStatus = tile.querySelector('[data-role=\"runtime-status\"]');
   if (runtimeStatus) {
     const value = String(stream.status || '').trim();
     runtimeStatus.textContent = value;
     runtimeStatus.title = value;
   }"""
-new_update = """  const runtimeStatus = tile.querySelector('[data-role=\\\"runtime-status\\\"]');
+new_update = """  const runtimeStatus = tile.querySelector('[data-role=\"runtime-status\"]');
   if (runtimeStatus) {
     const value = tileRuntimeStatus(stream.status);
     runtimeStatus.textContent = value;
@@ -73,8 +73,8 @@ new_update = """  const runtimeStatus = tile.querySelector('[data-role=\\\"runti
   }"""
 s = replace_once(s, old_update, new_update, 'live tile runtime status')
 
-old_template = """<span data-role=\\\"runtime-status\\\" class=\\\"runtime-status\\\" title=\\\"${escapeHtmlValue(stream.status || '')}\\\">${escapeHtmlValue(stream.status || '')}</span>"""
-new_template = """<span data-role=\\\"runtime-status\\\" class=\\\"runtime-status\\\" title=\\\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\\\">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>"""
+old_template = """<span data-role=\"runtime-status\" class=\"runtime-status\" title=\"${escapeHtmlValue(stream.status || '')}\">${escapeHtmlValue(stream.status || '')}</span>"""
+new_template = """<span data-role=\"runtime-status\" class=\"runtime-status\" title=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>"""
 s = replace_once(s, old_template, new_template, 'initial tile runtime status')
 
 # One dynamic fragment is not an exact text node because the level number is appended.
