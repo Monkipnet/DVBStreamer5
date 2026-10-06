@@ -177,7 +177,7 @@ diff --git a/src/StreamManager.cpp b/src/StreamManager.cpp
 +        // V10.8.105: keep paceObservedTransport enabled when CBR is selected.
 +        // Shared DVB only changes how input arrives; SRT/HTTP/HLS still require
 +        // the output CBR shaper to insert NULL packets up to targetBitrate.
- diff --git a/src/AppVersion.h b/src/AppVersion.h
+diff --git a/src/AppVersion.h b/src/AppVersion.h
 --- a/src/AppVersion.h
 +++ b/src/AppVersion.h
 @@ -6 +6 @@
