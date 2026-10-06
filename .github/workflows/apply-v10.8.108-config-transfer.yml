@@ -22,6 +22,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake nodejs pkg-config libssl-dev libcrypt-dev \
+            libpcsclite-dev pcscd pcsc-tools libccid \
             ca-certificates curl binutils nasm autoconf automake libtool
       - name: Prepare vendored media dependencies
         shell: bash
