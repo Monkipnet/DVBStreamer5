@@ -40,9 +40,16 @@ bool CbrTsPacer::nextDatagram(
         return false;
     }
 
-    const auto interval = std::chrono::nanoseconds(
-        kDatagramBits * kNanosecondsPerSecond / targetBitrate_);
-    if (now - nextDeadline_ > interval * 2) {
+    // Keep the pacing clock continuous across ordinary scheduler jitter.  The
+    // previous implementation snapped nextDeadline_ to `now` as soon as the
+    // worker was more than two datagram intervals late.  At typical DVB rates
+    // two 1316-byte intervals are only a few milliseconds, so normal Linux
+    // wake-up jitter repeatedly discarded elapsed CBR time and made the real
+    // network bitrate sag below the configured target.  Let the caller drain
+    // overdue datagrams instead; only re-anchor after a genuinely long stall
+    // (suspend/debugger/source restart) to avoid a huge catch-up burst.
+    constexpr auto kMaximumCatchupWindow = std::chrono::milliseconds(250);
+    if (now - nextDeadline_ > kMaximumCatchupWindow) {
         nextDeadline_ = now;
         pacingRemainder_ = 0;
     }
