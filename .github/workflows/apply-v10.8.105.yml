@@ -1,0 +1,36 @@
+name: Apply V10.8.105 true CBR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-v10.8.105.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply and verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          git apply --check patches/v10.8.105-true-observed-cbr.patch
+          git apply patches/v10.8.105-true-observed-cbr.patch
+          git diff --check
+          grep -q 'kProgramVersion = "10.8.105"' src/AppVersion.h
+          grep -q 'NATIVE OBSERVED CBR start target_kbps=' src/media/NativeUdpRelay.cpp
+          ! grep -q 'relay.paceObservedTransport = false;' src/StreamManager.cpp
+          rm -f patches/v10.8.105-true-observed-cbr.patch
+          rm -f .github/workflows/apply-v10.8.105.yml
+          git add -A
+          git commit -m "V10.8.105 true CBR for SRT HTTP HLS outputs"
+          git push origin HEAD:main
