@@ -363,6 +363,7 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     pmtPrefix_.clear();
     pmtPid_ = mpegts::kNullPid;
     elementaryStreamType_.fill(0);
+    hasH26xVideo_ = false;
     nextSequence_ = 0;
     completedSegments_ = 0;
     haveFirstPcr_ = false;
@@ -444,6 +445,7 @@ void NativeHlsSegmenter::observePsi(const mpegts::Packet& packet,
                             pmtCollecting_.clear();
                             pmtPrefix_.clear();
                             elementaryStreamType_.fill(0);
+                            hasH26xVideo_ = false;
                         }
                     }
                 }
@@ -464,7 +466,14 @@ void NativeHlsSegmenter::observePsi(const mpegts::Packet& packet,
         if ((info.payloadUnitStart || !pmtCollecting_.empty()) &&
             pmtCollecting_.size() < kMaxPsiPackets) {
             pmtCollecting_.push_back(packet);
-            (void)parsePmtStreamTypes(pmtCollecting_, elementaryStreamType_);
+            if (parsePmtStreamTypes(pmtCollecting_, elementaryStreamType_)) {
+                // PMT changes are rare compared with TS packet rate. Compute the
+                // 8192-entry H.26x presence scan here once per completed PMT,
+                // not from appendPacket() for every packet.
+                hasH26xVideo_ = std::any_of(
+                    elementaryStreamType_.begin(), elementaryStreamType_.end(),
+                    [](std::uint8_t type) { return type == 0x1bU || type == 0x24U; });
+            }
         }
     }
 }
@@ -741,9 +750,7 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         }
     }
 
-    const bool hasH26xVideo = std::any_of(
-        elementaryStreamType_.begin(), elementaryStreamType_.end(),
-        [](std::uint8_t type) { return type == 0x1bU || type == 0x24U; });
+    // V10.8.121: hasH26xVideo_ is maintained when PMT state changes.
     const double segmentTarget = completedSegments_ == 0
         ? std::min(config_.targetDurationSeconds, 1.0)
         : config_.targetDurationSeconds;
@@ -915,7 +922,7 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         }
     };
 
-    if (!config_.independentSegments && hasH26xVideo) {
+    if (!config_.independentSegments && hasH26xVideo_) {
         if (targetReached) h26xCutArmed_ = true;
 
         // A pending candidate owns every TS packet from its video PES start
@@ -1053,9 +1060,7 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     // decoded correctly when they are already listed together in a static HLS
     // playlist. Wait for two finalized H.26x segments before making video.m3u8
     // visible; later rotations keep the normal rolling playlist cadence.
-    const bool passthroughH26x = !config_.independentSegments &&
-        std::any_of(elementaryStreamType_.begin(), elementaryStreamType_.end(),
-                    [](std::uint8_t type) { return type == 0x1bU || type == 0x24U; });
+    const bool passthroughH26x = !config_.independentSegments && hasH26xVideo_;
     if (passthroughH26x && completedSegments_ < 2U) return true;
 
     if (!writePlaylist(false)) return false;

@@ -86,6 +86,9 @@ private:
     // gate must apply MPEG-2 sequence-header rules only to MPEG-1/2 video, not
     // to AVC/HEVC PES that use the same 0xE0..0xEF PES stream_id range.
     std::array<std::uint8_t, 8192> elementaryStreamType_{};
+    // V10.8.121: PMT-derived cache. appendPacket() is a per-TS-packet hot path;
+    // scanning all 8192 PID slots there multiplied CPU cost by every HLS stream.
+    bool hasH26xVideo_ = false;
     std::uint64_t nextSequence_ = 0;
     std::uint64_t completedSegments_ = 0;
     bool running_ = false;
