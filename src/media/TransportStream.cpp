@@ -72,6 +72,53 @@ void PacketFramer::push(
     if (!data || size == 0) {
         return;
     }
+
+    // V10.8.122: most native paths already deliver MPEG-TS on a 188-byte
+    // packet grid. Reserve the output once and consume that aligned prefix
+    // directly instead of first copying the whole chunk into pending_ and then
+    // shifting it back out again. The exact legacy byte-resync path below is
+    // retained for partial, corrupt or arbitrarily aligned input.
+    const std::size_t estimatedPackets = (pending_.size() + size) / kPacketSize;
+    if (estimatedPackets > 0 &&
+        estimatedPackets <= packets.max_size() - packets.size()) {
+        packets.reserve(packets.size() + estimatedPackets);
+    }
+
+    if (pending_.empty()) {
+        std::size_t direct = 0;
+        while (size - direct >= kPacketSize) {
+            if (data[direct] != kSyncByte) {
+                break;
+            }
+            const std::size_t remaining = size - direct;
+            if (remaining >= 2 * kPacketSize &&
+                data[direct + kPacketSize] != kSyncByte) {
+                break;
+            }
+            if (remaining >= 3 * kPacketSize &&
+                data[direct + 2 * kPacketSize] != kSyncByte) {
+                break;
+            }
+            PacketInfo candidateInfo;
+            if (!inspectPacket(data + direct, kPacketSize, candidateInfo)) {
+                break;
+            }
+
+            Packet packet {};
+            std::memcpy(packet.data(), data + direct, kPacketSize);
+            packets.push_back(packet);
+            direct += kPacketSize;
+        }
+
+        if (direct == size) {
+            return;
+        }
+        if (direct > 0) {
+            data += direct;
+            size -= direct;
+        }
+    }
+
     pending_.insert(pending_.end(), data, data + size);
 
     std::size_t consumed = 0;
