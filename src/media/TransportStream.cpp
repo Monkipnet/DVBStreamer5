@@ -173,6 +173,55 @@ void PacketFramer::push(
     }
 }
 
+void PacketFramer::pushTrustedAligned(
+    const std::uint8_t* data, std::size_t size, std::vector<Packet>& packets) {
+    if (!data || size == 0) return;
+
+    // V10.8.125: SharedDvbInputPool receives bytes directly from the Linux DVB
+    // TS tap. On the common aligned path, checking the 188-byte sync grid is
+    // sufficient for framing; the selected-service remapper still performs the
+    // full MPEG-TS header/adaptation validation before accepting a packet. This
+    // avoids parsing every foreign-service packet in a high-bitrate MPTS.
+    if (!pending_.empty()) {
+        push(data, size, packets);
+        return;
+    }
+
+    const std::size_t estimatedPackets = size / kPacketSize;
+    if (estimatedPackets > 0 &&
+        estimatedPackets <= packets.max_size() - packets.size()) {
+        packets.reserve(packets.size() + estimatedPackets);
+    }
+
+    std::size_t direct = 0;
+    while (size - direct >= kPacketSize) {
+        if (data[direct] != kSyncByte) break;
+        const std::size_t remaining = size - direct;
+        if (remaining >= 2 * kPacketSize &&
+            data[direct + kPacketSize] != kSyncByte) {
+            break;
+        }
+        if (remaining >= 3 * kPacketSize &&
+            data[direct + 2 * kPacketSize] != kSyncByte) {
+            break;
+        }
+
+        packets.emplace_back();
+        std::memcpy(packets.back().data(), data + direct, kPacketSize);
+        direct += kPacketSize;
+    }
+
+    if (direct == size) return;
+    if (direct > 0) {
+        data += direct;
+        size -= direct;
+    }
+
+    // Partial/misaligned/corrupt data retains the exact legacy resync and full
+    // structural validation behavior.
+    push(data, size, packets);
+}
+
 void PacketFramer::reset() noexcept {
     pending_.clear();
 }

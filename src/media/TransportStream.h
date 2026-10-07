@@ -34,6 +34,11 @@ bool rewritePid(std::uint8_t* data, std::size_t size, std::uint16_t pid) noexcep
 class PacketFramer {
 public:
     void push(const std::uint8_t* data, std::size_t size, std::vector<Packet>& packets);
+    // Fast path for trusted Linux DVB TS-tap input. It verifies the 188-byte
+    // sync grid but intentionally defers full packet-header validation to the
+    // selected-service remapper. Any alignment break falls back to push().
+    void pushTrustedAligned(
+        const std::uint8_t* data, std::size_t size, std::vector<Packet>& packets);
     void reset() noexcept;
 
 private:

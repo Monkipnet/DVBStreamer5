@@ -224,7 +224,10 @@ public:
         if (!relay || !data || size == 0) return false;
 
         inputPackets_.clear();
-        framer_.push(data, size, inputPackets_);
+        // V10.8.125: bytes originate from the shared Linux DVB TS tap. Avoid
+        // full inspectPacket() work for every foreign-service MPTS packet; the
+        // selected packets are validated below and again by Remapper::process().
+        framer_.pushTrustedAligned(data, size, inputPackets_);
         filteredPackets_.clear();
 
         // V10.8.118: keep the V10.8.117 filtering semantics but avoid doing a
@@ -246,6 +249,17 @@ public:
                 // to other services before inspectPacket(), PSI assembly and the
                 // per-packet steady-clock check inside Remapper::process().
                 if (!remapper_.wantsInputPid(pid)) continue;
+            }
+
+            // The trusted framer intentionally skipped full header validation.
+            // Preserve the old behavior for malformed selected-service packets:
+            // drop them here instead of turning a recoverable damaged TS packet
+            // into a fatal remapper error. Foreign-service packets never pay this
+            // parsing cost because wantsInputPid() rejected them above.
+            dvbstreamer5::media::mpegts::PacketInfo selectedInfo;
+            if (!dvbstreamer5::media::mpegts::inspectPacket(
+                    packet.data(), packet.size(), selectedInfo)) {
+                continue;
             }
 
             // Remapper appends to the supplied packet vector. Accumulate the
