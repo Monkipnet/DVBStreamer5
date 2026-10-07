@@ -104,9 +104,11 @@ void PacketFramer::push(
                 break;
             }
 
-            Packet packet {};
-            std::memcpy(packet.data(), data + direct, kPacketSize);
-            packets.push_back(packet);
+            // V10.8.124: construct the destination packet directly in the
+            // vector. The previous temporary Packet + push_back(packet) copied
+            // every 188-byte TS packet twice on this hot aligned-input path.
+            packets.emplace_back();
+            std::memcpy(packets.back().data(), data + direct, kPacketSize);
             direct += kPacketSize;
         }
 
@@ -159,9 +161,10 @@ void PacketFramer::push(
             break;
         }
 
-        Packet packet {};
-        std::memcpy(packet.data(), pending_.data() + candidate, kPacketSize);
-        packets.push_back(packet);
+        // Same single-copy rule for the byte-resync fallback path.
+        packets.emplace_back();
+        std::memcpy(
+            packets.back().data(), pending_.data() + candidate, kPacketSize);
         consumed = candidate + kPacketSize;
     }
 
