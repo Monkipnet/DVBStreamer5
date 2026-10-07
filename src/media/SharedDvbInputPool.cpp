@@ -152,6 +152,7 @@ struct SharedDvbInputPool::Impl {
         }
 
         bool dropped = false;
+        bool notify = false;
         std::uint64_t droppedCount = 0;
         {
             std::lock_guard<std::mutex> lock(subscriber->mutex);
@@ -173,6 +174,11 @@ struct SharedDvbInputPool::Impl {
                 ++subscriber->droppedChunks;
                 dropped = true;
             } else {
+                // V10.8.119: only wake the subscriber when the queue transitions
+                // from empty to non-empty. Once awake, runSubscriber drains the
+                // queue without sleeping again while data remains, so notifying
+                // on every 64 KiB tuner chunk only creates redundant futex wakeups.
+                notify = subscriber->queue.empty();
                 subscriber->queuedBytes += chunk->size();
                 subscriber->queue.push_back(chunk);
             }
@@ -186,7 +192,7 @@ struct SharedDvbInputPool::Impl {
                       << " max_bytes=" << kSubscriberQueueBytes
                       << std::endl;
         }
-        subscriber->condition.notify_one();
+        if (notify) subscriber->condition.notify_one();
     }
 
     static void finishSource(
