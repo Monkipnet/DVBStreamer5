@@ -798,8 +798,10 @@ void NativeUdpRelay::run() {
         if (!config_.observeTransport || observedPackets.empty()) return true;
 
         if (observedCbrPacer) {
+            bool wakeForStart = false;
             {
                 std::lock_guard<std::mutex> lock(observedCbrMutex);
+                const bool wasStarted = observedCbrPacer->started();
                 for (const auto& packet : observedPackets) {
                     if (!observedCbrPacer->enqueue(packet)) {
                         std::lock_guard<std::mutex> errorLock(errorMutex_);
@@ -811,8 +813,14 @@ void NativeUdpRelay::run() {
                         return false;
                     }
                 }
+                // V10.8.126: once the observed pacer has started, its worker
+                // sleeps on nextDeadline() and new input does not move that
+                // deadline. Repeated notify_one() calls only wake wait_until()
+                // early, creating avoidable futex/scheduler churn. The first
+                // successful enqueue still wakes the worker immediately.
+                wakeForStart = !wasStarted && observedCbrPacer->started();
             }
-            observedCbrCondition.notify_one();
+            if (wakeForStart) observedCbrCondition.notify_one();
             return true;
         }
 
