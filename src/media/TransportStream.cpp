@@ -222,6 +222,50 @@ void PacketFramer::pushTrustedAligned(
     push(data, size, packets);
 }
 
+bool PacketFramer::visitTrustedAligned(
+    const std::uint8_t* data, std::size_t size,
+    void* context, TrustedPacketVisitor visitor) {
+    if (!data || size == 0 || !visitor) return true;
+
+    auto visitFramed = [&](const std::uint8_t* bytes, std::size_t bytesSize) {
+        std::vector<Packet> fallbackPackets;
+        push(bytes, bytesSize, fallbackPackets);
+        for (const auto& packet : fallbackPackets) {
+            if (!visitor(context, packet.data())) return false;
+        }
+        return true;
+    };
+
+    if (!pending_.empty()) {
+        return visitFramed(data, size);
+    }
+
+    std::size_t direct = 0;
+    while (size - direct >= kPacketSize) {
+        if (data[direct] != kSyncByte) break;
+        const std::size_t remaining = size - direct;
+        if (remaining >= 2 * kPacketSize &&
+            data[direct + kPacketSize] != kSyncByte) {
+            break;
+        }
+        if (remaining >= 3 * kPacketSize &&
+            data[direct + 2 * kPacketSize] != kSyncByte) {
+            break;
+        }
+
+        if (!visitor(context, data + direct)) return false;
+        direct += kPacketSize;
+    }
+
+    if (direct == size) return true;
+    if (direct > 0) {
+        data += direct;
+        size -= direct;
+    }
+
+    return visitFramed(data, size);
+}
+
 void PacketFramer::reset() noexcept {
     pending_.clear();
 }

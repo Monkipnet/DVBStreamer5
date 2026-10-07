@@ -39,6 +39,15 @@ public:
     // selected-service remapper. Any alignment break falls back to push().
     void pushTrustedAligned(
         const std::uint8_t* data, std::size_t size, std::vector<Packet>& packets);
+
+    // V10.8.129: zero-copy visitor for trusted Linux DVB TS-tap input.
+    // The common aligned path invokes visitor directly on the source packet;
+    // partial/misaligned/corrupt input falls back to push() and preserves the
+    // exact legacy byte-resync and structural-validation behavior.
+    using TrustedPacketVisitor = bool (*)(void*, const std::uint8_t*);
+    bool visitTrustedAligned(
+        const std::uint8_t* data, std::size_t size,
+        void* context, TrustedPacketVisitor visitor);
     void reset() noexcept;
 
 private:
