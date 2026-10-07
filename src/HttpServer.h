@@ -87,9 +87,14 @@ private:
     void handleBlockStreamClient(const std::string& body, bool blocked);
     std::string renderIndexPage();
     void recordQualitySample(const StreamConfig& cfg, const Json::Value& state);
+    void recordAllQualitySamples();
+    void scheduleQualitySampler();
+    void loadQualityHistoryFromDisk();
+    void saveQualityHistoryToDisk();
 
     boost::asio::io_context& ioContext;
     boost::asio::thread_pool sessionPool;
+    boost::asio::steady_timer qualityHistoryTimer;
     std::atomic<uint32_t> queuedHttpSessions{0};
     std::unordered_map<int, std::shared_ptr<tcp::acceptor>> acceptors;
     mutable std::mutex acceptorsMutex;
@@ -114,6 +119,8 @@ private:
     std::map<std::string, std::pair<uint64_t, uint64_t>> previousNetworkBytes;
     std::unordered_map<std::string, std::deque<QualitySample>> qualitySamples;
     std::unordered_map<std::string, int64_t> qualityLastCompaction;
+    bool qualitySamplerStarted = false;
+    int64_t qualityLastPersist = 0;
     std::unordered_map<std::string, std::function<void(const boost::asio::ip::tcp::socket&)>> endpointHandlers;
 };
 
