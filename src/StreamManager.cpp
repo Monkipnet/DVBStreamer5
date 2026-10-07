@@ -233,12 +233,19 @@ public:
         // malformed packets still reach Remapper and retain its validation.
         std::string remapError;
         for (const auto& packet : inputPackets_) {
-            if (dropSourceNullPackets_ &&
-                packet[0] == dvbstreamer5::media::mpegts::kSyncByte) {
+            if (packet[0] == dvbstreamer5::media::mpegts::kSyncByte) {
                 const std::uint16_t pid = static_cast<std::uint16_t>(
                     (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8) |
                     packet[2]);
-                if (pid == dvbstreamer5::media::mpegts::kNullPid) continue;
+                if (dropSourceNullPackets_ &&
+                    pid == dvbstreamer5::media::mpegts::kNullPid) {
+                    continue;
+                }
+
+                // V10.8.120: once PAT/PMT state is known, reject PIDs belonging
+                // to other services before inspectPacket(), PSI assembly and the
+                // per-packet steady-clock check inside Remapper::process().
+                if (!remapper_.wantsInputPid(pid)) continue;
             }
 
             // Remapper appends to the supplied packet vector. Accumulate the
@@ -255,6 +262,11 @@ public:
                 return false;
             }
         }
+
+        // Preserve the V10.8.114 PAT/PMT/SDT cadence even when an input
+        // block contained only foreign-service PIDs and therefore skipped every
+        // Remapper::process() call above.
+        remapper_.tick(filteredPackets_);
 
         if (filteredPackets_.empty()) return true;
         static_assert(

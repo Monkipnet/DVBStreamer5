@@ -23,6 +23,8 @@ class Remapper {
 public:
     bool initialize(const RemapConfig& config, std::string& error);
     bool process(const Packet& input, std::vector<Packet>& output, std::string& error);
+    void tick(std::vector<Packet>& output);
+    bool wantsInputPid(std::uint16_t pid) const noexcept;
 
 private:
     struct PsiSectionState {
