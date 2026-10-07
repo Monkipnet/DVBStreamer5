@@ -205,6 +205,199 @@ bool sendCbrDatagram(
     return true;
 }
 
+
+constexpr std::size_t kObservedCbrDatagramBytes =
+    dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
+    dvbstreamer5::media::mpegts::kPacketSize;
+constexpr std::size_t kObservedCbrDispatchMaximumQueuedBytes = 2 * 1024 * 1024;
+constexpr std::size_t kObservedCbrDispatchShardCount = 4;
+
+static_assert(
+    sizeof(dvbstreamer5::media::mpegts::CbrDatagram) == kObservedCbrDatagramBytes,
+    "CBR datagram packet storage must be contiguous");
+
+struct ObservedCbrDispatchToken {
+    explicit ObservedCbrDispatchToken(
+        const NativeTransportObserver& transportObserver,
+        std::size_t shardIndex)
+        : observer(transportObserver), shard(shardIndex) {}
+
+    NativeTransportObserver observer;
+    const std::size_t shard;
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool active = true;
+    std::size_t queuedBytes = 0;
+    std::size_t inFlight = 0;
+};
+
+class ObservedCbrDispatcher {
+public:
+    static ObservedCbrDispatcher& instance() {
+        static ObservedCbrDispatcher dispatcher;
+        return dispatcher;
+    }
+
+    std::shared_ptr<ObservedCbrDispatchToken> createToken(
+        const NativeTransportObserver& observer) {
+        const std::size_t shard =
+            nextShard_.fetch_add(1, std::memory_order_relaxed) %
+            kObservedCbrDispatchShardCount;
+        return std::make_shared<ObservedCbrDispatchToken>(observer, shard);
+    }
+
+    bool enqueue(
+        const std::shared_ptr<ObservedCbrDispatchToken>& token,
+        const dvbstreamer5::media::mpegts::CbrDatagram& datagram) {
+        if (!token) return false;
+        {
+            std::lock_guard<std::mutex> tokenLock(token->mutex);
+            if (!token->active ||
+                token->queuedBytes + kObservedCbrDatagramBytes >
+                    kObservedCbrDispatchMaximumQueuedBytes) {
+                return false;
+            }
+            token->queuedBytes += kObservedCbrDatagramBytes;
+        }
+
+        Shard& shard = shards_[token->shard];
+        bool notify = false;
+        {
+            std::lock_guard<std::mutex> queueLock(shard.mutex);
+            if (shard.stopping) {
+                std::lock_guard<std::mutex> tokenLock(token->mutex);
+                token->queuedBytes -= kObservedCbrDatagramBytes;
+                return false;
+            }
+            notify = shard.queue.empty();
+            Task task;
+            task.token = token;
+            task.datagram = datagram;
+            shard.queue.push_back(std::move(task));
+        }
+        if (notify) shard.condition.notify_one();
+        return true;
+    }
+
+    void deactivateAndWait(
+        const std::shared_ptr<ObservedCbrDispatchToken>& token) noexcept {
+        if (!token) return;
+        std::unique_lock<std::mutex> lock(token->mutex);
+        token->active = false;
+        token->condition.wait(lock, [&] { return token->inFlight == 0; });
+    }
+
+    static constexpr std::size_t shardCount() noexcept {
+        return kObservedCbrDispatchShardCount;
+    }
+
+private:
+    struct Task {
+        std::shared_ptr<ObservedCbrDispatchToken> token;
+        dvbstreamer5::media::mpegts::CbrDatagram datagram {};
+    };
+
+    struct Shard {
+        std::mutex mutex;
+        std::condition_variable condition;
+        std::deque<Task> queue;
+        bool stopping = false;
+        std::thread worker;
+    };
+
+    ObservedCbrDispatcher() {
+        try {
+            for (std::size_t index = 0; index < shards_.size(); ++index) {
+                shards_[index].worker = std::thread([this, index] {
+                    runShard(index);
+                });
+            }
+        } catch (...) {
+            for (auto& shard : shards_) {
+                {
+                    std::lock_guard<std::mutex> lock(shard.mutex);
+                    shard.stopping = true;
+                }
+                shard.condition.notify_all();
+            }
+            for (auto& shard : shards_) {
+                if (shard.worker.joinable()) shard.worker.join();
+            }
+            throw;
+        }
+    }
+
+    ~ObservedCbrDispatcher() {
+        for (auto& shard : shards_) {
+            {
+                std::lock_guard<std::mutex> lock(shard.mutex);
+                shard.stopping = true;
+            }
+            shard.condition.notify_all();
+        }
+        for (auto& shard : shards_) {
+            if (shard.worker.joinable()) shard.worker.join();
+        }
+    }
+
+    void runShard(std::size_t index) {
+        Shard& shard = shards_[index];
+        while (true) {
+            Task task;
+            {
+                std::unique_lock<std::mutex> lock(shard.mutex);
+                shard.condition.wait(lock, [&] {
+                    return shard.stopping || !shard.queue.empty();
+                });
+                if (shard.stopping) return;
+                task = std::move(shard.queue.front());
+                shard.queue.pop_front();
+            }
+
+            bool invoke = false;
+            {
+                std::lock_guard<std::mutex> tokenLock(task.token->mutex);
+                if (task.token->queuedBytes >= kObservedCbrDatagramBytes) {
+                    task.token->queuedBytes -= kObservedCbrDatagramBytes;
+                } else {
+                    task.token->queuedBytes = 0;
+                }
+                if (task.token->active) {
+                    ++task.token->inFlight;
+                    invoke = true;
+                }
+            }
+
+            if (!invoke) continue;
+
+            task.token->observer(
+                reinterpret_cast<const std::uint8_t*>(task.datagram.data()),
+                kObservedCbrDatagramBytes);
+
+            {
+                std::lock_guard<std::mutex> tokenLock(task.token->mutex);
+                if (task.token->inFlight != 0) --task.token->inFlight;
+                if (!task.token->active && task.token->inFlight == 0) {
+                    task.token->condition.notify_all();
+                }
+            }
+        }
+    }
+
+    std::array<Shard, kObservedCbrDispatchShardCount> shards_;
+    std::atomic<std::size_t> nextShard_ {0};
+};
+
+struct ObservedCbrDispatchLease {
+    std::shared_ptr<ObservedCbrDispatchToken> token;
+
+    ~ObservedCbrDispatchLease() {
+        if (token) {
+            ObservedCbrDispatcher::instance().deactivateAndWait(token);
+        }
+    }
+};
+
 std::string inputInterfaceFor(const NativeUdpRelayConfig& config, bool multicastOrWildcard) {
     if (config.inputInterfaceAddressConfigured) {
         return config.inputInterfaceAddress;
@@ -725,6 +918,33 @@ void NativeUdpRelay::run() {
         ++seed;
     }
 
+    std::size_t sharedObservedCbrOutputIndex = outputs.size();
+    ObservedCbrDispatchLease sharedObservedCbrLease;
+    if (config_.paceObservedTransport && config_.targetBitrate > 0 &&
+        config_.observeTransport) {
+        for (std::size_t index = 0; index < outputs.size(); ++index) {
+            if (!outputs[index].cbrPacer) continue;
+            try {
+                sharedObservedCbrLease.token =
+                    ObservedCbrDispatcher::instance().createToken(
+                        config_.observeTransport);
+                sharedObservedCbrOutputIndex = index;
+                std::cerr << "NATIVE OBSERVED CBR reuse_udp_dispatch output_index="
+                          << outputs[index].index
+                          << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                          << " shards=" << ObservedCbrDispatcher::shardCount()
+                          << std::endl;
+            } catch (const std::exception& exception) {
+                sharedObservedCbrLease.token.reset();
+                sharedObservedCbrOutputIndex = outputs.size();
+                std::cerr << "NATIVE OBSERVED CBR dispatcher unavailable; "
+                             "using dedicated pacer: "
+                          << exception.what() << std::endl;
+            }
+            break;
+        }
+    }
+
     // V10.8.105: observeTransport feeds SRT/HTTP/HLS/RTSP/RTMP.  The old
     // implementation only slept between already-existing TS packets, so when
     // payload bitrate was below target it remained VBR and CBR Out simply
@@ -737,7 +957,8 @@ void NativeUdpRelay::run() {
     bool observedCbrStop = false;
     std::thread observedCbrWorker;
 
-    if (config_.paceObservedTransport && config_.targetBitrate > 0) {
+    if (config_.paceObservedTransport && config_.targetBitrate > 0 &&
+        !sharedObservedCbrLease.token) {
         try {
             observedCbrPacer =
                 std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
@@ -796,6 +1017,10 @@ void NativeUdpRelay::run() {
     auto observePackets = [&](
         const std::vector<dvbstreamer5::media::mpegts::Packet>& observedPackets) -> bool {
         if (!config_.observeTransport || observedPackets.empty()) return true;
+
+        // V10.8.127: the primary UDP-CBR datagram is dispatched after send, so
+        // do not feed a second per-stream CBR pacer with the same TS packets.
+        if (sharedObservedCbrLease.token) return true;
 
         if (observedCbrPacer) {
             bool wakeForStart = false;
@@ -1213,6 +1438,21 @@ void NativeUdpRelay::run() {
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_ = error.empty()
                         ? "UDP CBR output send failed" : error;
+                    break;
+                }
+
+                // V10.8.127: reuse this already-paced, already-NULL-stuffed
+                // datagram for observers without running another timer clock.
+                // Dispatch is asynchronous, so HLS/HTTP/SRT work cannot delay
+                // the UDP sender itself.
+                if (sharedObservedCbrLease.token &&
+                    output.index == sharedObservedCbrOutputIndex &&
+                    !ObservedCbrDispatcher::instance().enqueue(
+                        sharedObservedCbrLease.token, cbrDatagram)) {
+                    error =
+                        "observed CBR dispatcher exceeded the bounded 2 MiB queue";
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_ = error;
                     break;
                 }
                 ++output.datagramsSent;
