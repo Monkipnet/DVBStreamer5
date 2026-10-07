@@ -468,10 +468,15 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         if (!running_.load(std::memory_order_acquire)) {
             return false;
         }
+        // V10.8.123: there is one producer and one relay consumer for this
+        // bounded queue. Only wake the consumer when the queue transitions from
+        // empty to non-empty; repeated broadcasts while it is already draining
+        // create avoidable futex/scheduler churn on multi-service DVB inputs.
+        const bool notifyConsumer = httpQueue_.empty();
         httpQueuedBytes_ += chunk.size();
         httpQueue_.push_back(std::move(chunk));
         lock.unlock();
-        httpQueueCondition_.notify_all();
+        if (notifyConsumer) httpQueueCondition_.notify_one();
         offset += chunkSize;
     }
     return true;
@@ -940,7 +945,9 @@ void NativeUdpRelay::run() {
                 httpQueue_.pop_front();
                 httpQueuedBytes_ -= chunk.size();
                 lock.unlock();
-                httpQueueCondition_.notify_all();
+                // A dequeue can only unblock the single producer waiting for
+                // bounded-queue space. notify_one avoids a broadcast wakeup.
+                httpQueueCondition_.notify_one();
 
                 if (chunk.empty()) {
                     // HTTP reconnect boundary.  Do not join an incomplete TS
