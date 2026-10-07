@@ -1,0 +1,54 @@
+name: Validate V10.8.128 rollback
+
+on:
+  push:
+    branches:
+      - v10.8.128-revert-v127
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v10.8.128-revert-v127
+          fetch-depth: 0
+
+      - name: Guard exact V126 relay rollback
+        run: |
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.128"' src/AppVersion.h
+          git diff --exit-code bc9903bf263bd77fb9cead1872697566bc692cf4 -- src/media/NativeUdpRelay.cpp
+          ! grep -F 'ObservedCbrDispatcher' src/media/NativeUdpRelay.cpp
+          ! grep -F 'reuse_udp_dispatch' src/media/NativeUdpRelay.cpp
+          test "$(git diff --name-only 6ff81bb57e2e9f89dab65a040906a5ed5440e358 HEAD -- ':!.github/workflows/v10.8.128-revert-v127.yml' | sort | tr '\n' ' ')" = "src/AppVersion.h src/media/NativeUdpRelay.cpp "
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config \
+            libpcsclite-dev libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool
+
+      - name: Vendor locked media dependencies
+        run: |
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+
+      - name: Configure Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build --parallel 2
+
+      - name: Verify primary artifacts
+        run: |
+          test -x build/DVBStreamer5
+          test -f build/ca-plugins/dvbstreamer5-ca-newcamd.so
+          test -x build/oscam-mini/oscam-mini
+          git diff --check
