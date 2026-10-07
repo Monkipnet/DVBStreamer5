@@ -35,8 +35,8 @@ replace_once(
 )
 replace_once(
     "src/HttpServer.h",
-    '    bool start();\n    void addEndpoint(const std::string& path, std::function<void(const boost::asio::ip::tcp::socket&)> handler);\nprivate:\n',
-    '    bool start();\nprivate:\n',
+    '    bool start();\n    void addEndpoint(const std::string& path, std::function<void(const boost::asio::ip::tcp::socket&)> handler);\n\nprivate:\n',
+    '    bool start();\n\nprivate:\n',
 )
 replace_once(
     "src/HttpServer.h",
