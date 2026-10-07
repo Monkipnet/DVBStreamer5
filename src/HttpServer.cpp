@@ -4076,12 +4076,6 @@ void HttpServer::handleRestartProgram() {
     }
   }
 
-void HttpServer::addEndpoint(const std::string& path, std::function<void(const boost::asio::ip::tcp::socket&)> handler) {
-    // Store endpoint handler for future use
-    // This is a simple implementation - in a real server you'd want proper routing
-    endpointHandlers[path] = handler;
-}
-
 
 std::string HttpServer::renderIndexPage() {
     static const std::string html = R"HTML(
@@ -5089,9 +5083,11 @@ function fetchState() {
   return stateFetchPromise;
 }
 async function statePollLoop() {
-  await fetchState();
+  // V10.8.116: a background browser tab must not keep forcing large /api/state
+  // JSON snapshots. Quality history is sampled server-side independently.
+  if (!document.hidden) await fetchState();
   clearTimeout(statePollTimer);
-  statePollTimer = setTimeout(statePollLoop, 2000);
+  statePollTimer = setTimeout(statePollLoop, document.hidden ? 15000 : 2000);
 }
 function updateSystemLoad(metrics) {
   document.getElementById('cpuLoad').textContent = `${Number(metrics.cpu_percent || 0).toFixed(1)}%`;
@@ -5153,9 +5149,10 @@ function fetchSystemMetrics() {
   return metricsFetchPromise;
 }
 async function metricsPollLoop() {
-  await fetchSystemMetrics();
+  // Avoid /proc parsing, JSON construction and allocator churn for hidden tabs.
+  if (!document.hidden) await fetchSystemMetrics();
   clearTimeout(metricsPollTimer);
-  metricsPollTimer = setTimeout(metricsPollLoop, 3000);
+  metricsPollTimer = setTimeout(metricsPollLoop, document.hidden ? 15000 : 3000);
 }
 function playlistCheckboxes() {
   return [...document.querySelectorAll('.playlist-stream-checkbox')];
@@ -6732,7 +6729,7 @@ function satelliteFrontendChanged() {
   updateSatelliteSignal();
 }
 async function updateSatelliteSignal() {
-  if (satelliteScanning || satelliteSignalPending || !document.getElementById('satFrequency')) return;
+  if (document.hidden || satelliteScanning || satelliteSignalPending || !document.getElementById('satFrequency')) return;
   const generation = satelliteTuneGeneration;
   const payload = satelliteTunePayload();
   const controller = new AbortController();
@@ -7750,7 +7747,7 @@ function restartQualityAutoRefresh() {
   stopQualityAutoRefresh();
   if (!qualityChart.streamId || !qualityChart.refreshMs) return;
   qualityChart.timer = setInterval(() => {
-    loadQualityHistory(qualityChart.streamId, qualityChart.period);
+    if (!document.hidden) loadQualityHistory(qualityChart.streamId, qualityChart.period);
   }, qualityChart.refreshMs);
 }
 function setQualityAutoRefresh(ms) {
@@ -8183,6 +8180,19 @@ window.onload = () => {
   statePollLoop();
   metricsPollLoop();
 };
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  // Refresh immediately after returning to the UI instead of waiting for the
+  // long background retry interval. Promise guards collapse any overlap.
+  clearTimeout(statePollTimer);
+  clearTimeout(metricsPollTimer);
+  statePollLoop();
+  metricsPollLoop();
+  if (qualityChart.streamId && qualityChart.refreshMs) {
+    loadQualityHistory(qualityChart.streamId, qualityChart.period);
+  }
+  updateSatelliteSignal();
+});
 window.addEventListener('beforeunload', () => {
   clearTimeout(statePollTimer);
   clearTimeout(metricsPollTimer);

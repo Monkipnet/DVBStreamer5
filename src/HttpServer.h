@@ -13,7 +13,6 @@
 #include <set>
 #include <string>
 #include <thread>
-#include <functional>
 #include <unordered_map>
 
 #include "ConfigManager.h"
@@ -26,7 +25,6 @@ class HttpServer {
 public:
     HttpServer(boost::asio::io_context& ioc, ConfigManager& cfg, StreamManager& sm);
     bool start();
-    void addEndpoint(const std::string& path, std::function<void(const boost::asio::ip::tcp::socket&)> handler);
 
 private:
     struct QualitySample {
@@ -121,7 +119,6 @@ private:
     std::unordered_map<std::string, int64_t> qualityLastCompaction;
     bool qualitySamplerStarted = false;
     int64_t qualityLastPersist = 0;
-    std::unordered_map<std::string, std::function<void(const boost::asio::ip::tcp::socket&)>> endpointHandlers;
 };
 
 // V10.8.77: HttpServer.cpp already probes StreamManager::isStreamActive() in
