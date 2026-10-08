@@ -32,7 +32,98 @@ echo "[2/7] Ittiam AVC decoder static"
 # DVBStreamer5 links both statically into one executable. Give the AVC copy a
 # codec-specific name at compile time so the final link remains strict and we
 # do not have to hide the collision with --allow-multiple-definition.
-cmake -S "$ROOT/third_party/ittiam-libavc" -B "$BUILD_ROOT/ittiam-libavc" \
+#
+# The pinned libavc CMake globally enables -msse4.2 -mavx2 -mfma for every x86
+# translation unit even though its default function selector is SSE4.2. That
+# makes the whole static library illegal on Sandy Bridge-class CPUs. Build a
+# temporary source copy with an SSE4.2 baseline, compile only the explicit
+# *_avx2.c implementations with AVX2/FMA, and make the upstream selector choose
+# AVX2 at runtime when the host really supports it. New CPUs keep the optimized
+# path while older SSE4.2 CPUs never execute AVX2/FMA instructions.
+AVC_SOURCE="$BUILD_ROOT/ittiam-libavc-src"
+cp -a "$ROOT/third_party/ittiam-libavc" "$AVC_SOURCE"
+case "$arch" in
+  x86_64|amd64|i386|i486|i586|i686)
+    command -v python3 >/dev/null 2>&1 || {
+      echo "python3 is required to prepare portable Ittiam AVC x86 sources" >&2
+      exit 1
+    }
+    python3 - "$AVC_SOURCE" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+
+utils = root / "cmake" / "utils.cmake"
+text = utils.read_text()
+old = "add_compile_options(-msse4.2 -mavx2 -mfma)"
+new = "add_compile_options(-msse4.2)"
+if old not in text:
+    raise SystemExit("Ittiam AVC x86 compile-option layout changed")
+utils.write_text(text.replace(old, new, 1))
+
+libavcdec = root / "decoder" / "libavcdec.cmake"
+text = libavcdec.read_text()
+marker = "# DVBStreamer5 portable x86 AVX2 source flags"
+if marker not in text:
+    text += r'''
+
+# DVBStreamer5 portable x86 AVX2 source flags
+# The library baseline is SSE4.2; only the explicit AVX2 implementations may
+# contain AVX2/FMA instructions. ih264d_function_selector.c stays baseline-safe
+# and dispatches to these functions only after runtime CPU detection.
+if(NOT "${SYSTEM_PROCESSOR}" STREQUAL "aarch64" AND
+   NOT "${SYSTEM_PROCESSOR}" STREQUAL "arm64" AND
+   NOT "${SYSTEM_PROCESSOR}" STREQUAL "aarch32")
+  set(DVBSTREAMER5_LIBAVC_AVX2_SRCS
+      "${AVC_ROOT}/common/x86/ih264_ihadamard_scaling_avx2.c"
+      "${AVC_ROOT}/common/x86/ih264_deblk_chroma_avx2.c"
+      "${AVC_ROOT}/common/x86/ih264_deblk_luma_avx2.c"
+      "${AVC_ROOT}/common/x86/ih264_iquant_itrans_recon_avx2.c"
+      "${AVC_ROOT}/common/x86/ih264_weighted_pred_avx2.c"
+      "${AVC_ROOT}/common/x86/ih264_inter_pred_filters_avx2.c")
+  set_source_files_properties(${DVBSTREAMER5_LIBAVC_AVX2_SRCS}
+      PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
+endif()
+'''
+libavcdec.write_text(text)
+
+selector = root / "decoder" / "x86" / "ih264d_function_selector.c"
+text = selector.read_text()
+start = text.find("void ih264d_init_arch(dec_struct_t *ps_codec)\n{")
+if start < 0:
+    raise SystemExit("Ittiam AVC x86 architecture selector layout changed")
+brace = text.find("{", start)
+depth = 0
+end = None
+for pos in range(brace, len(text)):
+    if text[pos] == "{":
+        depth += 1
+    elif text[pos] == "}":
+        depth -= 1
+        if depth == 0:
+            end = pos + 1
+            break
+if end is None:
+    raise SystemExit("Ittiam AVC x86 architecture selector is malformed")
+replacement = r'''void ih264d_init_arch(dec_struct_t *ps_codec)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_cpu_init();
+    if(__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+    {
+        ps_codec->e_processor_arch = ARCH_X86_AVX2;
+        return;
+    }
+#endif
+    ps_codec->e_processor_arch = ARCH_X86_SSE42;
+}'''
+selector.write_text(text[:start] + replacement + text[end:])
+PY
+    ;;
+esac
+
+cmake -S "$AVC_SOURCE" -B "$BUILD_ROOT/ittiam-libavc" \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
   -DCMAKE_C_FLAGS="-Dcheck_app_out_buf_size=ih264d_check_app_out_buf_size" \
   -DENABLE_MVC=OFF -DENABLE_SVC=OFF -DENABLE_TESTS=OFF
@@ -144,7 +235,7 @@ done
 cat > "$PREFIX/DVBSTREAMER5_NATIVE_CODECS.txt" <<INFO
 DVBStreamer5 native codec prefix
 OpenH264: 2.6.0 / 652bdb7719f30b52b08e506645a7322ff1b2cc6f
-Ittiam libavc: 6d5853425d1697d6241a3e60ca6fd6c6c064cde6 (Apache-2.0)
+Ittiam libavc: 6d5853425d1697d6241a3e60ca6fd6c6c064cde6 (Apache-2.0; x86 SSE4.2 baseline + runtime AVX2/FMA dispatch)
 libde265: 1.1.3 / ba62bf4cfb3242f3bf0a45617ff09e35236e4d82
 Kvazaar: 2.3.2 / 6040962bed5cc68c5ad01234c38c08b8b2822068
 FDK-AAC: 2.0.3 / 716f4394641d53f0d79c9ddac3fa93b03a49f278
