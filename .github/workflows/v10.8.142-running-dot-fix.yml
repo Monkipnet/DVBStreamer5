@@ -27,7 +27,7 @@ jobs:
           grep -F 'kProgramVersion = "10.8.142"' src/AppVersion.h
           grep -F "return status === 'running' || status === 'работает';" src/HttpServer.cpp
           grep -F '.mpts-state.on{width:10px;height:10px;min-width:10px;padding:0;border-radius:50%;font-size:0;color:transparent;background:#22c55e' src/HttpServer.cpp
-          grep -F "aria-label=\\\"${active?'Работает':'Остановлен'}\\\">${active?'':'Остановлен'}</span>" src/HttpServer.cpp
+          grep -F "aria-label=\"\${active?'Работает':'Остановлен'}\">\${active?'':'Остановлен'}</span>" src/HttpServer.cpp
           grep -F 'runtime-status.running-dot' src/HttpServer.cpp
           test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/AppVersion.h src/HttpServer.cpp "
           git diff --exit-code HEAD -- \
