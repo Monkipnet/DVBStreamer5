@@ -717,7 +717,26 @@ bool Remapper::process(const Packet& input, std::vector<Packet>& output, std::st
         error = "native remapper received an invalid MPEG-TS packet";
         return false;
     }
+    return processValidated(input, info, output, error);
+}
 
+bool Remapper::processTrusted(
+    const Packet& input, const PacketInfo& info,
+    std::vector<Packet>& output, std::string& error) {
+    error.clear();
+    if (!initialized_) {
+        error = "native remapper is not initialized";
+        return false;
+    }
+    // V10.8.133: shared-DVB already performed inspectPacket() immediately
+    // before this call. Reuse that immutable PacketInfo instead of validating
+    // the same selected-service packet a second time.
+    return processValidated(input, info, output, error);
+}
+
+bool Remapper::processValidated(
+    const Packet& input, const PacketInfo& info,
+    std::vector<Packet>& output, std::string& error) {
     // Keep the service discoverable independently of the provider table
     // cadence. The CBR pacer downstream absorbs this tiny deterministic PSI
     // overhead with its normal NULL stuffing; media/PCR handling is untouched.

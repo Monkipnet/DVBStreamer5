@@ -23,6 +23,9 @@ class Remapper {
 public:
     bool initialize(const RemapConfig& config, std::string& error);
     bool process(const Packet& input, std::vector<Packet>& output, std::string& error);
+    bool processTrusted(
+        const Packet& input, const PacketInfo& info,
+        std::vector<Packet>& output, std::string& error);
     void tick(std::vector<Packet>& output);
     bool wantsInputPid(std::uint16_t pid) const noexcept {
         // V10.8.132: the shared-DVB hot path executes this predicate for every
@@ -34,6 +37,10 @@ public:
     }
 
 private:
+    bool processValidated(
+        const Packet& input, const PacketInfo& info,
+        std::vector<Packet>& output, std::string& error);
+
     struct PsiSectionState {
         std::vector<std::uint8_t> bytes;
         std::size_t expected = 0;

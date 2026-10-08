@@ -289,8 +289,8 @@ private:
             return true;
         }
 
-        if (!self->remapper_.process(
-                packet, self->filteredPackets_, *context->remapError)) {
+        if (!self->remapper_.processTrusted(
+                packet, selectedInfo, self->filteredPackets_, *context->remapError)) {
             const std::string message = context->remapError->empty()
                 ? "shared DVB service prefilter failed"
                 : "shared DVB service prefilter failed: " + *context->remapError;
