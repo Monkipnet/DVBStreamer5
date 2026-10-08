@@ -1,0 +1,91 @@
+name: Validate V10.8.141 transcode quality and running dot
+
+on:
+  push:
+    branches:
+      - v10.8.141-transcode-quality-running-dot
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v10.8.141-transcode-quality-running-dot
+          fetch-depth: 0
+
+      - name: Apply focused changes
+        run: python3 tools/apply_v10_8_141_transcode_quality_running_dot.py
+
+      - name: Guard focused diff
+        run: |
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.141"' src/AppVersion.h
+          grep -F 'NV_ENC_PRESET_P5_GUID' src/media/NativeHardwareCodec.cpp
+          grep -F 'NV_ENC_PRESET_P5_GUID' src/media/NativeNvidiaZeroCopy.cpp
+          ! grep -F 'NV_ENC_PRESET_P3_GUID' src/media/NativeHardwareCodec.cpp
+          ! grep -F 'NV_ENC_PRESET_P3_GUID' src/media/NativeNvidiaZeroCopy.cpp
+          grep -F 'runtime-status.running-dot' src/HttpServer.cpp
+          grep -F 'function tileRuntimeStatusIsRunning' src/HttpServer.cpp
+          grep -F "runtimeStatus.textContent = running ? '' : value;" src/HttpServer.cpp
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/AppVersion.h src/HttpServer.cpp src/media/NativeHardwareCodec.cpp src/media/NativeNvidiaZeroCopy.cpp "
+          git diff --exit-code HEAD -- \
+            src/StreamManager.cpp \
+            src/TranscoderModule.cpp \
+            src/TranscoderModule.h \
+            src/media/NativeTranscoderPipeline.cpp \
+            src/media/NativeVideoProcessing.cpp \
+            src/media/NativeUdpRelay.cpp \
+            src/media/NativeUdpRelay.h \
+            src/media/CbrTsPacer.cpp \
+            src/media/CbrTsPacer.h \
+            src/media/MpegTsRemapper.cpp \
+            src/media/MpegTsRemapper.h \
+            src/media/SharedDvbInputPool.cpp \
+            src/media/NativeHlsSegmenter.cpp \
+            src/media/TransportStream.cpp \
+            src/media/TransportStream.h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config \
+            libpcsclite-dev libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool
+
+      - name: Vendor locked media dependencies
+        run: |
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+
+      - name: Configure Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build --parallel 2
+
+      - name: Verify primary artifacts
+        run: |
+          test -x build/DVBStreamer5
+          test -f build/ca-plugins/dvbstreamer5-ca-newcamd.so
+          test -x build/oscam-mini/oscam-mini
+          git diff --check
+
+      - name: Commit implementation
+        run: |
+          git config user.name 'Vitali Lukomski'
+          git config user.email 'monkipnet@yandex.ru'
+          git add \
+            src/AppVersion.h \
+            src/HttpServer.cpp \
+            src/media/NativeHardwareCodec.cpp \
+            src/media/NativeNvidiaZeroCopy.cpp
+          if ! git diff --cached --quiet; then
+            git commit -m 'V10.8.141 improve transcode quality and running tile indicator [v10.8.141-applied]'
+            git push origin HEAD:v10.8.141-transcode-quality-running-dot
+          fi
