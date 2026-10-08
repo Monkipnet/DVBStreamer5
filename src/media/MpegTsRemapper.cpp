@@ -603,29 +603,6 @@ void Remapper::tick(std::vector<Packet>& output) {
     emitPeriodicPsi(output);
 }
 
-bool Remapper::wantsInputPid(std::uint16_t pid) const noexcept {
-    if (!initialized_) return true;
-
-    // PAT and CAT are always needed to discover the selected PMT and CA/EMM PIDs.
-    if (pid == 0x0000 || pid == 0x0001) return true;
-
-    // Once PAT has selected the service, its PMT must keep flowing so dynamic
-    // PMT/PID changes are observed without restarting the channel.
-    if (pmtPid_ != kNullPid && pid == pmtPid_) return true;
-
-    // Before PMT is complete, the remaining multiplex payload cannot contribute
-    // to the selected service and Remapper::process() would discard it anyway.
-    if (!remapReady_) return false;
-
-    // SDT is regenerated for the selected service and may change at runtime.
-    if (pid == 0x0011) return true;
-
-    // Keep every already-learned selected-service PID, CA/EMM PID and NULL PID.
-    // Input video/audio are checked explicitly because output PID remapping can
-    // remove their original PID bits from allowedPids_.
-    return isAllowed(pid) || pid == inputVideoPid_ || pid == inputAudioPid_;
-}
-
 bool Remapper::isAllowed(std::uint16_t pid) const noexcept {
     return pid == kNullPid || (pid < allowedPids_.size() && allowedPids_[pid]);
 }
