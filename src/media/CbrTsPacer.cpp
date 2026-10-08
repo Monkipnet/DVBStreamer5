@@ -5,9 +5,10 @@
 #include <stdexcept>
 
 // Adaptive MPEG-TS CBR sender clock. It still emits seven-packet datagrams on a
-// monotonic deadline and fills unused capacity with NULL packets, but it measures
-// the real non-null payload rate and corrects clearly excessive/insufficient CBR
-// targets. PCR generation/rewriting remains the mux layer's responsibility.
+// monotonic deadline and fills unused capacity with NULL packets. The configured
+// bitrate is a hard floor: adaptive control may only raise the effective CBR when
+// real non-null payload approaches/exceeds that floor; it never lowers CBR.
+// PCR generation/rewriting remains the mux layer's responsibility.
 
 namespace dvbstreamer5::media::mpegts {
 namespace {
@@ -17,9 +18,7 @@ constexpr std::uint64_t kDatagramBits =
     kPacketsPerCbrDatagram * kPacketSize * 8ULL;
 constexpr auto kAutoTuneWindow = std::chrono::seconds(4);
 constexpr auto kAutoTuneCooldown = std::chrono::seconds(8);
-constexpr std::uint64_t kMinimumMeasuredPayloadForDownTune = 512000ULL;
 constexpr std::uint64_t kMinimumAdjustment = 100000ULL;
-constexpr std::uint64_t kMinimumDownDifference = 500000ULL;
 
 } // namespace
 
@@ -137,37 +136,24 @@ void CbrTsPacer::finishPayloadRateWindow(
     }
 
     // Leave room for short video peaks, audio/PSI/PES overhead and scheduler
-    // jitter. 12.5% or 300 kbit/s (whichever is larger) avoids running exactly
-    // on the payload edge without recreating a massively over-padded transport.
+    // jitter. 12.5% or 300 kbit/s (whichever is larger) keeps the effective CBR
+    // safely above measured payload while avoiding queue growth.
     const std::uint64_t headroom = std::max<std::uint64_t>(
         recentPeak / 8U, 300000U);
     const std::uint64_t desired = std::clamp(
         roundUp100K(recentPeak + headroom),
-        kMinimumBitrate, kMaximumBitrate);
+        configuredTargetBitrate_, kMaximumBitrate);
 
     const bool cooldownFinished = !autoTuneApplied_ ||
         now - lastAutoTune_ >= kAutoTuneCooldown;
     if (cooldownFinished && recentPeak > 0) {
-        // Too-low CBR is corrected quickly so the bounded pacing queue does not
-        // build up to its 2 MiB safety limit during a sustained payload peak.
+        // V10.8.148: adaptive CBR is raise-only. The configured bitrate is a
+        // hard floor for the lifetime of the pacer. This deliberately prevents
+        // down/up/down oscillation that can make strict receivers such as WISI
+        // temporarily lose service lock when the transport rate keeps changing.
         if (recentPeak * 100ULL >= targetBitrate_ * 92ULL &&
             desired >= targetBitrate_ + kMinimumAdjustment) {
             applyTargetBitrate(desired, recentPeak, "up");
-        } else {
-            // Down-tune only a clearly excessive target. An extreme mismatch is
-            // corrected after the first 4-second window; smaller mismatches need
-            // three windows (~12 s) so scene-complexity dips cannot make CBR hunt.
-            const bool extremeHigh =
-                targetBitrate_ >= desired + desired / 2ULL;
-            const bool sustainedHigh =
-                recentPayloadRateCount_ >= recentPayloadRates_.size() &&
-                targetBitrate_ >= desired + desired / 4ULL;
-            const bool enoughDifference =
-                targetBitrate_ >= desired + kMinimumDownDifference;
-            if (recentPeak >= kMinimumMeasuredPayloadForDownTune &&
-                enoughDifference && (extremeHigh || sustainedHigh)) {
-                applyTargetBitrate(desired, recentPeak, "down");
-            }
         }
     }
 
@@ -180,8 +166,8 @@ void CbrTsPacer::applyTargetBitrate(
     std::uint64_t measuredPayloadBitrate,
     const char* direction) noexcept {
     targetBitrate = std::clamp(
-        targetBitrate, kMinimumBitrate, kMaximumBitrate);
-    if (targetBitrate == targetBitrate_) return;
+        targetBitrate, configuredTargetBitrate_, kMaximumBitrate);
+    if (targetBitrate <= targetBitrate_) return;
 
     const std::uint64_t oldTarget = targetBitrate_;
     targetBitrate_ = targetBitrate;
