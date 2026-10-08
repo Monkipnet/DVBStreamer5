@@ -1,0 +1,87 @@
+name: Validate V10.8.142 running dot fix
+
+on:
+  push:
+    branches:
+      - v10.8.142-running-dot-fix
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ !contains(github.event.head_commit.message, '[v10.8.142-applied]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v10.8.142-running-dot-fix
+          fetch-depth: 0
+
+      - name: Apply focused changes
+        run: python3 tools/apply_v10_8_142_running_dot_fix.py
+
+      - name: Guard focused diff
+        run: |
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.142"' src/AppVersion.h
+          grep -F "return status === 'running' || status === 'работает';" src/HttpServer.cpp
+          grep -F '.mpts-state.on{width:10px;height:10px;min-width:10px;padding:0;border-radius:50%;font-size:0;color:transparent;background:#22c55e' src/HttpServer.cpp
+          grep -F "aria-label=\\\"${active?'Работает':'Остановлен'}\\\">${active?'':'Остановлен'}</span>" src/HttpServer.cpp
+          grep -F 'runtime-status.running-dot' src/HttpServer.cpp
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/AppVersion.h src/HttpServer.cpp "
+          git diff --exit-code HEAD -- \
+            src/media/NativeHardwareCodec.cpp \
+            src/media/NativeNvidiaZeroCopy.cpp \
+            src/StreamManager.cpp \
+            src/TranscoderModule.cpp \
+            src/TranscoderModule.h \
+            src/media/NativeTranscoderPipeline.cpp \
+            src/media/NativeVideoProcessing.cpp \
+            src/media/NativeUdpRelay.cpp \
+            src/media/NativeUdpRelay.h \
+            src/media/CbrTsPacer.cpp \
+            src/media/CbrTsPacer.h \
+            src/media/MpegTsRemapper.cpp \
+            src/media/MpegTsRemapper.h \
+            src/media/SharedDvbInputPool.cpp \
+            src/media/NativeHlsSegmenter.cpp \
+            src/media/TransportStream.cpp \
+            src/media/TransportStream.h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config \
+            libpcsclite-dev libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool
+
+      - name: Vendor locked media dependencies
+        run: |
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+
+      - name: Configure Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build --parallel 2
+
+      - name: Verify primary artifacts
+        run: |
+          test -x build/DVBStreamer5
+          test -f build/ca-plugins/dvbstreamer5-ca-newcamd.so
+          test -x build/oscam-mini/oscam-mini
+          git diff --check
+
+      - name: Commit implementation
+        run: |
+          git config user.name 'Vitali Lukomski'
+          git config user.email 'monkipnet@yandex.ru'
+          git add src/AppVersion.h src/HttpServer.cpp
+          if ! git diff --cached --quiet; then
+            git commit -m 'V10.8.142 fix visible Running status dot [v10.8.142-applied]'
+            git push origin HEAD:v10.8.142-running-dot-fix
+          fi
