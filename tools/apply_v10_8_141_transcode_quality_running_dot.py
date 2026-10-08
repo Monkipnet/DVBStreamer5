@@ -67,6 +67,6 @@ replace_once(
     "    const running = tileRuntimeStatusIsRunning(value);\n    runtimeStatus.className = `runtime-status${running ? ' running-dot' : ''}`;\n    runtimeStatus.textContent = running ? '' : value;\n    runtimeStatus.title = value;\n    runtimeStatus.setAttribute('aria-label', value);",
 )
 
-old_initial = r'''            <span data-role=\"runtime-status\" class=\"runtime-status\" title=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>'''
-new_initial = r'''            <span data-role=\"runtime-status\" class=\"runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}\" title=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\" aria-label=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>'''
+old_initial = r'''            <span data-role="runtime-status" class="runtime-status" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>'''
+new_initial = r'''            <span data-role="runtime-status" class="runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}" aria-label="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>'''
 replace_once("src/HttpServer.cpp", old_initial, new_initial)
