@@ -7,7 +7,7 @@ def replace_once(path: str, old: str, new: str) -> None:
     text = p.read_text(encoding="utf-8")
     count = text.count(old)
     if count != 1:
-        raise SystemExit(f"{path}: expected one match, got {count}")
+        raise SystemExit(f"{path}: expected one match for {old[:80]!r}, got {count}")
     p.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
@@ -38,10 +38,9 @@ replace_once(
     'inline constexpr const char* kProgramVersion = "10.8.141";',
 )
 
-# V10.8.141: all NVIDIA transcoded renditions use the same encoder preset,
-# independent of output geometry. Move both the normal NVENC path and the
-# NVDEC->NVENC zero-copy path from P3 to P5 while retaining the existing
-# low-latency tuning, configured bitrate, GOP, timestamps and rate control.
+# All NVIDIA renditions share the encoder preset independently of geometry.
+# Raise the normal NVENC and NVDEC->NVENC zero-copy paths from P3 to P5 while
+# keeping bitrate, low-latency tuning, GOP, timestamps and rate-control intact.
 for path in (
     "src/media/NativeHardwareCodec.cpp",
     "src/media/NativeNvidiaZeroCopy.cpp",
@@ -49,12 +48,11 @@ for path in (
     replace_all_checked(path, "NV_ENC_PRESET_P3_GUID", "NV_ENC_PRESET_P5_GUID")
     replace_word_checked(path, "p3", "p5")
 
-# Replace only the visible exact runtime state Running with a green dot.
-# All non-running runtime/error/startup states continue to show their text.
+# Running is only a presentation change: backend state stays untouched.
 replace_once(
     "src/HttpServer.cpp",
-    ".tile .status-line{display:flex;align-items:center;gap:5px;min-width:0;margin-top:2px;line-height:12px}.tile .status-pill{flex:0 0 auto;padding:1px 5px;background:rgba(255,255,255,.06);color:#c9d2e4;border-radius:999px;font-size:9px;text-transform:uppercase;letter-spacing:.06em}.tile .runtime-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ca8bb;font-size:9px}",
-    ".tile .status-line{display:flex;align-items:center;gap:5px;min-width:0;margin-top:2px;line-height:12px}.tile .status-pill{flex:0 0 auto;padding:1px 5px;background:rgba(255,255,255,.06);color:#c9d2e4;border-radius:999px;font-size:9px;text-transform:uppercase;letter-spacing:.06em}.tile .runtime-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ca8bb;font-size:9px}.tile .runtime-status.running-dot{display:inline-block;flex:0 0 auto;width:9px;height:9px;min-width:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.18);overflow:visible}",
+    ".tile .runtime-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ca8bb;font-size:9px}",
+    ".tile .runtime-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ca8bb;font-size:9px}.tile .runtime-status.running-dot{display:inline-block;flex:0 0 auto;width:9px;height:9px;min-width:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.18);overflow:visible}",
 )
 
 replace_once(
@@ -65,12 +63,10 @@ replace_once(
 
 replace_once(
     "src/HttpServer.cpp",
-    "  const runtimeStatus = tile.querySelector('[data-role=\\\"runtime-status\\\"]');\n  if (runtimeStatus) {\n    const value = tileRuntimeStatus(stream.status);\n    runtimeStatus.textContent = value;\n    runtimeStatus.title = value;\n  }",
-    "  const runtimeStatus = tile.querySelector('[data-role=\\\"runtime-status\\\"]');\n  if (runtimeStatus) {\n    const value = tileRuntimeStatus(stream.status);\n    const running = tileRuntimeStatusIsRunning(value);\n    runtimeStatus.className = `runtime-status${running ? ' running-dot' : ''}`;\n    runtimeStatus.textContent = running ? '' : value;\n    runtimeStatus.title = value;\n    runtimeStatus.setAttribute('aria-label', value);\n  }",
+    "    runtimeStatus.textContent = value;\n    runtimeStatus.title = value;",
+    "    const running = tileRuntimeStatusIsRunning(value);\n    runtimeStatus.className = `runtime-status${running ? ' running-dot' : ''}`;\n    runtimeStatus.textContent = running ? '' : value;\n    runtimeStatus.title = value;\n    runtimeStatus.setAttribute('aria-label', value);",
 )
 
-replace_once(
-    "src/HttpServer.cpp",
-    "            <span data-role=\\\"runtime-status\\\" class=\\\"runtime-status\\\" title=\\\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\\\">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>",
-    "            <span data-role=\\\"runtime-status\\\" class=\\\"runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}\\\" title=\\\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\\\" aria-label=\\\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\\\">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>",
-)
+old_initial = r'''            <span data-role=\"runtime-status\" class=\"runtime-status\" title=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>'''
+new_initial = r'''            <span data-role=\"runtime-status\" class=\"runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}\" title=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\" aria-label=\"${escapeHtmlValue(tileRuntimeStatus(stream.status))}\">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>'''
+replace_once("src/HttpServer.cpp", old_initial, new_initial)
