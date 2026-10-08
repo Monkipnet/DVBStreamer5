@@ -39,14 +39,12 @@ struct ActiveStreamSession {
     size_t connections = 0;
 };
 
-// V10.8.53: browser preview must not keep a complete transcoder worker set
-// alive while nobody is watching. StreamManager still owns a stable object so
-// its relay callback never holds a dangling pointer, but the real native
-// pipeline is initialized only by the first preview transport packet. When no
-// packet reaches the preview path for five seconds (longer than the normal
-// ~3-second HLS source segment cadence), all decoder/encoder/mux workers are
-// stopped. A later preview transparently initializes the saved configuration
-// again. Production transcoders are not routed through this wrapper.
+// Browser preview must not keep a complete transcoder worker set alive while
+// nobody is watching. StreamManager owns a stable wrapper so its relay callback
+// never holds a dangling pointer, while the real native pipeline is initialized
+// only by preview traffic. Five seconds without preview media stops all preview
+// decoder/encoder/mux workers; a later preview transparently starts them again.
+// Production transcoders are not routed through this wrapper.
 class LazyPreviewTranscoder {
 public:
     LazyPreviewTranscoder() = default;
@@ -173,9 +171,9 @@ private:
     std::uint64_t generation_ = 0;
 };
 
-// Adapter used so existing StreamManager.cpp code can keep its unique_ptr-like
-// syntax. Its assignment intentionally discards the eagerly allocated base
-// pipeline and replaces it with the lazy preview-only implementation above.
+// Adapter used so StreamManager.cpp can keep its unique_ptr-like syntax. Its
+// assignment discards the eagerly allocated base pipeline and replaces it with
+// the lazy preview-only implementation above.
 class LazyPreviewTranscoderHandle {
 public:
     LazyPreviewTranscoderHandle() = default;
@@ -227,10 +225,10 @@ struct StreamState {
 
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
-    // V10.8.69: browser preview uses the direct V10.8.41 pipeline again.
-    // It stays initialized for the stream lifetime and is isolated from the
-    // production transcoder. Output is fixed H.264/AAC 1280x720 square-pixel 16:9.
-    std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativePreviewTranscoder;
+    // Browser preview owns a lazy, preview-only transcoder. It is completely
+    // separate from nativeTranscoder (the production path) and tears its worker
+    // set down after the preview client stops delivering activity.
+    LazyPreviewTranscoderHandle nativePreviewTranscoder;
     std::atomic<bool> previewTranscodeFailed{false};
     struct HlsAbrVariantRuntime {
         std::string name;
@@ -318,60 +316,34 @@ public:
     Json::Value queueMemorySnapshot() const;
 
 private:
-    // V10.8.77: monitorOnDemandStreams() historically used
-    // previewSession.empty() as a proxy for a persistent HTTP viewer and thus
-    // ignored private browser-preview sockets.  The token itself is still kept
-    // for /preview/close matching, while empty() intentionally reports true so
-    // both production HTTP and browser preview sockets keep OnDemand alive.
-    struct PreviewSessionToken {
-        std::string value;
+    void monitorNativeStream(StreamState* state);
+    void monitorOnDemandStreams();
+    bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
+    static std::string normalizedOutputType(const StreamConfig& cfg,
+                                            const StreamOutputConfig* extra = nullptr);
+    static bool isNativeInputSupported(const StreamConfig& cfg, std::string& reason);
+    static bool isNativeOutputSupported(const std::string& type, std::string& reason);
+    void pruneExpiredAdHocSessionsLocked(std::chrono::steady_clock::time_point now);
 
-        PreviewSessionToken() = default;
-        PreviewSessionToken(const std::string& token) : value(token) {}
-        PreviewSessionToken& operator=(const std::string& token) {
-            value = token;
-            return *this;
-        }
-        void clear() noexcept { value.clear(); }
-        bool empty() const noexcept { return true; }
-        bool operator==(const std::string& token) const noexcept { return value == token; }
-    };
-
+    ConfigManager& configManager;
+    TelegramNotifier& telegramNotifier;
+    std::unique_ptr<MptsOutputManager> mptsOutputManager;
+    mutable std::mutex managerMutex;
+    std::map<std::string, std::unique_ptr<StreamState>> streams;
     struct HttpClientSession {
         std::string streamId;
         std::string clientIp;
         std::string protocol;
-        std::chrono::steady_clock::time_point lastActivity = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point lastActivity;
         int upstreamFd = -1;
-        PreviewSessionToken previewSession;
+        std::string previewSession;
     };
-
-    // V10.8.54 build wrapper keeps the previous implementation available under
-    // this private name while addHttpClient() cleanly separates public HTTP TS
-    // subscribers from browser-preview subscribers.
-    bool addHttpClientOriginal(const std::string& id, int fd, const std::string& clientIp,
-                               const std::string& previewSession);
-
-    bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
-    void pruneExpiredAdHocSessionsLocked(std::chrono::steady_clock::time_point now);
-    static std::string normalizedOutputType(const StreamConfig& cfg, const StreamOutputConfig* extra = nullptr);
-    static bool isNativeInputSupported(const StreamConfig& cfg, std::string& reason);
-    static bool isNativeOutputSupported(const std::string& type, std::string& reason);
-    void monitorNativeStream(StreamState* state);
-    void monitorOnDemandStreams();
-
-    ConfigManager& configManager;
-    TelegramNotifier& telegramNotifier;
-    std::map<std::string, std::unique_ptr<StreamState>> streams;
-    std::unique_ptr<MptsOutputManager> mptsOutputManager;
-    dvbstreamer5::media::network::SharedDvbInputPool sharedDvbInputs;
     std::map<int, HttpClientSession> httpClients;
     std::map<std::string, HttpClientSession> adHocSessions;
-    mutable std::mutex managerMutex;
-    std::mutex onDemandMutex;
-    std::set<std::string> onDemandStartedStreams;
+    mutable std::mutex onDemandMutex;
     std::map<std::string, std::chrono::steady_clock::time_point> onDemandLastActivity;
+    std::set<std::string> onDemandStartedStreams;
     std::atomic<bool> onDemandMonitorStop{false};
     std::thread onDemandMonitorThread;
-    std::atomic<uint64_t> nextSessionId{0};
+    dvbstreamer5::media::SharedDvbInputPool sharedDvbInputs;
 };
