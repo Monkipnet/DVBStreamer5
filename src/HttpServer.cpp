@@ -4815,7 +4815,7 @@ function tileRuntimeStatus(value) {
 
 function tileRuntimeStatusIsRunning(value) {
   const status = tileRuntimeStatus(value).toLowerCase();
-  return status === 'running' || status === 'работает';
+  return /^(?:running|работает)(?:$|\s|\()/.test(status);
 }
 
 function localizeUiTextNode(node) {
