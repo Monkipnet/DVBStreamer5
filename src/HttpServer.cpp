@@ -4323,7 +4323,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 @media (max-width:480px){.sat-form,.sat-output{grid-template-columns:1fr}.sat-field.wide{grid-column:span 1}}.mpts-modal{width:min(980px,94vw);max-width:980px}
 .mpts-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0 14px;flex-wrap:wrap}
 .mpts-list{display:grid;gap:9px}.mpts-row{display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(160px,1fr) 90px 110px auto;gap:8px;align-items:center;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:11px;background:rgba(255,255,255,.035)}
-.mpts-name{font-weight:800;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpts-endpoint{color:#aeb8ca;font-family:monospace;font-size:.75rem}.mpts-services{font-size:.73rem;color:#b9c4d6}.mpts-state{display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;border-radius:999px;font-size:.69rem;font-weight:800;white-space:nowrap}.mpts-state.on{color:#9ef3bd;background:rgba(34,197,94,.14);border:1px solid rgba(34,197,94,.38)}.mpts-state.off{color:#aeb8ca;background:rgba(148,163,184,.09);border:1px solid rgba(148,163,184,.24)}.mpts-actions{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}.mpts-actions button{padding:5px 8px;font-size:.7rem}
+.mpts-name{font-weight:800;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mpts-endpoint{color:#aeb8ca;font-family:monospace;font-size:.75rem}.mpts-services{font-size:.73rem;color:#b9c4d6}.mpts-state{display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;border-radius:999px;font-size:.69rem;font-weight:800;white-space:nowrap}.mpts-state.on{width:10px;height:10px;min-width:10px;padding:0;border-radius:50%;font-size:0;color:transparent;background:#22c55e;border:0;box-shadow:0 0 0 2px rgba(34,197,94,.18)}.mpts-state.off{color:#aeb8ca;background:rgba(148,163,184,.09);border:1px solid rgba(148,163,184,.24)}.mpts-actions{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}.mpts-actions button{padding:5px 8px;font-size:.7rem}
 .mpts-service-picker{max-height:330px;overflow:auto;display:grid;gap:5px;padding:8px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(0,0,0,.12)}.mpts-service-row{display:grid;grid-template-columns:30px minmax(160px,1fr) 120px 90px;gap:8px;align-items:center;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.025);font-size:.75rem}.mpts-service-row input[type=number]{width:84px;padding:5px 6px}.mpts-runtime{color:#8f99aa;font-size:.68rem;white-space:nowrap}.mpts-runtime.ready{color:#8ee8b0}.mpts-empty{padding:18px;text-align:center;color:#8f99aa;border:1px dashed rgba(255,255,255,.12);border-radius:10px}.mpts-hint{font-size:.72rem;color:#8f99aa;line-height:1.45;margin:6px 0 12px}.mpts-advanced{margin-top:10px;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px 10px}.mpts-advanced summary{cursor:pointer;color:#b9c4d6;font-size:.75rem;font-weight:700}.mpts-advanced .form-grid{margin-top:9px}
 @media(max-width:780px){.mpts-row{grid-template-columns:1fr 1fr}.mpts-actions{grid-column:1/-1;justify-content:flex-start}.mpts-service-row{grid-template-columns:28px minmax(130px,1fr) 94px}.mpts-service-row .mpts-runtime{grid-column:2/-1}.mpts-modal{width:96vw}}
 .ui-toast-stack{position:fixed;right:18px;bottom:18px;z-index:30000;display:grid;gap:8px;width:min(520px,calc(100vw - 36px));pointer-events:none}
@@ -4814,7 +4814,8 @@ function tileRuntimeStatus(value) {
 }
 
 function tileRuntimeStatusIsRunning(value) {
-  return /^running$/i.test(tileRuntimeStatus(value));
+  const status = tileRuntimeStatus(value).toLowerCase();
+  return status === 'running' || status === 'работает';
 }
 
 function localizeUiTextNode(node) {
@@ -5671,7 +5672,7 @@ function renderMptsList() {
       <div class="mpts-name" title="${escapeHtmlValue(output.name || output.id)}">${escapeHtmlValue(output.name || output.id)}</div>
       <div class="mpts-endpoint">${escapeHtmlValue(output.output_host || '')}:${Number(output.output_port || 0)}</div>
       <div class="mpts-services">${ready}/${configured} сервисов</div>
-      <span class="mpts-state ${active?'on':'off'}">${active?'Работает':'Остановлен'}</span>
+      <span class="mpts-state ${active?'on':'off'}" title="${active?'Работает':'Остановлен'}" aria-label="${active?'Работает':'Остановлен'}">${active?'':'Остановлен'}</span>
       <div class="mpts-actions">
         <button class="button-secondary" onclick="mptsActionByIndex(${index},'${active?'stop':'start'}')">${active?'Стоп':'Старт'}</button>
         <button class="button-secondary" onclick="openMptsEditor(${index})">Ред.</button>
