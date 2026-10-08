@@ -237,6 +237,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     {
         std::lock_guard<std::mutex> lock(httpQueueMutex_);
         httpQueue_.clear();
+        httpQueueBufferPool_.clear();
         httpQueuedBytes_ = 0;
         httpFinished_ = false;
     }
@@ -405,6 +406,7 @@ void NativeUdpRelay::stop() noexcept {
     {
         std::lock_guard<std::mutex> lock(httpQueueMutex_);
         httpQueue_.clear();
+        httpQueueBufferPool_.clear();
         httpQueuedBytes_ = 0;
         httpFinished_ = false;
     }
@@ -458,8 +460,6 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         if (chunkSize > kMaximumHttpQueueBytes) {
             return false;
         }
-        std::vector<std::uint8_t> chunk(
-            data + offset, data + offset + chunkSize);
         std::unique_lock<std::mutex> lock(httpQueueMutex_);
         httpQueueCondition_.wait(lock, [this, chunkSize, kMaximumHttpQueueBytes] {
             return !running_.load(std::memory_order_acquire) ||
@@ -468,6 +468,16 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         if (!running_.load(std::memory_order_acquire)) {
             return false;
         }
+
+        std::vector<std::uint8_t> chunk;
+        if (!httpQueueBufferPool_.empty()) {
+            chunk = std::move(httpQueueBufferPool_.back());
+            httpQueueBufferPool_.pop_back();
+        } else {
+            chunk.reserve(kMaximumChunkBytes);
+        }
+        chunk.resize(chunkSize);
+        std::memcpy(chunk.data(), data + offset, chunkSize);
         // V10.8.123: there is one producer and one relay consumer for this
         // bounded queue. Only wake the consumer when the queue transitions from
         // empty to non-empty; repeated broadcasts while it is already draining
@@ -969,12 +979,23 @@ void NativeUdpRelay::run() {
                 }
 
                 received = chunk.size();
-                std::copy(chunk.begin(), chunk.end(), datagram.begin());
                 inputBytes_.fetch_add(received, std::memory_order_relaxed);
+                // V10.8.138: the dequeued vector already owns a stable contiguous
+                // byte range for the duration of framing. Feed it directly instead
+                // of copying every chunk through the 64 KiB datagram scratch buffer.
                 if (config_.trustedAlignedExternalInput) {
-                    inputFramer.pushTrustedAligned(datagram.data(), received, packets);
+                    inputFramer.pushTrustedAligned(chunk.data(), received, packets);
                 } else {
-                    inputFramer.push(datagram.data(), received, packets);
+                    inputFramer.push(chunk.data(), received, packets);
+                }
+
+                {
+                    std::lock_guard<std::mutex> recycleLock(httpQueueMutex_);
+                    constexpr std::size_t kMaximumRecycledQueueBuffers = 2;
+                    if (httpQueueBufferPool_.size() < kMaximumRecycledQueueBuffers) {
+                        chunk.clear();
+                        httpQueueBufferPool_.push_back(std::move(chunk));
+                    }
                 }
             } else if (httpFinished_) {
                 const bool cbrDrained = std::all_of(

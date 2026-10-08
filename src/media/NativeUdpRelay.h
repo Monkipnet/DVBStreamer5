@@ -160,6 +160,9 @@ private:
     std::mutex httpQueueMutex_;
     std::condition_variable httpQueueCondition_;
     std::deque<std::vector<std::uint8_t>> httpQueue_;
+    // V10.8.138: recycle a small number of consumed queue buffers so the
+    // shared-DVB/external hot path does not malloc/free one vector per chunk.
+    std::vector<std::vector<std::uint8_t>> httpQueueBufferPool_;
     std::size_t httpQueuedBytes_ = 0;
     bool httpFinished_ = false;
     std::atomic<bool> httpStopRequested_{false};
