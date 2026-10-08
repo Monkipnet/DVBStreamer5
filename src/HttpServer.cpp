@@ -4143,7 +4143,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .tile .dvb-meter{position:relative;height:13px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.07);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
 .tile .dvb-meter-fill{position:absolute;left:0;top:0;bottom:0;width:0%;border-radius:inherit;transition:width .25s ease,background .25s ease;opacity:.9}
 .tile .dvb-meter-label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;height:100%;font-size:8px;font-weight:800;line-height:13px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.9);letter-spacing:.02em;white-space:nowrap}
-.tile .status-line{display:flex;align-items:center;gap:5px;min-width:0;margin-top:2px;line-height:12px}.tile .status-pill{flex:0 0 auto;padding:1px 5px;background:rgba(255,255,255,.06);color:#c9d2e4;border-radius:999px;font-size:9px;text-transform:uppercase;letter-spacing:.06em}.tile .runtime-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ca8bb;font-size:9px}
+.tile .status-line{display:flex;align-items:center;gap:5px;min-width:0;margin-top:2px;line-height:12px}.tile .status-pill{flex:0 0 auto;padding:1px 5px;background:rgba(255,255,255,.06);color:#c9d2e4;border-radius:999px;font-size:9px;text-transform:uppercase;letter-spacing:.06em}.tile .runtime-status{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ca8bb;font-size:9px}.tile .runtime-status.running-dot{display:inline-block;flex:0 0 auto;width:9px;height:9px;min-width:9px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.18);overflow:visible}
 .tile .status-pill.active{background:rgba(23,194,97,.15);color:#b6f7c2}
 .tile .status-pill.stopped{background:rgba(255,95,95,.14);color:#ffb3b3}
 .tile .decode-pill{display:inline-flex;align-items:center;justify-content:center;min-width:64px;padding:1px 5px;border-radius:999px;font-size:8px;font-weight:800;line-height:10px;letter-spacing:.035em;white-space:nowrap}
@@ -4813,6 +4813,10 @@ function tileRuntimeStatus(value) {
     .trim();
 }
 
+function tileRuntimeStatusIsRunning(value) {
+  return /^running$/i.test(tileRuntimeStatus(value));
+}
+
 function localizeUiTextNode(node) {
   if (!node || node.nodeType !== Node.TEXT_NODE || ['SCRIPT','STYLE'].includes(node.parentElement?.tagName)) return;
   const current = node.nodeValue || '';
@@ -5409,8 +5413,11 @@ function updateStreamTile(tile, stream) {
   const runtimeStatus = tile.querySelector('[data-role="runtime-status"]');
   if (runtimeStatus) {
     const value = tileRuntimeStatus(stream.status);
-    runtimeStatus.textContent = value;
+    const running = tileRuntimeStatusIsRunning(value);
+    runtimeStatus.className = `runtime-status${running ? ' running-dot' : ''}`;
+    runtimeStatus.textContent = running ? '' : value;
     runtimeStatus.title = value;
+    runtimeStatus.setAttribute('aria-label', value);
   }
 
   if (stream.dvb_input) {
@@ -5498,7 +5505,7 @@ function render(force=false) {
           <div class="title">${escapeHtmlValue(stream.name || stream.id)}</div>
           <div class="status-line">
             <div data-role="status-pill" class="status-pill ${stream.active ? 'active' : 'stopped'}">${stream.active ? (stream.using_backup ? 'Backup' : 'Online') : 'Offline'}</div>
-            <span data-role="runtime-status" class="runtime-status" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>
+            <span data-role="runtime-status" class="runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}" aria-label="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>
           </div>
         </div>
       </div>

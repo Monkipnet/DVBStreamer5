@@ -687,8 +687,8 @@ private:
         preset.version = NV_ENC_PRESET_CONFIG_VER;
         preset.presetCfg.version = NV_ENC_CONFIG_VER;
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
-        GUID presetGuid = NV_ENC_PRESET_P3_GUID;
-        const char* presetName = "p3";
+        GUID presetGuid = NV_ENC_PRESET_P5_GUID;
+        const char* presetName = "p5";
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -698,7 +698,7 @@ private:
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         if (api_.nvEncGetEncodePresetConfigEx) {
             if (api_.nvEncGetEncodePresetConfigEx(
-                    encoder_, codecGuid, NV_ENC_PRESET_P3_GUID,
+                    encoder_, codecGuid, NV_ENC_PRESET_P5_GUID,
                     NV_ENC_TUNING_INFO_LOW_LATENCY,
                     &preset) == NV_ENC_SUCCESS) {
                 modernLowLatency = true;
