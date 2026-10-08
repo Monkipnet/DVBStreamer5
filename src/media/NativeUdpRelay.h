@@ -37,79 +37,39 @@ public:
     using Callback = std::function<void(const std::uint8_t*, std::size_t)>;
 
     NativeTransportObserver()
-        : state_(makeState(Callback{}, std::make_shared<NativePreviewHub>())) {}
+        : httpHub_(std::make_shared<NativePreviewHub>()) {}
 
-    NativeTransportObserver(const NativeTransportObserver& other) {
-        const auto source = std::atomic_load_explicit(
-            &other.state_, std::memory_order_acquire);
-        state_ = source
-            ? makeState(source->callback, source->httpHub)
-            : makeState(Callback{}, std::make_shared<NativePreviewHub>());
-    }
-
-    NativeTransportObserver& operator=(const NativeTransportObserver& other) {
-        if (this == &other) return *this;
-        const auto source = std::atomic_load_explicit(
-            &other.state_, std::memory_order_acquire);
-        auto next = source
-            ? makeState(source->callback, source->httpHub)
-            : makeState(Callback{}, std::make_shared<NativePreviewHub>());
-        std::atomic_store_explicit(
-            &state_, std::move(next), std::memory_order_release);
-        return *this;
-    }
+    NativeTransportObserver(const NativeTransportObserver&) = default;
+    NativeTransportObserver& operator=(const NativeTransportObserver&) = default;
 
     NativeTransportObserver& operator=(Callback callback) {
-        const auto current = std::atomic_load_explicit(
-            &state_, std::memory_order_acquire);
-        auto hub = current && current->httpHub
-            ? current->httpHub
-            : std::make_shared<NativePreviewHub>();
-        auto next = makeState(std::move(callback), std::move(hub));
-        std::atomic_store_explicit(
-            &state_, std::move(next), std::memory_order_release);
+        callback_ = std::move(callback);
         return *this;
     }
 
     explicit operator bool() const {
-        const auto snapshot = std::atomic_load_explicit(
-            &state_, std::memory_order_acquire);
-        return snapshot &&
-            (static_cast<bool>(snapshot->callback) ||
-             (snapshot->httpHub && snapshot->httpHub->subscriberCount() != 0U));
+        return static_cast<bool>(callback_) ||
+            (httpHub_ && httpHub_->subscriberCount() != 0U);
     }
 
     void operator()(const std::uint8_t* data, std::size_t size) const {
-        const auto snapshot = std::atomic_load_explicit(
-            &state_, std::memory_order_acquire);
-        if (!snapshot) return;
-        if (snapshot->callback) snapshot->callback(data, size);
-        if (snapshot->httpHub) snapshot->httpHub->publish(data, size);
+        if (callback_) callback_(data, size);
+        if (httpHub_) httpHub_->publish(data, size);
     }
 
     std::shared_ptr<NativePreviewHub> httpHub() const {
-        const auto snapshot = std::atomic_load_explicit(
-            &state_, std::memory_order_acquire);
-        return snapshot ? snapshot->httpHub : nullptr;
+        return httpHub_;
     }
 
 private:
-    struct State {
-        Callback callback;
-        std::shared_ptr<NativePreviewHub> httpHub;
-    };
-
-    static std::shared_ptr<const State> makeState(
-        Callback callback, std::shared_ptr<NativePreviewHub> hub) {
-        return std::make_shared<const State>(
-            State{std::move(callback), std::move(hub)});
-    }
-
-    // V10.8.135: readers take one immutable shared snapshot. The previous
-    // implementation copied the potentially heap-backed std::function while
-    // holding a mutex on every bool check and every 1316-byte observer call.
-    // Callback replacement now allocates only when configuration changes.
-    std::shared_ptr<const State> state_;
+    // V10.8.136: NativeUdpRelayConfig is fully assembled before start(), then
+    // copied into NativeUdpRelay before the worker thread is launched.  The
+    // observer callback and hub pointer are immutable afterwards, so the hot
+    // 1316-byte transport path needs neither a mutex nor an atomic shared_ptr
+    // snapshot/refcount operation. NativePreviewHub remains independently
+    // thread-safe for subscriber attach/detach and publish.
+    Callback callback_;
+    std::shared_ptr<NativePreviewHub> httpHub_;
 };
 
 struct NativeUdpRelayConfig {
