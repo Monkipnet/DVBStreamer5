@@ -1,0 +1,67 @@
+name: Validate V10.8.134 inline trusted visitor
+
+on:
+  push:
+    branches:
+      - v10.8.134-inline-trusted-visitor
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v10.8.134-inline-trusted-visitor
+          fetch-depth: 0
+
+      - name: Apply focused optimization
+        run: python3 tools/apply_v10_8_134_inline_trusted_visitor.py
+
+      - name: Guard focused diff
+        run: |
+          git diff --check
+          grep -F 'kProgramVersion = "10.8.134"' src/AppVersion.h
+          grep -F 'visitTrustedAlignedInline(' src/media/TransportStream.h
+          grep -F 'framer_.visitTrustedAlignedInline(' src/StreamManager.cpp
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "src/AppVersion.h src/StreamManager.cpp src/media/TransportStream.h "
+          git diff --exit-code HEAD -- src/media/NativeUdpRelay.cpp src/media/CbrTsPacer.cpp src/media/MpegTsRemapper.cpp src/media/MpegTsRemapper.h src/media/SharedDvbInputPool.cpp src/media/NativeHlsSegmenter.cpp src/media/TransportStream.cpp
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake nodejs pkg-config \
+            libpcsclite-dev libssl-dev libcrypt-dev \
+            ca-certificates curl binutils nasm autoconf automake libtool
+
+      - name: Vendor locked media dependencies
+        run: |
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          bash scripts/build_native_codecs.sh
+
+      - name: Configure Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build --parallel 2
+
+      - name: Verify primary artifacts
+        run: |
+          test -x build/DVBStreamer5
+          test -f build/ca-plugins/dvbstreamer5-ca-newcamd.so
+          test -x build/oscam-mini/oscam-mini
+          git diff --check
+
+      - name: Commit implementation
+        run: |
+          git config user.name 'Vitali Lukomski'
+          git config user.email 'monkipnet@yandex.ru'
+          git add src/AppVersion.h src/StreamManager.cpp src/media/TransportStream.h
+          if ! git diff --cached --quiet; then
+            git commit -m 'V10.8.134 inline trusted shared-DVB visitor [v10.8.134-applied]'
+            git push origin HEAD:v10.8.134-inline-trusted-visitor
+          fi
