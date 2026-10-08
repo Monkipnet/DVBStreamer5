@@ -36,6 +36,6 @@ replace_once(
 
 replace_once(
     "src/HttpServer.cpp",
-    "      <span class=\\\"mpts-state ${active?'on':'off'}\\\">${active?'Работает':'Остановлен'}</span>",
-    "      <span class=\\\"mpts-state ${active?'on':'off'}\\\" title=\\\"${active?'Работает':'Остановлен'}\\\" aria-label=\\\"${active?'Работает':'Остановлен'}\\\">${active?'':'Остановлен'}</span>",
+    '      <span class="mpts-state ${active?\'on\':\'off\'}">${active?\'Работает\':\'Остановлен\'}</span>',
+    '      <span class="mpts-state ${active?\'on\':\'off\'}" title="${active?\'Работает\':\'Остановлен\'}" aria-label="${active?\'Работает\':\'Остановлен\'}">${active?\'\':\'Остановлен\'}</span>',
 )
