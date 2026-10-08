@@ -37,61 +37,79 @@ public:
     using Callback = std::function<void(const std::uint8_t*, std::size_t)>;
 
     NativeTransportObserver()
-        : httpHub_(std::make_shared<NativePreviewHub>()) {}
+        : state_(makeState(Callback{}, std::make_shared<NativePreviewHub>())) {}
 
     NativeTransportObserver(const NativeTransportObserver& other) {
-        std::lock_guard<std::mutex> lock(other.mutex_);
-        callback_ = other.callback_;
-        httpHub_ = other.httpHub_;
+        const auto source = std::atomic_load_explicit(
+            &other.state_, std::memory_order_acquire);
+        state_ = source
+            ? makeState(source->callback, source->httpHub)
+            : makeState(Callback{}, std::make_shared<NativePreviewHub>());
     }
 
     NativeTransportObserver& operator=(const NativeTransportObserver& other) {
         if (this == &other) return *this;
-        std::scoped_lock lock(mutex_, other.mutex_);
-        callback_ = other.callback_;
-        httpHub_ = other.httpHub_;
+        const auto source = std::atomic_load_explicit(
+            &other.state_, std::memory_order_acquire);
+        auto next = source
+            ? makeState(source->callback, source->httpHub)
+            : makeState(Callback{}, std::make_shared<NativePreviewHub>());
+        std::atomic_store_explicit(
+            &state_, std::move(next), std::memory_order_release);
         return *this;
     }
 
     NativeTransportObserver& operator=(Callback callback) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        callback_ = std::move(callback);
+        const auto current = std::atomic_load_explicit(
+            &state_, std::memory_order_acquire);
+        auto hub = current && current->httpHub
+            ? current->httpHub
+            : std::make_shared<NativePreviewHub>();
+        auto next = makeState(std::move(callback), std::move(hub));
+        std::atomic_store_explicit(
+            &state_, std::move(next), std::memory_order_release);
         return *this;
     }
 
     explicit operator bool() const {
-        Callback callback;
-        std::shared_ptr<NativePreviewHub> hub;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            callback = callback_;
-            hub = httpHub_;
-        }
-        return static_cast<bool>(callback) ||
-            (hub && hub->subscriberCount() != 0U);
+        const auto snapshot = std::atomic_load_explicit(
+            &state_, std::memory_order_acquire);
+        return snapshot &&
+            (static_cast<bool>(snapshot->callback) ||
+             (snapshot->httpHub && snapshot->httpHub->subscriberCount() != 0U));
     }
 
     void operator()(const std::uint8_t* data, std::size_t size) const {
-        Callback callback;
-        std::shared_ptr<NativePreviewHub> hub;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            callback = callback_;
-            hub = httpHub_;
-        }
-        if (callback) callback(data, size);
-        if (hub) hub->publish(data, size);
+        const auto snapshot = std::atomic_load_explicit(
+            &state_, std::memory_order_acquire);
+        if (!snapshot) return;
+        if (snapshot->callback) snapshot->callback(data, size);
+        if (snapshot->httpHub) snapshot->httpHub->publish(data, size);
     }
 
     std::shared_ptr<NativePreviewHub> httpHub() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return httpHub_;
+        const auto snapshot = std::atomic_load_explicit(
+            &state_, std::memory_order_acquire);
+        return snapshot ? snapshot->httpHub : nullptr;
     }
 
 private:
-    mutable std::mutex mutex_;
-    Callback callback_;
-    std::shared_ptr<NativePreviewHub> httpHub_;
+    struct State {
+        Callback callback;
+        std::shared_ptr<NativePreviewHub> httpHub;
+    };
+
+    static std::shared_ptr<const State> makeState(
+        Callback callback, std::shared_ptr<NativePreviewHub> hub) {
+        return std::make_shared<const State>(
+            State{std::move(callback), std::move(hub)});
+    }
+
+    // V10.8.135: readers take one immutable shared snapshot. The previous
+    // implementation copied the potentially heap-backed std::function while
+    // holding a mutex on every bool check and every 1316-byte observer call.
+    // Callback replacement now allocates only when configuration changes.
+    std::shared_ptr<const State> state_;
 };
 
 struct NativeUdpRelayConfig {
