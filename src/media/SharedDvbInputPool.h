@@ -37,3 +37,10 @@ private:
 };
 
 } // namespace dvbstreamer5::media::network
+
+// Compatibility alias for StreamManager and older integrations that referenced
+// SharedDvbInputPool directly from dvbstreamer5::media before the shared DVB
+// implementation was moved under the network namespace.
+namespace dvbstreamer5::media {
+using SharedDvbInputPool = network::SharedDvbInputPool;
+} // namespace dvbstreamer5::media
