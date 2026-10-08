@@ -232,8 +232,10 @@ public:
         // chunk: wantsInputPid() observes remapper state updated by every prior
         // admitted packet. Only packets belonging to the selected service are
         // copied into a Packet for full structural validation/remapping.
-        if (!framer_.visitTrustedAligned(
-                data, size, &visitContext, &SharedDvbServicePrefilter::visitPacket)) {
+        if (!framer_.visitTrustedAlignedInline(
+                data, size, [&](const std::uint8_t* bytes) {
+                    return visitPacket(&visitContext, bytes);
+                })) {
             return false;
         }
 
