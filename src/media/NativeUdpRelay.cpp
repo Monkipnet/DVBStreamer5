@@ -239,6 +239,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
         httpQueue_.clear();
         httpQueueBufferPool_.clear();
         httpQueuedBytes_ = 0;
+        httpQueueProducerWaiting_ = false;
         httpFinished_ = false;
     }
     inputBytes_.store(0, std::memory_order_relaxed);
@@ -408,6 +409,7 @@ void NativeUdpRelay::stop() noexcept {
         httpQueue_.clear();
         httpQueueBufferPool_.clear();
         httpQueuedBytes_ = 0;
+        httpQueueProducerWaiting_ = false;
         httpFinished_ = false;
     }
 }
@@ -461,10 +463,15 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
             return false;
         }
         std::unique_lock<std::mutex> lock(httpQueueMutex_);
-        httpQueueCondition_.wait(lock, [this, chunkSize, kMaximumHttpQueueBytes] {
+        const auto hasQueueSpace = [this, chunkSize, kMaximumHttpQueueBytes] {
             return !running_.load(std::memory_order_acquire) ||
                 httpQueuedBytes_ + chunkSize <= kMaximumHttpQueueBytes;
-        });
+        };
+        if (!hasQueueSpace()) {
+            httpQueueProducerWaiting_ = true;
+            httpQueueCondition_.wait(lock, hasQueueSpace);
+            httpQueueProducerWaiting_ = false;
+        }
         if (!running_.load(std::memory_order_acquire)) {
             return false;
         }
@@ -962,10 +969,13 @@ void NativeUdpRelay::run() {
                 auto chunk = std::move(httpQueue_.front());
                 httpQueue_.pop_front();
                 httpQueuedBytes_ -= chunk.size();
+                // V10.8.139: most dequeues happen while the 2 MiB queue has
+                // ample space. Avoid a futex wake unless enqueueHttpData()
+                // actually had to block on backpressure. The flag and queue
+                // state are observed under the same mutex, so no wake is lost.
+                const bool notifyProducer = httpQueueProducerWaiting_;
                 lock.unlock();
-                // A dequeue can only unblock the single producer waiting for
-                // bounded-queue space. notify_one avoids a broadcast wakeup.
-                httpQueueCondition_.notify_one();
+                if (notifyProducer) httpQueueCondition_.notify_one();
 
                 if (chunk.empty()) {
                     // HTTP reconnect boundary.  Do not join an incomplete TS

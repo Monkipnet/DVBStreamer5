@@ -164,6 +164,9 @@ private:
     // shared-DVB/external hot path does not malloc/free one vector per chunk.
     std::vector<std::vector<std::uint8_t>> httpQueueBufferPool_;
     std::size_t httpQueuedBytes_ = 0;
+    // V10.8.139: guarded by httpQueueMutex_. Only signal queue-space
+    // availability when the single producer is actually blocked.
+    bool httpQueueProducerWaiting_ = false;
     bool httpFinished_ = false;
     std::atomic<bool> httpStopRequested_{false};
     std::atomic<bool> running_{false};
