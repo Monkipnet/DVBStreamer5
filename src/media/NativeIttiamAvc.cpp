@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -16,6 +17,40 @@
 
 namespace dvbstreamer5::media::codec {
 namespace {
+
+bool ittiamAvcCpuSupported(std::string& reason) {
+    reason.clear();
+#if defined(__i386__) || defined(__x86_64__)
+#if defined(__GNUC__) || defined(__clang__)
+    // The pinned upstream Ittiam libavc x86 build is compiled globally with
+    // -msse4.2 -mavx2 -mfma.  Entering that static library on an older CPU can
+    // therefore raise SIGILL before libavc gets a chance to select an optimized
+    // implementation.  Guard the factory before the first Ittiam call and let
+    // the existing OpenH264 fallback handle CPUs without the required ISA.
+    __builtin_cpu_init();
+    std::string missing;
+    const auto addMissing = [&missing](const char* feature) {
+        if (!missing.empty()) missing += ',';
+        missing += feature;
+    };
+    if (!__builtin_cpu_supports("sse4.2")) addMissing("sse4.2");
+    if (!__builtin_cpu_supports("avx2")) addMissing("avx2");
+    if (!__builtin_cpu_supports("fma")) addMissing("fma");
+    if (!missing.empty()) {
+        reason = "CPU missing Ittiam-required SIMD: " + missing;
+        return false;
+    }
+    return true;
+#else
+    reason = "Ittiam CPU feature detection unavailable on x86";
+    return false;
+#endif
+#else
+    // The upstream ARM builds use their architecture-specific implementation;
+    // the x86 SSE4.2/AVX2/FMA requirement does not apply there.
+    return true;
+#endif
+}
 
 class IttiamInterlacedDisplayClockDecoder final : public VideoDecoder {
 public:
@@ -88,6 +123,11 @@ private:
 } // namespace
 
 std::unique_ptr<VideoDecoder> createIttiamAvcDecoder(std::string& error) {
+    if (!ittiamAvcCpuSupported(error)) {
+        std::cerr << "NATIVE AVC ITTIAM skipped reason=" << error << '\n';
+        return {};
+    }
+
     auto inner = createIttiamAvcDecoderBase(error);
     if (!inner) return {};
     error.clear();
