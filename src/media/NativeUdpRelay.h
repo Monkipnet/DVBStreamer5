@@ -75,6 +75,10 @@ private:
 struct NativeUdpRelayConfig {
     std::string inputUri;
     bool externallyFedInput = false;
+    // V10.8.137: set only when an external producer already emits contiguous,
+    // structurally validated 188-byte MPEG-TS packets (shared-DVB prefilter).
+    // Other external inputs retain the legacy full PacketFramer validation.
+    bool trustedAlignedExternalInput = false;
     bool dvbInputSource = false;
     LinuxDvbTuneConfig dvbTuneConfig;
     bool remapEnabled = false;

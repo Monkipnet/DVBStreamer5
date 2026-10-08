@@ -971,7 +971,11 @@ void NativeUdpRelay::run() {
                 received = chunk.size();
                 std::copy(chunk.begin(), chunk.end(), datagram.begin());
                 inputBytes_.fetch_add(received, std::memory_order_relaxed);
-                inputFramer.push(datagram.data(), received, packets);
+                if (config_.trustedAlignedExternalInput) {
+                    inputFramer.pushTrustedAligned(datagram.data(), received, packets);
+                } else {
+                    inputFramer.push(datagram.data(), received, packets);
+                }
             } else if (httpFinished_) {
                 const bool cbrDrained = std::all_of(
                     outputs.begin(), outputs.end(), [](const OutputWorker& output) {

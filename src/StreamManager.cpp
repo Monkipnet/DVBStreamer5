@@ -1021,6 +1021,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // The same proven Remapper now runs in the subscriber thread before
         // NativeUdpRelay's bounded external-input queue.  Do not remap twice.
         relay.remapEnabled = false;
+        // V10.8.137: SharedDvbServicePrefilter emits a contiguous Packet[188]
+        // array after selected-packet structural validation/remapping. The relay
+        // may therefore use the trusted aligned framer fast path; a sync-grid
+        // break still falls back to the legacy byte-resync/full-validation path.
+        relay.trustedAlignedExternalInput = true;
         std::cerr << "SHARED DVB service prefilter enabled stream="
                   << streamConfig.id
                   << " sid=" << streamConfig.inputServiceId
