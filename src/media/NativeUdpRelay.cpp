@@ -190,18 +190,18 @@ bool sendCbrDatagram(
     UdpSocket& output,
     std::atomic<std::uint64_t>& outputBytes,
     std::string& error) {
-    std::array<std::uint8_t,
+    constexpr std::size_t kCbrDatagramBytes =
         dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
-            dvbstreamer5::media::mpegts::kPacketSize> bytes {};
-    for (std::size_t index = 0; index < packets.size(); ++index) {
-        std::copy(
-            packets[index].begin(),
-            packets[index].end(),
-            bytes.begin() + static_cast<std::ptrdiff_t>(
-                index * dvbstreamer5::media::mpegts::kPacketSize));
-    }
-    if (!output.send(bytes.data(), bytes.size(), error)) return false;
-    outputBytes.fetch_add(bytes.size(), std::memory_order_relaxed);
+        dvbstreamer5::media::mpegts::kPacketSize;
+    static_assert(
+        sizeof(dvbstreamer5::media::mpegts::CbrDatagram) == kCbrDatagramBytes,
+        "CBR datagram storage must be contiguous");
+    // V10.8.140: CbrDatagram is already seven contiguous 188-byte packets.
+    // Send that storage directly instead of zeroing and copying a second
+    // 1316-byte scratch array for every paced UDP datagram.
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(packets.data());
+    if (!output.send(bytes, kCbrDatagramBytes, error)) return false;
+    outputBytes.fetch_add(kCbrDatagramBytes, std::memory_order_relaxed);
     return true;
 }
 
@@ -761,7 +761,7 @@ void NativeUdpRelay::run() {
                     config_.targetBitrate);
             observedCbrWorker = std::thread([&] {
                 while (true) {
-                    dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram {};
+                    dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;
                     bool ready = false;
                     {
                         std::unique_lock<std::mutex> lock(observedCbrMutex);
@@ -783,17 +783,19 @@ void NativeUdpRelay::run() {
                     }
                     if (!ready) continue;
 
-                    std::array<std::uint8_t,
+                    constexpr std::size_t kObservedCbrBytes =
                         dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
-                            dvbstreamer5::media::mpegts::kPacketSize> bytes {};
-                    for (std::size_t index = 0; index < cbrDatagram.size(); ++index) {
-                        std::memcpy(
-                            bytes.data() +
-                                index * dvbstreamer5::media::mpegts::kPacketSize,
-                            cbrDatagram[index].data(),
-                            dvbstreamer5::media::mpegts::kPacketSize);
-                    }
-                    config_.observeTransport(bytes.data(), bytes.size());
+                        dvbstreamer5::media::mpegts::kPacketSize;
+                    static_assert(
+                        sizeof(dvbstreamer5::media::mpegts::CbrDatagram) ==
+                            kObservedCbrBytes,
+                        "observed CBR datagram storage must be contiguous");
+                    // V10.8.140: nextDatagram() fills every one of the seven
+                    // packets before returning true, so the observer can use
+                    // CbrDatagram storage directly with no second memset/copy.
+                    config_.observeTransport(
+                        reinterpret_cast<const std::uint8_t*>(cbrDatagram.data()),
+                        kObservedCbrBytes);
                 }
             });
             std::cerr << "NATIVE OBSERVED CBR start target_kbps="
@@ -1238,7 +1240,7 @@ void NativeUdpRelay::run() {
             // iteration, so an asynchronous transcoder could make UDP-CBR lag
             // badly behind the requested bitrate.
             for (unsigned drained = 0; drained < 32U; ++drained) {
-                dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram {};
+                dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;
                 if (!output.cbrPacer->nextDatagram(
                         std::chrono::steady_clock::now(), cbrDatagram)) {
                     break;
