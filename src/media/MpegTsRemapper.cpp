@@ -165,6 +165,9 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     nextSdtAt_ = {};
     allowedPids_.fill(false);
     caPids_.fill(false);
+    inputAdmissionPids_.fill(false);
+    inputAdmissionPids_[0x0000] = true;
+    inputAdmissionPids_[0x0001] = true;
     remapReady_ = false;
     initialized_ = true;
     return true;
@@ -346,11 +349,17 @@ bool Remapper::processCatSection(
         return false;
     }
 
-    if (remapReady_) allowedPids_[0x01] = true;
+    if (remapReady_) {
+        allowedPids_[0x01] = true;
+        inputAdmissionPids_[0x01] = true;
+    }
     for (std::size_t index = 0; index < foundCount; ++index) {
         const std::uint16_t pid = foundPids[index];
         caPids_[pid] = true;
-        if (remapReady_) allowedPids_[pid] = true;
+        if (remapReady_) {
+            allowedPids_[pid] = true;
+            inputAdmissionPids_[pid] = true;
+        }
     }
     return true;
 }
@@ -392,6 +401,10 @@ bool Remapper::processPatSection(
         nextPatPmtAt_ = {};
         nextSdtAt_ = {};
         allowedPids_.fill(false);
+        inputAdmissionPids_.fill(false);
+        inputAdmissionPids_[0x0000] = true;
+        inputAdmissionPids_[0x0001] = true;
+        inputAdmissionPids_[pmtPid_] = true;
         remapReady_ = false;
     }
     return true;
@@ -547,6 +560,13 @@ bool Remapper::processPmtSection(
     }
 
     allowedPids_ = allowed;
+    inputAdmissionPids_ = allowed;
+    if (inputVideoPid_ < inputAdmissionPids_.size()) {
+        inputAdmissionPids_[inputVideoPid_] = true;
+    }
+    if (inputAudioPid_ < inputAdmissionPids_.size()) {
+        inputAdmissionPids_[inputAudioPid_] = true;
+    }
     pmtOutputSection_ = std::move(section);
     const bool becameReady = !remapReady_;
     remapReady_ = true;

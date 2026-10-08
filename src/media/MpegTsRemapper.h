@@ -25,19 +25,12 @@ public:
     bool process(const Packet& input, std::vector<Packet>& output, std::string& error);
     void tick(std::vector<Packet>& output);
     bool wantsInputPid(std::uint16_t pid) const noexcept {
-        // V10.8.131: this predicate is executed for every packet of the shared
-        // DVB MPTS before service selection. Keep it inline in the caller TU
-        // so the hot path avoids an out-of-line call (and the nested isAllowed
-        // call) for every foreign PID while preserving the exact V10.8.129/130
-        // admission semantics.
+        // V10.8.132: the shared-DVB hot path executes this predicate for every
+        // packet of the full multiplex. All state-dependent admission decisions
+        // are cached when PAT/CAT/PMT state changes, leaving one table lookup per
+        // packet while preserving the V10.8.131 admission semantics exactly.
         if (!initialized_) return true;
-        if (pid == 0x0000 || pid == 0x0001) return true;
-        if (pmtPid_ != kNullPid && pid == pmtPid_) return true;
-        if (!remapReady_) return false;
-        if (pid == 0x0011) return true;
-        return pid == kNullPid ||
-            (pid < allowedPids_.size() && allowedPids_[pid]) ||
-            pid == inputVideoPid_ || pid == inputAudioPid_;
+        return pid < inputAdmissionPids_.size() && inputAdmissionPids_[pid];
     }
 
 private:
@@ -76,6 +69,7 @@ private:
     RemapConfig config_;
     std::array<bool, 8192> allowedPids_ {};
     std::array<bool, 8192> caPids_ {};
+    std::array<bool, 8192> inputAdmissionPids_ {};
     std::uint16_t inputServiceId_ = 0;
     std::uint16_t pmtPid_ = 0x1fff;
     std::uint16_t inputVideoPid_ = 0;
