@@ -951,35 +951,11 @@ void NativeUdpRelay::run() {
                 break;
             }
             if (received == 0) {
-                std::chrono::steady_clock::time_point nextDeadline {};
-                bool hasDeadline = false;
-                for (const auto& output : outputs) {
-                    if (output.cbrWorker && output.cbrWorker->started()) {
-                        const auto outputDeadline = output.cbrWorker->nextDeadline();
-                        if (!hasDeadline || outputDeadline < nextDeadline) {
-                            nextDeadline = outputDeadline;
-                            hasDeadline = true;
-                        }
-                    }
-                }
-                if (hasDeadline &&
-                    nextDeadline > std::chrono::steady_clock::now()) {
-                    std::this_thread::sleep_until(nextDeadline);
-                }
+                // The dedicated WISI sender owns all CBR deadlines. The input
+                // relay must not wake once per UDP slot merely to watch them.
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
         } else if (httpInput) {
-            int receiveTimeoutMs = 250;
-            auto nextDeadline = std::chrono::steady_clock::time_point {};
-            bool hasDeadline = false;
-            for (const auto& output : outputs) {
-                if (output.cbrWorker && output.cbrWorker->started()) {
-                    const auto deadline = output.cbrWorker->nextDeadline();
-                    if (!hasDeadline || deadline < nextDeadline) {
-                        nextDeadline = deadline;
-                        hasDeadline = true;
-                    }
-                }
-            }
             std::unique_lock<std::mutex> lock(httpQueueMutex_);
             if (httpQueue_.empty()) {
                 const bool cbrDrained = std::all_of(
@@ -990,19 +966,17 @@ void NativeUdpRelay::run() {
                 if (httpFinished_ && cbrDrained) {
                     break;
                 }
-                if (hasDeadline) {
-                    if (httpFinished_) {
-                        httpQueueCondition_.wait_until(lock, nextDeadline);
-                    } else {
-                        httpQueueCondition_.wait_until(
-                            lock, nextDeadline, [this] {
-                                return !httpQueue_.empty() || httpFinished_ ||
-                                    !running_.load(std::memory_order_acquire);
-                            });
-                    }
-                } else if (!httpFinished_) {
+                if (httpFinished_) {
+                    // Source is done but the dedicated WISI queue may still be
+                    // draining. Avoid a busy loop without coupling to its CBR clock.
                     httpQueueCondition_.wait_for(
-                        lock, std::chrono::milliseconds(receiveTimeoutMs), [this] {
+                        lock, std::chrono::milliseconds(20), [this] {
+                            return !httpQueue_.empty() ||
+                                !running_.load(std::memory_order_acquire);
+                        });
+                } else {
+                    httpQueueCondition_.wait_for(
+                        lock, std::chrono::milliseconds(250), [this] {
                             return !httpQueue_.empty() || httpFinished_ ||
                                 !running_.load(std::memory_order_acquire);
                         });
@@ -1064,22 +1038,9 @@ void NativeUdpRelay::run() {
                 }
             }
         } else {
+            // Input reads no longer share the WISI output clock. A fixed timeout
+            // avoids thousands of unnecessary wakeups per second across channels.
             int receiveTimeoutMs = 250;
-            for (const auto& output : outputs) {
-                if (!output.cbrWorker || !output.cbrWorker->started()) {
-                    continue;
-                }
-                const auto remaining = output.cbrWorker->nextDeadline() -
-                    std::chrono::steady_clock::now();
-                const int outputTimeout =
-                    remaining <= std::chrono::steady_clock::duration::zero()
-                    ? 0
-                    : static_cast<int>((std::min)(
-                        std::int64_t{250},
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            remaining + std::chrono::milliseconds(1)).count()));
-                receiveTimeoutMs = (std::min)(receiveTimeoutMs, outputTimeout);
-            }
             const bool receivedOk = dvbInput
                 ? dvbInput_.read(
                     datagram.data(), datagram.size(), received, receiveTimeoutMs, error)
