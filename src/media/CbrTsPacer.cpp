@@ -23,11 +23,18 @@ constexpr std::uint64_t kMinimumAdjustment = 100000ULL;
 
 // TVStreammerSAT5 StableUdpOutput continuous-network profile.
 constexpr auto kTvSatStartupReservoir = std::chrono::seconds(5);
-constexpr auto kTvSatRateSample = std::chrono::milliseconds(500);
-constexpr auto kTvSatControllerUpdate = std::chrono::milliseconds(100);
+// SAT5 continuous-network profile (202.22): rate is measured over a
+// 15-second arrival window after at least five seconds of evidence.
+constexpr auto kTvSatArrivalSampleInterval = std::chrono::milliseconds(500);
+constexpr auto kTvSatArrivalRateWindow = std::chrono::seconds(15);
+constexpr auto kTvSatArrivalRateMinimum = std::chrono::seconds(5);
+// The reservoir PLL intentionally reacts much more slowly than the input
+// reader: one update every two seconds, max +/-1% correction and 0.1% step.
+constexpr auto kTvSatControllerUpdate = std::chrono::seconds(2);
 constexpr auto kTvSatTargetReservoir = std::chrono::milliseconds(2500);
-constexpr auto kTvSatLowReservoir = std::chrono::milliseconds(800);
-constexpr auto kTvSatCorrectionHorizon = std::chrono::seconds(6);
+constexpr std::uint64_t kTvSatPllCorrectionPermille = 10ULL;
+constexpr std::uint64_t kTvSatPllStepPermille = 1ULL;
+constexpr std::uint64_t kTvSatPllFollowDivisor = 64ULL;
 constexpr auto kTvSatPeriodicPcrInterval = std::chrono::milliseconds(20);
 constexpr std::size_t kTvSatStartupMinimumPcrSamples = 5;
 constexpr std::uint64_t kPcrClockHz = 27000000ULL;
@@ -333,32 +340,47 @@ void CbrTsPacer::observeTvStreammerSat5Arrival(
         ++tvSatStartupPcrSamples_;
     }
 
-    if (!tvSatArrivalWindowStarted_) {
-        tvSatArrivalWindowStarted_ = true;
-        tvSatArrivalWindowStart_ = now;
-        tvSatArrivalPacketsInWindow_ = 1;
-        return;
+    ++tvSatTotalArrivalPackets_;
+    if (tvSatArrivalRateWindow_.empty() ||
+        now - tvSatArrivalRateWindow_.back().first >= kTvSatArrivalSampleInterval) {
+        tvSatArrivalRateWindow_.emplace_back(now, tvSatTotalArrivalPackets_);
+    } else {
+        // Keep the cumulative counter current without creating one node per TS packet.
+        tvSatArrivalRateWindow_.back().second = tvSatTotalArrivalPackets_;
     }
 
-    ++tvSatArrivalPacketsInWindow_;
+    while (tvSatArrivalRateWindow_.size() > 2 &&
+           now - tvSatArrivalRateWindow_.front().first > kTvSatArrivalRateWindow) {
+        tvSatArrivalRateWindow_.pop_front();
+    }
+    if (tvSatArrivalRateWindow_.size() < 2) return;
+
+    const auto& first = tvSatArrivalRateWindow_.front();
+    const auto& last = tvSatArrivalRateWindow_.back();
+    if (last.first <= first.first || last.second <= first.second) return;
     const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        now - tvSatArrivalWindowStart_);
-    if (elapsed < kTvSatRateSample) return;
+        last.first - first.first);
+    if (elapsed < kTvSatArrivalRateMinimum) return;
 
-    const std::uint64_t measured =
-        bitrateForPackets(tvSatArrivalPacketsInWindow_, elapsed);
-    if (measured > 0) {
-        // Stable, deliberately slow EWMA: network read chunking must not turn
-        // into useful-packet burst spacing on the wire.
-        // StableUdpOutput follows network-rate changes slowly. Keep the
-        // same 8-sample EWMA so read chunking/GOP bursts do not move the
-        // useful-packet clock abruptly.
-        tvSatEstimatedPayloadBitrate_ = tvSatEstimatedPayloadBitrate_ == 0
-            ? measured
-            : (tvSatEstimatedPayloadBitrate_ * 7ULL + measured) / 8ULL;
+    const std::uint64_t measured = bitrateForPackets(
+        last.second - first.second, elapsed);
+    if (measured == 0) return;
+
+    const bool firstLock = tvSatEstimatedPayloadBitrate_ == 0;
+    // Match StableUdpOutput networkLongTermArrivalBitrate: the 15-second window
+    // already removes TCP/SRT delivery bursts, then a 3/4 EWMA follows only
+    // genuine long-term service-rate changes.
+    tvSatEstimatedPayloadBitrate_ = firstLock
+        ? measured
+        : (tvSatEstimatedPayloadBitrate_ * 3ULL + measured) / 4ULL;
+    if (firstLock) {
+        std::cerr << "CBR TVSTREAMMERSAT5 network rate lock"
+                  << " source_rate=arrival_15s"
+                  << " useful_kbps=" << (tvSatEstimatedPayloadBitrate_ / 1000ULL)
+                  << " minimum_window_ms=5000"
+                  << " PCR_density=diagnostic_only"
+                  << std::endl;
     }
-    tvSatArrivalWindowStart_ = now;
-    tvSatArrivalPacketsInWindow_ = 0;
 }
 
 void CbrTsPacer::maybeStartTvStreammerSat5(
@@ -393,8 +415,9 @@ void CbrTsPacer::maybeStartTvStreammerSat5(
     const std::uint64_t maximumUsefulBitrate = targetBitrate_ > 100000ULL
         ? targetBitrate_ - 100000ULL
         : targetBitrate_;
-    tvSatRealPaceBitrate_ = (std::min)(
+    tvSatPllBaseBitrate_ = (std::min)(
         tvSatEstimatedPayloadBitrate_, maximumUsefulBitrate);
+    tvSatRealPaceBitrate_ = tvSatPllBaseBitrate_;
     tvSatRealTokenAccumulator_ = 0;
 
     if (!tvSatStartLogged_) {
@@ -423,44 +446,78 @@ void CbrTsPacer::updateTvStreammerSat5Controller(
     }
     tvSatLastControllerUpdate_ = now;
 
-    const std::uint64_t estimate = tvSatEstimatedPayloadBitrate_;
+    const std::uint64_t maximumUsefulBitrate = targetBitrate_ > 100000ULL
+        ? targetBitrate_ - 100000ULL
+        : targetBitrate_;
+    const std::uint64_t sourceLimited = (std::min)(
+        tvSatEstimatedPayloadBitrate_, maximumUsefulBitrate);
+
+    if (tvSatPllBaseBitrate_ == 0) {
+        tvSatPllBaseBitrate_ = sourceLimited;
+    } else {
+        // SAT5 continuous-network PLL: follow a noisy long-term source estimate
+        // at only 1/64 per controller update.
+        tvSatPllBaseBitrate_ =
+            (tvSatPllBaseBitrate_ * (kTvSatPllFollowDivisor - 1ULL) + sourceLimited) /
+            kTvSatPllFollowDivisor;
+    }
+    tvSatPllBaseBitrate_ = (std::min)(tvSatPllBaseBitrate_, maximumUsefulBitrate);
+
     const std::uint64_t bufferBytes =
         static_cast<std::uint64_t>(queuedPackets_.size()) * kPacketSize;
     const std::uint64_t targetBufferBytes = (std::max<std::uint64_t>)(
         kPacketsPerCbrDatagram * kPacketSize * 32ULL,
         bytesForDuration(
-            estimate,
+            tvSatPllBaseBitrate_,
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 kTvSatTargetReservoir)));
-    const std::uint64_t lowBufferBytes = (std::max<std::uint64_t>)(
-        kPacketsPerCbrDatagram * kPacketSize * 8ULL,
-        bytesForDuration(
-            estimate,
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                kTvSatLowReservoir)));
 
-    const long double errorBytes =
-        static_cast<long double>(bufferBytes) -
-        static_cast<long double>(targetBufferBytes);
-    const long double correction =
-        errorBytes * 8.0L * static_cast<long double>(kNanosecondsPerSecond) /
-        static_cast<long double>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                kTvSatCorrectionHorizon).count());
-    long double desired = static_cast<long double>(estimate) + correction;
-    if (bufferBytes < lowBufferBytes) {
-        desired = (std::min)(
-            desired,
-            static_cast<long double>(estimate) * 0.85L);
+    std::int64_t errorBytes = 0;
+    if (bufferBytes >= targetBufferBytes) {
+        const std::uint64_t diff = bufferBytes - targetBufferBytes;
+        errorBytes = static_cast<std::int64_t>((std::min<std::uint64_t>)(
+            diff, static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())));
+    } else {
+        const std::uint64_t diff = targetBufferBytes - bufferBytes;
+        errorBytes = -static_cast<std::int64_t>((std::min<std::uint64_t>)(
+            diff, static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())));
     }
-    const std::uint64_t maximumUsefulBitrate = targetBitrate_ > 100000ULL
-        ? targetBitrate_ - 100000ULL
-        : targetBitrate_;
-    desired = std::clamp(
-        desired,
-        0.0L,
-        static_cast<long double>(maximumUsefulBitrate));
-    tvSatRealPaceBitrate_ = static_cast<std::uint64_t>(desired);
+
+    // 1% pace correction for a 100% reservoir occupancy error, hard-limited
+    // to +/-1%, exactly the SAT5 continuous-network controller policy.
+    std::int64_t correction = 0;
+    if (targetBufferBytes > 0) {
+#if defined(__SIZEOF_INT128__)
+        correction = static_cast<std::int64_t>(
+            (static_cast<__int128>(tvSatPllBaseBitrate_) * errorBytes) /
+            (static_cast<__int128>(targetBufferBytes) * 100));
+#else
+        correction = static_cast<std::int64_t>(
+            (static_cast<long double>(tvSatPllBaseBitrate_) *
+             static_cast<long double>(errorBytes)) /
+            (static_cast<long double>(targetBufferBytes) * 100.0L));
+#endif
+    }
+    const std::int64_t maximumCorrection = static_cast<std::int64_t>(
+        tvSatPllBaseBitrate_ * kTvSatPllCorrectionPermille / 1000ULL);
+    correction = std::clamp<std::int64_t>(
+        correction, -maximumCorrection, maximumCorrection);
+
+    std::int64_t desired = static_cast<std::int64_t>(tvSatPllBaseBitrate_) + correction;
+    desired = std::clamp<std::int64_t>(
+        desired, 0, static_cast<std::int64_t>(maximumUsefulBitrate));
+
+    const std::uint64_t maximumStep = (std::max<std::uint64_t>)(
+        1000ULL, tvSatPllBaseBitrate_ * kTvSatPllStepPermille / 1000ULL);
+    const std::int64_t current = static_cast<std::int64_t>(tvSatRealPaceBitrate_);
+    const std::int64_t lower = current > static_cast<std::int64_t>(maximumStep)
+        ? current - static_cast<std::int64_t>(maximumStep)
+        : 0;
+    const std::int64_t upper = (std::min)(
+        static_cast<std::int64_t>(maximumUsefulBitrate),
+        current + static_cast<std::int64_t>(maximumStep));
+    tvSatRealPaceBitrate_ = static_cast<std::uint64_t>(
+        std::clamp<std::int64_t>(desired, lower, upper));
 }
 
 void CbrTsPacer::fillTvStreammerSat5Datagram(

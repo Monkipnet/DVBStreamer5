@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <utility>
 
 namespace dvbstreamer5::media::mpegts {
 
@@ -108,7 +109,11 @@ private:
     std::chrono::steady_clock::time_point tvSatArrivalWindowStart_ {};
     std::chrono::steady_clock::time_point tvSatLastControllerUpdate_ {};
     std::uint64_t tvSatArrivalPacketsInWindow_ = 0;
+    std::uint64_t tvSatTotalArrivalPackets_ = 0;
+    std::deque<std::pair<std::chrono::steady_clock::time_point, std::uint64_t>>
+        tvSatArrivalRateWindow_;
     std::uint64_t tvSatEstimatedPayloadBitrate_ = 0;
+    std::uint64_t tvSatPllBaseBitrate_ = 0;
     std::uint64_t tvSatRealPaceBitrate_ = 0;
     std::uint64_t tvSatRealTokenAccumulator_ = 0;
     std::size_t tvSatStartupPcrSamples_ = 0;
