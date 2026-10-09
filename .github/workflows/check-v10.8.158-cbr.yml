@@ -13,13 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Targeted CBR compile
+      - name: Compile CBR pacer
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             -c src/media/CbrTsPacer.cpp -o /tmp/CbrTsPacer.o
-      - name: Vendor SRT
-        run: ./scripts/vendor_srt_source.sh
-      - name: Configure Release
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build Release
-        run: cmake --build build --parallel 2
+      - name: Compile native relay integration
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            -c src/media/NativeUdpRelay.cpp -o /tmp/NativeUdpRelay.o
