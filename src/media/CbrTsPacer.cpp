@@ -1,7 +1,6 @@
 #include "media/CbrTsPacer.h"
 
 #include <algorithm>
-#include <limits>
 #include <stdexcept>
 
 namespace dvbstreamer5::media::mpegts {
@@ -13,14 +12,6 @@ constexpr std::uint64_t kPcrWrapTicks = (1ULL << 33U) * 300ULL;
 constexpr std::uint64_t kDatagramBits =
     kPacketsPerCbrDatagram * kPacketSize * 8ULL;
 constexpr std::uint64_t kPacketBits = kPacketSize * 8ULL;
-constexpr auto kArrivalRateWindow = std::chrono::milliseconds(250);
-
-// V10.8.166: do not let one jittery PCR interval change real/null placement.
-// A 200 ms aggregate is short enough to fit inside the existing 400 ms startup
-// reservoir, but long enough to average several normal 20..40 ms PCR intervals.
-constexpr std::uint64_t kPcrFilterWindowTicks = kPcrClockHz / 5ULL;
-constexpr std::uint64_t kPcrRateDeadbandPermille = 10ULL; // +/-1.0%
-constexpr std::uint64_t kPcrRateFollowDivisor = 4ULL;     // move 25% of real change/window
 
 } // namespace
 
@@ -41,14 +32,13 @@ bool CbrTsPacer::canEnqueue(const Packet& packet) const noexcept {
 bool CbrTsPacer::enqueue(const Packet& packet) {
     if (packet[0] != kSyncByte) return false;
 
-    // The WISI shaper owns the NULL budget. Source NULLs must not enter the
-    // useful-packet queue because they would hide the true payload/PCR rate.
+    // WISI CBR owns the NULL budget. Source NULL packets are removed before the
+    // PCR interval is built; the exact target-CBR NULL budget is generated on
+    // output instead.
     if (isNullPacket(packet)) return true;
     if (!canEnqueue(packet)) return false;
 
     const auto now = std::chrono::steady_clock::now();
-    observeArrival(now);
-
     QueuedPacket queued;
     queued.packet = packet;
     queued.sequence = nextSequence_++;
@@ -67,9 +57,9 @@ bool CbrTsPacer::nextDatagram(
     CbrDatagram& datagram) {
     if (!started_ || now < nextDeadline_) return false;
 
-    // Never repay scheduler latency with a burst. WISI must see one 1316-byte
-    // datagram per transport slot, not a train of overdue datagrams followed by
-    // a gap.
+    // Never repay scheduler latency with a burst. One physical 1316-byte UDP
+    // datagram is emitted per transport deadline; after a late wakeup the clock
+    // is simply rebased to now.
     const std::uint64_t periodNs =
         (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
     const auto maximumCatchup = std::chrono::nanoseconds(
@@ -79,27 +69,54 @@ bool CbrTsPacer::nextDatagram(
         pacingRemainder_ = 0;
     }
 
-    // Real TS is spread through the fixed transport slots with a Bresenham/token
-    // accumulator. V10.8.166 feeds this with the filtered multi-PCR rate, not the
-    // instantaneous rate of one PCR interval. The physical CBR/1316-byte sender
-    // clock is unchanged.
     for (Packet& packet : datagram) {
-        if (queuedPackets_.empty()) {
+        if (!activeSegment_ && !activateNextSegment()) {
+            // The physical transport remains CBR while waiting for the closing
+            // PCR of the next useful interval. A 1.2 s upstream reservoir in the
+            // WISI worker normally keeps several complete intervals ready.
             makeNullPacket(packet);
             continue;
         }
 
-        const std::uint64_t usefulRate =
-            (std::min)(rateForNextPacket(), targetBitrate_);
-        usefulToken_ += usefulRate;
-        if (usefulToken_ < targetBitrate_) {
-            makeNullPacket(packet);
-            continue;
+        bool emitReal = false;
+        if (activeForceFirstReal_) {
+            // A source-PCR packet starts every exact PCR segment and must occupy
+            // the first target slot. This is what makes PCR-to-PCR packet spacing
+            // deterministic at the configured transport bitrate.
+            activeForceFirstReal_ = false;
+            emitReal = true;
+        } else if (activeSpreadSlotsTotal_ != 0 && activeSpreadRealTotal_ != 0) {
+            activeToken_ += activeSpreadRealTotal_;
+            if (activeToken_ >= activeSpreadSlotsTotal_) {
+                activeToken_ -= activeSpreadSlotsTotal_;
+                emitReal = true;
+            }
         }
 
-        usefulToken_ -= targetBitrate_;
-        packet = queuedPackets_.front().packet;
-        queuedPackets_.pop_front();
+        if (emitReal) {
+            if (!emitRealFromActiveSegment(packet)) {
+                makeNullPacket(packet);
+            }
+        } else {
+            makeNullPacket(packet);
+        }
+
+        if (activeSlotsRemaining_ > 0) --activeSlotsRemaining_;
+        if (activeSlotsRemaining_ == 0) {
+            // With slots >= realPackets and the deterministic accumulator,
+            // activeRealRemaining_ is expected to be zero. Keep a data-preserving
+            // emergency tail only for an internal accounting mismatch.
+            if (activeRealRemaining_ != 0) {
+                activeSlotsRemaining_ = activeRealRemaining_;
+                activeSlotsTotal_ += activeRealRemaining_;
+                activeSpreadRealTotal_ = activeRealRemaining_;
+                activeSpreadSlotsTotal_ = activeRealRemaining_;
+                activeToken_ = 0;
+                activeForceFirstReal_ = false;
+            } else {
+                activeSegment_ = false;
+            }
+        }
     }
 
     advanceDeadline();
@@ -117,8 +134,7 @@ std::chrono::steady_clock::time_point CbrTsPacer::nextDeadline() const noexcept 
 std::uint64_t CbrTsPacer::targetBitrate() const noexcept { return targetBitrate_; }
 
 std::uint64_t CbrTsPacer::sourcePayloadBitrate() const noexcept {
-    if (sourcePayloadBitrate_ > 0) return sourcePayloadBitrate_;
-    return arrivalPayloadBitrate_;
+    return sourcePayloadBitrate_;
 }
 
 std::size_t CbrTsPacer::queuedPackets() const noexcept { return queuedPackets_.size(); }
@@ -127,42 +143,12 @@ std::size_t CbrTsPacer::queuedBytes() const noexcept {
     return queuedPackets_.size() * kPacketSize;
 }
 
-void CbrTsPacer::observeArrival(
-    std::chrono::steady_clock::time_point now) noexcept {
-    if (!arrivalWindowStarted_) {
-        arrivalWindowStarted_ = true;
-        arrivalWindowStart_ = now;
-        arrivalPackets_ = 1;
-        return;
-    }
+std::size_t CbrTsPacer::readySegments() const noexcept {
+    return readySegments_.size() + (activeSegment_ ? 1U : 0U);
+}
 
-    ++arrivalPackets_;
-    if (now - arrivalWindowStart_ < kArrivalRateWindow) return;
-
-    const auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        now - arrivalWindowStart_).count();
-    if (elapsedNs > 0) {
-        const long double measured =
-            static_cast<long double>(arrivalPackets_) *
-            static_cast<long double>(kPacketBits) *
-            static_cast<long double>(kNanosecondsPerSecond) /
-            static_cast<long double>(elapsedNs);
-        if (measured > 0.0L) {
-            const auto bounded = static_cast<std::uint64_t>((std::min)(
-                measured, static_cast<long double>(kMaximumBitrate)));
-            // Arrival rate is only a fallback for malformed/no-PCR streams.
-            // Smooth it heavily because HTTP/HLS delivery itself is bursty.
-            if (arrivalPayloadBitrate_ == 0) {
-                arrivalPayloadBitrate_ = bounded;
-            } else {
-                arrivalPayloadBitrate_ =
-                    (arrivalPayloadBitrate_ * 7ULL + bounded) / 8ULL;
-            }
-        }
-    }
-
-    arrivalWindowStart_ = now;
-    arrivalPackets_ = 0;
+std::uint64_t CbrTsPacer::insufficientTargetSegments() const noexcept {
+    return insufficientTargetSegments_;
 }
 
 void CbrTsPacer::observePcr(
@@ -172,128 +158,207 @@ void CbrTsPacer::observePcr(
     bool discontinuity = false;
     if (!readPcr(packet, pcrTicks, discontinuity)) return;
 
-    if (discontinuity || !havePreviousPcr_) {
+    const std::uint16_t pid = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8U) | packet[2]);
+    if (!havePcrPid_) {
+        pcrPid_ = pid;
+        havePcrPid_ = true;
+    } else if (pid != pcrPid_) {
+        // Do not mix independent PCR domains if an upstream MPTS leaks more than
+        // one service through the relay. One WISI output must be scheduled from
+        // one PCR clock only.
+        return;
+    }
+
+    if (!havePreviousPcr_) {
         previousPcrTicks_ = pcrTicks;
         previousPcrSequence_ = sequence;
         havePreviousPcr_ = true;
-        resetPcrFilterWindow();
+        return;
+    }
+
+    if (discontinuity) {
+        if (pcrTimingLocked_ && sequence > previousPcrSequence_) {
+            queueFallbackSegment(previousPcrSequence_, sequence - 1ULL);
+        }
+        previousPcrTicks_ = pcrTicks;
+        previousPcrSequence_ = sequence;
         return;
     }
 
     const std::uint64_t deltaTicks = pcrTicks >= previousPcrTicks_
         ? pcrTicks - previousPcrTicks_
         : (kPcrWrapTicks - previousPcrTicks_) + pcrTicks;
-    const std::uint64_t intervalPackets =
-        sequence > previousPcrSequence_ ? sequence - previousPcrSequence_ : 0;
 
-    // Reject obvious PCR resets/corruption. 1 ms..10 s covers normal DVB/IP
-    // PCR cadence while treating HLS discontinuities as a new anchor.
     const bool validDelta =
+        sequence > previousPcrSequence_ &&
         deltaTicks >= (kPcrClockHz / 1000ULL) &&
-        deltaTicks <= (kPcrClockHz * 10ULL) &&
-        intervalPackets > 0;
+        deltaTicks <= (kPcrClockHz * 10ULL);
 
     if (validDelta) {
-        if (!pcrFilterWindowActive_) {
-            pcrFilterWindowActive_ = true;
-            pcrFilterWindowFirstSequence_ = previousPcrSequence_ + 1ULL;
+        if (!pcrTimingLocked_ && !queuedPackets_.empty() &&
+            queuedPackets_.front().sequence < previousPcrSequence_) {
+            queuePrefixSegment(
+                queuedPackets_.front().sequence,
+                previousPcrSequence_ - 1ULL);
         }
-        pcrFilterWindowTicks_ += deltaTicks;
-        pcrFilterWindowPackets_ += intervalPackets;
-        ++pcrFilterWindowIntervals_;
 
-        if (pcrFilterWindowTicks_ >= kPcrFilterWindowTicks) {
-            const long double measured =
-                static_cast<long double>(pcrFilterWindowPackets_) *
-                static_cast<long double>(kPacketBits) *
-                static_cast<long double>(kPcrClockHz) /
-                static_cast<long double>(pcrFilterWindowTicks_);
-            if (measured > 0.0L &&
-                measured <= static_cast<long double>(kMaximumBitrate)) {
-                const std::uint64_t candidateRate =
-                    (std::max<std::uint64_t>)(1ULL, static_cast<std::uint64_t>(measured));
-                const std::uint64_t filteredRate = filterPcrRate(candidateRate);
-
-                // On the first lock stamp the whole startup queue. Afterwards
-                // stamp only this aggregate window. Packets not yet stamped fall
-                // back to the same filtered sourcePayloadBitrate_, so an interval
-                // cannot suddenly revert to an instantaneous PCR-derived value.
-                const std::uint64_t firstSequence = pcrTimingLocked_
-                    ? pcrFilterWindowFirstSequence_
-                    : 0ULL;
-                annotatePcrInterval(firstSequence, sequence, filteredRate);
-                sourcePayloadBitrate_ = filteredRate;
-                pcrTimingLocked_ = true;
-            }
-            resetPcrFilterWindow();
-        }
-    } else {
-        // Keep the last good filtered source rate through a discontinuity/bad
-        // interval and restart accumulation from this PCR anchor.
-        resetPcrFilterWindow();
+        queuePcrSegment(
+            previousPcrSequence_,
+            sequence - 1ULL,
+            deltaTicks);
+        pcrTimingLocked_ = true;
+    } else if (pcrTimingLocked_ && sequence > previousPcrSequence_) {
+        // HLS discontinuities and damaged PCR jumps must not strand useful
+        // packets forever at the head of the queue. Preserve the last good
+        // media rate for just this one incomplete interval, then re-anchor.
+        queueFallbackSegment(previousPcrSequence_, sequence - 1ULL);
     }
 
     previousPcrTicks_ = pcrTicks;
     previousPcrSequence_ = sequence;
 }
 
-void CbrTsPacer::resetPcrFilterWindow() noexcept {
-    pcrFilterWindowActive_ = false;
-    pcrFilterWindowTicks_ = 0;
-    pcrFilterWindowPackets_ = 0;
-    pcrFilterWindowFirstSequence_ = 0;
-    pcrFilterWindowIntervals_ = 0;
-}
-
-std::uint64_t CbrTsPacer::filterPcrRate(
-    std::uint64_t candidateRate) noexcept {
-    candidateRate = std::clamp(
-        candidateRate, std::uint64_t{1}, kMaximumBitrate);
-    if (sourcePayloadBitrate_ == 0) return candidateRate;
-
-    const std::uint64_t current = sourcePayloadBitrate_;
-    const std::uint64_t difference = candidateRate > current
-        ? candidateRate - current
-        : current - candidateRate;
-
-    // Small PCR jitter is deliberately ignored. This is the key V10.8.166
-    // behaviour: +/-1% around the established useful rate does not move the
-    // real/null packet pattern at all.
-    if (difference * 1000ULL <= current * kPcrRateDeadbandPermille) {
-        return current;
+std::uint64_t CbrTsPacer::countQueuedPackets(
+    std::uint64_t firstSequence,
+    std::uint64_t lastSequence) const noexcept {
+    if (firstSequence == 0 || lastSequence < firstSequence) return 0;
+    std::uint64_t count = 0;
+    for (const auto& queued : queuedPackets_) {
+        if (queued.sequence < firstSequence) continue;
+        if (queued.sequence > lastSequence) break;
+        ++count;
     }
-
-    // A genuine source-rate change still has to be followed, but only gradually
-    // so one abnormal PCR interval cannot create a visible WISI bitrate pulse.
-    std::uint64_t step = difference / kPcrRateFollowDivisor;
-    if (step == 0) step = 1;
-    return candidateRate > current ? current + step : current - step;
+    return count;
 }
 
-void CbrTsPacer::annotatePcrInterval(
+void CbrTsPacer::queuePrefixSegment(
+    std::uint64_t firstSequence,
+    std::uint64_t lastSequence) noexcept {
+    const std::uint64_t realPackets =
+        countQueuedPackets(firstSequence, lastSequence);
+    if (realPackets == 0) return;
+
+    ReadySegment segment;
+    segment.firstSequence = firstSequence;
+    segment.lastSequence = lastSequence;
+    segment.realPackets = realPackets;
+    segment.slots = realPackets;
+    segment.startsWithPcr = false;
+    readySegments_.push_back(segment);
+}
+
+void CbrTsPacer::queuePcrSegment(
     std::uint64_t firstSequence,
     std::uint64_t lastSequence,
-    std::uint64_t sourceRate) noexcept {
-    for (auto& queued : queuedPackets_) {
-        if (queued.sequence > lastSequence) break;
-        if (firstSequence == 0 || queued.sequence >= firstSequence) {
-            queued.sourceRate = sourceRate;
-        }
+    std::uint64_t deltaTicks) noexcept {
+    const std::uint64_t realPackets =
+        countQueuedPackets(firstSequence, lastSequence);
+    if (realPackets == 0 || deltaTicks == 0) return;
+
+    constexpr std::uint64_t denominator = kPcrClockHz * kPacketBits;
+    const std::uint64_t numerator = targetBitrate_ * deltaTicks;
+    std::uint64_t slots = (numerator + denominator / 2ULL) / denominator;
+    if (slots == 0) slots = 1;
+    if (slots < realPackets) {
+        slots = realPackets;
+        ++insufficientTargetSegments_;
+    }
+
+    ReadySegment segment;
+    segment.firstSequence = firstSequence;
+    segment.lastSequence = lastSequence;
+    segment.realPackets = realPackets;
+    segment.slots = slots;
+    segment.startsWithPcr = true;
+    readySegments_.push_back(segment);
+
+    const long double measured =
+        static_cast<long double>(realPackets) *
+        static_cast<long double>(kPacketBits) *
+        static_cast<long double>(kPcrClockHz) /
+        static_cast<long double>(deltaTicks);
+    if (measured > 0.0L && measured <= static_cast<long double>(kMaximumBitrate)) {
+        sourcePayloadBitrate_ =
+            (std::max<std::uint64_t>)(1ULL, static_cast<std::uint64_t>(measured));
     }
 }
 
-std::uint64_t CbrTsPacer::rateForNextPacket() const noexcept {
-    if (queuedPackets_.empty()) return 0;
-    const std::uint64_t packetRate = queuedPackets_.front().sourceRate;
-    if (packetRate > 0) return packetRate;
-    if (sourcePayloadBitrate_ > 0) return sourcePayloadBitrate_;
-    if (arrivalPayloadBitrate_ > 0) return arrivalPayloadBitrate_;
-    return targetBitrate_;
+void CbrTsPacer::queueFallbackSegment(
+    std::uint64_t firstSequence,
+    std::uint64_t lastSequence) noexcept {
+    const std::uint64_t realPackets =
+        countQueuedPackets(firstSequence, lastSequence);
+    if (realPackets == 0) return;
+
+    std::uint64_t slots = realPackets;
+    if (sourcePayloadBitrate_ > 0) {
+        const std::uint64_t numerator = realPackets * targetBitrate_;
+        slots = (numerator + sourcePayloadBitrate_ - 1ULL) /
+            sourcePayloadBitrate_;
+        if (slots < realPackets) {
+            slots = realPackets;
+            ++insufficientTargetSegments_;
+        }
+    }
+
+    ReadySegment segment;
+    segment.firstSequence = firstSequence;
+    segment.lastSequence = lastSequence;
+    segment.realPackets = realPackets;
+    segment.slots = slots;
+    segment.startsWithPcr = true;
+    readySegments_.push_back(segment);
+}
+
+bool CbrTsPacer::activateNextSegment() noexcept {
+    if (activeSegment_) return true;
+    if (readySegments_.empty()) return false;
+
+    const ReadySegment segment = readySegments_.front();
+    readySegments_.pop_front();
+    if (segment.slots == 0) return activateNextSegment();
+
+    activeSegment_ = true;
+    activeFirstSequence_ = segment.firstSequence;
+    activeLastSequence_ = segment.lastSequence;
+    activeRealTotal_ = segment.realPackets;
+    activeRealRemaining_ = segment.realPackets;
+    activeSlotsTotal_ = segment.slots;
+    activeSlotsRemaining_ = segment.slots;
+    activeForceFirstReal_ = segment.startsWithPcr && segment.realPackets != 0;
+
+    const std::uint64_t forced = activeForceFirstReal_ ? 1ULL : 0ULL;
+    activeSpreadRealTotal_ = segment.realPackets >= forced
+        ? segment.realPackets - forced
+        : 0ULL;
+    activeSpreadSlotsTotal_ = segment.slots >= forced
+        ? segment.slots - forced
+        : 0ULL;
+    activeToken_ = 0;
+    return true;
+}
+
+bool CbrTsPacer::emitRealFromActiveSegment(Packet& packet) noexcept {
+    if (!activeSegment_ || activeRealRemaining_ == 0 || queuedPackets_.empty()) {
+        return false;
+    }
+
+    const auto& queued = queuedPackets_.front();
+    if (queued.sequence < activeFirstSequence_ ||
+        queued.sequence > activeLastSequence_) {
+        return false;
+    }
+
+    packet = queued.packet;
+    queuedPackets_.pop_front();
+    --activeRealRemaining_;
+    return true;
 }
 
 bool CbrTsPacer::isNullPacket(const Packet& packet) noexcept {
     const std::uint16_t pid = static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8) | packet[2]);
+        (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8U) | packet[2]);
     return pid == kNullPid;
 }
 
