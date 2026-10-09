@@ -201,9 +201,11 @@ private:
     std::uint64_t generation_ = 0;
 };
 
-// Adapter used so StreamManager.cpp can keep its unique_ptr-like syntax. Its
-// assignment discards the eagerly allocated base pipeline and replaces it with
-// the lazy preview-only implementation above.
+// Adapter used so StreamManager.cpp can keep its unique_ptr-like syntax while
+// the real preview pipeline remains lazy. V10.8.152 preserves the preview
+// configuration before discarding the short-lived eager probe pipeline; older
+// code created a fresh LazyPreviewTranscoder without initialize(), so the first
+// fallback-transcode packet failed with "browser preview transcoder is not configured".
 class LazyPreviewTranscoderHandle {
 public:
     LazyPreviewTranscoderHandle() = default;
@@ -212,8 +214,32 @@ public:
 
     LazyPreviewTranscoderHandle& operator=(
         std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline>&& eager) {
+        if (!eager) {
+            value_.reset();
+            return *this;
+        }
+
+        const auto geometry = eager->configuredOutputGeometry();
+        dvbstreamer5::media::transcode::NativeTranscoderConfig config;
+        config.videoCodec = "h264";
+        config.videoEncoder = "cpu";
+        config.audioCodec = "aac";
+        config.width = geometry.first > 0 ? geometry.first : 1280;
+        config.height = geometry.second > 0 ? geometry.second : 720;
+        config.fps = 25.0;
+        config.videoBitrate = 1800000ULL;
+        config.audioBitrate = 128000ULL;
+        config.deinterlace = true;
+        config.lockOutputGeometry = true;
+        config.muxBitrate = 0;
+        config.serviceName = "DVBStreamer5 Preview";
+        config.serviceProvider = "DVBStreamer5";
+
         eager.reset();
-        value_ = std::make_unique<LazyPreviewTranscoder>();
+        auto lazy = std::make_unique<LazyPreviewTranscoder>();
+        std::string ignored;
+        (void)lazy->initialize(config, ignored);
+        value_ = std::move(lazy);
         return *this;
     }
 
