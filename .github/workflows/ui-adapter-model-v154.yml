@@ -1,0 +1,81 @@
+name: One-shot V10.8.154 adapter model UI
+
+on:
+  push:
+    branches:
+      - ui-adapter-model-v154
+
+permissions:
+  contents: write
+
+jobs:
+  patch-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: ui-adapter-model-v154
+          fetch-depth: 0
+
+      - name: Move DVB model label from Frontend to Adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/http/HttpServerWebUi.inc')
+          text = path.read_text(encoding='utf-8')
+
+          start = text.index('function refreshSatelliteFrontendOptions(')
+          end = text.index('\nfunction selectedDvbFrontend()', start)
+          frontend = text[start:end]
+          old_return = "    return `<option value=\"${f}\">Frontend ${f}${model ? ` · ${satEscape(model)}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;"
+          new_return = "    return `<option value=\"${f}\">Frontend ${f}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;"
+          if frontend.count(old_return) != 1:
+              raise SystemExit('Unexpected Frontend label layout')
+          frontend = frontend.replace(old_return, new_return, 1)
+          old_model = "    const model = String(item.model || item.frontend_name || '').trim();\n"
+          if frontend.count(old_model) != 1:
+              raise SystemExit('Unexpected Frontend model declaration layout')
+          frontend = frontend.replace(old_model, '', 1)
+          text = text[:start] + frontend + text[end:]
+
+          start = text.index('function refreshSatelliteAdapterOptions(')
+          end = text.index('\nfunction satelliteTunePayload()', start)
+          adapter = text[start:end]
+          old = "    const used = adapterItems.reduce((sum,item)=>sum + (Number(item.consumers||0)>0 ? 1 : 0), 0);\n    return `<option value=\"${adapter}\">Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;"
+          new = "    const used = adapterItems.reduce((sum,item)=>sum + (Number(item.consumers||0)>0 ? 1 : 0), 0);\n    const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];\n    const model = models.join(' / ');\n    return `<option value=\"${adapter}\">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;"
+          if adapter.count(old) != 1:
+              raise SystemExit('Unexpected Adapter label layout')
+          adapter = adapter.replace(old, new, 1)
+          text = text[:start] + adapter + text[end:]
+
+          if 'Frontend ${f}${model ?' in text[start:]:
+              raise SystemExit('Frontend still contains model label')
+
+          path.write_text(text, encoding='utf-8')
+
+          version = Path('src/AppVersion.h')
+          version_text = version.read_text(encoding='utf-8')
+          old_version = 'kProgramVersion = "10.8.153"'
+          new_version = 'kProgramVersion = "10.8.154"'
+          if version_text.count(old_version) != 1:
+              raise SystemExit('Unexpected version before V10.8.154')
+          version.write_text(version_text.replace(old_version, new_version, 1), encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -F 'models.join' src/http/HttpServerWebUi.inc
+          grep -F 'kProgramVersion = "10.8.154"' src/AppVersion.h
+
+          rm -f .github/workflows/ui-adapter-model-v154.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "V10.8.154 move DVB model label to adapter selector"
+          git push origin HEAD:ui-adapter-model-v154
