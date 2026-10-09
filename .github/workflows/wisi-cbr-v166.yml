@@ -1,0 +1,106 @@
+name: wisi-cbr-v166
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v166
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-jitter-filter:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+
+      - name: Syntax check
+        run: |
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_header.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_header.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: PCR jitter deadband test
+        run: |
+          cat >/tmp/test_wisi_jitter.cpp <<'EOF'
+          #include "media/CbrTsPacer.h"
+          #include <cassert>
+          #include <cstdint>
+          #include <iostream>
+
+          using namespace dvbstreamer5::media::mpegts;
+
+          static Packet dataPacket(std::uint8_t cc) {
+              Packet p{};
+              p.fill(0xff);
+              p[0] = kSyncByte;
+              p[1] = 0x01;
+              p[2] = 0x00;
+              p[3] = static_cast<std::uint8_t>(0x10U | (cc & 0x0fU));
+              return p;
+          }
+
+          static Packet pcrPacket(std::uint64_t ticks, std::uint8_t cc) {
+              Packet p = dataPacket(cc);
+              p[3] = static_cast<std::uint8_t>(0x30U | (cc & 0x0fU));
+              p[4] = 7;
+              p[5] = 0x10;
+              const std::uint64_t base = ticks / 300ULL;
+              const std::uint64_t ext = ticks % 300ULL;
+              p[6] = static_cast<std::uint8_t>(base >> 25U);
+              p[7] = static_cast<std::uint8_t>(base >> 17U);
+              p[8] = static_cast<std::uint8_t>(base >> 9U);
+              p[9] = static_cast<std::uint8_t>(base >> 1U);
+              p[10] = static_cast<std::uint8_t>(((base & 1ULL) << 7U) | 0x7eU | ((ext >> 8U) & 1ULL));
+              p[11] = static_cast<std::uint8_t>(ext & 0xffU);
+              return p;
+          }
+
+          static void addInterval(CbrTsPacer& pacer, std::uint64_t& pcr, std::uint64_t delta, unsigned baseCc) {
+              for (unsigned i = 0; i < 99; ++i) {
+                  assert(pacer.enqueue(dataPacket(static_cast<std::uint8_t>(baseCc + i))));
+              }
+              pcr += delta;
+              assert(pacer.enqueue(pcrPacket(pcr, static_cast<std::uint8_t>(baseCc + 99))));
+          }
+
+          int main() {
+              constexpr std::uint64_t target = 6000000ULL;
+              constexpr std::uint64_t useful = 4000000ULL;
+              constexpr std::uint64_t packetBits = 188ULL * 8ULL;
+              constexpr std::uint64_t clock = 27000000ULL;
+              constexpr std::uint64_t exactDelta = (100ULL * packetBits * clock) / useful;
+
+              CbrTsPacer pacer(target);
+              std::uint64_t pcr = 0;
+              assert(pacer.enqueue(pcrPacket(pcr, 0)));
+
+              // 6 exact intervals = 225.6 ms, enough to establish the 200 ms filter window.
+              for (unsigned i = 0; i < 6; ++i) addInterval(pacer, pcr, exactDelta, i * 4U);
+              assert(pacer.timingLocked());
+              const std::uint64_t locked = pacer.sourcePayloadBitrate();
+              assert(locked == useful);
+
+              // Next window has a systematic +0.7% PCR interval error. V165 would
+              // move packet placement; V166 must keep the established useful rate.
+              const std::uint64_t jitterDelta = (exactDelta * 1007ULL) / 1000ULL;
+              for (unsigned i = 0; i < 6; ++i) addInterval(pacer, pcr, jitterDelta, 32U + i * 4U);
+              assert(pacer.sourcePayloadBitrate() == locked);
+
+              std::cout << "locked_kbps=" << locked / 1000ULL
+                        << " after_jitter_kbps=" << pacer.sourcePayloadBitrate() / 1000ULL
+                        << "\n";
+              return 0;
+          }
+          EOF
+          g++ -std=c++17 -pthread -Isrc /tmp/test_wisi_jitter.cpp src/media/CbrTsPacer.cpp -o /tmp/test_wisi_jitter
+          /tmp/test_wisi_jitter
