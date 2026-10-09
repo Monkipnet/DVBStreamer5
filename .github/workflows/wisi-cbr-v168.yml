@@ -76,7 +76,9 @@ jobs:
                   if(s==75) break;
                   const std::uint64_t local=(s&1U)?3500000ULL:2000000ULL;
                   const std::uint64_t packets=(local*40ULL/1000ULL)/packetBits;
-                  for(std::uint64_t i=1;i<packets;++i) assert(pacer.enqueue(dataPacket(cc++));
+                  for(std::uint64_t i=1;i<packets;++i) {
+                      assert(pacer.enqueue(dataPacket(cc++)));
+                  }
                   pcr+=intervalTicks;
               }
               assert(pacer.timingLocked());
