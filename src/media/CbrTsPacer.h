@@ -66,6 +66,7 @@ private:
         std::chrono::steady_clock::time_point now) noexcept;
     void updateTvStreammerSat5Controller(
         std::chrono::steady_clock::time_point now) noexcept;
+    void advanceTvStreammerSat5MediaTimeline() noexcept;
     void fillTvStreammerSat5Datagram(
         std::chrono::steady_clock::time_point datagramTime,
         CbrDatagram& datagram) noexcept;
@@ -77,6 +78,7 @@ private:
         std::chrono::steady_clock::time_point slotTime) noexcept;
     std::uint64_t pcrTicksAt(
         std::chrono::steady_clock::time_point slotTime) const noexcept;
+    static void clearPcrFlag(Packet& packet) noexcept;
     static void writePcr(Packet& packet, std::uint64_t pcrTicks) noexcept;
 
     static constexpr std::size_t kMaximumQueuedBytes = 2 * 1024 * 1024;
@@ -108,6 +110,10 @@ private:
     std::chrono::steady_clock::time_point tvSatFirstPacketTime_ {};
     std::chrono::steady_clock::time_point tvSatArrivalWindowStart_ {};
     std::chrono::steady_clock::time_point tvSatLastControllerUpdate_ {};
+    // SAT5 keeps this media/PCR timeline independent from nextDeadline_. A
+    // scheduler reset may rebase the physical sender but never the PCR clock.
+    std::chrono::steady_clock::time_point tvSatMediaTimeline_ {};
+    std::uint64_t tvSatMediaRemainder_ = 0;
     std::uint64_t tvSatArrivalPacketsInWindow_ = 0;
     std::uint64_t tvSatTotalArrivalPackets_ = 0;
     std::deque<std::pair<std::chrono::steady_clock::time_point, std::uint64_t>>
