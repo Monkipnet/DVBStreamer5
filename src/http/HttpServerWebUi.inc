@@ -2492,8 +2492,13 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
     const f = Number(item.frontend || 0);
     const device = String(item.device || `/dev/dvb/adapter${adapter}/frontend${f}`);
     const consumers = Number(item.consumers || 0);
+    const configured = Number(item.configured_streams || 0);
+    const ondemand = Number(item.ondemand_streams || 0);
+    const inUse = item.in_use === true || configured > 0 || consumers > 0;
     const freq = Number(item.frequency_khz || 0);
-    const tune = consumers > 0 ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}` : ' · свободен';
+    const tune = consumers > 0
+      ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}`
+      : (inUse ? ` · используется${ondemand ? ` · OnDemand ${ondemand}` : ''}` : ' · свободен');
     const mode = Number(item.driver_mode ?? -1);
     return `<option value="${f}">Frontend ${f}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
   }).join('');
@@ -2574,10 +2579,11 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
   adapterSelect.innerHTML = adapters.map(adapter => {
     const adapterItems = dvbAdapters.filter(item => Number(item.adapter) === adapter);
     const count = adapterItems.length;
-    const used = adapterItems.reduce((sum,item)=>sum + (Number(item.consumers||0)>0 ? 1 : 0), 0);
+    const used = adapterItems.reduce((sum,item)=>sum + ((item.in_use === true || Number(item.configured_streams||0)>0 || Number(item.consumers||0)>0) ? 1 : 0), 0);
     const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];
     const model = models.join(' / ');
-    return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;
+    const usage = used ? ` · используется ${used}/${count}` : ' · свободен';
+    return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${usage}</option>`;
   }).join('');
   const selected = adapters.includes(previous) ? previous : adapters[0];
   adapterSelect.value = String(selected);
