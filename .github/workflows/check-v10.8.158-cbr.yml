@@ -17,6 +17,8 @@ jobs:
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
             -c src/media/CbrTsPacer.cpp -o /tmp/CbrTsPacer.o
+      - name: Vendor SRT
+        run: ./scripts/vendor_srt_source.sh
       - name: Configure Release
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build Release
