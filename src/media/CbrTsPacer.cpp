@@ -103,14 +103,16 @@ bool CbrTsPacer::enqueue(const Packet& packet) {
     // exactly the slots left by the useful-data pace.
     if (isNullPacket(packet)) return true;
 
+    // Capacity is checked before rate accounting so a producer retry after
+    // backpressure cannot count the same TS packet twice.
+    if ((queuedPackets_.size() + 1) * kPacketSize > maximumQueuedBytes()) {
+        return false;
+    }
+
     const auto now = std::chrono::steady_clock::now();
     observePayloadPacket(now);
     if (tvStreammerSat5Profile()) {
         observeTvStreammerSat5Arrival(packet, now);
-    }
-
-    if ((queuedPackets_.size() + 1) * kPacketSize > maximumQueuedBytes()) {
-        return false;
     }
     queuedPackets_.push_back(packet);
 
@@ -177,6 +179,19 @@ std::uint64_t CbrTsPacer::targetBitrate() const noexcept {
 
 std::size_t CbrTsPacer::queuedPackets() const noexcept {
     return queuedPackets_.size();
+}
+
+bool CbrTsPacer::canEnqueue(const Packet& packet) const noexcept {
+    if (packet[0] != kSyncByte) return false;
+    if (isNullPacket(packet)) return true;
+    return (queuedPackets_.size() + 1) * kPacketSize <= maximumQueuedBytes();
+}
+
+void CbrTsPacer::pollStart(
+    std::chrono::steady_clock::time_point now) noexcept {
+    if (tvStreammerSat5Profile() && !started_) {
+        maybeStartTvStreammerSat5(now);
+    }
 }
 
 void CbrTsPacer::observePayloadPacket(
@@ -335,9 +350,12 @@ void CbrTsPacer::observeTvStreammerSat5Arrival(
     if (measured > 0) {
         // Stable, deliberately slow EWMA: network read chunking must not turn
         // into useful-packet burst spacing on the wire.
+        // StableUdpOutput follows network-rate changes slowly. Keep the
+        // same 8-sample EWMA so read chunking/GOP bursts do not move the
+        // useful-packet clock abruptly.
         tvSatEstimatedPayloadBitrate_ = tvSatEstimatedPayloadBitrate_ == 0
             ? measured
-            : (tvSatEstimatedPayloadBitrate_ * 3ULL + measured) / 4ULL;
+            : (tvSatEstimatedPayloadBitrate_ * 7ULL + measured) / 8ULL;
     }
     tvSatArrivalWindowStart_ = now;
     tvSatArrivalPacketsInWindow_ = 0;
@@ -345,30 +363,38 @@ void CbrTsPacer::observeTvStreammerSat5Arrival(
 
 void CbrTsPacer::maybeStartTvStreammerSat5(
     std::chrono::steady_clock::time_point now) noexcept {
-    if (started_ || tvSatEstimatedPayloadBitrate_ == 0 ||
-        tvSatFirstPacketTime_ == std::chrono::steady_clock::time_point{}) {
+    if (started_ ||
+        tvSatFirstPacketTime_ == std::chrono::steady_clock::time_point{} ||
+        queuedPackets_.empty()) {
         return;
     }
-    if (now - tvSatFirstPacketTime_ < kTvSatStartupReservoir) return;
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        now - tvSatFirstPacketTime_);
+    if (elapsed < kTvSatStartupReservoir) return;
 
-    const std::uint64_t startupBytes = (std::max<std::uint64_t>)(
-        kPacketsPerCbrDatagram * kPacketSize * 32ULL,
-        bytesForDuration(
-            tvSatEstimatedPayloadBitrate_,
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                kTvSatStartupReservoir)));
+    // Match StableUdpOutput waitForInitialPackets(): five seconds of wall-clock
+    // reservoir plus five PCR samples. Do not require a second derived byte
+    // threshold -- the original SAT5 sender starts from the bytes actually
+    // accumulated during that five-second interval.
+    if (tvSatStartupPcrSamples_ < kTvSatStartupMinimumPcrSamples) return;
+
     const std::uint64_t queuedBytes =
         static_cast<std::uint64_t>(queuedPackets_.size()) * kPacketSize;
-    if (queuedBytes < startupBytes ||
-        tvSatStartupPcrSamples_ < kTvSatStartupMinimumPcrSamples) {
-        return;
+    const std::uint64_t startupRate = bitrateForPackets(
+        static_cast<std::uint64_t>(queuedPackets_.size()), elapsed);
+    if (startupRate > 0) {
+        tvSatEstimatedPayloadBitrate_ = startupRate;
     }
+    if (tvSatEstimatedPayloadBitrate_ == 0) return;
 
     started_ = true;
     nextDeadline_ = now;
     tvSatLastControllerUpdate_ = now;
+    const std::uint64_t maximumUsefulBitrate = targetBitrate_ > 100000ULL
+        ? targetBitrate_ - 100000ULL
+        : targetBitrate_;
     tvSatRealPaceBitrate_ = (std::min)(
-        tvSatEstimatedPayloadBitrate_, targetBitrate_);
+        tvSatEstimatedPayloadBitrate_, maximumUsefulBitrate);
     tvSatRealTokenAccumulator_ = 0;
 
     if (!tvSatStartLogged_) {
@@ -377,6 +403,7 @@ void CbrTsPacer::maybeStartTvStreammerSat5(
                   << " target_kbps=" << (targetBitrate_ / 1000ULL)
                   << " estimated_payload_kbps="
                   << (tvSatEstimatedPayloadBitrate_ / 1000ULL)
+                  << " real_pace_kbps=" << (tvSatRealPaceBitrate_ / 1000ULL)
                   << " startup_reservoir_ms=5000"
                   << " startup_kb=" << (queuedBytes / 1024ULL)
                   << " startup_pcr_samples=" << tvSatStartupPcrSamples_
@@ -426,10 +453,13 @@ void CbrTsPacer::updateTvStreammerSat5Controller(
             desired,
             static_cast<long double>(estimate) * 0.85L);
     }
+    const std::uint64_t maximumUsefulBitrate = targetBitrate_ > 100000ULL
+        ? targetBitrate_ - 100000ULL
+        : targetBitrate_;
     desired = std::clamp(
         desired,
         0.0L,
-        static_cast<long double>(targetBitrate_));
+        static_cast<long double>(maximumUsefulBitrate));
     tvSatRealPaceBitrate_ = static_cast<std::uint64_t>(desired);
 }
 
@@ -479,13 +509,20 @@ void CbrTsPacer::processTvStreammerSat5RealPacket(
     PacketInfo info;
     if (!inspectPacket(packet.data(), packet.size(), info)) return;
 
+    bool firstPcrLock = false;
     if (!tvSatPcrInitialized_ && info.hasPcr) {
         tvSatPcrInitialized_ = true;
         tvSatPcrPid_ = info.pid;
+        // TransportStream::PacketInfo exposes PCR base at 90 kHz. Preserve the
+        // 9-bit PCR extension as SAT5 does so the initial 27 MHz phase is exact.
+        const std::uint64_t extension =
+            ((static_cast<std::uint64_t>(packet[10] & 0x01U) << 8) |
+             static_cast<std::uint64_t>(packet[11]));
         tvSatPcrOriginTicks_ =
-            (info.pcrBase90k * 300ULL) % kPcrTicksModulus;
+            (info.pcrBase90k * 300ULL + extension) % kPcrTicksModulus;
         tvSatPcrOriginTime_ = slotTime;
         tvSatNextPeriodicPcrTime_ = slotTime + kTvSatPeriodicPcrInterval;
+        firstPcrLock = true;
         std::cerr << "CBR TVSTREAMMERSAT5 PCR lock"
                   << " pid=" << tvSatPcrPid_
                   << " cadence_ms=20"
@@ -499,7 +536,15 @@ void CbrTsPacer::processTvStreammerSat5RealPacket(
             tvSatPcrPidContinuityValid_ = true;
         }
         if (info.hasPcr) {
-            writePcr(packet, pcrTicksAt(slotTime));
+            if (firstPcrLock) {
+                // The first provider PCR anchors the new continuous domain.
+                writePcr(packet, tvSatPcrOriginTicks_);
+            } else if ((packet[3] & 0x20U) != 0 && packet[4] >= 1) {
+                // SAT5 removes later provider PCRs; their bytes remain legal
+                // adaptation stuffing. A single periodic adaptation-only PCR
+                // packet every 20 ms is then the authoritative output clock.
+                packet[5] = static_cast<std::uint8_t>(packet[5] & ~0x10U);
+            }
         }
     }
 }

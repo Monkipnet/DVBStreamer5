@@ -2,6 +2,7 @@
 
 #include "NativeHttpClient.h"
 #include "media/CbrTsPacer.h"
+#include "media/TvSatCbrOutputWorker.h"
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
 
@@ -676,6 +677,7 @@ void NativeUdpRelay::run() {
         std::uint64_t datagramsSent = 0;
         std::unique_ptr<dvbstreamer5::media::rtp::MpegTsPacketizer> packetizer;
         std::unique_ptr<dvbstreamer5::media::mpegts::CbrTsPacer> cbrPacer;
+        std::unique_ptr<TvSatCbrOutputWorker> tvSatCbrWorker;
     };
 
     UdpInputEndpoint inputEndpoint;
@@ -729,6 +731,22 @@ void NativeUdpRelay::run() {
     std::vector<std::uint8_t> observedTransport;
     std::vector<OutputWorker> outputs;
     outputs.reserve(config_.outputs.size());
+
+    // V10.8.159: decide observer sharing before constructing the dedicated
+    // SAT5 sender so that exactly one already-shaped CBR datagram stream is
+    // published to HTTP/SRT/HLS/RTSP/RTMP consumers.
+    std::size_t observedCbrOutputIndex = config_.outputs.size();
+    if (config_.paceObservedTransport && config_.observeTransport) {
+        for (std::size_t index = 0; index < config_.outputs.size(); ++index) {
+            if (config_.outputs[index].outputType == "udp-cbr") {
+                observedCbrOutputIndex = index;
+                break;
+            }
+        }
+    }
+    const bool shareObservedCbrWithUdpOutput =
+        observedCbrOutputIndex < config_.outputs.size();
+
     auto seed = static_cast<std::uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
     for (std::size_t index = 0; index < config_.outputs.size(); ++index) {
@@ -749,8 +767,36 @@ void NativeUdpRelay::run() {
         }
         if (config_.outputs[index].outputType == "udp-cbr") {
             try {
-                output.cbrPacer = std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
-                    config_.targetBitrate, cbrPacingProfile);
+                if (tvStreammerSat5CbrProfile) {
+                    TvSatCbrOutputWorker::Observer observer;
+                    if (shareObservedCbrWithUdpOutput &&
+                        index == observedCbrOutputIndex) {
+                        const auto transportObserver = config_.observeTransport;
+                        observer = [transportObserver](
+                            const std::uint8_t* data, std::size_t size) mutable {
+                            transportObserver(data, size);
+                        };
+                    }
+                    output.tvSatCbrWorker = std::make_unique<TvSatCbrOutputWorker>(
+                        output.socket,
+                        index,
+                        config_.targetBitrate,
+                        &outputBytes_,
+                        &running_,
+                        std::move(observer),
+                        [this](const std::string& message) {
+                            {
+                                std::lock_guard<std::mutex> lock(errorMutex_);
+                                lastError_ = message;
+                            }
+                            running_.store(false, std::memory_order_release);
+                            httpQueueCondition_.notify_all();
+                        });
+                } else {
+                    output.cbrPacer =
+                        std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
+                            config_.targetBitrate, cbrPacingProfile);
+                }
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();
@@ -763,26 +809,15 @@ void NativeUdpRelay::run() {
         ++seed;
     }
 
-    // V10.8.156: when a native UDP-CBR output already exists, reuse its
-    // paced datagrams for observeTransport instead of running a second
-    // independent CBR pacer/thread for the same stream. This keeps public
-    // HTTP/SRT/HLS/RTSP/RTMP/statistics on the exact emitted CBR timeline
-    // and removes one high-frequency pacing thread per UDP-CBR channel.
-    std::size_t observedCbrOutputIndex = outputs.size();
-    if (config_.paceObservedTransport && config_.observeTransport) {
-        for (std::size_t index = 0; index < outputs.size(); ++index) {
-            if (outputs[index].cbrPacer) {
-                observedCbrOutputIndex = index;
-                break;
-            }
-        }
-    }
-    const bool shareObservedCbrWithUdpOutput =
-        observedCbrOutputIndex < outputs.size();
+    // Reuse the already-shaped first UDP-CBR output for observer fan-out.
+    // For the SAT5 profile the dedicated sender publishes after the UDP send;
+    // Standard CBR retains the V10.8.156 in-loop publication below.
     if (shareObservedCbrWithUdpOutput) {
         std::cerr << "NATIVE OBSERVED CBR share output_index="
                   << observedCbrOutputIndex
                   << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                  << " sender="
+                  << (tvStreammerSat5CbrProfile ? "tvstreammersat5-dedicated" : "native")
                   << std::endl;
     }
 
@@ -1244,7 +1279,16 @@ void NativeUdpRelay::run() {
             }
 
             for (auto& output : outputs) {
-                if (output.cbrPacer) {
+                if (output.tvSatCbrWorker) {
+                    if (!output.tvSatCbrWorker->enqueue(packets)) {
+                        if (running_.load(std::memory_order_acquire)) {
+                            error = "TVStreammerSAT5 UDP CBR input stopped while queuing transport";
+                            std::lock_guard<std::mutex> lock(errorMutex_);
+                            lastError_ = error;
+                        }
+                        break;
+                    }
+                } else if (output.cbrPacer) {
                     for (const auto& packet : packets) {
                         if (!output.cbrPacer->enqueue(packet)) {
                             error = "native UDP CBR input exceeded the bounded 2 MiB pacing queue";
@@ -1327,6 +1371,10 @@ void NativeUdpRelay::run() {
             lastError_ = error;
             break;
         }
+    }
+
+    for (auto& output : outputs) {
+        if (output.tvSatCbrWorker) output.tvSatCbrWorker->stop();
     }
 
     {

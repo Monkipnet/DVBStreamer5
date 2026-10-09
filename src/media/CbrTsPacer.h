@@ -39,6 +39,10 @@ public:
     std::chrono::steady_clock::time_point nextDeadline() const noexcept;
     std::uint64_t targetBitrate() const noexcept;
     std::size_t queuedPackets() const noexcept;
+    bool canEnqueue(const Packet& packet) const noexcept;
+    // Dedicated SAT5 sender threads poll this during the five-second cold
+    // reservoir so startup is not dependent on another producer enqueue.
+    void pollStart(std::chrono::steady_clock::time_point now) noexcept;
     CbrPacingProfile profile() const noexcept { return profile_; }
 
 private:
