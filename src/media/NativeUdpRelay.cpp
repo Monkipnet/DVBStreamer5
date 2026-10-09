@@ -691,6 +691,27 @@ void NativeUdpRelay::run() {
     }
 
     const bool rtpInput = networkInput && inputEndpoint.scheme == "rtp";
+    // V10.8.158: continuous SRT and plain HTTP MPEG-TS use the proven
+    // TVStreammerSAT5 StableUdpOutput reservoir/token/PCR CBR profile.
+    // HLS, DVB, UDP/RTP, RTSP and RTMP deliberately keep their existing timing.
+    const bool tvStreammerSat5CbrProfile =
+        config_.inputUri == "external://srt" ||
+        startsWithInsensitive(config_.inputUri, "http://") ||
+        startsWithInsensitive(config_.inputUri, "https://");
+    const auto cbrPacingProfile = tvStreammerSat5CbrProfile
+        ? dvbstreamer5::media::mpegts::CbrPacingProfile::TvStreammerSat5Network
+        : dvbstreamer5::media::mpegts::CbrPacingProfile::Standard;
+    if (tvStreammerSat5CbrProfile && config_.targetBitrate > 0) {
+        std::cerr << "CBR profile=tvstreammersat5-network"
+                  << " source=" << config_.inputUri
+                  << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                  << " startup_reservoir_ms=5000"
+                  << " steady_reservoir_ms=2500"
+                  << " low_watermark_ms=800"
+                  << " buffer_limit_mb=32"
+                  << " pcr_interval_ms=20"
+                  << std::endl;
+    }
     bool fileInputEof = false;
     bool fileHadTsPackets = false;
     // V10.3: keep the source/input MPEG-TS framer completely separate from
@@ -729,7 +750,7 @@ void NativeUdpRelay::run() {
         if (config_.outputs[index].outputType == "udp-cbr") {
             try {
                 output.cbrPacer = std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
-                    config_.targetBitrate);
+                    config_.targetBitrate, cbrPacingProfile);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();
@@ -782,7 +803,7 @@ void NativeUdpRelay::run() {
         try {
             observedCbrPacer =
                 std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
-                    config_.targetBitrate);
+                    config_.targetBitrate, cbrPacingProfile);
             observedCbrWorker = std::thread([&] {
                 while (true) {
                     dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;
