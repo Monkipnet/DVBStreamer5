@@ -1,0 +1,58 @@
+name: V159 SAT5 CBR refactor
+
+on:
+  push:
+    branches:
+      - work/v159-tvsat-cbr-thread
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply V159 patch
+        run: |
+          python3 scripts/apply_v159_tvsat_cbr.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/media/TvSatCbrOutputWorker.h')
+          s = p.read_text()
+          needle = '#include <mutex>\n#include <string>\n'
+          assert needle in s
+          p.write_text(s.replace(needle, '#include <mutex>\n#include <stdexcept>\n#include <string>\n', 1))
+          PY
+
+      - name: Verify patch structure
+        run: |
+          grep -q 'kProgramVersion = "10.8.159"' src/AppVersion.h
+          grep -q 'class TvSatCbrOutputWorker' src/media/TvSatCbrOutputWorker.h
+          grep -q 'sender_thread=dedicated' src/media/TvSatCbrOutputWorker.h
+          grep -q 'output.tvSatCbrWorker->enqueue' src/media/NativeUdpRelay.cpp
+          grep -q 'targetBitrate_ - 100000ULL' src/media/CbrTsPacer.cpp
+          grep -q 'packet\[5\].*~0x10U' src/media/CbrTsPacer.cpp
+          git diff --check
+
+      - name: Syntax check CBR core
+        run: |
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: Remove temporary patch machinery
+        run: |
+          rm -f scripts/apply_v159_tvsat_cbr.py
+          rm -f .github/workflows/v159-sat5-cbr.yml
+
+      - name: Commit checked V159 tree
+        run: |
+          git config user.name 'Monkipnet'
+          git config user.email 'monkipnet@yandex.ru'
+          git add -A
+          git status --short
+          git commit -m 'V10.8.159 finish TVStreammerSAT5 CBR sender port [skip ci]'
+          git push origin HEAD:work/v159-tvsat-cbr-thread
