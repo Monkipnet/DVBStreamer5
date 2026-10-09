@@ -27,42 +27,54 @@ jobs:
 
           source = Path('src/HttpServer.cpp')
           original = source.read_text(encoding='utf-8')
-          lines = original.splitlines(keepends=True)
 
-          if len(lines) < 8277:
-              raise SystemExit(f'Unexpected HttpServer.cpp line count: {len(lines)}')
+          markers = [
+              ('HttpServerCommon.inc', 'HttpServer::HttpServer('),
+              ('HttpServerTransport.inc', 'std::string HttpServer::listInterfaces()'),
+              ('HttpServerState.inc', 'std::string HttpServer::dvbAdapters()'),
+              ('HttpServerDvbMedia.inc', 'void HttpServer::recordAllQualitySamples()'),
+              ('HttpServerQuality.inc', 'std::string HttpServer::handleConfigExport()'),
+              ('HttpServerConfigActions.inc', 'std::string HttpServer::renderIndexPage()'),
+          ]
 
-          probes = {
-              677: 'HttpServer::HttpServer',
-              1407: 'HttpServer::listInterfaces',
-              2176: 'HttpServer::dvbAdapters',
-              2634: 'HttpServer::recordAllQualitySamples',
-              3107: 'HttpServer::handleConfigExport',
-              3887: 'HttpServer::renderIndexPage',
-          }
-          for line_no, needle in probes.items():
-              if needle not in lines[line_no - 1]:
-                  raise SystemExit(
-                      f'HttpServer.cpp layout changed at line {line_no}: expected {needle!r}, got {lines[line_no - 1]!r}'
-                  )
+          def unique_position(needle: str) -> int:
+              first = original.find(needle)
+              if first < 0:
+                  raise SystemExit(f'Missing HttpServer split marker: {needle}')
+              if original.find(needle, first + 1) >= 0:
+                  raise SystemExit(f'Non-unique HttpServer split marker: {needle}')
+              # Split at the start of the complete source line so indentation or
+              # return-type whitespace remains byte-for-byte identical.
+              line_start = original.rfind('\n', 0, first)
+              return 0 if line_start < 0 else line_start + 1
 
-          modules = [
-              ('HttpServerCommon.inc', 1, 676),
-              ('HttpServerTransport.inc', 677, 1406),
-              ('HttpServerState.inc', 1407, 2175),
-              ('HttpServerDvbMedia.inc', 2176, 2633),
-              ('HttpServerQuality.inc', 2634, 3106),
-              ('HttpServerConfigActions.inc', 3107, 3886),
-              ('HttpServerWebUi.inc', 3887, len(lines)),
+          boundaries = [0]
+          for _name, marker in markers:
+              boundaries.append(unique_position(marker))
+          boundaries.append(len(original))
+          if boundaries != sorted(boundaries) or len(set(boundaries)) != len(boundaries):
+              raise SystemExit(f'Invalid HttpServer split order: {boundaries}')
+
+          names = [
+              'HttpServerCommon.inc',
+              'HttpServerTransport.inc',
+              'HttpServerState.inc',
+              'HttpServerDvbMedia.inc',
+              'HttpServerQuality.inc',
+              'HttpServerConfigActions.inc',
+              'HttpServerWebUi.inc',
           ]
 
           out_dir = Path('src/http')
           out_dir.mkdir(parents=True, exist_ok=True)
           reconstructed = []
-          for name, first, last in modules:
-              part = ''.join(lines[first - 1:last])
+          for index, name in enumerate(names):
+              part = original[boundaries[index]:boundaries[index + 1]]
+              if not part:
+                  raise SystemExit(f'Empty HttpServer module: {name}')
               (out_dir / name).write_text(part, encoding='utf-8')
               reconstructed.append(part)
+              print(f'{name}: bytes={len(part.encode("utf-8"))}')
 
           if ''.join(reconstructed) != original:
               raise SystemExit('Split validation failed: module concatenation differs from original HttpServer.cpp')
@@ -70,7 +82,7 @@ jobs:
           wrapper = '''// HttpServer implementation is intentionally partitioned into focused\n// implementation fragments. They remain one translation unit so this structural\n// refactor cannot change anonymous-namespace visibility, static state, or linkage.\n// Keep the include order synchronized with src/http/README.md.\n#include "http/HttpServerCommon.inc"\n#include "http/HttpServerTransport.inc"\n#include "http/HttpServerState.inc"\n#include "http/HttpServerDvbMedia.inc"\n#include "http/HttpServerQuality.inc"\n#include "http/HttpServerConfigActions.inc"\n#include "http/HttpServerWebUi.inc"\n'''
           source.write_text(wrapper, encoding='utf-8')
 
-          readme = '''# HttpServer implementation layout\n\n`src/HttpServer.cpp` is a small composition unit. The implementation is split by responsibility while intentionally remaining a single C++ translation unit. This preserves the existing anonymous-namespace helpers, static state, macro behavior, and linkage during the refactor.\n\n- `HttpServerCommon.inc` — includes, shared helpers, URL/output helpers.\n- `HttpServerTransport.inc` — listener/session handling, authentication, HTTP port management.\n- `HttpServerState.inc` — interfaces, system metrics, runtime state serialization.\n- `HttpServerDvbMedia.inc` — DVB/CA endpoints and HTTP/HLS media delivery.\n- `HttpServerQuality.inc` — quality sampling, persistence, history API.\n- `HttpServerConfigActions.inc` — config import/export/save, backup and stream/subscriber actions.\n- `HttpServerWebUi.inc` — embedded Web UI returned by `renderIndexPage()`.\n\nThe order of fragments is significant. A later cleanup can move individual groups to independent `.cpp` translation units after their shared helpers are given explicit interfaces.\n'''
+          readme = '''# HttpServer implementation layout\n\n`src/HttpServer.cpp` is now a small composition unit. The implementation is split by responsibility while intentionally remaining a single C++ translation unit. This preserves the existing anonymous-namespace helpers, static state, macro behavior, and linkage during the structural refactor.\n\n- `HttpServerCommon.inc` — includes, shared helpers, URL/output helpers.\n- `HttpServerTransport.inc` — listener/session handling, authentication, HTTP port management.\n- `HttpServerState.inc` — interfaces, system metrics, runtime state serialization.\n- `HttpServerDvbMedia.inc` — DVB/CA endpoints and HTTP/HLS media delivery.\n- `HttpServerQuality.inc` — quality sampling, persistence, history API.\n- `HttpServerConfigActions.inc` — config import/export/save, backup and stream/subscriber actions.\n- `HttpServerWebUi.inc` — embedded Web UI returned by `renderIndexPage()`.\n\nThe include order is significant. A later cleanup can move individual groups to independent `.cpp` translation units after their shared helpers are given explicit interfaces.\n'''
           (out_dir / 'README.md').write_text(readme, encoding='utf-8')
 
           version = Path('src/AppVersion.h')
@@ -82,8 +94,6 @@ jobs:
           version.write_text(version_text.replace(old, new, 1), encoding='utf-8')
           PY
 
-          # The fragments are byte-for-byte slices of the previous implementation;
-          # this catches whitespace errors before committing the structural change.
           git diff --check
 
           # Remove this one-shot workflow from the resulting source tree.
