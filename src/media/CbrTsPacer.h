@@ -96,6 +96,8 @@ private:
     bool started_ = false;
 
     std::uint64_t nextSequence_ = 1;
+    bool havePcrPid_ = false;
+    std::uint16_t pcrPid_ = 0;
     bool havePreviousPcr_ = false;
     bool pcrTimingLocked_ = false;
     std::uint64_t previousPcrTicks_ = 0;
