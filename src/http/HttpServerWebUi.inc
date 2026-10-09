@@ -2492,8 +2492,13 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
     const f = Number(item.frontend || 0);
     const device = String(item.device || `/dev/dvb/adapter${adapter}/frontend${f}`);
     const consumers = Number(item.consumers || 0);
+    const configured = Number(item.configured_streams || 0);
+    const ondemand = Number(item.ondemand_streams || 0);
+    const inUse = item.in_use === true || configured > 0 || consumers > 0;
     const freq = Number(item.frequency_khz || 0);
-    const tune = consumers > 0 ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}` : ' · свободен';
+    const tune = consumers > 0
+      ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}`
+      : (inUse ? ` · используется${ondemand ? ` · OnDemand ${ondemand}` : ''}` : ' · свободен');
     const mode = Number(item.driver_mode ?? -1);
     return `<option value="${f}">Frontend ${f}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
   }).join('');
@@ -2507,6 +2512,33 @@ function selectedDvbFrontend() {
   const adapter = Number(document.getElementById('satAdapter')?.value || 0);
   const frontend = Number(document.getElementById('satFrontend')?.value || 0);
   return dvbAdapters.find(item => Number(item.adapter) === adapter && Number(item.frontend) === frontend) || null;
+}
+function applySelectedDvbFrontendTuneToForm() {
+  const item = selectedDvbFrontend();
+  const configured = Number(item?.configured_streams || 0);
+  const consumers = Number(item?.consumers || 0);
+  if (!item || (!(item.in_use === true) && configured <= 0 && consumers <= 0)) return false;
+  const setValue = (id, value) => {
+    const input = document.getElementById(id);
+    if (input && value !== undefined && value !== null && value !== '') input.value = String(value);
+  };
+  const frequencyKHz = Number(item.frequency_khz || 0);
+  const lof1KHz = Number(item.lnb_lof1_khz || 0);
+  const lof2KHz = Number(item.lnb_lof2_khz || 0);
+  const slofKHz = Number(item.lnb_slof_khz || 0);
+  if (frequencyKHz > 0) setValue('satFrequency', frequencyKHz / 1000);
+  if (Number(item.symbol_rate || 0) > 0) setValue('satSymbolRate', Number(item.symbol_rate));
+  setValue('satPolarity', item.polarity || 'H');
+  setValue('satDeliverySystem', item.delivery_system || 'dvb-s2');
+  setValue('satModulation', item.modulation || 'auto');
+  setValue('satFec', item.fec || 'auto');
+  setValue('satDiseqc', Number(item.diseqc_source ?? -1));
+  setValue('satStreamId', Number(item.stream_id ?? -1));
+  if (lof1KHz > 0) setValue('satLof1', lof1KHz / 1000);
+  if (lof2KHz > 0) setValue('satLof2', lof2KHz / 1000);
+  if (slofKHz > 0) setValue('satSlof', slofKHz / 1000);
+  applyTbsDriverModeUi();
+  return true;
 }
 function updateSatelliteDeviceInfo(prefix=null) {
   const info = document.getElementById('satDeviceInfo');
@@ -2574,10 +2606,11 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
   adapterSelect.innerHTML = adapters.map(adapter => {
     const adapterItems = dvbAdapters.filter(item => Number(item.adapter) === adapter);
     const count = adapterItems.length;
-    const used = adapterItems.reduce((sum,item)=>sum + (Number(item.consumers||0)>0 ? 1 : 0), 0);
+    const used = adapterItems.reduce((sum,item)=>sum + ((item.in_use === true || Number(item.configured_streams||0)>0 || Number(item.consumers||0)>0) ? 1 : 0), 0);
     const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];
     const model = models.join(' / ');
-    return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;
+    const usage = used ? ` · используется ${used}/${count}` : ' · свободен';
+    return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${usage}</option>`;
   }).join('');
   const selected = adapters.includes(previous) ? previous : adapters[0];
   adapterSelect.value = String(selected);
@@ -2644,6 +2677,7 @@ function satelliteAdapterChanged() {
   satelliteSignalController = null;
   satelliteSignalPending = false;
   refreshSatelliteFrontendOptions();
+  applySelectedDvbFrontendTuneToForm();
   resetSatelliteServicesForTuneChange();
   updateSatelliteDeviceInfo();
   updateSatelliteSignal();
@@ -2653,6 +2687,7 @@ function satelliteFrontendChanged() {
   if (satelliteSignalController) satelliteSignalController.abort();
   satelliteSignalController = null;
   satelliteSignalPending = false;
+  applySelectedDvbFrontendTuneToForm();
   resetSatelliteServicesForTuneChange();
   applyTbsDriverModeUi();
   updateSatelliteDeviceInfo();
@@ -2732,6 +2767,7 @@ async function loadSatelliteAdapters() {
       ? frontendBeforeLoad
       : Number((dvbAdapters.find(item => Number(item.adapter) === preferredAdapter) || dvbAdapters[0]).frontend || 0);
     refreshSatelliteAdapterOptions(preferredAdapter, preferredFrontend);
+    applySelectedDvbFrontendTuneToForm();
     updateSatelliteDeviceInfo();
     updateSatelliteSignal();
   } catch (error) {

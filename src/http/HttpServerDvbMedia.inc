@@ -1,6 +1,49 @@
 std::string HttpServer::dvbAdapters() {
     Json::Value root = DvbSatellite::adapters();
     std::map<std::pair<int, int>, Json::Value> usage;
+
+    // A DVB frontend is assigned as soon as a stream is configured for it.
+    // OnDemand streams are intentionally included even while their runtime
+    // state is stopped, so the scanner does not advertise an assigned
+    // frontend as free merely because no subscriber is connected yet.
+    for (const auto& config : configManager.config.streams) {
+        DvbSatelliteParams params;
+        std::string parseError;
+        if (!DvbSatellite::parseUri(config.inputUri, params, parseError)) continue;
+        const auto key = std::make_pair(params.adapter, params.frontend);
+        auto& item = usage[key];
+        item["configured_streams"] = item.get("configured_streams", 0).asUInt() + 1;
+        if (toLower(config.activationMode) == "ondemand") {
+            item["ondemand_streams"] = item.get("ondemand_streams", 0).asUInt() + 1;
+        }
+        // Preserve one configured tune even while an OnDemand frontend is idle.
+        // An active runtime consumer below overrides these values with the tune
+        // that is physically in use right now.
+        if (!item.isMember("frequency_khz")) {
+            item["frequency_khz"] = params.frequencyKHz;
+            item["symbol_rate"] = params.symbolRateK;
+            item["polarity"] = params.polarity;
+            item["delivery_system"] = params.deliverySystem;
+            item["modulation"] = params.modulation;
+            item["fec"] = params.fec;
+            item["stream_id"] = params.streamId;
+            item["diseqc_source"] = params.diseqcSource;
+            item["lnb_lof1_khz"] = params.lnbLof1KHz;
+            item["lnb_lof2_khz"] = params.lnbLof2KHz;
+            item["lnb_slof_khz"] = params.lnbSlofKHz;
+        }
+        if (!item.isMember("streams")) item["streams"] = Json::Value(Json::arrayValue);
+        Json::Value stream;
+        stream["id"] = config.id;
+        stream["name"] = config.name;
+        stream["sid"] = config.inputServiceId;
+        stream["activation_mode"] = config.activationMode;
+        item["streams"].append(stream);
+    }
+
+    // Keep the old active-consumer accounting separately. This preserves
+    // SHARED N as a runtime indicator instead of conflating configured
+    // OnDemand assignments with currently tuned consumers.
     const auto snap = streamManager.snapshot();
     for (const auto& [id, state] : snap) {
         if (!state || !state->running.load()) continue;
@@ -14,15 +57,15 @@ std::string HttpServer::dvbAdapters() {
         item["symbol_rate"] = params.symbolRateK;
         item["polarity"] = params.polarity;
         item["delivery_system"] = params.deliverySystem;
+        item["modulation"] = params.modulation;
+        item["fec"] = params.fec;
         item["stream_id"] = params.streamId;
         item["diseqc_source"] = params.diseqcSource;
-        if (!item.isMember("streams")) item["streams"] = Json::Value(Json::arrayValue);
-        Json::Value stream;
-        stream["id"] = id;
-        stream["name"] = state->config.name;
-        stream["sid"] = state->config.inputServiceId;
-        item["streams"].append(stream);
+        item["lnb_lof1_khz"] = params.lnbLof1KHz;
+        item["lnb_lof2_khz"] = params.lnbLof2KHz;
+        item["lnb_slof_khz"] = params.lnbSlofKHz;
     }
+
     if (root.isMember("adapters") && root["adapters"].isArray()) {
         for (Json::ArrayIndex i = 0; i < root["adapters"].size(); ++i) {
             auto& adapter = root["adapters"][i];
@@ -31,16 +74,31 @@ std::string HttpServer::dvbAdapters() {
             if (found == usage.end()) {
                 adapter["in_use"] = false;
                 adapter["consumers"] = 0;
+                adapter["configured_streams"] = 0;
+                adapter["ondemand_streams"] = 0;
             } else {
-                adapter["in_use"] = true;
-                adapter["consumers"] = found->second.get("consumers", 0);
-                adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
-                adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
-                adapter["polarity"] = found->second.get("polarity", "");
-                adapter["delivery_system"] = found->second.get("delivery_system", "");
-                adapter["stream_id"] = found->second.get("stream_id", -1);
-                adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
-                adapter["streams"] = found->second["streams"];
+                const unsigned configured = found->second.get("configured_streams", 0).asUInt();
+                const unsigned consumers = found->second.get("consumers", 0).asUInt();
+                adapter["in_use"] = configured > 0 || consumers > 0;
+                adapter["consumers"] = consumers;
+                adapter["configured_streams"] = configured;
+                adapter["ondemand_streams"] = found->second.get("ondemand_streams", 0);
+                if (found->second.isMember("frequency_khz")) {
+                    adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
+                    adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
+                    adapter["polarity"] = found->second.get("polarity", "");
+                    adapter["delivery_system"] = found->second.get("delivery_system", "");
+                    adapter["modulation"] = found->second.get("modulation", "auto");
+                    adapter["fec"] = found->second.get("fec", "auto");
+                    adapter["stream_id"] = found->second.get("stream_id", -1);
+                    adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
+                    adapter["lnb_lof1_khz"] = found->second.get("lnb_lof1_khz", 9750000);
+                    adapter["lnb_lof2_khz"] = found->second.get("lnb_lof2_khz", 10600000);
+                    adapter["lnb_slof_khz"] = found->second.get("lnb_slof_khz", 11700000);
+                }
+                if (found->second.isMember("streams")) {
+                    adapter["streams"] = found->second["streams"];
+                }
             }
         }
     }
