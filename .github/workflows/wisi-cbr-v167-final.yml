@@ -1,0 +1,47 @@
+name: wisi-cbr-v167-final
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v167
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-pcr-segments:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD || git diff --check 648edb4055a5f3c70acb84107ec7d9d93b4ea118...HEAD
+
+      - name: Syntax check
+        run: |
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_header.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_header.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: Exact PCR segment test
+        run: |
+          cat >/tmp/test_wisi_segment.cpp <<'EOF'
+          #include "media/CbrTsPacer.h"
+          #include <cassert>
+          #include <cstdint>
+          #include <vector>
+          using namespace dvbstreamer5::media::mpegts;
+          static Packet dataPacket(std::uint8_t cc) { Packet p{}; p.fill(0xff); p[0]=kSyncByte; p[1]=0x01; p[2]=0x00; p[3]=static_cast<std::uint8_t>(0x10U|(cc&0x0fU)); return p; }
+          static Packet pcrPacket(std::uint64_t ticks, std::uint8_t cc) { Packet p=dataPacket(cc); p[3]=static_cast<std::uint8_t>(0x30U|(cc&0x0fU)); p[4]=7; p[5]=0x10; const auto base=ticks/300ULL; const auto ext=ticks%300ULL; p[6]=static_cast<std::uint8_t>(base>>25U); p[7]=static_cast<std::uint8_t>(base>>17U); p[8]=static_cast<std::uint8_t>(base>>9U); p[9]=static_cast<std::uint8_t>(base>>1U); p[10]=static_cast<std::uint8_t>(((base&1ULL)<<7U)|0x7eU|((ext>>8U)&1ULL)); p[11]=static_cast<std::uint8_t>(ext&0xffU); return p; }
+          static bool hasPcr(const Packet& p) { const unsigned afc=(p[3]>>4U)&3U; return p[0]==kSyncByte&&(afc==2U||afc==3U)&&p[4]>=7U&&(p[5]&0x10U); }
+          static bool isNull(const Packet& p) { return (((static_cast<unsigned>(p[1])&0x1fU)<<8U)|p[2])==0x1fffU; }
+          int main() { constexpr std::uint64_t target=6000000ULL,useful=4000000ULL,packetBits=188ULL*8ULL,clock=27000000ULL,delta=(100ULL*packetBits*clock)/useful; CbrTsPacer pacer(target); std::uint64_t pcr=0; for(unsigned s=0;s<4;++s){ assert(pacer.enqueue(pcrPacket(pcr,static_cast<std::uint8_t>(s)))); for(unsigned i=0;i<99;++i) assert(pacer.enqueue(dataPacket(static_cast<std::uint8_t>(i)))); pcr+=delta; } assert(pacer.timingLocked()); std::vector<std::size_t> pos; std::size_t slot=0,real=0,nulls=0; while(slot<450){ CbrDatagram out{}; assert(pacer.nextDatagram(pacer.nextDeadline(),out)); for(const auto& p:out){ if(slot<450&&hasPcr(p)) pos.push_back(slot); if(slot<150){ if(isNull(p)) ++nulls; else ++real; } ++slot; }} assert(pos.size()>=3); assert(pos[0]==0&&pos[1]==150&&pos[2]==300); assert(real==100&&nulls==50); assert(pacer.insufficientTargetSegments()==0); return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc /tmp/test_wisi_segment.cpp src/media/CbrTsPacer.cpp -o /tmp/test_wisi_segment
+          /tmp/test_wisi_segment
