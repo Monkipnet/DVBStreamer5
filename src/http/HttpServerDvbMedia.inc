@@ -16,6 +16,22 @@ std::string HttpServer::dvbAdapters() {
         if (toLower(config.activationMode) == "ondemand") {
             item["ondemand_streams"] = item.get("ondemand_streams", 0).asUInt() + 1;
         }
+        // Preserve one configured tune even while an OnDemand frontend is idle.
+        // An active runtime consumer below overrides these values with the tune
+        // that is physically in use right now.
+        if (!item.isMember("frequency_khz")) {
+            item["frequency_khz"] = params.frequencyKHz;
+            item["symbol_rate"] = params.symbolRateK;
+            item["polarity"] = params.polarity;
+            item["delivery_system"] = params.deliverySystem;
+            item["modulation"] = params.modulation;
+            item["fec"] = params.fec;
+            item["stream_id"] = params.streamId;
+            item["diseqc_source"] = params.diseqcSource;
+            item["lnb_lof1_khz"] = params.lnbLof1KHz;
+            item["lnb_lof2_khz"] = params.lnbLof2KHz;
+            item["lnb_slof_khz"] = params.lnbSlofKHz;
+        }
         if (!item.isMember("streams")) item["streams"] = Json::Value(Json::arrayValue);
         Json::Value stream;
         stream["id"] = config.id;
@@ -41,8 +57,13 @@ std::string HttpServer::dvbAdapters() {
         item["symbol_rate"] = params.symbolRateK;
         item["polarity"] = params.polarity;
         item["delivery_system"] = params.deliverySystem;
+        item["modulation"] = params.modulation;
+        item["fec"] = params.fec;
         item["stream_id"] = params.streamId;
         item["diseqc_source"] = params.diseqcSource;
+        item["lnb_lof1_khz"] = params.lnbLof1KHz;
+        item["lnb_lof2_khz"] = params.lnbLof2KHz;
+        item["lnb_slof_khz"] = params.lnbSlofKHz;
     }
 
     if (root.isMember("adapters") && root["adapters"].isArray()) {
@@ -62,13 +83,18 @@ std::string HttpServer::dvbAdapters() {
                 adapter["consumers"] = consumers;
                 adapter["configured_streams"] = configured;
                 adapter["ondemand_streams"] = found->second.get("ondemand_streams", 0);
-                if (consumers > 0) {
+                if (found->second.isMember("frequency_khz")) {
                     adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
                     adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
                     adapter["polarity"] = found->second.get("polarity", "");
                     adapter["delivery_system"] = found->second.get("delivery_system", "");
+                    adapter["modulation"] = found->second.get("modulation", "auto");
+                    adapter["fec"] = found->second.get("fec", "auto");
                     adapter["stream_id"] = found->second.get("stream_id", -1);
                     adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
+                    adapter["lnb_lof1_khz"] = found->second.get("lnb_lof1_khz", 9750000);
+                    adapter["lnb_lof2_khz"] = found->second.get("lnb_lof2_khz", 10600000);
+                    adapter["lnb_slof_khz"] = found->second.get("lnb_slof_khz", 11700000);
                 }
                 if (found->second.isMember("streams")) {
                     adapter["streams"] = found->second["streams"];
