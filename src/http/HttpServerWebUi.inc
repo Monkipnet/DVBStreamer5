@@ -2494,9 +2494,8 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
     const consumers = Number(item.consumers || 0);
     const freq = Number(item.frequency_khz || 0);
     const tune = consumers > 0 ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}` : ' · свободен';
-    const model = String(item.model || item.frontend_name || '').trim();
     const mode = Number(item.driver_mode ?? -1);
-    return `<option value="${f}">Frontend ${f}${model ? ` · ${satEscape(model)}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
+    return `<option value="${f}">Frontend ${f}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
   }).join('');
   const selected = frontends.some(item => Number(item.frontend) === previous)
     ? previous : Number(frontends[0].frontend || 0);
@@ -2576,7 +2575,9 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
     const adapterItems = dvbAdapters.filter(item => Number(item.adapter) === adapter);
     const count = adapterItems.length;
     const used = adapterItems.reduce((sum,item)=>sum + (Number(item.consumers||0)>0 ? 1 : 0), 0);
-    return `<option value="${adapter}">Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;
+    const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];
+    const model = models.join(' / ');
+    return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;
   }).join('');
   const selected = adapters.includes(previous) ? previous : adapters[0];
   adapterSelect.value = String(selected);
