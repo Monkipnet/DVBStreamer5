@@ -1,0 +1,185 @@
+name: tmp-v164-hls-legacy-cbr
+on:
+  push:
+    branches: [fix-hls-legacy-cbr-v164]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-hls-legacy-cbr-v164
+      - name: Apply V164 HLS legacy CBR isolation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected 1 match, found {count} for {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "src/AppVersion.h",
+              'inline constexpr const char* kProgramVersion = "10.8.163";',
+              'inline constexpr const char* kProgramVersion = "10.8.164";')
+
+          path = "src/media/NativeUdpRelay.cpp"
+          old = '''    const bool tvStreammerSat5CbrProfile =
+        config_.inputUri == "external://srt" ||
+        startsWithInsensitive(config_.inputUri, "http://") ||
+        startsWithInsensitive(config_.inputUri, "https://");
+    const auto cbrPacingProfile = tvStreammerSat5CbrProfile
+'''
+          new = '''    const bool tvStreammerSat5CbrProfile =
+        config_.inputUri == "external://srt" ||
+        startsWithInsensitive(config_.inputUri, "http://") ||
+        startsWithInsensitive(config_.inputUri, "https://");
+    // V10.8.164: HLS was stable before the SAT5 continuous-network work and
+    // must remain outside that reservoir/PLL/PCR domain. Give external HLS its
+    // own sender thread, but keep the original Standard CBR packet/PCR policy.
+    // This isolates HLS timing from relay-loop stalls without applying any of
+    // the SRT/HTTP SAT5 timing transformations.
+    const bool hlsLegacyCbrProfile = config_.inputUri == "external://hls";
+    const bool dedicatedCbrSender =
+        tvStreammerSat5CbrProfile || hlsLegacyCbrProfile;
+    const auto cbrPacingProfile = tvStreammerSat5CbrProfile
+'''
+          replace_once(path, old, new)
+
+          replace_once(
+              path,
+              '''        if (config_.outputs[index].outputType == "udp-cbr") {
+            try {
+                if (tvStreammerSat5CbrProfile) {
+                    TvSatCbrOutputWorker::Observer observer;
+''',
+              '''        if (config_.outputs[index].outputType == "udp-cbr") {
+            try {
+                if (dedicatedCbrSender) {
+                    TvSatCbrOutputWorker::Observer observer;
+''')
+
+          replace_once(
+              path,
+              '''                        &outputBytes_,
+                        &running_,
+                        std::move(observer),
+''',
+              '''                        &outputBytes_,
+                        &running_,
+                        hlsLegacyCbrProfile,
+                        std::move(observer),
+''')
+
+          replace_once(
+              path,
+              '''                  << (tvStreammerSat5CbrProfile ? "tvstreammersat5-dedicated" : "native")
+''',
+              '''                  << (tvStreammerSat5CbrProfile
+                          ? "tvstreammersat5-dedicated"
+                          : (hlsLegacyCbrProfile ? "hls-legacy-dedicated" : "native"))
+''')
+
+          replace_once(
+              path,
+              'error = "TVStreammerSAT5 UDP CBR input stopped while queuing transport";',
+              'error = "dedicated UDP CBR input stopped while queuing transport";')
+
+          marker = '''    if (tvStreammerSat5CbrProfile && config_.targetBitrate > 0) {
+        std::cerr << "CBR profile=tvstreammersat5-network"
+'''
+          text = Path(path).read_text()
+          idx = text.find(marker)
+          if idx < 0:
+              raise SystemExit("NativeUdpRelay.cpp: SAT5 profile log marker not found")
+          # Insert the HLS compatibility log immediately before the SAT5 log.
+          insert = '''    if (hlsLegacyCbrProfile && config_.targetBitrate > 0) {
+        std::cerr << "CBR profile=hls-legacy-standard"
+                  << " source=" << config_.inputUri
+                  << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                  << " sat5_timing=off"
+                  << " source_pcr=preserved"
+                  << " sender=dedicated"
+                  << std::endl;
+    }
+'''
+          text = text[:idx] + insert + text[idx:]
+          Path(path).write_text(text)
+
+          path = "src/media/TvSatCbrOutputWorker.h"
+          replace_once(
+              path,
+              '''        std::atomic<std::uint64_t>* outputBytes,
+        std::atomic<bool>* relayRunning,
+        Observer observer,
+''',
+              '''        std::atomic<std::uint64_t>* outputBytes,
+        std::atomic<bool>* relayRunning,
+        bool legacyHlsStandard,
+        Observer observer,
+''')
+
+          replace_once(
+              path,
+              '''          outputIndex_(outputIndex),
+          pacer_(targetBitrate, mpegts::CbrPacingProfile::TvStreammerSat5Network),
+          outputBytes_(outputBytes),
+''',
+              '''          outputIndex_(outputIndex),
+          pacer_(targetBitrate,
+              legacyHlsStandard
+                  ? mpegts::CbrPacingProfile::Standard
+                  : mpegts::CbrPacingProfile::TvStreammerSat5Network),
+          outputBytes_(outputBytes),
+''')
+
+          replace_once(
+              path,
+              '''          relayRunning_(relayRunning),
+          observer_(std::move(observer)),
+''',
+              '''          relayRunning_(relayRunning),
+          legacyHlsStandard_(legacyHlsStandard),
+          observer_(std::move(observer)),
+''')
+
+          replace_once(
+              path,
+              '''                              << " profile=tvstreammersat5-network"
+''',
+              '''                              << " profile="
+                              << (legacyHlsStandard_
+                                      ? "hls-legacy-standard"
+                                      : "tvstreammersat5-network")
+''')
+
+          replace_once(
+              path,
+              '''    std::atomic<std::uint64_t>* outputBytes_ = nullptr;
+    std::atomic<bool>* relayRunning_ = nullptr;
+    Observer observer_;
+''',
+              '''    std::atomic<std::uint64_t>* outputBytes_ = nullptr;
+    std::atomic<bool>* relayRunning_ = nullptr;
+    bool legacyHlsStandard_ = false;
+    Observer observer_;
+''')
+          PY
+
+          git diff --check
+          printf '#include "media/TvSatCbrOutputWorker.h"\nint main(){return 0;}\n' | \
+            g++ -std=c++17 -pthread -Isrc -x c++ -fsyntax-only -
+
+          git rm .github/workflows/tmp-v164-hls-legacy-cbr.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/AppVersion.h src/media/NativeUdpRelay.cpp src/media/TvSatCbrOutputWorker.h
+          git commit -m "V10.8.164 isolate HLS on legacy CBR sender"
+          git push origin HEAD:fix-hls-legacy-cbr-v164
