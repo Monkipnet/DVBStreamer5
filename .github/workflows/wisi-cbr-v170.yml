@@ -1,0 +1,147 @@
+name: wisi-cbr-v170
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v170
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply V170
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/media/CbrTsPacer.cpp')
+          s = p.read_text()
+          old = '''    // V169: never repay even sub-period scheduler latency. A strict hardware
+    // receiver such as WISI measures shortened inter-datagram gaps as brief
+    // transport-rate overshoot (for example 4.0 -> 4.3 Mbit/s). Rebase the
+    // physical CBR clock after every late wakeup so the next 1316-byte UDP
+    // datagram is never intentionally scheduled early to catch up phase.
+    if (now > nextDeadline_) {
+        nextDeadline_ = now;
+        pacingRemainder_ = 0;
+    }
+'''
+          new = '''    // V170: keep the absolute transport phase, but recover scheduler lateness
+    // very slowly. V168 could shorten the next inter-datagram gap by the full
+    // wakeup error (visible on WISI as 4.0 -> 4.3 Mbit/s). V169 rebased after
+    // every tiny late wakeup, making the physical clock systematically slow.
+    //
+    // The first datagram after the intentional 1.2 s startup reservoir gets a
+    // fresh anchor. Afterwards catch-up is capped at 0.25% of one datagram
+    // period, so a 4.000 Mbit/s target can only rise to about 4.010 Mbit/s while
+    // phase error is being repaid.
+    const std::uint64_t periodNs =
+        (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
+    if (outputSlotCounter_ == 0) {
+        nextDeadline_ = now;
+        pacingRemainder_ = 0;
+    } else if (now > nextDeadline_) {
+        const auto lateNsSigned = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            now - nextDeadline_).count();
+        const std::uint64_t lateNs = lateNsSigned > 0
+            ? static_cast<std::uint64_t>(lateNsSigned)
+            : 0ULL;
+        const std::uint64_t maximumPhaseCorrectionNs =
+            (std::max<std::uint64_t>)(1ULL, periodNs / 400ULL); // 0.25%
+        if (lateNs > maximumPhaseCorrectionNs) {
+            nextDeadline_ = now - std::chrono::nanoseconds(maximumPhaseCorrectionNs);
+        }
+    }
+'''
+          if old not in s:
+              raise SystemExit('V169 pacing block not found')
+          p.write_text(s.replace(old, new, 1))
+
+          v = Path('src/AppVersion.h')
+          vs = v.read_text()
+          if '10.8.169' not in vs:
+              raise SystemExit('V169 version not found')
+          v.write_text(vs.replace('10.8.169', '10.8.170', 1))
+
+          w = Path('src/media/WisiCbrOutputWorker.h')
+          ws = w.read_text()
+          ws = ws.replace('''                if (wokeAt > deadline) {''', '''                if (firstSendLogged_ && wokeAt > deadline) {''', 1)
+          ws = ws.replace('''                              << " source_pcr=preserved"
+                              << " pcr_schedule=exact-segments"''', '''                              << " source_pcr=restamped-to-output-clock"
+                              << " pcr_schedule=reservoir-remux"''', 1)
+          w.write_text(ws)
+          PY
+
+      - name: Diff and syntax check
+        run: |
+          git diff --check
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_header.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_header.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: Startup anchor and bounded phase test
+        run: |
+          cat >/tmp/test_v170.cpp <<'EOF'
+          #include "media/CbrTsPacer.h"
+          #include <cassert>
+          #include <chrono>
+          #include <cstdint>
+          #include <iostream>
+          using namespace dvbstreamer5::media::mpegts;
+          static Packet packet() {
+              Packet p{}; p.fill(0xff); p[0]=kSyncByte; p[1]=0x01; p[2]=0x00; p[3]=0x10; return p;
+          }
+          int main() {
+              constexpr std::uint64_t rate=4000000ULL;
+              constexpr std::uint64_t bits=7ULL*188ULL*8ULL;
+              constexpr std::uint64_t period=bits*1000000000ULL/rate;
+              constexpr std::uint64_t correction=period/400ULL;
+              CbrTsPacer p(rate);
+              for(int i=0;i<2000;++i) assert(p.enqueue(packet()));
+
+              // Intentional 1.2 s startup wait must not become phase debt.
+              const auto d0=p.nextDeadline();
+              const auto startup=d0+std::chrono::milliseconds(1200);
+              CbrDatagram out{};
+              assert(p.nextDatagram(startup,out));
+              auto d1=p.nextDeadline();
+              auto gap=std::chrono::duration_cast<std::chrono::nanoseconds>(d1-startup).count();
+              assert(gap>=static_cast<long long>(period));
+              assert(gap<=static_cast<long long>(period+1));
+
+              // A 200 us scheduler delay may recover only 0.25% of a period.
+              const auto late=d1+std::chrono::microseconds(200);
+              assert(p.nextDatagram(late,out));
+              const auto d2=p.nextDeadline();
+              gap=std::chrono::duration_cast<std::chrono::nanoseconds>(d2-late).count();
+              assert(gap>=static_cast<long long>(period-correction));
+              assert(gap<=static_cast<long long>(period-correction+1));
+              const long double instant=static_cast<long double>(bits)*1000000000.0L/static_cast<long double>(gap);
+              assert(instant<4011000.0L);
+              std::cout << "period_ns=" << period << " correction_ns=" << correction
+                        << " next_gap_ns=" << gap << " instant_bps=" << static_cast<unsigned long long>(instant) << "\n";
+              return 0;
+          }
+          EOF
+          g++ -std=c++17 -pthread -Isrc /tmp/test_v170.cpp src/media/CbrTsPacer.cpp -o /tmp/test_v170
+          /tmp/test_v170
+
+      - name: Commit clean V170 tree
+        run: |
+          git config user.name "Vitali Lukomski"
+          git config user.email "monkipnet@yandex.ru"
+          git rm .github/workflows/wisi-cbr-v170.yml
+          git add src/AppVersion.h src/media/CbrTsPacer.cpp src/media/WisiCbrOutputWorker.h
+          git commit -m "V10.8.170 bound WISI CBR phase recovery"
+          git push origin HEAD:wisi-cbr-v170
