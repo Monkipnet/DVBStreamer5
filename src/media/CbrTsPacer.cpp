@@ -8,7 +8,8 @@
 // Adaptive MPEG-TS CBR sender clock. Standard mode keeps the native DVBStreamer5
 // shaper. TvStreammerSat5Network ports the stable continuous SRT/HTTP strategy
 // from TVStreammerSAT5 StableUdpOutput: a real jitter reservoir, uniform useful
-// packet token pacing, strict 7x188 CBR slots, NULL stuffing and source-PCR passthrough.
+// packet token pacing, strict 7x188 CBR slots, NULL stuffing and an independent
+// continuous 20 ms PCR media clock, matching StableUdpOutput.
 
 namespace dvbstreamer5::media::mpegts {
 namespace {
@@ -158,7 +159,12 @@ bool CbrTsPacer::nextDatagram(
         pacingRemainder_ = 0;
     }
 
-    const auto datagramTime = nextDeadline_;
+    // SAT5 deliberately keeps media/PCR time independent from the physical
+    // sender deadline. A late scheduler wake may rebase nextDeadline_ above, but
+    // it must never jump PCR with it because upstream PTS/DTS did not jump.
+    const auto datagramTime = tvStreammerSat5Profile()
+        ? tvSatMediaTimeline_
+        : nextDeadline_;
     if (tvStreammerSat5Profile()) {
         updateTvStreammerSat5Controller(now);
         fillTvStreammerSat5Datagram(datagramTime, datagram);
@@ -171,6 +177,9 @@ bool CbrTsPacer::nextDatagram(
                 queuedPackets_.pop_front();
             }
         }
+    }
+    if (tvStreammerSat5Profile()) {
+        advanceTvStreammerSat5MediaTimeline();
     }
     advanceDeadline();
     return true;
@@ -312,6 +321,17 @@ void CbrTsPacer::advanceDeadline() noexcept {
     nextDeadline_ += std::chrono::nanoseconds(nanoseconds);
 }
 
+void CbrTsPacer::advanceTvStreammerSat5MediaTimeline() noexcept {
+    const std::uint64_t numerator = kDatagramBits * kNanosecondsPerSecond;
+    std::uint64_t nanoseconds = numerator / targetBitrate_;
+    tvSatMediaRemainder_ += numerator % targetBitrate_;
+    if (tvSatMediaRemainder_ >= targetBitrate_) {
+        nanoseconds += tvSatMediaRemainder_ / targetBitrate_;
+        tvSatMediaRemainder_ %= targetBitrate_;
+    }
+    tvSatMediaTimeline_ += std::chrono::nanoseconds(nanoseconds);
+}
+
 void CbrTsPacer::makeNullPacket(Packet& packet) noexcept {
     packet.fill(0xff);
     packet[0] = kSyncByte;
@@ -415,6 +435,8 @@ void CbrTsPacer::maybeStartTvStreammerSat5(
 
     started_ = true;
     nextDeadline_ = now;
+    tvSatMediaTimeline_ = now;
+    tvSatMediaRemainder_ = 0;
     tvSatLastControllerUpdate_ = now;
     const std::uint64_t maximumUsefulBitrate = targetBitrate_ > 100000ULL
         ? targetBitrate_ - 100000ULL
@@ -438,7 +460,9 @@ void CbrTsPacer::maybeStartTvStreammerSat5(
                   << " datagram_bytes="
                   << (kPacketsPerCbrDatagram * kPacketSize)
                   << " transport_auto_tune=off"
-                  << " source_pcr=passthrough"
+                  << " source_pcr=stripped-after-lock"
+                  << " synthetic_pcr=20ms"
+                  << " media_clock=independent"
                   << std::endl;
     }
 }
@@ -533,10 +557,20 @@ void CbrTsPacer::fillTvStreammerSat5Datagram(
         const auto slotTime = datagramTime + std::chrono::nanoseconds(
             packetOffsetNanoseconds(index, targetBitrate_));
 
-        // Accumulate useful-data entitlement on every fixed CBR transport slot.
-        // Continuous SRT/HTTP keeps provider PCR packets unchanged; NULL packets
-        // fill only the unused transport capacity.
+        // StableUdpOutput accrues real-packet entitlement on every transport
+        // slot, including slots occupied by its periodic PCR-only packet.
         tvSatRealTokenAccumulator_ += tvSatRealPaceBitrate_;
+
+        // TVStreamer5 continuous SRT/HTTP owns a synthetic 20 ms PCR domain.
+        // Periodic PCR consumes an otherwise NULL CBR slot; the real-packet
+        // token remains accrued so useful media is not throttled by PCR inserts.
+        if (tvSatPcrInitialized_ && slotTime >= tvSatNextPeriodicPcrTime_) {
+            makePeriodicPcrPacket(datagram[index], slotTime);
+            do {
+                tvSatNextPeriodicPcrTime_ += kTvSatPeriodicPcrInterval;
+            } while (tvSatNextPeriodicPcrTime_ <= slotTime);
+            continue;
+        }
 
         bool sendReal = false;
         if (targetBitrate_ > 0 && tvSatRealTokenAccumulator_ >= targetBitrate_) {
@@ -561,21 +595,37 @@ void CbrTsPacer::fillTvStreammerSat5Datagram(
 
 void CbrTsPacer::processTvStreammerSat5RealPacket(
     Packet& packet,
-    std::chrono::steady_clock::time_point) noexcept {
+    std::chrono::steady_clock::time_point slotTime) noexcept {
     PacketInfo info;
     if (!inspectPacket(packet.data(), packet.size(), info)) return;
 
-    // TVStreammerSAT5 continuous SRT/HTTP mode preserves the provider PCR
-    // domain. Do not rewrite or strip PCR and do not insert synthetic PCR-only
-    // packets. PTS/DTS and PCR therefore remain in the same source timeline.
-    if (!tvSatPcrInitialized_ && info.hasPcr) {
-        tvSatPcrInitialized_ = true;
-        tvSatPcrPid_ = info.pid;
-        std::cerr << "CBR TVSTREAMMERSAT5 PCR lock"
-                  << " pid=" << tvSatPcrPid_
-                  << " mode=source-passthrough"
-                  << " synthetic_pcr=off"
-                  << std::endl;
+    if (info.hasPcr) {
+        if (!tvSatPcrInitialized_) {
+            // Match StableUdpOutput 203.07/202.74: the first provider PCR is
+            // the phase anchor. Do not consume startup media or advance phase.
+            tvSatPcrInitialized_ = true;
+            tvSatPcrPid_ = info.pid;
+            tvSatPcrOriginTicks_ =
+                (info.pcrBase90k * 300ULL) % kPcrTicksModulus;
+            tvSatPcrOriginTime_ = slotTime;
+            tvSatNextPeriodicPcrTime_ = slotTime + kTvSatPeriodicPcrInterval;
+            writePcr(packet, tvSatPcrOriginTicks_);
+            std::cerr << "CBR TVSTREAMMERSAT5 PCR lock"
+                      << " pid=" << tvSatPcrPid_
+                      << " mode=synthetic-tvstreamer5-20ms"
+                      << " source_pcr=stripped-after-lock"
+                      << " media_clock=independent"
+                      << std::endl;
+        } else if (info.pid == tvSatPcrPid_) {
+            clearPcrFlag(packet);
+        }
+    }
+
+    // Adaptation-only PCR packets do not advance payload continuity. Periodic
+    // PCR packets reuse the most recently observed payload CC on the PCR PID.
+    if (tvSatPcrInitialized_ && info.pid == tvSatPcrPid_ && info.hasPayload) {
+        tvSatPcrPidContinuityCounter_ = info.continuityCounter;
+        tvSatPcrPidContinuityValid_ = true;
     }
 }
 
@@ -606,6 +656,15 @@ std::uint64_t CbrTsPacer::pcrTicksAt(
     return (tvSatPcrOriginTicks_ +
             nanosecondsToPcrTicks(static_cast<std::uint64_t>(elapsed))) %
         kPcrTicksModulus;
+}
+
+void CbrTsPacer::clearPcrFlag(Packet& packet) noexcept {
+    if (packet[0] != kSyncByte) return;
+    const std::uint8_t adaptationFieldControl =
+        static_cast<std::uint8_t>((packet[3] >> 4) & 0x03U);
+    if (adaptationFieldControl != 2U && adaptationFieldControl != 3U) return;
+    if (packet[4] == 0) return;
+    packet[5] = static_cast<std::uint8_t>(packet[5] & ~0x10U);
 }
 
 void CbrTsPacer::writePcr(Packet& packet, std::uint64_t pcrTicks) noexcept {
