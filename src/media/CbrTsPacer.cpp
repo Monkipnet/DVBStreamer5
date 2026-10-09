@@ -67,13 +67,12 @@ bool CbrTsPacer::nextDatagram(
     CbrDatagram& datagram) {
     if (!started_ || now < nextDeadline_) return false;
 
-    // Never repay scheduler latency with a burst. Physical WISI CBR is always
-    // one 1316-byte datagram per transport deadline.
-    const std::uint64_t periodNs =
-        (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
-    const auto maximumCatchup = std::chrono::nanoseconds(
-        (std::max<std::uint64_t>)(periodNs, 1ULL));
-    if (now - nextDeadline_ >= maximumCatchup) {
+    // V169: never repay even sub-period scheduler latency. A strict hardware
+    // receiver such as WISI measures shortened inter-datagram gaps as brief
+    // transport-rate overshoot (for example 4.0 -> 4.3 Mbit/s). Rebase the
+    // physical CBR clock after every late wakeup so the next 1316-byte UDP
+    // datagram is never intentionally scheduled early to catch up phase.
+    if (now > nextDeadline_) {
         nextDeadline_ = now;
         pacingRemainder_ = 0;
     }
