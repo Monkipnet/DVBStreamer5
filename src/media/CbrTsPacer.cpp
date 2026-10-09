@@ -67,14 +67,31 @@ bool CbrTsPacer::nextDatagram(
     CbrDatagram& datagram) {
     if (!started_ || now < nextDeadline_) return false;
 
-    // V169: never repay even sub-period scheduler latency. A strict hardware
-    // receiver such as WISI measures shortened inter-datagram gaps as brief
-    // transport-rate overshoot (for example 4.0 -> 4.3 Mbit/s). Rebase the
-    // physical CBR clock after every late wakeup so the next 1316-byte UDP
-    // datagram is never intentionally scheduled early to catch up phase.
-    if (now > nextDeadline_) {
+    // V170: keep the absolute transport phase, but recover scheduler lateness
+    // very slowly. V168 could shorten the next inter-datagram gap by the full
+    // wakeup error (visible on WISI as 4.0 -> 4.3 Mbit/s). V169 rebased after
+    // every tiny late wakeup, making the physical clock systematically slow.
+    //
+    // The first datagram after the intentional 1.2 s startup reservoir gets a
+    // fresh anchor. Afterwards catch-up is capped at 0.25% of one datagram
+    // period, so a 4.000 Mbit/s target can only rise to about 4.010 Mbit/s while
+    // phase error is being repaid.
+    const std::uint64_t periodNs =
+        (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
+    if (outputSlotCounter_ == 0) {
         nextDeadline_ = now;
         pacingRemainder_ = 0;
+    } else if (now > nextDeadline_) {
+        const auto lateNsSigned = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            now - nextDeadline_).count();
+        const std::uint64_t lateNs = lateNsSigned > 0
+            ? static_cast<std::uint64_t>(lateNsSigned)
+            : 0ULL;
+        const std::uint64_t maximumPhaseCorrectionNs =
+            (std::max<std::uint64_t>)(1ULL, periodNs / 400ULL); // 0.25%
+        if (lateNs > maximumPhaseCorrectionNs) {
+            nextDeadline_ = now - std::chrono::nanoseconds(maximumPhaseCorrectionNs);
+        }
     }
 
     updateUsefulPace(now);
