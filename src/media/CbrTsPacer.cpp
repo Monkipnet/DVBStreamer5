@@ -60,11 +60,21 @@ bool CbrTsPacer::nextDatagram(
         return false;
     }
 
-    // Keep the pacing clock continuous across ordinary scheduler jitter. The
-    // caller drains overdue datagrams; only a genuinely long stall re-anchors
-    // the clock so resume cannot produce a huge catch-up burst.
-    constexpr auto kMaximumCatchupWindow = std::chrono::milliseconds(250);
-    if (now - nextDeadline_ > kMaximumCatchupWindow) {
+    // V10.8.157: never catch up more than one datagram period. The old fixed
+    // 250 ms window allowed several overdue 1316-byte UDP datagrams to be sent
+    // back-to-back after ordinary scheduler jitter. Strict receivers such as
+    // WISI then measured short 10-20+ Mbit/s bursts followed by gaps even when
+    // the long-term average matched the configured CBR.
+    //
+    // Keep sub-period timing error so the monotonic clock does not drift, but
+    // once the sender is at least one whole datagram late, re-anchor to now.
+    // advanceDeadline() then puts the next datagram in the future, preventing
+    // immediate catch-up bursts.
+    const std::uint64_t periodNs =
+        (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
+    const auto maximumCatchup = std::chrono::nanoseconds(
+        (std::max<std::uint64_t>)(periodNs, 1ULL));
+    if (now - nextDeadline_ >= maximumCatchup) {
         nextDeadline_ = now;
         pacingRemainder_ = 0;
     }
