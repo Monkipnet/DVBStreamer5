@@ -13,9 +13,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Diff check
-        run: git diff --check HEAD~3..HEAD
+        run: git diff --check origin/main...HEAD
 
       - name: Syntax check
         run: |
