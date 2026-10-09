@@ -1,0 +1,36 @@
+name: wisi-cbr-v164-wake
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v164
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply input wake cleanup
+        run: python3 tools/patch_wisi_v164_input_wake.py
+      - name: Validate
+        run: |
+          git diff --check
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_cbr_header_check.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_cbr_header_check.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+      - name: Commit cleanup
+        run: |
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          git add -A
+          git commit -m "V10.8.164 decouple input wakeups from WISI CBR clock"
+          git push origin HEAD:wisi-cbr-v164
