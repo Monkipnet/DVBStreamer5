@@ -45,6 +45,14 @@ public:
     std::uint64_t sourceOverTargetWindows() const noexcept;
     std::uint64_t pcrRewriteCount() const noexcept;
     std::size_t lastDatagramUsefulPackets() const noexcept;
+
+    // Compatibility with the V167 worker diagnostics. In V168 a non-empty
+    // useful queue replaces the old notion of a completed PCR segment, and the
+    // old insufficient-segment counter maps to long media-rate windows that are
+    // genuinely above the configured transport bitrate.
+    std::size_t readySegments() const noexcept;
+    std::uint64_t insufficientTargetSegments() const noexcept;
+
     static constexpr std::size_t maximumQueuedBytes() noexcept {
         return kMaximumQueuedBytes;
     }
