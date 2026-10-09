@@ -19,8 +19,8 @@ using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
 // Source NULL packets are removed. Useful packets are grouped into complete
 // source-PCR intervals. Once the closing PCR is known, the complete interval is
 // distributed over the exact number of target-CBR TS slots represented by the
-// source PCR delta. This preserves PCR timing without allowing HTTP/SRT/HLS
-// delivery bursts (or short-term PCR bitrate estimates) to drain the queue.
+// source PCR delta. The PCR packet itself is forced into the first slot of each
+// interval, so consecutive source PCRs stay on exact CBR interval boundaries.
 // PTS/DTS/PCR bytes in source packets remain byte-for-byte unchanged.
 class CbrTsPacer {
 public:
@@ -56,6 +56,7 @@ private:
         std::uint64_t lastSequence = 0;
         std::uint64_t realPackets = 0;
         std::uint64_t slots = 0;
+        bool startsWithPcr = false;
     };
 
     void advanceDeadline() noexcept;
@@ -103,12 +104,15 @@ private:
     std::uint64_t insufficientTargetSegments_ = 0;
 
     bool activeSegment_ = false;
+    bool activeForceFirstReal_ = false;
     std::uint64_t activeFirstSequence_ = 0;
     std::uint64_t activeLastSequence_ = 0;
     std::uint64_t activeRealTotal_ = 0;
     std::uint64_t activeRealRemaining_ = 0;
     std::uint64_t activeSlotsTotal_ = 0;
     std::uint64_t activeSlotsRemaining_ = 0;
+    std::uint64_t activeSpreadRealTotal_ = 0;
+    std::uint64_t activeSpreadSlotsTotal_ = 0;
     std::uint64_t activeToken_ = 0;
 };
 
