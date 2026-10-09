@@ -51,28 +51,27 @@ new = '''        item["delivery_system"] = params.deliverySystem;
         item["lnb_slof_khz"] = params.lnbSlofKHz;'''
 text = replace_once(text, old, new, "active DVB tune block")
 
-old = '''            if (consumers > 0) {
-                adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
-                adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
-                adapter["polarity"] = found->second.get("polarity", "");
-                adapter["delivery_system"] = found->second.get("delivery_system", "");
-                adapter["stream_id"] = found->second.get("stream_id", -1);
-                adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
-            }'''
-new = '''            if (found->second.isMember("frequency_khz")) {
-                adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
-                adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
-                adapter["polarity"] = found->second.get("polarity", "");
-                adapter["delivery_system"] = found->second.get("delivery_system", "");
-                adapter["modulation"] = found->second.get("modulation", "auto");
-                adapter["fec"] = found->second.get("fec", "auto");
-                adapter["stream_id"] = found->second.get("stream_id", -1);
-                adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
-                adapter["lnb_lof1_khz"] = found->second.get("lnb_lof1_khz", 9750000);
-                adapter["lnb_lof2_khz"] = found->second.get("lnb_lof2_khz", 10600000);
-                adapter["lnb_slof_khz"] = found->second.get("lnb_slof_khz", 11700000);
-            }'''
-text = replace_once(text, old, new, "DVB response tune copy block")
+start_marker = '                if (consumers > 0) {'
+end_marker = '                if (found->second.isMember("streams")) {'
+start = text.find(start_marker)
+end = text.find(end_marker, start)
+if start < 0 or end < 0 or end <= start:
+    raise SystemExit("DVB response tune copy markers changed")
+new_block = '''                if (found->second.isMember("frequency_khz")) {
+                    adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
+                    adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
+                    adapter["polarity"] = found->second.get("polarity", "");
+                    adapter["delivery_system"] = found->second.get("delivery_system", "");
+                    adapter["modulation"] = found->second.get("modulation", "auto");
+                    adapter["fec"] = found->second.get("fec", "auto");
+                    adapter["stream_id"] = found->second.get("stream_id", -1);
+                    adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
+                    adapter["lnb_lof1_khz"] = found->second.get("lnb_lof1_khz", 9750000);
+                    adapter["lnb_lof2_khz"] = found->second.get("lnb_lof2_khz", 10600000);
+                    adapter["lnb_slof_khz"] = found->second.get("lnb_slof_khz", 11700000);
+                }
+'''
+text = text[:start] + new_block + text[end:]
 dvb.write_text(text, encoding="utf-8")
 
 ui = Path("src/http/HttpServerWebUi.inc")
