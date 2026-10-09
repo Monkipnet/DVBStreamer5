@@ -21,6 +21,8 @@
 #ifndef _WIN32
 #include <cerrno>
 #include <ctime>
+#include <pthread.h>
+#include <sched.h>
 #endif
 
 namespace dvbstreamer5::media::network {
@@ -134,6 +136,20 @@ private:
     static constexpr std::size_t kObserverQueueDatagrams = 4096;
 
 #ifndef _WIN32
+    void configureSenderScheduling() noexcept {
+        sched_param parameters {};
+        parameters.sched_priority = 1;
+        const int result = ::pthread_setschedparam(
+            ::pthread_self(), SCHED_FIFO, &parameters);
+        if (result == 0) {
+            std::cerr << "WISI CBR sender scheduling index=" << outputIndex_
+                      << " policy=SCHED_FIFO priority=1" << std::endl;
+        } else {
+            std::cerr << "WISI CBR sender scheduling index=" << outputIndex_
+                      << " policy=CFS fallback_error=" << result << std::endl;
+        }
+    }
+
     static std::uint64_t monotonicNanoseconds() noexcept {
         timespec now {};
         if (::clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
@@ -158,6 +174,8 @@ private:
         } while (result == EINTR);
     }
 #else
+    void configureSenderScheduling() noexcept {}
+
     static void sleepUntil(std::chrono::steady_clock::time_point deadline) noexcept {
         std::this_thread::sleep_until(deadline);
     }
@@ -212,6 +230,7 @@ private:
 
     void senderLoop() noexcept {
         try {
+            configureSenderScheduling();
             bool startupComplete = false;
             std::unique_lock<std::mutex> lock(mutex_);
             while (!stopping_ && relayRunning_->load(std::memory_order_acquire)) {
@@ -236,13 +255,14 @@ private:
                 sleepUntil(deadline);
                 const auto wokeAt = std::chrono::steady_clock::now();
                 lock.lock();
+                const auto sendReadyAt = std::chrono::steady_clock::now();
                 if (stopping_ || !relayRunning_->load(std::memory_order_acquire)) break;
 
                 mpegts::CbrDatagram datagram {};
                 const std::size_t queuedBefore = pacer_.queuedPackets();
                 const std::size_t readySegmentsBefore = pacer_.readySegments();
                 const bool timingLockedBefore = pacer_.timingLocked();
-                if (!pacer_.nextDatagram(wokeAt, datagram)) continue;
+                if (!pacer_.nextDatagram(sendReadyAt, datagram)) continue;
                 const std::size_t queuedAfter = pacer_.queuedPackets();
                 if (queuedAfter < queuedBefore) queueSpace_.notify_all();
                 const std::uint64_t targetBitrate = pacer_.targetBitrate();
@@ -266,21 +286,29 @@ private:
 
                 const std::uint64_t periodNs =
                     (kDatagramBytes * 8ULL * 1000000000ULL) / targetBitrate;
-                if (wokeAt > deadline) {
+                if (firstSendLogged_ && sendReadyAt > deadline) {
                     const auto lateNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        wokeAt - deadline).count();
+                        sendReadyAt - deadline).count();
                     const std::uint64_t reportThreshold =
                         (std::max<std::uint64_t>)(periodNs * 4ULL, 20000000ULL);
                     if (lateNs >= 0 && static_cast<std::uint64_t>(lateNs) >= reportThreshold) {
                         ++lateEvents_;
-                        lateMaxUs_ = (std::max<std::uint64_t>)(
-                            lateMaxUs_, static_cast<std::uint64_t>(lateNs) / 1000ULL);
+                        const std::uint64_t currentLateUs =
+                            static_cast<std::uint64_t>(lateNs) / 1000ULL;
+                        const auto lockWaitNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            sendReadyAt - wokeAt).count();
+                        const std::uint64_t currentLockWaitUs = lockWaitNs > 0
+                            ? static_cast<std::uint64_t>(lockWaitNs) / 1000ULL
+                            : 0ULL;
+                        lateMaxUs_ = (std::max<std::uint64_t>)(lateMaxUs_, currentLateUs);
                         const auto now = std::chrono::steady_clock::now();
                         if (lastLateLog_ == std::chrono::steady_clock::time_point{} ||
                             now - lastLateLog_ >= std::chrono::seconds(5)) {
                             lastLateLog_ = now;
                             std::cerr << "WISI CBR LATE index=" << outputIndex_
                                       << " late_events=" << lateEvents_
+                                      << " current_late_us=" << currentLateUs
+                                      << " current_lock_wait_us=" << currentLockWaitUs
                                       << " max_late_us=" << lateMaxUs_
                                       << " queued_kb=" << (pacer_.queuedBytes() / 1024U)
                                       << " target_kbps=" << (targetBitrate / 1000ULL)
@@ -310,8 +338,8 @@ private:
                               << " datagram_bytes=" << kDatagramBytes
                               << " startup_buffer_ms=1200"
                               << " queue_kb=" << (queuedAfter * mpegts::kPacketSize / 1024U)
-                              << " source_pcr=preserved"
-                              << " pcr_schedule=exact-segments"
+                              << " source_pcr=restamped"
+                              << " pcr_schedule=output-cbr-slot-clock"
                               << " pts_dts=preserved"
                               << " auto_tune=off"
                               << " catchup_burst=off"
