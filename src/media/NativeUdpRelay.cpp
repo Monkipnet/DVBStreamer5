@@ -2,7 +2,7 @@
 
 #include "NativeHttpClient.h"
 #include "media/CbrTsPacer.h"
-#include "media/TvSatCbrOutputWorker.h"
+#include "media/WisiCbrOutputWorker.h"
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
 
@@ -676,8 +676,7 @@ void NativeUdpRelay::run() {
         bool firstSendLogged = false;
         std::uint64_t datagramsSent = 0;
         std::unique_ptr<dvbstreamer5::media::rtp::MpegTsPacketizer> packetizer;
-        std::unique_ptr<dvbstreamer5::media::mpegts::CbrTsPacer> cbrPacer;
-        std::unique_ptr<TvSatCbrOutputWorker> tvSatCbrWorker;
+        std::unique_ptr<dvbstreamer5::media::network::WisiCbrOutputWorker> cbrWorker;
     };
 
     UdpInputEndpoint inputEndpoint;
@@ -693,27 +692,6 @@ void NativeUdpRelay::run() {
     }
 
     const bool rtpInput = networkInput && inputEndpoint.scheme == "rtp";
-    // V10.8.158: continuous SRT and plain HTTP MPEG-TS use the proven
-    // TVStreammerSAT5 StableUdpOutput reservoir/token/PCR CBR profile.
-    // HLS, DVB, UDP/RTP, RTSP and RTMP deliberately keep their existing timing.
-    const bool tvStreammerSat5CbrProfile =
-        config_.inputUri == "external://srt" ||
-        startsWithInsensitive(config_.inputUri, "http://") ||
-        startsWithInsensitive(config_.inputUri, "https://");
-    const auto cbrPacingProfile = tvStreammerSat5CbrProfile
-        ? dvbstreamer5::media::mpegts::CbrPacingProfile::TvStreammerSat5Network
-        : dvbstreamer5::media::mpegts::CbrPacingProfile::Standard;
-    if (tvStreammerSat5CbrProfile && config_.targetBitrate > 0) {
-        std::cerr << "CBR profile=tvstreammersat5-network"
-                  << " source=" << config_.inputUri
-                  << " target_kbps=" << (config_.targetBitrate / 1000ULL)
-                  << " startup_reservoir_ms=5000"
-                  << " steady_reservoir_ms=2500"
-                  << " low_watermark_ms=800"
-                  << " buffer_limit_mb=32"
-                  << " pcr_interval_ms=20"
-                  << std::endl;
-    }
     bool fileInputEof = false;
     bool fileHadTsPackets = false;
     // V10.3: keep the source/input MPEG-TS framer completely separate from
@@ -731,10 +709,6 @@ void NativeUdpRelay::run() {
     std::vector<std::uint8_t> observedTransport;
     std::vector<OutputWorker> outputs;
     outputs.reserve(config_.outputs.size());
-
-    // V10.8.159: decide observer sharing before constructing the dedicated
-    // SAT5 sender so that exactly one already-shaped CBR datagram stream is
-    // published to HTTP/SRT/HLS/RTSP/RTMP consumers.
     std::size_t observedCbrOutputIndex = config_.outputs.size();
     if (config_.paceObservedTransport && config_.observeTransport) {
         for (std::size_t index = 0; index < config_.outputs.size(); ++index) {
@@ -744,9 +718,6 @@ void NativeUdpRelay::run() {
             }
         }
     }
-    const bool shareObservedCbrWithUdpOutput =
-        observedCbrOutputIndex < config_.outputs.size();
-
     auto seed = static_cast<std::uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
     for (std::size_t index = 0; index < config_.outputs.size(); ++index) {
@@ -767,17 +738,10 @@ void NativeUdpRelay::run() {
         }
         if (config_.outputs[index].outputType == "udp-cbr") {
             try {
-                if (tvStreammerSat5CbrProfile) {
-                    TvSatCbrOutputWorker::Observer observer;
-                    if (shareObservedCbrWithUdpOutput &&
-                        index == observedCbrOutputIndex) {
-                        const auto transportObserver = config_.observeTransport;
-                        observer = [transportObserver](
-                            const std::uint8_t* data, std::size_t size) mutable {
-                            transportObserver(data, size);
-                        };
-                    }
-                    output.tvSatCbrWorker = std::make_unique<TvSatCbrOutputWorker>(
+                dvbstreamer5::media::network::WisiCbrOutputWorker::Observer observer;
+                if (index == observedCbrOutputIndex) observer = config_.observeTransport;
+                output.cbrWorker =
+                    std::make_unique<dvbstreamer5::media::network::WisiCbrOutputWorker>(
                         output.socket,
                         index,
                         config_.targetBitrate,
@@ -792,11 +756,6 @@ void NativeUdpRelay::run() {
                             running_.store(false, std::memory_order_release);
                             httpQueueCondition_.notify_all();
                         });
-                } else {
-                    output.cbrPacer =
-                        std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
-                            config_.targetBitrate, cbrPacingProfile);
-                }
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();
@@ -809,15 +768,16 @@ void NativeUdpRelay::run() {
         ++seed;
     }
 
-    // Reuse the already-shaped first UDP-CBR output for observer fan-out.
-    // For the SAT5 profile the dedicated sender publishes after the UDP send;
-    // Standard CBR retains the V10.8.156 in-loop publication below.
+    // WISI CBR: the first UDP-CBR worker publishes its already-shaped
+    // datagrams to observeTransport asynchronously. Observer work can never
+    // block the physical WISI UDP sender clock.
+    const bool shareObservedCbrWithUdpOutput =
+        observedCbrOutputIndex < outputs.size();
     if (shareObservedCbrWithUdpOutput) {
         std::cerr << "NATIVE OBSERVED CBR share output_index="
                   << observedCbrOutputIndex
                   << " target_kbps=" << (config_.targetBitrate / 1000ULL)
-                  << " sender="
-                  << (tvStreammerSat5CbrProfile ? "tvstreammersat5-dedicated" : "native")
+                  << " profile=wisi-fixed-cbr async_observer=1"
                   << std::endl;
     }
 
@@ -838,7 +798,7 @@ void NativeUdpRelay::run() {
         try {
             observedCbrPacer =
                 std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
-                    config_.targetBitrate, cbrPacingProfile);
+                    config_.targetBitrate);
             observedCbrWorker = std::thread([&] {
                 while (true) {
                     dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;
@@ -955,8 +915,8 @@ void NativeUdpRelay::run() {
         if (fileInputSource_) {
             const bool needsFileData = std::any_of(
                 outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                    return output.cbrPacer &&
-                        output.cbrPacer->queuedPackets() <
+                    return output.cbrWorker &&
+                        output.cbrWorker->queuedPackets() <
                             dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram;
                 });
             if (!fileInputEof && needsFileData) {
@@ -981,7 +941,7 @@ void NativeUdpRelay::run() {
             }
             if (fileInputEof && packets.empty() && std::all_of(
                     outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                        return !output.cbrPacer || output.cbrPacer->queuedPackets() == 0;
+                        return !output.cbrWorker || output.cbrWorker->queuedPackets() == 0;
                     })) {
                 if (!fileHadTsPackets) {
                     std::lock_guard<std::mutex> lock(errorMutex_);
@@ -991,58 +951,32 @@ void NativeUdpRelay::run() {
                 break;
             }
             if (received == 0) {
-                std::chrono::steady_clock::time_point nextDeadline {};
-                bool hasDeadline = false;
-                for (const auto& output : outputs) {
-                    if (output.cbrPacer && output.cbrPacer->started()) {
-                        const auto outputDeadline = output.cbrPacer->nextDeadline();
-                        if (!hasDeadline || outputDeadline < nextDeadline) {
-                            nextDeadline = outputDeadline;
-                            hasDeadline = true;
-                        }
-                    }
-                }
-                if (hasDeadline &&
-                    nextDeadline > std::chrono::steady_clock::now()) {
-                    std::this_thread::sleep_until(nextDeadline);
-                }
+                // The dedicated WISI sender owns all CBR deadlines. The input
+                // relay must not wake once per UDP slot merely to watch them.
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
         } else if (httpInput) {
-            int receiveTimeoutMs = 250;
-            auto nextDeadline = std::chrono::steady_clock::time_point {};
-            bool hasDeadline = false;
-            for (const auto& output : outputs) {
-                if (output.cbrPacer && output.cbrPacer->started()) {
-                    const auto deadline = output.cbrPacer->nextDeadline();
-                    if (!hasDeadline || deadline < nextDeadline) {
-                        nextDeadline = deadline;
-                        hasDeadline = true;
-                    }
-                }
-            }
             std::unique_lock<std::mutex> lock(httpQueueMutex_);
             if (httpQueue_.empty()) {
                 const bool cbrDrained = std::all_of(
                     outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                        return !output.cbrPacer ||
-                            output.cbrPacer->queuedPackets() == 0;
+                        return !output.cbrWorker ||
+                            output.cbrWorker->queuedPackets() == 0;
                     });
                 if (httpFinished_ && cbrDrained) {
                     break;
                 }
-                if (hasDeadline) {
-                    if (httpFinished_) {
-                        httpQueueCondition_.wait_until(lock, nextDeadline);
-                    } else {
-                        httpQueueCondition_.wait_until(
-                            lock, nextDeadline, [this] {
-                                return !httpQueue_.empty() || httpFinished_ ||
-                                    !running_.load(std::memory_order_acquire);
-                            });
-                    }
-                } else if (!httpFinished_) {
+                if (httpFinished_) {
+                    // Source is done but the dedicated WISI queue may still be
+                    // draining. Avoid a busy loop without coupling to its CBR clock.
                     httpQueueCondition_.wait_for(
-                        lock, std::chrono::milliseconds(receiveTimeoutMs), [this] {
+                        lock, std::chrono::milliseconds(20), [this] {
+                            return !httpQueue_.empty() ||
+                                !running_.load(std::memory_order_acquire);
+                        });
+                } else {
+                    httpQueueCondition_.wait_for(
+                        lock, std::chrono::milliseconds(250), [this] {
                             return !httpQueue_.empty() || httpFinished_ ||
                                 !running_.load(std::memory_order_acquire);
                         });
@@ -1096,30 +1030,17 @@ void NativeUdpRelay::run() {
             } else if (httpFinished_) {
                 const bool cbrDrained = std::all_of(
                     outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                        return !output.cbrPacer ||
-                            output.cbrPacer->queuedPackets() == 0;
+                        return !output.cbrWorker ||
+                            output.cbrWorker->queuedPackets() == 0;
                     });
                 if (cbrDrained) {
                     break;
                 }
             }
         } else {
+            // Input reads no longer share the WISI output clock. A fixed timeout
+            // avoids thousands of unnecessary wakeups per second across channels.
             int receiveTimeoutMs = 250;
-            for (const auto& output : outputs) {
-                if (!output.cbrPacer || !output.cbrPacer->started()) {
-                    continue;
-                }
-                const auto remaining = output.cbrPacer->nextDeadline() -
-                    std::chrono::steady_clock::now();
-                const int outputTimeout =
-                    remaining <= std::chrono::steady_clock::duration::zero()
-                    ? 0
-                    : static_cast<int>((std::min)(
-                        std::int64_t{250},
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            remaining + std::chrono::milliseconds(1)).count()));
-                receiveTimeoutMs = (std::min)(receiveTimeoutMs, outputTimeout);
-            }
             const bool receivedOk = dvbInput
                 ? dvbInput_.read(
                     datagram.data(), datagram.size(), received, receiveTimeoutMs, error)
@@ -1279,18 +1200,9 @@ void NativeUdpRelay::run() {
             }
 
             for (auto& output : outputs) {
-                if (output.tvSatCbrWorker) {
-                    if (!output.tvSatCbrWorker->enqueue(packets)) {
-                        if (running_.load(std::memory_order_acquire)) {
-                            error = "TVStreammerSAT5 UDP CBR input stopped while queuing transport";
-                            std::lock_guard<std::mutex> lock(errorMutex_);
-                            lastError_ = error;
-                        }
-                        break;
-                    }
-                } else if (output.cbrPacer) {
+                if (output.cbrWorker) {
                     for (const auto& packet : packets) {
-                        if (!output.cbrPacer->enqueue(packet)) {
+                        if (!output.cbrWorker->enqueue(packet)) {
                             error = "native UDP CBR input exceeded the bounded 2 MiB pacing queue";
                             break;
                         }
@@ -1323,58 +1235,9 @@ void NativeUdpRelay::run() {
             }
         }
 
-        for (auto& output : outputs) {
-            if (!output.cbrPacer || !output.cbrPacer->started()) {
-                continue;
-            }
+        // UDP-CBR is drained by WisiCbrOutputWorker on its own absolute
+        // CLOCK_MONOTONIC sender thread. Never send CBR datagrams here.
 
-            // Drain every datagram whose pacing deadline has already arrived.
-            // The previous code emitted at most one CBR datagram per input-loop
-            // iteration, so an asynchronous transcoder could make UDP-CBR lag
-            // badly behind the requested bitrate.
-            for (unsigned drained = 0; drained < 32U; ++drained) {
-                dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;
-                if (!output.cbrPacer->nextDatagram(
-                        std::chrono::steady_clock::now(), cbrDatagram)) {
-                    break;
-                }
-                if (!sendCbrDatagram(
-                        cbrDatagram, *output.socket, outputBytes_, error)) {
-                    std::lock_guard<std::mutex> lock(errorMutex_);
-                    lastError_ = error.empty()
-                        ? "UDP CBR output send failed" : error;
-                    break;
-                }
-                if (shareObservedCbrWithUdpOutput &&
-                    output.index == observedCbrOutputIndex && config_.observeTransport) {
-                    config_.observeTransport(
-                        reinterpret_cast<const std::uint8_t*>(cbrDatagram.data()),
-                        sizeof(cbrDatagram));
-                }
-                ++output.datagramsSent;
-                if (!output.firstSendLogged) {
-                    output.firstSendLogged = true;
-                    std::cerr << "NATIVE UDP OUTPUT first_send index="
-                              << output.index
-                              << " type=" << output.type
-                              << " queued_packets="
-                              << output.cbrPacer->queuedPackets()
-                              << " target_kbps="
-                              << (output.cbrPacer->targetBitrate() / 1000ULL)
-                              << std::endl;
-                }
-            }
-            if (!error.empty()) break;
-        }
-        if (!error.empty()) {
-            std::lock_guard<std::mutex> lock(errorMutex_);
-            lastError_ = error;
-            break;
-        }
-    }
-
-    for (auto& output : outputs) {
-        if (output.tvSatCbrWorker) output.tvSatCbrWorker->stop();
     }
 
     {
