@@ -128,7 +128,9 @@ public:
     }
 
 private:
-    static constexpr auto kStartupBuffer = std::chrono::milliseconds(400);
+    // V10.8.167: keep enough already-received media to bridge normal HTTP/SRT/HLS
+    // delivery gaps without returning to the 5-second SAT5 playout reservoir.
+    static constexpr auto kStartupBuffer = std::chrono::milliseconds(1200);
     static constexpr std::size_t kObserverQueueDatagrams = 4096;
 
 #ifndef _WIN32
@@ -238,10 +240,29 @@ private:
 
                 mpegts::CbrDatagram datagram {};
                 const std::size_t queuedBefore = pacer_.queuedPackets();
+                const std::size_t readySegmentsBefore = pacer_.readySegments();
+                const bool timingLockedBefore = pacer_.timingLocked();
                 if (!pacer_.nextDatagram(wokeAt, datagram)) continue;
                 const std::size_t queuedAfter = pacer_.queuedPackets();
                 if (queuedAfter < queuedBefore) queueSpace_.notify_all();
                 const std::uint64_t targetBitrate = pacer_.targetBitrate();
+
+                if (timingLockedBefore && readySegmentsBefore == 0) {
+                    ++usefulUnderflowDatagrams_;
+                    const auto now = std::chrono::steady_clock::now();
+                    if (lastUnderflowLog_ == std::chrono::steady_clock::time_point{} ||
+                        now - lastUnderflowLog_ >= std::chrono::seconds(5)) {
+                        lastUnderflowLog_ = now;
+                        std::cerr << "WISI CBR USEFUL UNDERFLOW index=" << outputIndex_
+                                  << " null_only_datagrams=" << usefulUnderflowDatagrams_
+                                  << " queued_kb=" << (pacer_.queuedBytes() / 1024U)
+                                  << " source_kbps=" << (pacer_.sourcePayloadBitrate() / 1000ULL)
+                                  << " target_kbps=" << (targetBitrate / 1000ULL)
+                                  << " insufficient_target_segments="
+                                  << pacer_.insufficientTargetSegments()
+                                  << std::endl;
+                    }
+                }
 
                 const std::uint64_t periodNs =
                     (kDatagramBytes * 8ULL * 1000000000ULL) / targetBitrate;
@@ -287,9 +308,10 @@ private:
                     std::cerr << "WISI CBR start index=" << outputIndex_
                               << " target_kbps=" << (targetBitrate / 1000ULL)
                               << " datagram_bytes=" << kDatagramBytes
-                              << " startup_buffer_ms=400"
+                              << " startup_buffer_ms=1200"
                               << " queue_kb=" << (queuedAfter * mpegts::kPacketSize / 1024U)
                               << " source_pcr=preserved"
+                              << " pcr_schedule=exact-segments"
                               << " pts_dts=preserved"
                               << " auto_tune=off"
                               << " catchup_burst=off"
@@ -327,8 +349,10 @@ private:
     std::size_t queuePeakPackets_ = 0;
     std::chrono::steady_clock::time_point firstPacketAt_ {};
     std::chrono::steady_clock::time_point lastLateLog_ {};
+    std::chrono::steady_clock::time_point lastUnderflowLog_ {};
     std::uint64_t lateEvents_ = 0;
     std::uint64_t lateMaxUs_ = 0;
+    std::uint64_t usefulUnderflowDatagrams_ = 0;
     std::thread senderThread_;
 
     std::mutex observerMutex_;
