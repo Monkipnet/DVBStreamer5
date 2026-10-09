@@ -459,7 +459,7 @@ void CbrTsPacer::fillTvStreammerSat5Datagram(
             if (!sendReal) {
                 // Never accumulate a catch-up burst during an upstream gap.
                 tvSatRealTokenAccumulator_ = (std::min)(
-                    tvSatRealTokenAccumulator_, targetBitrate_ - 1ULL);
+                    tvSatRealTokenAccumulator_, targetBitrate_ - std::uint64_t{1});
             }
         }
 
