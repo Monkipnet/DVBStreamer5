@@ -742,6 +742,29 @@ void NativeUdpRelay::run() {
         ++seed;
     }
 
+    // V10.8.156: when a native UDP-CBR output already exists, reuse its
+    // paced datagrams for observeTransport instead of running a second
+    // independent CBR pacer/thread for the same stream. This keeps public
+    // HTTP/SRT/HLS/RTSP/RTMP/statistics on the exact emitted CBR timeline
+    // and removes one high-frequency pacing thread per UDP-CBR channel.
+    std::size_t observedCbrOutputIndex = outputs.size();
+    if (config_.paceObservedTransport && config_.observeTransport) {
+        for (std::size_t index = 0; index < outputs.size(); ++index) {
+            if (outputs[index].cbrPacer) {
+                observedCbrOutputIndex = index;
+                break;
+            }
+        }
+    }
+    const bool shareObservedCbrWithUdpOutput =
+        observedCbrOutputIndex < outputs.size();
+    if (shareObservedCbrWithUdpOutput) {
+        std::cerr << "NATIVE OBSERVED CBR share output_index="
+                  << observedCbrOutputIndex
+                  << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                  << std::endl;
+    }
+
     // V10.8.105: observeTransport feeds SRT/HTTP/HLS/RTSP/RTMP.  The old
     // implementation only slept between already-existing TS packets, so when
     // payload bitrate was below target it remained VBR and CBR Out simply
@@ -754,7 +777,8 @@ void NativeUdpRelay::run() {
     bool observedCbrStop = false;
     std::thread observedCbrWorker;
 
-    if (config_.paceObservedTransport && config_.targetBitrate > 0) {
+    if (config_.paceObservedTransport && config_.targetBitrate > 0 &&
+        !shareObservedCbrWithUdpOutput) {
         try {
             observedCbrPacer =
                 std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
@@ -815,6 +839,10 @@ void NativeUdpRelay::run() {
     auto observePackets = [&](
         const std::vector<dvbstreamer5::media::mpegts::Packet>& observedPackets) -> bool {
         if (!config_.observeTransport || observedPackets.empty()) return true;
+
+        // The first UDP-CBR pacer will publish its already-shaped 1316-byte
+        // datagrams below. Do not enqueue the same TS into a second pacer.
+        if (shareObservedCbrWithUdpOutput) return true;
 
         if (observedCbrPacer) {
             bool wakeForStart = false;
@@ -1251,6 +1279,12 @@ void NativeUdpRelay::run() {
                     lastError_ = error.empty()
                         ? "UDP CBR output send failed" : error;
                     break;
+                }
+                if (shareObservedCbrWithUdpOutput &&
+                    output.index == observedCbrOutputIndex && config_.observeTransport) {
+                    config_.observeTransport(
+                        reinterpret_cast<const std::uint8_t*>(cbrDatagram.data()),
+                        sizeof(cbrDatagram));
                 }
                 ++output.datagramsSent;
                 if (!output.firstSendLogged) {
