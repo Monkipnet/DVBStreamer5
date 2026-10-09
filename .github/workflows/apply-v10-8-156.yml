@@ -1,0 +1,32 @@
+name: Apply V10.8.156 shared CBR observer
+
+on:
+  push:
+    branches:
+      - fix-v10.8.156-shared-cbr-observer
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[v10.8.156-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 tools/apply_v10_8_156_shared_cbr_observer.py
+      - name: Validate diff
+        run: |
+          git diff --check
+          grep 'kProgramVersion = "10.8.156"' src/AppVersion.h
+          grep -n 'NATIVE OBSERVED CBR share output_index' src/media/NativeUdpRelay.cpp
+      - name: Commit result
+        run: |
+          git config user.name "Monkipnet"
+          git config user.email "monkipnet@yandex.ru"
+          git add src/AppVersion.h src/media/NativeUdpRelay.cpp
+          git commit -m "V10.8.156 reuse UDP CBR pacer for observer fan-out [v10.8.156-applied]"
+          git push origin HEAD:${GITHUB_REF_NAME}
