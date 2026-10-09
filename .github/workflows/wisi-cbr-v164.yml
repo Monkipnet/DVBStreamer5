@@ -17,7 +17,18 @@ jobs:
           fetch-depth: 0
 
       - name: Apply WISI CBR V164
-        run: python3 tools/apply_wisi_cbr_v164.py
+        run: |
+          python3 tools/apply_wisi_cbr_v164.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/media/NativeUdpRelay.cpp')
+          s = p.read_text()
+          needle = '\n    {\n        std::lock_guard<std::mutex> lock(observedCbrMutex);'
+          if needle not in s:
+              raise SystemExit('cleanup marker not found')
+          s = s.replace(needle, '\n    }\n' + needle, 1)
+          p.write_text(s)
+          PY
 
       - name: Validate diff
         run: |
