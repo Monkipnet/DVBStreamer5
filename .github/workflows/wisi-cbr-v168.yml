@@ -1,0 +1,117 @@
+name: wisi-cbr-v168
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v168
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-remux-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+
+      - name: Syntax check
+        run: |
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_header.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_header.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: VBR reservoir and PCR restamp test
+        run: |
+          cat >/tmp/test_wisi_v168.cpp <<'EOF'
+          #include "media/CbrTsPacer.h"
+          #include <cassert>
+          #include <cstdint>
+          #include <iostream>
+          #include <vector>
+          using namespace dvbstreamer5::media::mpegts;
+
+          static Packet dataPacket(std::uint8_t cc) {
+              Packet p{}; p.fill(0xff); p[0]=kSyncByte; p[1]=0x01; p[2]=0x00;
+              p[3]=static_cast<std::uint8_t>(0x10U|(cc&0x0fU)); return p;
+          }
+          static Packet pcrPacket(std::uint64_t ticks, std::uint8_t cc) {
+              Packet p=dataPacket(cc); p[1]=0x01; p[2]=0x00;
+              p[3]=static_cast<std::uint8_t>(0x30U|(cc&0x0fU)); p[4]=7; p[5]=0x10;
+              const auto base=ticks/300ULL, ext=ticks%300ULL;
+              p[6]=static_cast<std::uint8_t>(base>>25U); p[7]=static_cast<std::uint8_t>(base>>17U);
+              p[8]=static_cast<std::uint8_t>(base>>9U); p[9]=static_cast<std::uint8_t>(base>>1U);
+              p[10]=static_cast<std::uint8_t>(((base&1ULL)<<7U)|0x7eU|((ext>>8U)&1ULL));
+              p[11]=static_cast<std::uint8_t>(ext&0xffU); return p;
+          }
+          static bool readPcr(const Packet& p, std::uint64_t& ticks) {
+              const unsigned afc=(p[3]>>4U)&3U;
+              if(p[0]!=kSyncByte||(afc!=2U&&afc!=3U)||p[4]<7U||(p[5]&0x10U)==0) return false;
+              const std::uint64_t base=(static_cast<std::uint64_t>(p[6])<<25U)|(static_cast<std::uint64_t>(p[7])<<17U)|(static_cast<std::uint64_t>(p[8])<<9U)|(static_cast<std::uint64_t>(p[9])<<1U)|(static_cast<std::uint64_t>(p[10])>>7U);
+              const std::uint64_t ext=(static_cast<std::uint64_t>(p[10]&1U)<<8U)|p[11]; ticks=base*300ULL+ext; return true;
+          }
+          static bool isNull(const Packet& p) {
+              return (((static_cast<unsigned>(p[1])&0x1fU)<<8U)|p[2])==0x1fffU;
+          }
+
+          int main() {
+              constexpr std::uint64_t target=3000000ULL, clock=27000000ULL, packetBits=188ULL*8ULL;
+              constexpr std::uint64_t intervalTicks=clock/25ULL; // 40 ms
+              CbrTsPacer pacer(target);
+              std::uint64_t pcr=0; std::uint8_t cc=0;
+
+              // 75 PCR intervals = 3 s. Alternate local 2.0 and 3.5 Mbit/s
+              // bursts: some short intervals exceed the 3 Mbit/s target, while
+              // the long-term payload remains below target (~2.75 Mbit/s).
+              for(unsigned s=0;s<76;++s) {
+                  assert(pacer.enqueue(pcrPacket(pcr,cc++)));
+                  if(s==75) break;
+                  const std::uint64_t local=(s&1U)?3500000ULL:2000000ULL;
+                  const std::uint64_t packets=(local*40ULL/1000ULL)/packetBits;
+                  for(std::uint64_t i=1;i<packets;++i) assert(pacer.enqueue(dataPacket(cc++));
+                  pcr+=intervalTicks;
+              }
+              assert(pacer.timingLocked());
+              assert(pacer.sourcePayloadBitrate()>2400000ULL && pacer.sourcePayloadBitrate()<3000000ULL);
+
+              struct Seen { std::uint64_t slot; std::uint64_t ticks; };
+              std::vector<Seen> seen; std::uint64_t slot=0; std::uint64_t useful=0, nulls=0;
+              while(seen.size()<12 && slot<20000) {
+                  CbrDatagram out{};
+                  assert(pacer.nextDatagram(pacer.nextDeadline(),out));
+                  for(const auto& pkt:out) {
+                      std::uint64_t ticks=0;
+                      if(readPcr(pkt,ticks)) seen.push_back({slot,ticks});
+                      if(isNull(pkt)) ++nulls; else ++useful;
+                      ++slot;
+                  }
+              }
+              assert(seen.size()>=10);
+              assert(useful>0 && nulls>0);
+              // Rewritten PCR must describe the configured transport rate from
+              // actual output packet positions, regardless of source VBR burst.
+              for(std::size_t i=1;i<seen.size();++i) {
+                  const std::uint64_t ds=seen[i].slot-seen[i-1].slot;
+                  const std::uint64_t dt=seen[i].ticks>=seen[i-1].ticks ? seen[i].ticks-seen[i-1].ticks : 0;
+                  assert(dt>0);
+                  const long double bitrate=static_cast<long double>(ds)*packetBits*clock/static_cast<long double>(dt);
+                  assert(bitrate>2990000.0L && bitrate<3010000.0L);
+              }
+              assert(pacer.pcrRewriteCount()>=seen.size());
+              std::cout << "source_kbps=" << pacer.sourcePayloadBitrate()/1000ULL
+                        << " pace_kbps=" << pacer.usefulPaceBitrate()/1000ULL
+                        << " pcr_rewrites=" << pacer.pcrRewriteCount()
+                        << " useful=" << useful << " null=" << nulls << "\n";
+              return 0;
+          }
+          EOF
+          g++ -std=c++17 -pthread -Isrc /tmp/test_wisi_v168.cpp src/media/CbrTsPacer.cpp -o /tmp/test_wisi_v168
+          /tmp/test_wisi_v168
