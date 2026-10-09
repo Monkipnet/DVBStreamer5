@@ -15,6 +15,13 @@ constexpr std::uint64_t kDatagramBits =
 constexpr std::uint64_t kPacketBits = kPacketSize * 8ULL;
 constexpr auto kArrivalRateWindow = std::chrono::milliseconds(250);
 
+// V10.8.166: do not let one jittery PCR interval change real/null placement.
+// A 200 ms aggregate is short enough to fit inside the existing 400 ms startup
+// reservoir, but long enough to average several normal 20..40 ms PCR intervals.
+constexpr std::uint64_t kPcrFilterWindowTicks = kPcrClockHz / 5ULL;
+constexpr std::uint64_t kPcrRateDeadbandPermille = 10ULL; // +/-1.0%
+constexpr std::uint64_t kPcrRateFollowDivisor = 4ULL;     // move 25% of real change/window
+
 } // namespace
 
 CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate)
@@ -72,12 +79,10 @@ bool CbrTsPacer::nextDatagram(
         pacingRemainder_ = 0;
     }
 
-    // The important WISI rule is that a buffered network burst must not be
-    // drained at the full transport rate. Each real TS packet carries the useful
-    // packet rate measured from its source-PCR interval. A Bresenham/token
-    // accumulator spreads those real packets over the fixed CBR slots; every
-    // unused slot becomes PID 0x1fff. This preserves source PCR spacing while
-    // the IP transport itself remains exactly targetBitrate_.
+    // Real TS is spread through the fixed transport slots with a Bresenham/token
+    // accumulator. V10.8.166 feeds this with the filtered multi-PCR rate, not the
+    // instantaneous rate of one PCR interval. The physical CBR/1316-byte sender
+    // clock is unchanged.
     for (Packet& packet : datagram) {
         if (queuedPackets_.empty()) {
             makeNullPacket(packet);
@@ -171,6 +176,7 @@ void CbrTsPacer::observePcr(
         previousPcrTicks_ = pcrTicks;
         previousPcrSequence_ = sequence;
         havePreviousPcr_ = true;
+        resetPcrFilterWindow();
         return;
     }
 
@@ -188,35 +194,80 @@ void CbrTsPacer::observePcr(
         intervalPackets > 0;
 
     if (validDelta) {
-        const long double measured =
-            static_cast<long double>(intervalPackets) *
-            static_cast<long double>(kPacketBits) *
-            static_cast<long double>(kPcrClockHz) /
-            static_cast<long double>(deltaTicks);
-        if (measured > 0.0L && measured <= static_cast<long double>(kMaximumBitrate)) {
-            const std::uint64_t sourceRate =
-                (std::max<std::uint64_t>)(1ULL, static_cast<std::uint64_t>(measured));
+        if (!pcrFilterWindowActive_) {
+            pcrFilterWindowActive_ = true;
+            pcrFilterWindowFirstSequence_ = previousPcrSequence_ + 1ULL;
+        }
+        pcrFilterWindowTicks_ += deltaTicks;
+        pcrFilterWindowPackets_ += intervalPackets;
+        ++pcrFilterWindowIntervals_;
 
-            // Because the WISI worker deliberately buffers input before starting,
-            // the packets of this PCR interval are normally still queued here.
-            // Stamp each one with the exact useful rate of its own PCR interval.
-            // The first valid interval also stamps startup PAT/PMT/prefix packets.
-            const std::uint64_t firstSequence = pcrTimingLocked_
-                ? previousPcrSequence_ + 1ULL
-                : 0ULL;
-            annotatePcrInterval(firstSequence, sequence, sourceRate);
-            sourcePayloadBitrate_ = sourceRate;
-            pcrTimingLocked_ = true;
+        if (pcrFilterWindowTicks_ >= kPcrFilterWindowTicks) {
+            const long double measured =
+                static_cast<long double>(pcrFilterWindowPackets_) *
+                static_cast<long double>(kPacketBits) *
+                static_cast<long double>(kPcrClockHz) /
+                static_cast<long double>(pcrFilterWindowTicks_);
+            if (measured > 0.0L &&
+                measured <= static_cast<long double>(kMaximumBitrate)) {
+                const std::uint64_t candidateRate =
+                    (std::max<std::uint64_t>)(1ULL, static_cast<std::uint64_t>(measured));
+                const std::uint64_t filteredRate = filterPcrRate(candidateRate);
+
+                // On the first lock stamp the whole startup queue. Afterwards
+                // stamp only this aggregate window. Packets not yet stamped fall
+                // back to the same filtered sourcePayloadBitrate_, so an interval
+                // cannot suddenly revert to an instantaneous PCR-derived value.
+                const std::uint64_t firstSequence = pcrTimingLocked_
+                    ? pcrFilterWindowFirstSequence_
+                    : 0ULL;
+                annotatePcrInterval(firstSequence, sequence, filteredRate);
+                sourcePayloadBitrate_ = filteredRate;
+                pcrTimingLocked_ = true;
+            }
+            resetPcrFilterWindow();
         }
     } else {
-        // Keep the last good source rate through a discontinuity, but start the
-        // next PCR interval from this packet. This is important for HLS segment
-        // boundaries where PCR may jump even though useful TS remains valid.
-        havePreviousPcr_ = true;
+        // Keep the last good filtered source rate through a discontinuity/bad
+        // interval and restart accumulation from this PCR anchor.
+        resetPcrFilterWindow();
     }
 
     previousPcrTicks_ = pcrTicks;
     previousPcrSequence_ = sequence;
+}
+
+void CbrTsPacer::resetPcrFilterWindow() noexcept {
+    pcrFilterWindowActive_ = false;
+    pcrFilterWindowTicks_ = 0;
+    pcrFilterWindowPackets_ = 0;
+    pcrFilterWindowFirstSequence_ = 0;
+    pcrFilterWindowIntervals_ = 0;
+}
+
+std::uint64_t CbrTsPacer::filterPcrRate(
+    std::uint64_t candidateRate) noexcept {
+    candidateRate = std::clamp(
+        candidateRate, std::uint64_t{1}, kMaximumBitrate);
+    if (sourcePayloadBitrate_ == 0) return candidateRate;
+
+    const std::uint64_t current = sourcePayloadBitrate_;
+    const std::uint64_t difference = candidateRate > current
+        ? candidateRate - current
+        : current - candidateRate;
+
+    // Small PCR jitter is deliberately ignored. This is the key V10.8.166
+    // behaviour: +/-1% around the established useful rate does not move the
+    // real/null packet pattern at all.
+    if (difference * 1000ULL <= current * kPcrRateDeadbandPermille) {
+        return current;
+    }
+
+    // A genuine source-rate change still has to be followed, but only gradually
+    // so one abnormal PCR interval cannot create a visible WISI bitrate pulse.
+    std::uint64_t step = difference / kPcrRateFollowDivisor;
+    if (step == 0) step = 1;
+    return candidateRate > current ? current + step : current - step;
 }
 
 void CbrTsPacer::annotatePcrInterval(
