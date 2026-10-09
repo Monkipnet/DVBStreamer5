@@ -1,0 +1,38 @@
+name: Fix V10.8.158 type
+
+on:
+  push:
+    branches:
+      - fix-v10.8.158-tvstreammersat5-cbr
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[v10.8.158-typefix]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fix uint64 min type
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/media/CbrTsPacer.cpp')
+          s = p.read_text()
+          old = 'tvSatRealTokenAccumulator_, targetBitrate_ - 1ULL);'
+          new = 'tvSatRealTokenAccumulator_, targetBitrate_ - std::uint64_t{1});'
+          if s.count(old) != 1:
+              raise SystemExit(f'expected one match, got {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
+      - name: Commit fix
+        run: |
+          git config user.name "Vitali Lukomski"
+          git config user.email "monkipnet@yandex.ru"
+          git add src/media/CbrTsPacer.cpp
+          git commit -m "V10.8.158 fix token accumulator uint64 type [v10.8.158-typefix]"
+          git push origin HEAD:fix-v10.8.158-tvstreammersat5-cbr
