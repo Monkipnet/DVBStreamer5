@@ -1,0 +1,23 @@
+name: Check V10.8.158 CBR
+
+on:
+  push:
+    branches:
+      - fix-v10.8.158-tvstreammersat5-cbr
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Targeted CBR compile
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Isrc \
+            -c src/media/CbrTsPacer.cpp -o /tmp/CbrTsPacer.o
+      - name: Configure Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build Release
+        run: cmake --build build --parallel 2
