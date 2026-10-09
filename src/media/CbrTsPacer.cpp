@@ -171,6 +171,14 @@ std::size_t CbrTsPacer::lastDatagramUsefulPackets() const noexcept {
     return lastDatagramUsefulPackets_;
 }
 
+std::size_t CbrTsPacer::readySegments() const noexcept {
+    return queuedPackets_.empty() ? 0U : 1U;
+}
+
+std::uint64_t CbrTsPacer::insufficientTargetSegments() const noexcept {
+    return sourceOverTargetWindows_;
+}
+
 void CbrTsPacer::observeArrival(
     std::chrono::steady_clock::time_point now) noexcept {
     if (!arrivalWindowStarted_) {
