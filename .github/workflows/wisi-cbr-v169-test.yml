@@ -1,0 +1,69 @@
+name: wisi-cbr-v169-test
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v169
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-pacing:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+
+      - name: Syntax check
+        run: |
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_header.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_header.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: No sub-period catch-up test
+        run: |
+          cat >/tmp/test_v169.cpp <<'EOF'
+          #include "media/CbrTsPacer.h"
+          #include <cassert>
+          #include <chrono>
+          #include <cstdint>
+          #include <iostream>
+          using namespace dvbstreamer5::media::mpegts;
+          static Packet packet() {
+              Packet p{};
+              p.fill(0xff);
+              p[0]=kSyncByte;
+              p[1]=0x01;
+              p[2]=0x00;
+              p[3]=0x10;
+              return p;
+          }
+          int main() {
+              constexpr std::uint64_t rate=4000000ULL;
+              constexpr std::uint64_t bits=7ULL*188ULL*8ULL;
+              constexpr std::uint64_t expectedNs=bits*1000000000ULL/rate;
+              CbrTsPacer p(rate);
+              assert(p.enqueue(packet()));
+              const auto d0=p.nextDeadline();
+              const auto late=d0+std::chrono::microseconds(200);
+              CbrDatagram out{};
+              assert(p.nextDatagram(late,out));
+              const auto d1=p.nextDeadline();
+              const auto gap=std::chrono::duration_cast<std::chrono::nanoseconds>(d1-late).count();
+              assert(gap>=static_cast<long long>(expectedNs));
+              assert(gap<=static_cast<long long>(expectedNs+1));
+              std::cout << "expected_ns=" << expectedNs << " next_gap_ns=" << gap << "\n";
+              return 0;
+          }
+          EOF
+          g++ -std=c++17 -pthread -Isrc /tmp/test_v169.cpp src/media/CbrTsPacer.cpp -o /tmp/test_v169
+          /tmp/test_v169
