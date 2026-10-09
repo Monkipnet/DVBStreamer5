@@ -81,6 +81,18 @@ std::uint64_t nanosecondsToPcrTicks(std::uint64_t nanoseconds) noexcept {
 #endif
 }
 
+void clearPcrFlag(Packet& packet) noexcept {
+    if (packet[0] != kSyncByte) return;
+    const std::uint8_t adaptationFieldControl =
+        static_cast<std::uint8_t>((packet[3] >> 4) & 0x03U);
+    if (adaptationFieldControl != 2U && adaptationFieldControl != 3U) return;
+    const std::size_t adaptationLength = packet[4];
+    if (adaptationLength < 1 || 5 + adaptationLength > packet.size()) return;
+    // Keep adaptation-field size unchanged. The former PCR bytes become stuffing,
+    // exactly as in TVStreammerSAT5 StableUdpOutput::clearPcrFlag().
+    packet[5] = static_cast<std::uint8_t>(packet[5] & ~0x10U);
+}
+
 } // namespace
 
 CbrTsPacer::CbrTsPacer(
@@ -132,15 +144,15 @@ bool CbrTsPacer::nextDatagram(
         return false;
     }
 
+    // V10.8.159 deliberately keeps V10.8.157's one-period anti-catch-up rule
+    // for both profiles. TVStreammerSAT5 owns a dedicated sender thread, whereas
+    // NativeUdpRelay can drain several due datagrams in one loop; allowing a
+    // four-period window here would reintroduce the WISI-visible burst V157 fixed.
     const std::uint64_t periodNs =
         (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
-    const std::uint64_t latePeriods =
-        tvStreammerSat5Profile() ? 4ULL : 1ULL;
     const auto maximumCatchup = std::chrono::nanoseconds(
-        (std::max<std::uint64_t>)(periodNs * latePeriods, 1ULL));
+        (std::max<std::uint64_t>)(periodNs, 1ULL));
     if (now - nextDeadline_ >= maximumCatchup) {
-        // Match StableUdpOutput: scheduler stalls move only the physical sender
-        // phase. Never dump a backlog of overdue UDP datagrams as a catch-up burst.
         nextDeadline_ = now;
         pacingRemainder_ = 0;
     }
@@ -479,7 +491,8 @@ void CbrTsPacer::processTvStreammerSat5RealPacket(
     PacketInfo info;
     if (!inspectPacket(packet.data(), packet.size(), info)) return;
 
-    if (!tvSatPcrInitialized_ && info.hasPcr) {
+    const bool firstPcrLock = !tvSatPcrInitialized_ && info.hasPcr;
+    if (firstPcrLock) {
         tvSatPcrInitialized_ = true;
         tvSatPcrPid_ = info.pid;
         tvSatPcrOriginTicks_ =
@@ -499,7 +512,16 @@ void CbrTsPacer::processTvStreammerSat5RealPacket(
             tvSatPcrPidContinuityValid_ = true;
         }
         if (info.hasPcr) {
-            writePcr(packet, pcrTicksAt(slotTime));
+            if (firstPcrLock) {
+                // Lock the synthetic clock to the first source PCR actually sent.
+                writePcr(packet, pcrTicksAt(slotTime));
+            } else {
+                // V10.8.159: match StableUdpOutput exactly. Once the 20 ms
+                // synthetic domain is active, later source-PCR fields on the
+                // same PID are stripped; otherwise source PCR plus PCR-only
+                // packets create a double/irregular PCR cadence.
+                clearPcrFlag(packet);
+            }
         }
     }
 }
