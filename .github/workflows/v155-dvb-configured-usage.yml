@@ -1,0 +1,154 @@
+name: One-shot V10.8.155 configured DVB usage
+
+on:
+  push:
+    branches:
+      - v10.8.155-dvb-configured-usage
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: v10.8.155-dvb-configured-usage
+          fetch-depth: 0
+
+      - name: Count configured DVB streams even when OnDemand is idle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          dvb = Path('src/http/HttpServerDvbMedia.inc')
+          text = dvb.read_text(encoding='utf-8')
+          start = text.index('std::string HttpServer::dvbAdapters() {')
+          end = text.index('\nstd::string HttpServer::caManagerStatus()', start)
+          replacement = r'''std::string HttpServer::dvbAdapters() {
+              Json::Value root = DvbSatellite::adapters();
+              std::map<std::pair<int, int>, Json::Value> usage;
+
+              // A DVB frontend is assigned as soon as a stream is configured for it.
+              // OnDemand streams are intentionally included even while their runtime
+              // state is stopped, so the scanner does not advertise an assigned
+              // frontend as free merely because no subscriber is connected yet.
+              for (const auto& config : configManager.config.streams) {
+                  DvbSatelliteParams params;
+                  std::string parseError;
+                  if (!DvbSatellite::parseUri(config.inputUri, params, parseError)) continue;
+                  const auto key = std::make_pair(params.adapter, params.frontend);
+                  auto& item = usage[key];
+                  item["configured_streams"] = item.get("configured_streams", 0).asUInt() + 1;
+                  if (toLower(config.activationMode) == "ondemand") {
+                      item["ondemand_streams"] = item.get("ondemand_streams", 0).asUInt() + 1;
+                  }
+                  if (!item.isMember("streams")) item["streams"] = Json::Value(Json::arrayValue);
+                  Json::Value stream;
+                  stream["id"] = config.id;
+                  stream["name"] = config.name;
+                  stream["sid"] = config.inputServiceId;
+                  stream["activation_mode"] = config.activationMode;
+                  item["streams"].append(stream);
+              }
+
+              // Keep the old active-consumer accounting separately. This preserves
+              // SHARED N as a runtime indicator instead of conflating configured
+              // OnDemand assignments with currently tuned consumers.
+              const auto snap = streamManager.snapshot();
+              for (const auto& [id, state] : snap) {
+                  if (!state || !state->running.load()) continue;
+                  DvbSatelliteParams params;
+                  std::string parseError;
+                  if (!DvbSatellite::parseUri(state->config.inputUri, params, parseError)) continue;
+                  const auto key = std::make_pair(params.adapter, params.frontend);
+                  auto& item = usage[key];
+                  item["consumers"] = item.get("consumers", 0).asUInt() + 1;
+                  item["frequency_khz"] = params.frequencyKHz;
+                  item["symbol_rate"] = params.symbolRateK;
+                  item["polarity"] = params.polarity;
+                  item["delivery_system"] = params.deliverySystem;
+                  item["stream_id"] = params.streamId;
+                  item["diseqc_source"] = params.diseqcSource;
+              }
+
+              if (root.isMember("adapters") && root["adapters"].isArray()) {
+                  for (Json::ArrayIndex i = 0; i < root["adapters"].size(); ++i) {
+                      auto& adapter = root["adapters"][i];
+                      const auto key = std::make_pair(adapter.get("adapter", 0).asInt(), adapter.get("frontend", 0).asInt());
+                      const auto found = usage.find(key);
+                      if (found == usage.end()) {
+                          adapter["in_use"] = false;
+                          adapter["consumers"] = 0;
+                          adapter["configured_streams"] = 0;
+                          adapter["ondemand_streams"] = 0;
+                      } else {
+                          const unsigned configured = found->second.get("configured_streams", 0).asUInt();
+                          const unsigned consumers = found->second.get("consumers", 0).asUInt();
+                          adapter["in_use"] = configured > 0 || consumers > 0;
+                          adapter["consumers"] = consumers;
+                          adapter["configured_streams"] = configured;
+                          adapter["ondemand_streams"] = found->second.get("ondemand_streams", 0);
+                          if (consumers > 0) {
+                              adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
+                              adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
+                              adapter["polarity"] = found->second.get("polarity", "");
+                              adapter["delivery_system"] = found->second.get("delivery_system", "");
+                              adapter["stream_id"] = found->second.get("stream_id", -1);
+                              adapter["diseqc_source"] = found->second.get("diseqc_source", -1);
+                          }
+                          if (found->second.isMember("streams")) {
+                              adapter["streams"] = found->second["streams"];
+                          }
+                      }
+                  }
+              }
+              Json::StreamWriterBuilder writer;
+              return Json::writeString(writer, root);
+          }
+          '''
+          text = text[:start] + replacement + text[end:]
+          dvb.write_text(text, encoding='utf-8')
+
+          ui = Path('src/http/HttpServerWebUi.inc')
+          text = ui.read_text(encoding='utf-8')
+          old_frontend = """    const consumers = Number(item.consumers || 0);\n    const freq = Number(item.frequency_khz || 0);\n    const tune = consumers > 0 ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}` : ' · свободен';\n    const mode = Number(item.driver_mode ?? -1);"""
+          new_frontend = """    const consumers = Number(item.consumers || 0);\n    const configured = Number(item.configured_streams || 0);\n    const ondemand = Number(item.ondemand_streams || 0);\n    const inUse = item.in_use === true || configured > 0 || consumers > 0;\n    const freq = Number(item.frequency_khz || 0);\n    const tune = consumers > 0\n      ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}`\n      : (inUse ? ` · используется${ondemand ? ` · OnDemand ${ondemand}` : ''}` : ' · свободен');\n    const mode = Number(item.driver_mode ?? -1);"""
+          if text.count(old_frontend) != 1:
+              raise SystemExit('Unexpected frontend usage label layout')
+          text = text.replace(old_frontend, new_frontend, 1)
+
+          old_adapter = """    const used = adapterItems.reduce((sum,item)=>sum + (Number(item.consumers||0)>0 ? 1 : 0), 0);\n    const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];\n    const model = models.join(' / ');\n    return `<option value=\"${adapter}\">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${used ? ` · занято ${used}` : ''}</option>`;"""
+          new_adapter = """    const used = adapterItems.reduce((sum,item)=>sum + ((item.in_use === true || Number(item.configured_streams||0)>0 || Number(item.consumers||0)>0) ? 1 : 0), 0);\n    const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];\n    const model = models.join(' / ');\n    const usage = used ? ` · используется ${used}/${count}` : ' · свободен';\n    return `<option value=\"${adapter}\">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${usage}</option>`;"""
+          if text.count(old_adapter) != 1:
+              raise SystemExit('Unexpected adapter usage label layout')
+          text = text.replace(old_adapter, new_adapter, 1)
+          ui.write_text(text, encoding='utf-8')
+
+          version = Path('src/AppVersion.h')
+          version_text = version.read_text(encoding='utf-8')
+          old_version = 'kProgramVersion = "10.8.154"'
+          new_version = 'kProgramVersion = "10.8.155"'
+          if version_text.count(old_version) != 1:
+              raise SystemExit('Unexpected version before V10.8.155')
+          version.write_text(version_text.replace(old_version, new_version, 1), encoding='utf-8')
+          PY
+
+          git diff --check
+          grep -F 'configured_streams' src/http/HttpServerDvbMedia.inc
+          grep -F 'используется ${used}/${count}' src/http/HttpServerWebUi.inc
+          grep -F 'kProgramVersion = "10.8.155"' src/AppVersion.h
+
+          rm -f .github/workflows/v155-dvb-configured-usage.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "V10.8.155 count configured DVB frontend usage"
+          git push origin HEAD:v10.8.155-dvb-configured-usage
