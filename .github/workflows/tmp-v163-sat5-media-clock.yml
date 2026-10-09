@@ -1,0 +1,32 @@
+name: tmp-v163-sat5-media-clock
+on:
+  push:
+    branches:
+      - fix-sat5-media-clock-v163
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply V163 patch
+        run: python3 tools/apply_v163_sat5_media_clock.py
+      - name: Validate diff and CBR core syntax
+        run: |
+          git diff --check
+          g++ -std=c++17 -Wall -Wextra -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          grep -n '10.8.163' src/AppVersion.h
+          grep -n 'media_clock=independent' src/media/CbrTsPacer.cpp
+          grep -n 'source_pcr=stripped-after-lock' src/media/CbrTsPacer.cpp
+      - name: Commit clean V163 tree
+        run: |
+          rm -f tools/apply_v163_sat5_media_clock.py
+          rm -f .github/workflows/tmp-v163-sat5-media-clock.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'V10.8.163 match SAT5 independent media PCR clock'
+          git push origin HEAD:fix-sat5-media-clock-v163
