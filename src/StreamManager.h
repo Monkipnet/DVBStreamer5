@@ -39,6 +39,36 @@ struct ActiveStreamSession {
     size_t connections = 0;
 };
 
+// Keep the real remote address for diagnostics/session management while carrying
+// one bit of access-policy context that only the private admin-preview path may
+// set. Ordinary HTTP/HLS/SRT/RTSP sessions always keep this flag false.
+struct StreamClientIp : std::string {
+    using std::string::string;
+    using std::string::operator=;
+
+    StreamClientIp() = default;
+    StreamClientIp(const std::string& value) : std::string(value) {}
+    StreamClientIp(std::string&& value) : std::string(std::move(value)) {}
+
+    StreamClientIp& operator=(const std::string& value) {
+        std::string::operator=(value);
+        subscriberFilterExempt = false;
+        return *this;
+    }
+
+    StreamClientIp& operator=(std::string&& value) {
+        std::string::operator=(std::move(value));
+        subscriberFilterExempt = false;
+        return *this;
+    }
+
+    bool subscriberFilterExempt = false;
+};
+
+inline std::string operator+(const StreamClientIp& lhs, const char* rhs) {
+    return static_cast<const std::string&>(lhs) + rhs;
+}
+
 // Browser preview must not keep a complete transcoder worker set alive while
 // nobody is watching. StreamManager owns a stable wrapper so its relay callback
 // never holds a dangling pointer, while the real native pipeline is initialized
@@ -319,6 +349,11 @@ private:
     void monitorNativeStream(StreamState* state);
     void monitorOnDemandStreams();
     bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
+    bool isClientAllowedForStream(const std::string& streamId, const StreamClientIp& clientIp) const {
+        if (clientIp.subscriberFilterExempt) return true;
+        return isClientAllowedForStream(
+            streamId, static_cast<const std::string&>(clientIp));
+    }
     static std::string normalizedOutputType(const StreamConfig& cfg,
                                             const StreamOutputConfig* extra = nullptr);
     static bool isNativeInputSupported(const StreamConfig& cfg, std::string& reason);
@@ -331,8 +366,27 @@ private:
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
     struct HttpClientSession {
+        HttpClientSession() = default;
+        HttpClientSession(std::string streamIdValue,
+                          std::string clientIpValue,
+                          std::string protocolValue,
+                          std::chrono::steady_clock::time_point lastActivityValue,
+                          int upstreamFdValue,
+                          std::string previewSessionValue)
+            : streamId(std::move(streamIdValue)),
+              clientIp(std::move(clientIpValue)),
+              protocol(std::move(protocolValue)),
+              lastActivity(lastActivityValue),
+              upstreamFd(upstreamFdValue),
+              previewSession(std::move(previewSessionValue)) {
+            // previewSession is minted only by the authenticated private
+            // /api/streams/<id>/preview.ts endpoint. Subscriber filtering is a
+            // delivery policy for stream clients, not an admin-panel ACL.
+            clientIp.subscriberFilterExempt = !previewSession.empty();
+        }
+
         std::string streamId;
-        std::string clientIp;
+        StreamClientIp clientIp;
         std::string protocol;
         std::chrono::steady_clock::time_point lastActivity;
         int upstreamFd = -1;
