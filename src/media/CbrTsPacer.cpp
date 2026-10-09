@@ -117,9 +117,14 @@ bool CbrTsPacer::enqueue(const Packet& packet) {
     }
 
     const auto now = std::chrono::steady_clock::now();
-    observePayloadPacket(now);
     if (tvStreammerSat5Profile()) {
+        // SAT5 continuous-network profile owns its useful-packet clock via the
+        // long-term arrival estimator + slow reservoir PLL. Do not let the
+        // legacy 4-second DVBStreamer5 raise-only transport auto-tune change the
+        // configured CBR rate underneath that clock.
         observeTvStreammerSat5Arrival(packet, now);
+    } else {
+        observePayloadPacket(now);
     }
     queuedPackets_.push_back(packet);
 
@@ -433,6 +438,7 @@ void CbrTsPacer::maybeStartTvStreammerSat5(
                   << " buffer_limit_mb=32"
                   << " datagram_bytes="
                   << (kPacketsPerCbrDatagram * kPacketSize)
+                  << " transport_auto_tune=off"
                   << std::endl;
     }
 }
