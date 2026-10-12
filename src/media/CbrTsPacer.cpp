@@ -14,25 +14,15 @@ constexpr std::uint64_t kDatagramBits =
     kPacketsPerCbrDatagram * kPacketSize * 8ULL;
 constexpr std::uint64_t kPacketBits = kPacketSize * 8ULL;
 
-// V172: source-rate estimation is deliberately separated from the physical UDP
-// sender clock. A half-second PCR window locks quickly enough for network/HLS
-// starts while averaging the 20/40 ms encoder PCR jitter that caused the older
-// real/NULL pattern to wander.
+// Source-rate estimation stays separate from the physical UDP sender clock.
+// A half-second PCR window locks quickly enough for network/HLS starts while
+// averaging normal encoder PCR cadence jitter.
 constexpr std::uint64_t kMediaRateWindowTicks = kPcrClockHz / 2ULL;
 constexpr auto kArrivalRateWindow = std::chrono::seconds(1);
 constexpr auto kControllerInterval = std::chrono::milliseconds(250);
 constexpr std::uint64_t kReservoirTargetMs = 1200ULL;
-constexpr long double kMaximumReservoirCorrection = 0.03L; // +/-3%
-constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // 0.25% per update
-
-// V174 opt-in PCR source PLL. The output slot clock remains the nominal clock;
-// only a slow phase correction is applied so source PCR/PTS timing can follow
-// long-term source media time without importing raw encoder/network PCR jitter.
-constexpr std::int64_t kSourcePllFilterDivisor = 64;
-constexpr std::int64_t kSourcePllMaximumStepTicks =
-    static_cast<std::int64_t>(kPcrClockHz / 4000ULL); // 0.25 ms per PCR sample.
-constexpr std::uint64_t kSourcePllMaximumSourceDeltaTicks =
-    kPcrClockHz * 2ULL;
+constexpr long double kMaximumReservoirCorrection = 0.03L; // legacy fixed-CBR only
+constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // legacy fixed-CBR only
 
 } // namespace
 
@@ -60,8 +50,9 @@ bool CbrTsPacer::enqueueAt(
     std::chrono::steady_clock::time_point arrivalTime) {
     if (packet[0] != kSyncByte) return false;
 
-    // Source NULL packets are not part of the useful media reservoir. V172
-    // regenerates the complete NULL budget on the output fixed-rate clock.
+    // Source NULL packets are not part of the useful media reservoir. The
+    // output remultiplexer regenerates the complete NULL budget on the fixed
+    // transport clock.
     if (isNullPacket(packet)) return true;
     if (!canEnqueue(packet)) return false;
 
@@ -90,8 +81,7 @@ bool CbrTsPacer::emitDatagram(
         const std::uint64_t measured = sourcePayloadBitrate_ > 0
             ? sourcePayloadBitrate_
             : arrivalPayloadBitrate_;
-        // Before the first rate window is available, start conservatively so
-        // the 1.2 s reservoir is not consumed by an aggressive full-rate drain.
+        // Before the first PCR-rate window is available, start conservatively.
         pace = measured > 0
             ? (std::min)(measured, targetBitrate_)
             : (targetBitrate_ * 3ULL) / 4ULL;
@@ -133,8 +123,7 @@ bool CbrTsPacer::nextDatagram(
     if (!started_ || now < nextDeadline_) return false;
 
     // Compatibility clock for non-UDP-CBR observers. The real WISI UDP sender
-    // does not use this deadline in V172. Avoid multi-datagram catch-up here as
-    // well so a delayed observer cannot generate a burst.
+    // owns a separate physical transport clock.
     const std::uint64_t periodNs =
         (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
     if (now - nextDeadline_ >=
@@ -314,9 +303,16 @@ void CbrTsPacer::observeSourcePcr(const Packet& packet) noexcept {
                 }
                 if (sourcePayloadBitrate_ == 0) {
                     sourcePayloadBitrate_ = candidate;
+                } else if (sourcePllMode_) {
+                    // V175 source-timeline mode: the PCR-derived useful rate is
+                    // the media clock. Keep the estimator responsive enough to
+                    // follow real VBR changes, but do not let queue depth alter
+                    // media speed. A 3/4 EWMA removes single-window packet-count
+                    // noise without introducing the very slow V174 phase chase.
+                    sourcePayloadBitrate_ =
+                        (sourcePayloadBitrate_ * 3ULL + candidate) / 4ULL;
                 } else {
-                    // The half-second PCR window locks quickly; the 7/8 EWMA
-                    // keeps encoder PCR wander from modulating the output slot mix.
+                    // Legacy fixed-CBR mode keeps the V172/V173 estimator.
                     sourcePayloadBitrate_ =
                         (sourcePayloadBitrate_ * 7ULL + candidate) / 8ULL;
                 }
@@ -348,6 +344,18 @@ void CbrTsPacer::updateUsefulPace(
     if (base == 0) return;
     base = (std::min)(base, targetBitrate_);
 
+    if (sourcePllMode_ && sourcePayloadBitrate_ > 0) {
+        // V175: source-PCR timeline mode. This is the key behavioural change.
+        // The useful media rate is derived only from source PCR elapsed time and
+        // useful-packet count. Queue fill level must never accelerate or slow the
+        // media clock; the fixed physical CBR sender simply fills all remaining
+        // transport slots with NULL packets.
+        usefulPaceBitrate_ = base;
+        return;
+    }
+
+    // Legacy fixed-CBR path retained byte-for-byte in behaviour for streams that
+    // do not opt into source-timeline mode.
     const long double targetPacketsExact =
         static_cast<long double>(base) *
         static_cast<long double>(kReservoirTargetMs) /
@@ -408,7 +416,17 @@ bool CbrTsPacer::restampPcr(
         state.sourceElapsedTicks = 0;
         state.filteredPhaseTicks = 0;
         state.previousOutputDeltaTicks = 0;
-        if (!writePcr(packet, sourceTicks)) return false;
+        ++pcrRewriteCount_;
+        return true;
+    }
+
+    if (sourcePllMode_) {
+        // V175 source-PCR timeline mode deliberately preserves every provider
+        // PCR value. PTS/DTS are already preserved, so all media timestamps stay
+        // in one source clock domain. Correct physical arrival timing is achieved
+        // by pacing useful packets from the source-PCR-derived useful rate above;
+        // PCR is no longer forced onto the unrelated output-slot phase.
+        state.previousSourceTicks = sourceTicks;
         ++pcrRewriteCount_;
         return true;
     }
@@ -423,62 +441,8 @@ bool CbrTsPacer::restampPcr(
     const std::uint64_t nominalDeltaTicks =
         static_cast<std::uint64_t>(numerator / targetBitrate_);
 
-    // Default/legacy path: keep V173 PCR behaviour exactly. This branch is used
-    // by every existing channel unless the per-stream UI switch is enabled.
-    if (!sourcePllMode_) {
-        const std::uint64_t rewritten =
-            (state.sourceAnchorTicks + nominalDeltaTicks) % kPcrWrapTicks;
-        if (!writePcr(packet, rewritten)) return false;
-        ++pcrRewriteCount_;
-        return true;
-    }
-
-    // Source-PLL path. Follow source media time slowly, while the physical UDP
-    // sender continues to transmit at the exact configured CBR slot rate.
-    const std::uint64_t sourceDeltaTicks = sourceTicks >= state.previousSourceTicks
-        ? sourceTicks - state.previousSourceTicks
-        : (kPcrWrapTicks - state.previousSourceTicks) + sourceTicks;
-    state.previousSourceTicks = sourceTicks;
-
-    if (sourceDeltaTicks > 0 &&
-        sourceDeltaTicks <= kSourcePllMaximumSourceDeltaTicks) {
-        state.sourceElapsedTicks += sourceDeltaTicks;
-
-        const __int128 desiredPhaseWide =
-            static_cast<__int128>(state.sourceElapsedTicks) -
-            static_cast<__int128>(nominalDeltaTicks);
-        const std::int64_t desiredPhase = desiredPhaseWide > INT64_MAX
-            ? INT64_MAX
-            : (desiredPhaseWide < INT64_MIN
-                ? INT64_MIN
-                : static_cast<std::int64_t>(desiredPhaseWide));
-
-        std::int64_t phaseError = desiredPhase - state.filteredPhaseTicks;
-        std::int64_t step = phaseError / kSourcePllFilterDivisor;
-        if (step == 0 && phaseError != 0) step = phaseError > 0 ? 1 : -1;
-        step = (std::max)(-kSourcePllMaximumStepTicks,
-            (std::min)(kSourcePllMaximumStepTicks, step));
-        state.filteredPhaseTicks += step;
-    }
-
-    __int128 correctedWide =
-        static_cast<__int128>(nominalDeltaTicks) +
-        static_cast<__int128>(state.filteredPhaseTicks);
-    if (correctedWide < 0) correctedWide = 0;
-    std::uint64_t correctedDelta = correctedWide > UINT64_MAX
-        ? UINT64_MAX
-        : static_cast<std::uint64_t>(correctedWide);
-
-    // Never allow the smoothed correction to make output PCR move backwards.
-    // One 27-MHz tick is enough to preserve strict monotonicity; normal PCR
-    // intervals remain governed by the source/slot PLL above.
-    if (correctedDelta <= state.previousOutputDeltaTicks) {
-        correctedDelta = state.previousOutputDeltaTicks + 1ULL;
-    }
-    state.previousOutputDeltaTicks = correctedDelta;
-
     const std::uint64_t rewritten =
-        (state.sourceAnchorTicks + correctedDelta) % kPcrWrapTicks;
+        (state.sourceAnchorTicks + nominalDeltaTicks) % kPcrWrapTicks;
     if (!writePcr(packet, rewritten)) return false;
     ++pcrRewriteCount_;
     return true;
