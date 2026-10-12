@@ -14,15 +14,16 @@ constexpr std::uint64_t kDatagramBits =
     kPacketsPerCbrDatagram * kPacketSize * 8ULL;
 constexpr std::uint64_t kPacketBits = kPacketSize * 8ULL;
 
-// V168 deliberately measures the media rate over a long PCR window. Individual
-// 20/40 ms VBR PCR intervals are allowed to be above or below the configured
-// transport bitrate; the reservoir absorbs those short peaks.
-constexpr std::uint64_t kMediaRateWindowTicks = kPcrClockHz * 2ULL;
-constexpr auto kArrivalRateWindow = std::chrono::seconds(2);
+// V172: source-rate estimation is deliberately separated from the physical UDP
+// sender clock. A half-second PCR window locks quickly enough for network/HLS
+// starts while averaging the 20/40 ms encoder PCR jitter that caused the older
+// real/NULL pattern to wander.
+constexpr std::uint64_t kMediaRateWindowTicks = kPcrClockHz / 2ULL;
+constexpr auto kArrivalRateWindow = std::chrono::seconds(1);
 constexpr auto kControllerInterval = std::chrono::milliseconds(250);
-constexpr std::uint64_t kReservoirTargetMs = 2000ULL;
-constexpr long double kMaximumReservoirCorrection = 0.08L; // +/-8%
-constexpr std::uint64_t kControllerStepPermille = 10ULL;   // 1% per update
+constexpr std::uint64_t kReservoirTargetMs = 1200ULL;
+constexpr long double kMaximumReservoirCorrection = 0.03L; // +/-3%
+constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // 0.25% per update
 
 } // namespace
 
@@ -41,75 +42,56 @@ bool CbrTsPacer::canEnqueue(const Packet& packet) const noexcept {
 }
 
 bool CbrTsPacer::enqueue(const Packet& packet) {
+    return enqueueAt(packet, std::chrono::steady_clock::now());
+}
+
+bool CbrTsPacer::enqueueAt(
+    const Packet& packet,
+    std::chrono::steady_clock::time_point arrivalTime) {
     if (packet[0] != kSyncByte) return false;
 
-    // The WISI remultiplexer owns the NULL budget. Source NULL packets carry no
-    // useful media and are regenerated at the exact configured transport rate.
+    // Source NULL packets are not part of the useful media reservoir. V172
+    // regenerates the complete NULL budget on the output fixed-rate clock.
     if (isNullPacket(packet)) return true;
     if (!canEnqueue(packet)) return false;
 
-    const auto now = std::chrono::steady_clock::now();
     queuedPackets_.push_back(packet);
     ++totalUsefulPackets_;
-    observeArrival(now);
+    observeArrival(arrivalTime);
     observeSourcePcr(packet);
 
     if (!started_) {
         started_ = true;
-        nextDeadline_ = now;
-        lastControllerUpdate_ = now;
+        nextDeadline_ = arrivalTime;
+        lastControllerUpdate_ = arrivalTime;
     }
     return true;
 }
 
-bool CbrTsPacer::nextDatagram(
+bool CbrTsPacer::emitDatagram(
     std::chrono::steady_clock::time_point now,
     CbrDatagram& datagram) {
-    if (!started_ || now < nextDeadline_) return false;
-
-    // V170: keep the absolute transport phase, but recover scheduler lateness
-    // very slowly. V168 could shorten the next inter-datagram gap by the full
-    // wakeup error (visible on WISI as 4.0 -> 4.3 Mbit/s). V169 rebased after
-    // every tiny late wakeup, making the physical clock systematically slow.
-    //
-    // The first datagram after the intentional 1.2 s startup reservoir gets a
-    // fresh anchor. Afterwards catch-up is capped at 0.25% of one datagram
-    // period, so a 4.000 Mbit/s target can only rise to about 4.010 Mbit/s while
-    // phase error is being repaid.
-    const std::uint64_t periodNs =
-        (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
-    if (outputSlotCounter_ == 0) {
-        nextDeadline_ = now;
-        pacingRemainder_ = 0;
-    } else if (now > nextDeadline_) {
-        const auto lateNsSigned = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            now - nextDeadline_).count();
-        const std::uint64_t lateNs = lateNsSigned > 0
-            ? static_cast<std::uint64_t>(lateNsSigned)
-            : 0ULL;
-        const std::uint64_t maximumPhaseCorrectionNs =
-            (std::max<std::uint64_t>)(1ULL, periodNs / 400ULL); // 0.25%
-        if (lateNs > maximumPhaseCorrectionNs) {
-            nextDeadline_ = now - std::chrono::nanoseconds(maximumPhaseCorrectionNs);
-        }
-    }
+    if (!started_) return false;
 
     updateUsefulPace(now);
+
     std::uint64_t pace = usefulPaceBitrate_;
     if (pace == 0) {
         const std::uint64_t measured = sourcePayloadBitrate_ > 0
             ? sourcePayloadBitrate_
             : arrivalPayloadBitrate_;
+        // Before the first rate window is available, start conservatively so
+        // the 1.2 s reservoir is not consumed by an aggressive full-rate drain.
         pace = measured > 0
             ? (std::min)(measured, targetBitrate_)
-            : (targetBitrate_ * 9ULL) / 10ULL;
+            : (targetBitrate_ * 3ULL) / 4ULL;
     }
-    pace = (std::min)(pace, targetBitrate_);
+    pace = (std::max<std::uint64_t>)(1ULL, (std::min)(pace, targetBitrate_));
 
     lastDatagramUsefulPackets_ = 0;
     for (Packet& packet : datagram) {
-        bool emitUseful = false;
         usefulToken_ += pace;
+        bool emitUseful = false;
         if (!queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
             usefulToken_ -= targetBitrate_;
             emitUseful = true;
@@ -121,20 +103,45 @@ bool CbrTsPacer::nextDatagram(
             restampPcr(packet, outputSlotCounter_);
             ++lastDatagramUsefulPackets_;
         } else {
-            // Do not accumulate an unlimited token debt while the network source
-            // is temporarily empty; otherwise recovery would create a full-rate
-            // useful-packet burst.
+            // Do not accumulate unlimited useful entitlement while an input is
+            // temporarily empty. Recovery must remain smooth rather than turn
+            // into a full-rate burst of real packets.
             if (queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
                 usefulToken_ = targetBitrate_ - 1ULL;
             }
             makeNullPacket(packet);
         }
-
         ++outputSlotCounter_;
     }
 
+    return true;
+}
+
+bool CbrTsPacer::nextDatagram(
+    std::chrono::steady_clock::time_point now,
+    CbrDatagram& datagram) {
+    if (!started_ || now < nextDeadline_) return false;
+
+    // Compatibility clock for non-UDP-CBR observers. The real WISI UDP sender
+    // does not use this deadline in V172. Avoid multi-datagram catch-up here as
+    // well so a delayed observer cannot generate a burst.
+    const std::uint64_t periodNs =
+        (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
+    if (now - nextDeadline_ >=
+        std::chrono::nanoseconds((std::max<std::uint64_t>)(periodNs, 1ULL))) {
+        nextDeadline_ = now;
+        pacingRemainder_ = 0;
+    }
+
+    if (!emitDatagram(now, datagram)) return false;
     advanceDeadline();
     return true;
+}
+
+void CbrTsPacer::reanchorDeadline(
+    std::chrono::steady_clock::time_point now) noexcept {
+    nextDeadline_ = now;
+    pacingRemainder_ = 0;
 }
 
 bool CbrTsPacer::started() const noexcept { return started_; }
@@ -183,8 +190,16 @@ std::uint64_t CbrTsPacer::pcrRewriteCount() const noexcept {
     return pcrRewriteCount_;
 }
 
+std::uint64_t CbrTsPacer::pcrPidCount() const noexcept {
+    return pcrPidCount_;
+}
+
 std::size_t CbrTsPacer::lastDatagramUsefulPackets() const noexcept {
     return lastDatagramUsefulPackets_;
+}
+
+std::uint64_t CbrTsPacer::outputSlots() const noexcept {
+    return outputSlotCounter_;
 }
 
 std::size_t CbrTsPacer::readySegments() const noexcept {
@@ -193,6 +208,10 @@ std::size_t CbrTsPacer::readySegments() const noexcept {
 
 std::uint64_t CbrTsPacer::insufficientTargetSegments() const noexcept {
     return sourceOverTargetWindows_;
+}
+
+bool CbrTsPacer::sourcePacketIsNull(const Packet& packet) noexcept {
+    return isNullPacket(packet);
 }
 
 void CbrTsPacer::observeArrival(
@@ -217,13 +236,10 @@ void CbrTsPacer::observeArrival(
             static_cast<long double>(elapsedNs);
         if (measured > 0.0L &&
             measured <= static_cast<long double>(kMaximumBitrate)) {
-            const std::uint64_t candidate =
-                static_cast<std::uint64_t>(measured);
+            const std::uint64_t candidate = static_cast<std::uint64_t>(measured);
             if (arrivalPayloadBitrate_ == 0) {
                 arrivalPayloadBitrate_ = candidate;
             } else {
-                // Delivery callbacks can be bursty, so this is only a slow
-                // fallback for malformed/no-PCR streams.
                 arrivalPayloadBitrate_ =
                     (arrivalPayloadBitrate_ * 7ULL + candidate) / 8ULL;
             }
@@ -240,10 +256,10 @@ void CbrTsPacer::observeSourcePcr(const Packet& packet) noexcept {
     if (!readPcr(packet, pcrTicks, discontinuity)) return;
 
     const std::uint16_t pid = packetPid(packet);
-    if (!havePcrPid_) {
-        havePcrPid_ = true;
-        pcrPid_ = pid;
-    } else if (pid != pcrPid_) {
+    if (!haveReferencePcrPid_) {
+        haveReferencePcrPid_ = true;
+        referencePcrPid_ = pid;
+    } else if (pid != referencePcrPid_) {
         return;
     }
 
@@ -289,11 +305,10 @@ void CbrTsPacer::observeSourcePcr(const Packet& packet) noexcept {
                 if (sourcePayloadBitrate_ == 0) {
                     sourcePayloadBitrate_ = candidate;
                 } else {
-                    // Two-second windows already remove local VBR peaks; this
-                    // extra EWMA prevents slow source-rate wander from moving the
-                    // real/NULL pattern abruptly.
+                    // The half-second PCR window locks quickly; the 7/8 EWMA
+                    // keeps encoder PCR wander from modulating the output slot mix.
                     sourcePayloadBitrate_ =
-                        (sourcePayloadBitrate_ * 3ULL + candidate) / 4ULL;
+                        (sourcePayloadBitrate_ * 7ULL + candidate) / 8ULL;
                 }
                 pcrTimingLocked_ = true;
             }
@@ -344,7 +359,7 @@ void CbrTsPacer::updateUsefulPace(
         static_cast<long double>(base) * (1.0L + correction);
     desiredLd = (std::max)(1.0L,
         (std::min)(desiredLd, static_cast<long double>(targetBitrate_)));
-    std::uint64_t desired = static_cast<std::uint64_t>(desiredLd);
+    const std::uint64_t desired = static_cast<std::uint64_t>(desiredLd);
 
     if (usefulPaceBitrate_ == 0) {
         usefulPaceBitrate_ = desired;
@@ -352,8 +367,7 @@ void CbrTsPacer::updateUsefulPace(
     }
 
     const std::uint64_t maximumStep =
-        (std::max<std::uint64_t>)(1000ULL,
-            (base * kControllerStepPermille) / 1000ULL);
+        (std::max<std::uint64_t>)(500ULL, base / kControllerStepDivisor);
     if (desired > usefulPaceBitrate_) {
         usefulPaceBitrate_ +=
             (std::min)(maximumStep, desired - usefulPaceBitrate_);
@@ -370,21 +384,23 @@ bool CbrTsPacer::restampPcr(
     std::uint64_t sourceTicks = 0;
     bool discontinuity = false;
     if (!readPcr(packet, sourceTicks, discontinuity)) return false;
-    if (havePcrPid_ && packetPid(packet) != pcrPid_) return false;
 
-    if (!haveOutputPcrAnchor_ || discontinuity) {
-        haveOutputPcrAnchor_ = true;
-        outputPcrTicks_ = sourceTicks;
-        outputPcrSlot_ = outputSlot;
-        if (writePcr(packet, sourceTicks)) {
-            ++pcrRewriteCount_;
-            return true;
-        }
-        return false;
+    const std::uint16_t pid = packetPid(packet);
+    if (pid >= outputPcrStates_.size()) return false;
+    OutputPcrState& state = outputPcrStates_[pid];
+
+    if (!state.anchored || discontinuity) {
+        if (!state.anchored) ++pcrPidCount_;
+        state.anchored = true;
+        state.sourceAnchorTicks = sourceTicks;
+        state.outputAnchorSlot = outputSlot;
+        if (!writePcr(packet, sourceTicks)) return false;
+        ++pcrRewriteCount_;
+        return true;
     }
 
-    const std::uint64_t deltaSlots = outputSlot >= outputPcrSlot_
-        ? outputSlot - outputPcrSlot_
+    const std::uint64_t deltaSlots = outputSlot >= state.outputAnchorSlot
+        ? outputSlot - state.outputAnchorSlot
         : 0ULL;
     const unsigned __int128 numerator =
         static_cast<unsigned __int128>(deltaSlots) *
@@ -393,7 +409,7 @@ bool CbrTsPacer::restampPcr(
     const std::uint64_t deltaTicks =
         static_cast<std::uint64_t>(numerator / targetBitrate_);
     const std::uint64_t rewritten =
-        (outputPcrTicks_ + deltaTicks) % kPcrWrapTicks;
+        (state.sourceAnchorTicks + deltaTicks) % kPcrWrapTicks;
     if (!writePcr(packet, rewritten)) return false;
     ++pcrRewriteCount_;
     return true;
