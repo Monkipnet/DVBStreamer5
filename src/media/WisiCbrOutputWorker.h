@@ -13,23 +13,32 @@
 #include <deque>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 #ifndef _WIN32
 #include <cerrno>
 #include <ctime>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/prctl.h>
 #endif
 
 namespace dvbstreamer5::media::network {
 
-// Dedicated WISI UDP-CBR sender. The relay/input thread only feeds useful TS;
-// this worker owns the physical output clock. That prevents HTTP/SRT/HLS input
-// bursts, remap/CA work and observer delivery from moving UDP send deadlines.
+// V172 WISI-compatible UDP-CBR output path.
+//
+// The input/remap/CA thread only appends useful TS packets to an ingress FIFO.
+// The sender thread never shares the MPEG-TS pacer lock with the producer. It
+// owns a dedicated CLOCK_MONOTONIC transport clock, creates exactly 7x188-byte
+// datagrams, fills unused TS slots with PID 0x1fff and sends one datagram per
+// transport period. This isolation is deliberate: DVB, HTTP, SRT and HLS all
+// use the same physical UDP-CBR clock and therefore have identical output
+// timing behaviour.
 class WisiCbrOutputWorker {
 public:
     using Observer = std::function<void(const std::uint8_t*, std::size_t)>;
@@ -66,54 +75,65 @@ public:
 
     bool enqueue(const mpegts::Packet& packet) {
         if (packet[0] != mpegts::kSyncByte) return false;
-        std::unique_lock<std::mutex> lock(mutex_);
-        bool backpressureLogged = false;
-        while (!stopping_ && relayRunning_->load(std::memory_order_acquire) &&
-               !pacer_.canEnqueue(packet)) {
-            if (!backpressureLogged) {
-                backpressureLogged = true;
+
+        // The output remultiplexer owns all NULL stuffing. Do not even put
+        // source NULL packets into the producer FIFO; this keeps the ingress
+        // lock short for satellite CBR sources that already contain many NULLs.
+        if (mpegts::CbrTsPacer::sourcePacketIsNull(packet)) return true;
+
+        const auto now = std::chrono::steady_clock::now();
+        std::unique_lock<std::mutex> lock(ingressMutex_);
+        while (!stopping_.load(std::memory_order_acquire) &&
+               relayRunning_->load(std::memory_order_acquire) &&
+               bufferedPackets_.load(std::memory_order_relaxed) >= kMaximumBufferedPackets) {
+            if (!backpressureLogged_) {
+                backpressureLogged_ = true;
                 std::cerr << "WISI CBR BACKPRESSURE index=" << outputIndex_
-                          << " queued_kb=" << (pacer_.queuedBytes() / 1024U)
-                          << " limit_kb=" << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
+                          << " buffered_kb="
+                          << (bufferedPackets_.load(std::memory_order_relaxed) *
+                              mpegts::kPacketSize / 1024U)
+                          << " limit_kb="
+                          << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
                           << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                           << std::endl;
             }
             queueSpace_.wait_for(lock, std::chrono::milliseconds(20));
         }
-        if (stopping_ || !relayRunning_->load(std::memory_order_acquire)) return false;
-
-        const bool wasStarted = pacer_.started();
-        if (!pacer_.enqueue(packet)) return false;
-        if (!wasStarted && pacer_.started()) {
-            firstPacketAt_ = std::chrono::steady_clock::now();
-            senderWake_.notify_one();
+        if (stopping_.load(std::memory_order_acquire) ||
+            !relayRunning_->load(std::memory_order_acquire)) {
+            return false;
         }
-        const std::size_t queued = pacer_.queuedPackets();
-        if (queued > queuePeakPackets_) queuePeakPackets_ = queued;
+
+        ingressQueue_.push_back({packet, now});
+        const std::size_t buffered =
+            bufferedPackets_.fetch_add(1U, std::memory_order_relaxed) + 1U;
+        if (buffered > queuePeakPackets_) queuePeakPackets_ = buffered;
+        if (!inputStarted_.load(std::memory_order_relaxed)) {
+            firstPacketAt_ = now;
+            inputStarted_.store(true, std::memory_order_release);
+        }
+        lock.unlock();
+        ingressReady_.notify_one();
         return true;
     }
 
     bool started() const noexcept {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return pacer_.started();
+        return inputStarted_.load(std::memory_order_acquire);
     }
 
     std::chrono::steady_clock::time_point nextDeadline() const noexcept {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return pacer_.nextDeadline();
+        const std::int64_t value = nextDeadlineSteadyNs_.load(std::memory_order_relaxed);
+        return std::chrono::steady_clock::time_point(std::chrono::nanoseconds(value));
     }
 
     std::size_t queuedPackets() const noexcept {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return pacer_.queuedPackets();
+        return bufferedPackets_.load(std::memory_order_relaxed);
     }
 
     void stop() noexcept {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            stopping_ = true;
-        }
-        senderWake_.notify_all();
+        const bool alreadyStopping =
+            stopping_.exchange(true, std::memory_order_acq_rel);
+        ingressReady_.notify_all();
         queueSpace_.notify_all();
         {
             std::lock_guard<std::mutex> lock(observerMutex_);
@@ -121,72 +141,142 @@ public:
         }
         observerReady_.notify_all();
 
-        if (senderThread_.joinable() && senderThread_.get_id() != std::this_thread::get_id()) {
+        if (!alreadyStopping && senderThread_.joinable() &&
+            senderThread_.get_id() != std::this_thread::get_id()) {
+            senderThread_.join();
+        } else if (senderThread_.joinable() &&
+                   senderThread_.get_id() != std::this_thread::get_id()) {
             senderThread_.join();
         }
-        if (observerThread_.joinable() && observerThread_.get_id() != std::this_thread::get_id()) {
+        if (observerThread_.joinable() &&
+            observerThread_.get_id() != std::this_thread::get_id()) {
             observerThread_.join();
         }
     }
 
 private:
-    // V10.8.167: keep enough already-received media to bridge normal HTTP/SRT/HLS
-    // delivery gaps without returning to the 5-second SAT5 playout reservoir.
+    struct IngressPacket {
+        mpegts::Packet packet {};
+        std::chrono::steady_clock::time_point arrival {};
+    };
+
     static constexpr auto kStartupBuffer = std::chrono::milliseconds(1200);
     static constexpr std::size_t kObserverQueueDatagrams = 4096;
+    static constexpr std::size_t kDatagramBytes =
+        mpegts::kPacketsPerCbrDatagram * mpegts::kPacketSize;
+    static constexpr std::size_t kMaximumBufferedPackets =
+        mpegts::CbrTsPacer::maximumQueuedBytes() / mpegts::kPacketSize;
+    static constexpr std::uint64_t kNanosecondsPerSecond = 1000000000ULL;
+    static constexpr std::uint64_t kSpinGuardNanoseconds = 30000ULL; // 30 us
+    static constexpr std::uint64_t kPhaseCorrectionDivisor = 400ULL; // 0.25%
+    static constexpr std::uint64_t kClockLogNanoseconds = 5ULL * kNanosecondsPerSecond;
 
-#ifndef _WIN32
     void configureSenderScheduling() noexcept {
+#ifndef _WIN32
+        // Minimise timer coalescing first. This matters more than priority for
+        // 2-4 ms UDP periods and is safe even when SCHED_FIFO is unavailable.
+        (void)::prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
+
         sched_param parameters {};
-        parameters.sched_priority = 1;
+        const int minimum = ::sched_get_priority_min(SCHED_FIFO);
+        const int maximum = ::sched_get_priority_max(SCHED_FIFO);
+        parameters.sched_priority =
+            minimum >= 0 && maximum >= 0 ? (std::min)(maximum, minimum + 1) : 1;
         const int result = ::pthread_setschedparam(
             ::pthread_self(), SCHED_FIFO, &parameters);
         if (result == 0) {
             std::cerr << "WISI CBR sender scheduling index=" << outputIndex_
-                      << " policy=SCHED_FIFO priority=1" << std::endl;
+                      << " policy=SCHED_FIFO priority=" << parameters.sched_priority
+                      << " timerslack_ns=1" << std::endl;
         } else {
             std::cerr << "WISI CBR sender scheduling index=" << outputIndex_
-                      << " policy=CFS fallback_error=" << result << std::endl;
+                      << " policy=CFS fallback_error=" << result
+                      << " timerslack_ns=1" << std::endl;
         }
+#endif
     }
 
     static std::uint64_t monotonicNanoseconds() noexcept {
+#ifndef _WIN32
         timespec now {};
         if (::clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
-        return static_cast<std::uint64_t>(now.tv_sec) * 1000000000ULL +
+        return static_cast<std::uint64_t>(now.tv_sec) * kNanosecondsPerSecond +
             static_cast<std::uint64_t>(now.tv_nsec);
-    }
-
-    static void sleepUntil(std::chrono::steady_clock::time_point deadline) noexcept {
-        const auto nowSteady = std::chrono::steady_clock::now();
-        if (deadline <= nowSteady) return;
-        const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            deadline - nowSteady).count();
-        const std::uint64_t monoNow = monotonicNanoseconds();
-        if (monoNow == 0 || remaining <= 0) return;
-        const std::uint64_t target = monoNow + static_cast<std::uint64_t>(remaining);
-        timespec ts {};
-        ts.tv_sec = static_cast<time_t>(target / 1000000000ULL);
-        ts.tv_nsec = static_cast<long>(target % 1000000000ULL);
-        int result = 0;
-        do {
-            result = ::clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, nullptr);
-        } while (result == EINTR);
-    }
 #else
-    void configureSenderScheduling() noexcept {}
-
-    static void sleepUntil(std::chrono::steady_clock::time_point deadline) noexcept {
-        std::this_thread::sleep_until(deadline);
-    }
+        const auto value = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return value > 0 ? static_cast<std::uint64_t>(value) : 0ULL;
 #endif
+    }
+
+    static void sleepUntilMonotonic(std::uint64_t deadlineNs) noexcept {
+        if (deadlineNs == 0) return;
+#ifndef _WIN32
+        std::uint64_t now = monotonicNanoseconds();
+        if (now >= deadlineNs) return;
+
+        // Sleep most of the period in the kernel, then use a very short final
+        // spin. This avoids the 100-300 us CFS wakeup error that Chameleon can
+        // expose as a transport-rate step, without burning a CPU for the whole
+        // 2-4 ms datagram period.
+        const std::uint64_t sleepTarget = deadlineNs > kSpinGuardNanoseconds
+            ? deadlineNs - kSpinGuardNanoseconds
+            : deadlineNs;
+        if (sleepTarget > now) {
+            timespec ts {};
+            ts.tv_sec = static_cast<time_t>(sleepTarget / kNanosecondsPerSecond);
+            ts.tv_nsec = static_cast<long>(sleepTarget % kNanosecondsPerSecond);
+            int result = 0;
+            do {
+                result = ::clock_nanosleep(
+                    CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, nullptr);
+            } while (result == EINTR);
+        }
+        while ((now = monotonicNanoseconds()) < deadlineNs) {
+            // Deliberately empty: at most ~30 us on the production Linux path.
+        }
+#else
+        const auto deadline = std::chrono::steady_clock::time_point(
+            std::chrono::nanoseconds(deadlineNs));
+        std::this_thread::sleep_until(deadline);
+#endif
+    }
+
+    std::uint64_t nextPeriodNanoseconds() noexcept {
+        const std::uint64_t target = pacer_.targetBitrate();
+        const std::uint64_t numerator =
+            kDatagramBytes * 8ULL * kNanosecondsPerSecond;
+        std::uint64_t nanoseconds = numerator / target;
+        periodRemainder_ += numerator % target;
+        if (periodRemainder_ >= target) {
+            nanoseconds += periodRemainder_ / target;
+            periodRemainder_ %= target;
+        }
+        return (std::max<std::uint64_t>)(nanoseconds, 1ULL);
+    }
+
+    bool drainIngress() noexcept {
+        std::deque<IngressPacket> pending;
+        {
+            std::lock_guard<std::mutex> lock(ingressMutex_);
+            pending.swap(ingressQueue_);
+        }
+        for (auto& item : pending) {
+            if (!pacer_.enqueueAt(item.packet, item.arrival)) {
+                fail("WISI CBR internal remux queue overflow; increase configured CBR bitrate");
+                return false;
+            }
+        }
+        return true;
+    }
 
     void fail(const std::string& message) noexcept {
         relayRunning_->store(false, std::memory_order_release);
+        stopping_.store(true, std::memory_order_release);
         if (errorCallback_) {
             try { errorCallback_(message); } catch (...) {}
         }
-        senderWake_.notify_all();
+        ingressReady_.notify_all();
         queueSpace_.notify_all();
         observerReady_.notify_all();
     }
@@ -228,129 +318,221 @@ private:
         }
     }
 
+    void updateClockDiagnostics(
+        std::uint64_t sendNs,
+        std::uint64_t gapNs,
+        std::uint64_t lateNs) noexcept {
+        if (clockWindowStartNs_ == 0) {
+            clockWindowStartNs_ = sendNs;
+            clockWindowDatagrams_ = 0;
+            clockMinGapNs_ = (std::numeric_limits<std::uint64_t>::max)();
+            clockMaxGapNs_ = 0;
+            clockMaxLateNs_ = 0;
+        }
+        ++clockWindowDatagrams_;
+        if (gapNs > 0) {
+            clockMinGapNs_ = (std::min)(clockMinGapNs_, gapNs);
+            clockMaxGapNs_ = (std::max)(clockMaxGapNs_, gapNs);
+        }
+        clockMaxLateNs_ = (std::max)(clockMaxLateNs_, lateNs);
+
+        const std::uint64_t elapsed = sendNs >= clockWindowStartNs_
+            ? sendNs - clockWindowStartNs_
+            : 0ULL;
+        if (elapsed < kClockLogNanoseconds) return;
+
+        const unsigned __int128 bits =
+            static_cast<unsigned __int128>(clockWindowDatagrams_) *
+            static_cast<unsigned __int128>(kDatagramBytes * 8ULL) *
+            static_cast<unsigned __int128>(kNanosecondsPerSecond);
+        const std::uint64_t actualBps = elapsed > 0
+            ? static_cast<std::uint64_t>(bits / elapsed)
+            : 0ULL;
+        const std::uint64_t minGapUs =
+            clockMinGapNs_ == (std::numeric_limits<std::uint64_t>::max)()
+                ? 0ULL : clockMinGapNs_ / 1000ULL;
+
+        std::cerr << "WISI CBR CLOCK index=" << outputIndex_
+                  << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
+                  << " actual_kbps=" << (actualBps / 1000ULL)
+                  << " min_gap_us=" << minGapUs
+                  << " max_gap_us=" << (clockMaxGapNs_ / 1000ULL)
+                  << " max_late_us=" << (clockMaxLateNs_ / 1000ULL)
+                  << " phase_debt_us=" << (phaseDebtNs_ / 1000ULL)
+                  << " buffered_kb="
+                  << (bufferedPackets_.load(std::memory_order_relaxed) *
+                      mpegts::kPacketSize / 1024U)
+                  << " source_kbps=" << (pacer_.sourcePayloadBitrate() / 1000ULL)
+                  << " useful_kbps=" << (pacer_.usefulPaceBitrate() / 1000ULL)
+                  << " pcr_pids=" << pacer_.pcrPidCount()
+                  << " pcr_rewrites=" << pacer_.pcrRewriteCount()
+                  << " source_over_target_windows=" << pacer_.sourceOverTargetWindows()
+                  << std::endl;
+
+        clockWindowStartNs_ = sendNs;
+        clockWindowDatagrams_ = 0;
+        clockMinGapNs_ = (std::numeric_limits<std::uint64_t>::max)();
+        clockMaxGapNs_ = 0;
+        clockMaxLateNs_ = 0;
+    }
+
     void senderLoop() noexcept {
         try {
             configureSenderScheduling();
-            bool startupComplete = false;
-            std::unique_lock<std::mutex> lock(mutex_);
-            while (!stopping_ && relayRunning_->load(std::memory_order_acquire)) {
-                if (!pacer_.started()) {
-                    senderWake_.wait_for(lock, std::chrono::milliseconds(20));
-                    continue;
-                }
 
-                if (!startupComplete) {
-                    const auto startAt = firstPacketAt_ + kStartupBuffer;
-                    if (std::chrono::steady_clock::now() < startAt) {
-                        senderWake_.wait_until(lock, startAt, [this] {
-                            return stopping_ || !relayRunning_->load(std::memory_order_acquire);
-                        });
-                        if (stopping_ || !relayRunning_->load(std::memory_order_acquire)) break;
-                    }
-                    startupComplete = true;
+            // Wait only for the first useful TS packet. The physical transport
+            // clock is not started until the complete startup reservoir has been
+            // collected, so the intentional 1.2 s delay can never be reported
+            // as sender lateness.
+            {
+                std::unique_lock<std::mutex> lock(ingressMutex_);
+                ingressReady_.wait(lock, [this] {
+                    return stopping_.load(std::memory_order_acquire) ||
+                        !relayRunning_->load(std::memory_order_acquire) ||
+                        inputStarted_.load(std::memory_order_acquire);
+                });
+                if (stopping_.load(std::memory_order_acquire) ||
+                    !relayRunning_->load(std::memory_order_acquire)) {
+                    return;
                 }
+            }
 
-                const auto deadline = pacer_.nextDeadline();
-                lock.unlock();
-                sleepUntil(deadline);
-                const auto wokeAt = std::chrono::steady_clock::now();
-                lock.lock();
-                const auto sendReadyAt = std::chrono::steady_clock::now();
-                if (stopping_ || !relayRunning_->load(std::memory_order_acquire)) break;
+            const auto startAt = firstPacketAt_ + kStartupBuffer;
+            while (!stopping_.load(std::memory_order_acquire) &&
+                   relayRunning_->load(std::memory_order_acquire) &&
+                   std::chrono::steady_clock::now() < startAt) {
+                if (!drainIngress()) return;
+                std::unique_lock<std::mutex> lock(ingressMutex_);
+                ingressReady_.wait_for(lock, std::chrono::milliseconds(20));
+            }
+            if (stopping_.load(std::memory_order_acquire) ||
+                !relayRunning_->load(std::memory_order_acquire)) {
+                return;
+            }
+            if (!drainIngress()) return;
+            if (!pacer_.started()) return;
+
+            // Fresh transport anchor after the startup reservoir. No historical
+            // input timestamp participates in the physical CBR clock.
+            std::uint64_t nextDeadlineNs = monotonicNanoseconds();
+            periodRemainder_ = 0;
+            phaseDebtNs_ = 0;
+            lastSendNs_ = 0;
+
+            while (!stopping_.load(std::memory_order_acquire) &&
+                   relayRunning_->load(std::memory_order_acquire)) {
+                if (!drainIngress()) return;
+
+                nextDeadlineSteadyNs_.store(
+                    static_cast<std::int64_t>(nextDeadlineNs),
+                    std::memory_order_relaxed);
+                sleepUntilMonotonic(nextDeadlineNs);
+                const std::uint64_t sendNs = monotonicNanoseconds();
+                const std::uint64_t lateNs = sendNs > nextDeadlineNs
+                    ? sendNs - nextDeadlineNs
+                    : 0ULL;
+
+                // Preserve long-term phase without ever doing a burst. Every
+                // scheduling delay becomes phase debt and is repaid at at most
+                // 0.25% of one datagram period per send.
+                const std::uint64_t debtCap = kNanosecondsPerSecond;
+                phaseDebtNs_ = (std::min)(
+                    debtCap,
+                    phaseDebtNs_ + (std::min)(lateNs, debtCap));
 
                 mpegts::CbrDatagram datagram {};
-                const std::size_t queuedBefore = pacer_.queuedPackets();
-                const std::size_t readySegmentsBefore = pacer_.readySegments();
-                const bool timingLockedBefore = pacer_.timingLocked();
-                if (!pacer_.nextDatagram(sendReadyAt, datagram)) continue;
-                const std::size_t queuedAfter = pacer_.queuedPackets();
-                if (queuedAfter < queuedBefore) queueSpace_.notify_all();
-                const std::uint64_t targetBitrate = pacer_.targetBitrate();
+                const auto nowSteady = std::chrono::steady_clock::now();
+                if (!pacer_.emitDatagram(nowSteady, datagram)) {
+                    // This should only be possible before the first packet; keep
+                    // the transport alive as a NULL-only stream if it ever occurs.
+                    for (auto& packet : datagram) {
+                        packet.fill(0xff);
+                        packet[0] = mpegts::kSyncByte;
+                        packet[1] = 0x1f;
+                        packet[2] = 0xff;
+                        packet[3] = 0x10;
+                    }
+                }
 
-                if (timingLockedBefore && readySegmentsBefore == 0) {
+                const std::size_t useful = pacer_.lastDatagramUsefulPackets();
+                if (useful > 0) {
+                    const std::size_t previous =
+                        bufferedPackets_.fetch_sub(useful, std::memory_order_relaxed);
+                    if (previous < useful) {
+                        bufferedPackets_.store(0, std::memory_order_relaxed);
+                    }
+                    backpressureLogged_ = false;
+                    queueSpace_.notify_all();
+                } else if (pacer_.timingLocked()) {
                     ++usefulUnderflowDatagrams_;
-                    const auto now = std::chrono::steady_clock::now();
+                    const auto logNow = std::chrono::steady_clock::now();
                     if (lastUnderflowLog_ == std::chrono::steady_clock::time_point{} ||
-                        now - lastUnderflowLog_ >= std::chrono::seconds(5)) {
-                        lastUnderflowLog_ = now;
+                        logNow - lastUnderflowLog_ >= std::chrono::seconds(5)) {
+                        lastUnderflowLog_ = logNow;
                         std::cerr << "WISI CBR USEFUL UNDERFLOW index=" << outputIndex_
                                   << " null_only_datagrams=" << usefulUnderflowDatagrams_
-                                  << " queued_kb=" << (pacer_.queuedBytes() / 1024U)
-                                  << " source_kbps=" << (pacer_.sourcePayloadBitrate() / 1000ULL)
-                                  << " target_kbps=" << (targetBitrate / 1000ULL)
-                                  << " insufficient_target_segments="
-                                  << pacer_.insufficientTargetSegments()
+                                  << " buffered_kb="
+                                  << (bufferedPackets_.load(std::memory_order_relaxed) *
+                                      mpegts::kPacketSize / 1024U)
+                                  << " source_kbps="
+                                  << (pacer_.sourcePayloadBitrate() / 1000ULL)
+                                  << " useful_kbps="
+                                  << (pacer_.usefulPaceBitrate() / 1000ULL)
+                                  << " target_kbps="
+                                  << (pacer_.targetBitrate() / 1000ULL)
                                   << std::endl;
                     }
                 }
 
-                const std::uint64_t periodNs =
-                    (kDatagramBytes * 8ULL * 1000000000ULL) / targetBitrate;
-                if (firstSendLogged_ && sendReadyAt > deadline) {
-                    const auto lateNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        sendReadyAt - deadline).count();
-                    const std::uint64_t reportThreshold =
-                        (std::max<std::uint64_t>)(periodNs * 4ULL, 20000000ULL);
-                    if (lateNs >= 0 && static_cast<std::uint64_t>(lateNs) >= reportThreshold) {
-                        ++lateEvents_;
-                        const std::uint64_t currentLateUs =
-                            static_cast<std::uint64_t>(lateNs) / 1000ULL;
-                        const auto lockWaitNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            sendReadyAt - wokeAt).count();
-                        const std::uint64_t currentLockWaitUs = lockWaitNs > 0
-                            ? static_cast<std::uint64_t>(lockWaitNs) / 1000ULL
-                            : 0ULL;
-                        lateMaxUs_ = (std::max<std::uint64_t>)(lateMaxUs_, currentLateUs);
-                        const auto now = std::chrono::steady_clock::now();
-                        if (lastLateLog_ == std::chrono::steady_clock::time_point{} ||
-                            now - lastLateLog_ >= std::chrono::seconds(5)) {
-                            lastLateLog_ = now;
-                            std::cerr << "WISI CBR LATE index=" << outputIndex_
-                                      << " late_events=" << lateEvents_
-                                      << " current_late_us=" << currentLateUs
-                                      << " current_lock_wait_us=" << currentLockWaitUs
-                                      << " max_late_us=" << lateMaxUs_
-                                      << " queued_kb=" << (pacer_.queuedBytes() / 1024U)
-                                      << " target_kbps=" << (targetBitrate / 1000ULL)
-                                      << std::endl;
-                        }
-                    }
-                }
-
-                const auto* bytes = reinterpret_cast<const std::uint8_t*>(datagram.data());
-                lock.unlock();
+                const auto* bytes =
+                    reinterpret_cast<const std::uint8_t*>(datagram.data());
                 std::string sendError;
                 if (!socket_->send(bytes, kDatagramBytes, sendError)) {
                     fail(sendError.empty()
                         ? "WISI UDP CBR output send failed"
                         : "WISI UDP CBR output send failed: " + sendError);
-                    lock.lock();
-                    stopping_ = true;
-                    break;
+                    return;
                 }
                 outputBytes_->fetch_add(kDatagramBytes, std::memory_order_relaxed);
                 queueObserverDatagram(bytes, kDatagramBytes);
 
+                const std::uint64_t gapNs = lastSendNs_ > 0 && sendNs >= lastSendNs_
+                    ? sendNs - lastSendNs_
+                    : 0ULL;
+                lastSendNs_ = sendNs;
+                updateClockDiagnostics(sendNs, gapNs, lateNs);
+
                 if (!firstSendLogged_) {
                     firstSendLogged_ = true;
                     std::cerr << "WISI CBR start index=" << outputIndex_
-                              << " target_kbps=" << (targetBitrate / 1000ULL)
+                              << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                               << " datagram_bytes=" << kDatagramBytes
+                              << " ts_packets_per_datagram=" << mpegts::kPacketsPerCbrDatagram
                               << " startup_buffer_ms=1200"
-                              << " queue_kb=" << (queuedAfter * mpegts::kPacketSize / 1024U)
-                              << " source_pcr=restamped"
+                              << " ingress_clock=decoupled"
+                              << " source_null=regenerated"
+                              << " source_pcr=restamped-all-pids"
                               << " pcr_schedule=output-cbr-slot-clock"
                               << " pts_dts=preserved"
                               << " auto_tune=off"
                               << " catchup_burst=off"
+                              << " phase_recovery_max_pct=0.25"
                               << " sender_clock=CLOCK_MONOTONIC_ABSTIME"
                               << std::endl;
                     std::cerr << "NATIVE UDP OUTPUT first_send index=" << outputIndex_
-                              << " type=udp-cbr profile=wisi-fixed-cbr"
+                              << " type=udp-cbr profile=wisi-fixed-cbr-v172"
                               << " sender_thread=dedicated"
                               << std::endl;
                 }
-                lock.lock();
+
+                const std::uint64_t periodNs = nextPeriodNanoseconds();
+                const std::uint64_t maximumCorrection =
+                    (std::max<std::uint64_t>)(1ULL,
+                        periodNs / kPhaseCorrectionDivisor);
+                const std::uint64_t correction =
+                    (std::min)(phaseDebtNs_, maximumCorrection);
+                phaseDebtNs_ -= correction;
+                nextDeadlineNs = sendNs + periodNs - correction;
             }
         } catch (const std::exception& ex) {
             fail(std::string("WISI CBR sender failed: ") + ex.what());
@@ -359,28 +541,40 @@ private:
         }
     }
 
-    static constexpr std::size_t kDatagramBytes =
-        mpegts::kPacketsPerCbrDatagram * mpegts::kPacketSize;
-
     UdpSocket* socket_ = nullptr;
     std::size_t outputIndex_ = 0;
-    mutable std::mutex mutex_;
     mpegts::CbrTsPacer pacer_;
     std::atomic<std::uint64_t>* outputBytes_ = nullptr;
     std::atomic<bool>* relayRunning_ = nullptr;
     Observer observer_;
     ErrorCallback errorCallback_;
-    std::condition_variable senderWake_;
+
+    std::atomic<bool> stopping_ {false};
+    std::atomic<bool> inputStarted_ {false};
+    std::atomic<std::size_t> bufferedPackets_ {0};
+    std::atomic<std::int64_t> nextDeadlineSteadyNs_ {0};
+
+    std::mutex ingressMutex_;
+    std::condition_variable ingressReady_;
     std::condition_variable queueSpace_;
-    bool stopping_ = false;
-    bool firstSendLogged_ = false;
-    std::size_t queuePeakPackets_ = 0;
+    std::deque<IngressPacket> ingressQueue_;
     std::chrono::steady_clock::time_point firstPacketAt_ {};
-    std::chrono::steady_clock::time_point lastLateLog_ {};
-    std::chrono::steady_clock::time_point lastUnderflowLog_ {};
-    std::uint64_t lateEvents_ = 0;
-    std::uint64_t lateMaxUs_ = 0;
+    bool backpressureLogged_ = false;
+    std::size_t queuePeakPackets_ = 0;
+
+    bool firstSendLogged_ = false;
+    std::uint64_t periodRemainder_ = 0;
+    std::uint64_t phaseDebtNs_ = 0;
+    std::uint64_t lastSendNs_ = 0;
     std::uint64_t usefulUnderflowDatagrams_ = 0;
+    std::chrono::steady_clock::time_point lastUnderflowLog_ {};
+
+    std::uint64_t clockWindowStartNs_ = 0;
+    std::uint64_t clockWindowDatagrams_ = 0;
+    std::uint64_t clockMinGapNs_ = (std::numeric_limits<std::uint64_t>::max)();
+    std::uint64_t clockMaxGapNs_ = 0;
+    std::uint64_t clockMaxLateNs_ = 0;
+
     std::thread senderThread_;
 
     std::mutex observerMutex_;
