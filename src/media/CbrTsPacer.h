@@ -59,6 +59,26 @@ public:
     std::uint64_t pcrPidCount() const noexcept;
     std::size_t lastDatagramUsefulPackets() const noexcept;
     std::uint64_t outputSlots() const noexcept;
+    bool sourcePllMode() const noexcept { return sourcePllMode_; }
+
+    // V174 keeps the per-stream switch backward-compatible with the existing
+    // StreamManager wiring. The Web UI stores target bitrate in whole kbps; an
+    // opt-in source-PLL stream carries a private +777 bps marker through the
+    // configuration/runtime structs. The pacer removes that marker before any
+    // transport timing calculation, so the physical configured bitrate remains
+    // exactly unchanged. Existing normal kbps values never enter this path.
+    static constexpr std::uint64_t kSourcePllBitrateMarker = 777ULL;
+    static constexpr bool sourcePllEncodedTargetBitrate(
+        std::uint64_t value) noexcept {
+        return value >= 100000ULL + kSourcePllBitrateMarker &&
+            (value % 1000ULL) == kSourcePllBitrateMarker;
+    }
+    static constexpr std::uint64_t decodeTargetBitrate(
+        std::uint64_t value) noexcept {
+        return sourcePllEncodedTargetBitrate(value)
+            ? value - kSourcePllBitrateMarker
+            : value;
+    }
 
     // Kept for the existing diagnostics interface.
     std::size_t readySegments() const noexcept;
@@ -75,6 +95,13 @@ private:
         bool anchored = false;
         std::uint64_t sourceAnchorTicks = 0;
         std::uint64_t outputAnchorSlot = 0;
+
+        // V174 source-PLL state. Fixed-CBR mode never reads these fields, so its
+        // V173 PCR formula stays byte-for-byte equivalent in behaviour.
+        std::uint64_t previousSourceTicks = 0;
+        std::uint64_t sourceElapsedTicks = 0;
+        std::int64_t filteredPhaseTicks = 0;
+        std::uint64_t previousOutputDeltaTicks = 0;
     };
 
     void advanceDeadline() noexcept;
@@ -97,6 +124,7 @@ private:
     static constexpr std::uint64_t kMaximumBitrate = 200000000;
     static constexpr std::size_t kPidCount = 8192;
 
+    const bool sourcePllMode_;
     std::uint64_t targetBitrate_;
     std::deque<Packet> queuedPackets_;
 
@@ -137,7 +165,9 @@ private:
     std::chrono::steady_clock::time_point lastControllerUpdate_ {};
 
     // Output PCR clocks. Every PCR PID has its own anchor so SPTS and MPTS are
-    // both restamped against the same fixed output TS slot clock.
+    // both restamped against the same fixed output TS slot clock. Source-PLL is
+    // an explicit per-stream opt-in that applies only a bounded low-pass phase
+    // correction on top of that nominal slot clock.
     std::uint64_t outputSlotCounter_ = 0;
     std::array<OutputPcrState, kPidCount> outputPcrStates_ {};
     std::uint64_t pcrRewriteCount_ = 0;

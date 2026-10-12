@@ -25,12 +25,22 @@ constexpr std::uint64_t kReservoirTargetMs = 1200ULL;
 constexpr long double kMaximumReservoirCorrection = 0.03L; // +/-3%
 constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // 0.25% per update
 
+// V174 opt-in PCR source PLL. The output slot clock remains the nominal clock;
+// only a slow phase correction is applied so source PCR/PTS timing can follow
+// long-term source media time without importing raw encoder/network PCR jitter.
+constexpr std::int64_t kSourcePllFilterDivisor = 64;
+constexpr std::int64_t kSourcePllMaximumStepTicks =
+    static_cast<std::int64_t>(kPcrClockHz / 4000ULL); // 0.25 ms per PCR sample.
+constexpr std::uint64_t kSourcePllMaximumSourceDeltaTicks =
+    kPcrClockHz * 2ULL;
+
 } // namespace
 
 CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate)
-    : targetBitrate_(std::clamp(
-          targetBitrate, kMinimumBitrate, kMaximumBitrate)) {
-    if (targetBitrate == 0) {
+    : sourcePllMode_(sourcePllEncodedTargetBitrate(targetBitrate)),
+      targetBitrate_(std::clamp(
+          decodeTargetBitrate(targetBitrate), kMinimumBitrate, kMaximumBitrate)) {
+    if (decodeTargetBitrate(targetBitrate) == 0) {
         throw std::invalid_argument("WISI CBR transport bitrate must be greater than zero");
     }
 }
@@ -394,6 +404,10 @@ bool CbrTsPacer::restampPcr(
         state.anchored = true;
         state.sourceAnchorTicks = sourceTicks;
         state.outputAnchorSlot = outputSlot;
+        state.previousSourceTicks = sourceTicks;
+        state.sourceElapsedTicks = 0;
+        state.filteredPhaseTicks = 0;
+        state.previousOutputDeltaTicks = 0;
         if (!writePcr(packet, sourceTicks)) return false;
         ++pcrRewriteCount_;
         return true;
@@ -406,10 +420,65 @@ bool CbrTsPacer::restampPcr(
         static_cast<unsigned __int128>(deltaSlots) *
         static_cast<unsigned __int128>(kPacketBits) *
         static_cast<unsigned __int128>(kPcrClockHz);
-    const std::uint64_t deltaTicks =
+    const std::uint64_t nominalDeltaTicks =
         static_cast<std::uint64_t>(numerator / targetBitrate_);
+
+    // Default/legacy path: keep V173 PCR behaviour exactly. This branch is used
+    // by every existing channel unless the per-stream UI switch is enabled.
+    if (!sourcePllMode_) {
+        const std::uint64_t rewritten =
+            (state.sourceAnchorTicks + nominalDeltaTicks) % kPcrWrapTicks;
+        if (!writePcr(packet, rewritten)) return false;
+        ++pcrRewriteCount_;
+        return true;
+    }
+
+    // Source-PLL path. Follow source media time slowly, while the physical UDP
+    // sender continues to transmit at the exact configured CBR slot rate.
+    const std::uint64_t sourceDeltaTicks = sourceTicks >= state.previousSourceTicks
+        ? sourceTicks - state.previousSourceTicks
+        : (kPcrWrapTicks - state.previousSourceTicks) + sourceTicks;
+    state.previousSourceTicks = sourceTicks;
+
+    if (sourceDeltaTicks > 0 &&
+        sourceDeltaTicks <= kSourcePllMaximumSourceDeltaTicks) {
+        state.sourceElapsedTicks += sourceDeltaTicks;
+
+        const __int128 desiredPhaseWide =
+            static_cast<__int128>(state.sourceElapsedTicks) -
+            static_cast<__int128>(nominalDeltaTicks);
+        const std::int64_t desiredPhase = desiredPhaseWide > INT64_MAX
+            ? INT64_MAX
+            : (desiredPhaseWide < INT64_MIN
+                ? INT64_MIN
+                : static_cast<std::int64_t>(desiredPhaseWide));
+
+        std::int64_t phaseError = desiredPhase - state.filteredPhaseTicks;
+        std::int64_t step = phaseError / kSourcePllFilterDivisor;
+        if (step == 0 && phaseError != 0) step = phaseError > 0 ? 1 : -1;
+        step = (std::max)(-kSourcePllMaximumStepTicks,
+            (std::min)(kSourcePllMaximumStepTicks, step));
+        state.filteredPhaseTicks += step;
+    }
+
+    __int128 correctedWide =
+        static_cast<__int128>(nominalDeltaTicks) +
+        static_cast<__int128>(state.filteredPhaseTicks);
+    if (correctedWide < 0) correctedWide = 0;
+    std::uint64_t correctedDelta = correctedWide > UINT64_MAX
+        ? UINT64_MAX
+        : static_cast<std::uint64_t>(correctedWide);
+
+    // Never allow the smoothed correction to make output PCR move backwards.
+    // One 27-MHz tick is enough to preserve strict monotonicity; normal PCR
+    // intervals remain governed by the source/slot PLL above.
+    if (correctedDelta <= state.previousOutputDeltaTicks) {
+        correctedDelta = state.previousOutputDeltaTicks + 1ULL;
+    }
+    state.previousOutputDeltaTicks = correctedDelta;
+
     const std::uint64_t rewritten =
-        (state.sourceAnchorTicks + deltaTicks) % kPcrWrapTicks;
+        (state.sourceAnchorTicks + correctedDelta) % kPcrWrapTicks;
     if (!writePcr(packet, rewritten)) return false;
     ++pcrRewriteCount_;
     return true;

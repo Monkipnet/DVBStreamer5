@@ -83,6 +83,10 @@ private:
     void handleSaveSubscribers(const std::string& body);
     void handleResetSubscriber(const std::string& body);
     void handleBlockStreamClient(const std::string& body, bool blocked);
+    // V174 keeps the existing 300-KB WebUI source untouched. The included
+    // implementation is renamed to renderIndexPageBase(), then a small wrapper
+    // injects only the per-stream PCR-PLL control and serialization expression.
+    std::string renderIndexPageBase();
     std::string renderIndexPage();
     void recordQualitySample(const StreamConfig& cfg, const Json::Value& state);
     void recordAllQualitySamples();
