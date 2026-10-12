@@ -322,6 +322,13 @@ private:
         std::uint64_t sendNs,
         std::uint64_t gapNs,
         std::uint64_t lateNs) noexcept {
+        // V173: the 5-second CLOCK line was temporary bring-up telemetry. Keep
+        // fault/startup logs, but remove this hot-path diagnostic noise entirely.
+        (void)sendNs;
+        (void)gapNs;
+        (void)lateNs;
+        return;
+
         if (clockWindowStartNs_ == 0) {
             clockWindowStartNs_ = sendNs;
             clockWindowDatagrams_ = 0;
