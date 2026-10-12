@@ -1,0 +1,109 @@
+name: wisi-cbr-v172-test
+
+on:
+  push:
+    branches:
+      - wisi-cbr-v172
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-and-remux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff check
+        run: git diff --check origin/main...HEAD
+
+      - name: Syntax check
+        run: |
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/CbrTsPacer.cpp
+          cat >/tmp/wisi_header.cpp <<'EOF'
+          #include "media/WisiCbrOutputWorker.h"
+          int main() { return 0; }
+          EOF
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only /tmp/wisi_header.cpp
+          g++ -std=c++17 -pthread -Isrc -fsyntax-only src/media/NativeUdpRelay.cpp
+
+      - name: Fixed-slot and multi-PCR test
+        run: |
+          cat >/tmp/test_v172.cpp <<'EOF'
+          #include "media/CbrTsPacer.h"
+          #include <cassert>
+          #include <chrono>
+          #include <cstdint>
+          #include <iostream>
+          using namespace dvbstreamer5::media::mpegts;
+
+          static Packet payload(std::uint16_t pid) {
+              Packet p{};
+              p.fill(0xff);
+              p[0] = kSyncByte;
+              p[1] = static_cast<std::uint8_t>((pid >> 8) & 0x1f);
+              p[2] = static_cast<std::uint8_t>(pid & 0xff);
+              p[3] = 0x10;
+              return p;
+          }
+
+          static Packet pcrPacket(std::uint16_t pid, std::uint64_t ticks) {
+              Packet p{};
+              p.fill(0xff);
+              p[0] = kSyncByte;
+              p[1] = static_cast<std::uint8_t>((pid >> 8) & 0x1f);
+              p[2] = static_cast<std::uint8_t>(pid & 0xff);
+              p[3] = 0x30;
+              p[4] = 7;
+              p[5] = 0x10;
+              const std::uint64_t base = ticks / 300ULL;
+              const std::uint64_t ext = ticks % 300ULL;
+              p[6] = static_cast<std::uint8_t>(base >> 25U);
+              p[7] = static_cast<std::uint8_t>(base >> 17U);
+              p[8] = static_cast<std::uint8_t>(base >> 9U);
+              p[9] = static_cast<std::uint8_t>(base >> 1U);
+              p[10] = static_cast<std::uint8_t>(((base & 1ULL) << 7U) | 0x7eU | ((ext >> 8U) & 1ULL));
+              p[11] = static_cast<std::uint8_t>(ext & 0xffULL);
+              return p;
+          }
+
+          int main() {
+              CbrTsPacer pacer(4000000ULL);
+              Packet nullPacket{};
+              nullPacket.fill(0xff);
+              nullPacket[0] = kSyncByte;
+              nullPacket[1] = 0x1f;
+              nullPacket[2] = 0xff;
+              nullPacket[3] = 0x10;
+              assert(CbrTsPacer::sourcePacketIsNull(nullPacket));
+              assert(pacer.enqueue(nullPacket));
+              assert(pacer.queuedPackets() == 0);
+
+              const auto t0 = std::chrono::steady_clock::now();
+              assert(pacer.enqueueAt(pcrPacket(100, 27000000ULL), t0));
+              for (int i = 0; i < 60; ++i) assert(pacer.enqueueAt(payload(256), t0 + std::chrono::milliseconds(i)));
+              assert(pacer.enqueueAt(pcrPacket(200, 54000000ULL), t0 + std::chrono::milliseconds(100)));
+              for (int i = 0; i < 60; ++i) assert(pacer.enqueueAt(payload(257), t0 + std::chrono::milliseconds(100 + i)));
+              assert(pacer.enqueueAt(pcrPacket(100, 81000000ULL), t0 + std::chrono::milliseconds(200)));
+              assert(pacer.enqueueAt(pcrPacket(200, 108000000ULL), t0 + std::chrono::milliseconds(200)));
+
+              CbrDatagram out{};
+              std::size_t datagrams = 0;
+              while (pacer.queuedPackets() > 0 && datagrams < 1000) {
+                  assert(pacer.emitDatagram(t0 + std::chrono::milliseconds(static_cast<int>(datagrams)), out));
+                  ++datagrams;
+              }
+              assert(datagrams > 0);
+              assert(sizeof(out) == 7U * 188U);
+              assert(pacer.pcrPidCount() == 2);
+              assert(pacer.pcrRewriteCount() >= 4);
+              std::cout << "datagrams=" << datagrams
+                        << " pcr_pids=" << pacer.pcrPidCount()
+                        << " pcr_rewrites=" << pacer.pcrRewriteCount() << "\n";
+              return 0;
+          }
+          EOF
+          g++ -std=c++17 -pthread -Isrc /tmp/test_v172.cpp src/media/CbrTsPacer.cpp -o /tmp/test_v172
+          /tmp/test_v172
