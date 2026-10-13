@@ -249,6 +249,14 @@ struct SharedDvbInputPool::Impl {
                     subscribers.push_back(subscriber);
                 }
             }
+
+            // Warm standby deliberately keeps the frontend/DVR reader alive so
+            // DVB LOCK, LNB voltage and tone are preserved, but there is no
+            // service pipeline to feed. Drain the kernel DVR buffer and discard
+            // the bytes without allocating/copying transport chunks while the
+            // subscriber set is empty.
+            if (subscribers.empty()) continue;
+
             // Allocate/copy the tuner chunk once. Every service subscriber
             // references the same immutable buffer; only the downstream relay
             // performs its own queue copy. This keeps a 20-30 channel
@@ -319,13 +327,40 @@ struct SharedDvbInputPool::Impl {
                 return false;
             }
 
-            const auto owner = frontendOwner.find(frontend);
+            auto owner = frontendOwner.find(frontend);
             if (owner != frontendOwner.end() && owner->second != key) {
-                error =
-                    "DVB frontend adapter" + std::to_string(tune.adapter) +
-                    "/frontend" + std::to_string(tune.frontend) +
-                    " is already tuned to another transponder";
-                return false;
+                const std::string oldKey = owner->second;
+                auto oldBusIt = buses.find(oldKey);
+                bool busy = false;
+                std::shared_ptr<Bus> oldBus;
+                if (oldBusIt != buses.end()) {
+                    oldBus = oldBusIt->second;
+                    if (oldBus) {
+                        std::lock_guard<std::mutex> busLock(oldBus->mutex);
+                        busy = !oldBus->subscribers.empty();
+                    }
+                }
+
+                if (busy) {
+                    error =
+                        "DVB frontend adapter" + std::to_string(tune.adapter) +
+                        "/frontend" + std::to_string(tune.frontend) +
+                        " is already tuned to another transponder";
+                    return false;
+                }
+
+                // A frontend in warm standby has no service consumers. It may
+                // therefore be retuned for a different requested transponder.
+                // Stop only the transport reader; there is no decoder/CA/HLS
+                // pipeline attached while the subscriber set is empty.
+                if (oldBusIt != buses.end()) buses.erase(oldBusIt);
+                frontendOwner.erase(owner);
+                if (oldBus) {
+                    std::cerr << "SHARED DVB STANDBY retune frontend=" << frontend
+                              << " old_key=" << oldKey
+                              << " new_key=" << key << std::endl;
+                    stopBus(oldBus);
+                }
             }
 
             const auto existing = buses.find(key);
@@ -420,6 +455,7 @@ struct SharedDvbInputPool::Impl {
         std::shared_ptr<Bus> bus;
         std::shared_ptr<Subscriber> subscriber;
         bool stopSource = false;
+        bool standby = false;
         std::string key;
         std::string frontend;
 
@@ -443,9 +479,15 @@ struct SharedDvbInputPool::Impl {
                     subscriber = item->second;
                     bus->subscribers.erase(item);
                 }
-                stopSource = bus->subscribers.empty();
+                if (bus->subscribers.empty()) {
+                    standby = bus->running.load(std::memory_order_acquire);
+                    stopSource = !standby;
+                }
             }
 
+            // A healthy source with zero subscribers is intentionally retained
+            // as warm standby. If the reader has already failed, remove the dead
+            // source so the next request can create/tune a fresh bus.
             if (stopSource) {
                 buses.erase(key);
                 const auto owner = frontendOwner.find(frontend);
@@ -466,6 +508,13 @@ struct SharedDvbInputPool::Impl {
                   << " frontend=" << frontend
                   << " subscribers=" << remaining
                   << std::endl;
+
+        if (standby) {
+            std::cerr << "SHARED DVB STANDBY frontend=" << frontend
+                      << " key=" << key
+                      << " subscribers=0 transport_drain=1 service_pipeline=detached"
+                      << std::endl;
+        }
 
         if (stopSource) stopBus(bus);
     }
