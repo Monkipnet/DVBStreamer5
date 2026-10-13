@@ -77,6 +77,7 @@ struct SharedDvbInputPool::Impl {
         std::map<std::string, std::shared_ptr<Subscriber>> subscribers;
         std::atomic<bool> stop{false};
         std::atomic<bool> running{false};
+        bool keepWarmOnIdle = false;
         std::string sourceError;
         std::thread reader;
     };
@@ -306,7 +307,8 @@ struct SharedDvbInputPool::Impl {
         const LinuxDvbTuneConfig& requested,
         DataCallback onData,
         FinishCallback onFinish,
-        std::string& error) {
+        std::string& error,
+        bool keepWarmOnIdle) {
         error.clear();
         if (streamId.empty() || !onData) {
             error = "shared DVB subscription requires stream id and data callback";
@@ -377,11 +379,13 @@ struct SharedDvbInputPool::Impl {
                     }
                     return false;
                 }
+                bus->keepWarmOnIdle = bus->keepWarmOnIdle || keepWarmOnIdle;
             } else {
                 bus = std::make_shared<Bus>();
                 bus->key = key;
                 bus->frontend = frontend;
                 bus->tune = tune;
+                bus->keepWarmOnIdle = keepWarmOnIdle;
 
                 if (!bus->input.open(tune, error)) {
                     return false;
@@ -445,9 +449,88 @@ struct SharedDvbInputPool::Impl {
                 std::lock_guard<std::mutex> busLock(bus->mutex);
                 std::cerr << bus->subscribers.size();
             }
-            std::cerr << std::endl;
+            std::cerr << " keep_warm=" << (bus->keepWarmOnIdle ? 1 : 0)
+                      << std::endl;
         }
 
+        return true;
+    }
+
+    bool warmStandby(
+        const LinuxDvbTuneConfig& requested,
+        std::string& error) {
+        error.clear();
+        LinuxDvbTuneConfig tune = requested;
+        tune.pids = "8192";
+        const std::string key = transponderKey(tune);
+        const std::string frontend = frontendKey(tune);
+
+        std::lock_guard<std::mutex> lock(mutex);
+
+        auto owner = frontendOwner.find(frontend);
+        if (owner != frontendOwner.end() && owner->second != key) {
+            const std::string oldKey = owner->second;
+            auto oldBusIt = buses.find(oldKey);
+            std::shared_ptr<Bus> oldBus;
+            bool busy = false;
+            if (oldBusIt != buses.end()) {
+                oldBus = oldBusIt->second;
+                if (oldBus) {
+                    std::lock_guard<std::mutex> busLock(oldBus->mutex);
+                    busy = !oldBus->subscribers.empty();
+                }
+            }
+            if (busy) {
+                error =
+                    "DVB frontend adapter" + std::to_string(tune.adapter) +
+                    "/frontend" + std::to_string(tune.frontend) +
+                    " has active service consumers";
+                return false;
+            }
+            if (oldBusIt != buses.end()) buses.erase(oldBusIt);
+            frontendOwner.erase(owner);
+            if (oldBus) {
+                std::cerr << "SHARED DVB STANDBY prewarm-retune frontend="
+                          << frontend << " old_key=" << oldKey
+                          << " new_key=" << key << std::endl;
+                stopBus(oldBus);
+            }
+        }
+
+        const auto existing = buses.find(key);
+        if (existing != buses.end()) {
+            auto bus = existing->second;
+            if (bus && bus->running.load(std::memory_order_acquire)) {
+                bus->keepWarmOnIdle = true;
+                return true;
+            }
+            if (bus) stopBus(bus);
+            buses.erase(existing);
+            const auto staleOwner = frontendOwner.find(frontend);
+            if (staleOwner != frontendOwner.end() && staleOwner->second == key) {
+                frontendOwner.erase(staleOwner);
+            }
+        }
+
+        auto bus = std::make_shared<Bus>();
+        bus->key = key;
+        bus->frontend = frontend;
+        bus->tune = tune;
+        bus->keepWarmOnIdle = true;
+        if (!bus->input.open(tune, error)) {
+            return false;
+        }
+        bus->running.store(true, std::memory_order_release);
+        try {
+            bus->reader = std::thread([bus] { runBus(bus); });
+        } catch (const std::exception& ex) {
+            bus->running.store(false, std::memory_order_release);
+            bus->input.close();
+            error = std::string("cannot start shared DVB standby thread: ") + ex.what();
+            return false;
+        }
+        buses[key] = bus;
+        frontendOwner[frontend] = key;
         return true;
     }
 
@@ -480,14 +563,15 @@ struct SharedDvbInputPool::Impl {
                     bus->subscribers.erase(item);
                 }
                 if (bus->subscribers.empty()) {
-                    standby = bus->running.load(std::memory_order_acquire);
+                    standby = bus->keepWarmOnIdle &&
+                        bus->running.load(std::memory_order_acquire);
                     stopSource = !standby;
                 }
             }
 
-            // A healthy source with zero subscribers is intentionally retained
-            // as warm standby. If the reader has already failed, remove the dead
-            // source so the next request can create/tune a fresh bus.
+            // Only buses explicitly marked warm (OnDemand/prewarm) survive with
+            // zero subscribers. Online services retain the historical behavior:
+            // the last subscriber closes dvr/frontend ownership immediately.
             if (stopSource) {
                 buses.erase(key);
                 const auto owner = frontendOwner.find(frontend);
@@ -560,9 +644,17 @@ bool SharedDvbInputPool::subscribe(
     const LinuxDvbTuneConfig& config,
     DataCallback onData,
     FinishCallback onFinish,
-    std::string& error) {
+    std::string& error,
+    bool keepWarmOnIdle) {
     return impl_->subscribe(
-        streamId, config, std::move(onData), std::move(onFinish), error);
+        streamId, config, std::move(onData), std::move(onFinish), error,
+        keepWarmOnIdle);
+}
+
+bool SharedDvbInputPool::warmStandby(
+    const LinuxDvbTuneConfig& config,
+    std::string& error) {
+    return impl_->warmStandby(config, error);
 }
 
 void SharedDvbInputPool::unsubscribe(const std::string& streamId) noexcept {
