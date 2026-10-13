@@ -26,6 +26,14 @@ public:
         const LinuxDvbTuneConfig& config,
         DataCallback onData,
         FinishCallback onFinish,
+        std::string& error,
+        bool keepWarmOnIdle = false);
+
+    // Tune/open one full-MPTS DVB bus without attaching a service subscriber.
+    // The frontend/DVR reader remains alive and drains input, preserving LOCK,
+    // voltage and tone while decoder/CA/transcoder/HLS service pipelines stay off.
+    bool warmStandby(
+        const LinuxDvbTuneConfig& config,
         std::string& error);
 
     void unsubscribe(const std::string& streamId) noexcept;
