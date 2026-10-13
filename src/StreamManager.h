@@ -335,16 +335,15 @@ public:
     bool isStreamActive(const std::string& id);
     bool ensureOnDemandStream(const std::string& id, const std::string& source,
                               std::string* error = nullptr);
+    bool ensureOnDemandStreamParallel(const std::string& id, const std::string& source,
+                                      std::string* error = nullptr);
     void prewarmOnDemandDvbInputs();
 
-    // V10.8.77: the private browser-preview endpoint is a legitimate OnDemand
-    // consumer.  HttpServer redirects its existing activity probes here so an
-    // idle satellite service is tuned before the preview manifest/TS is tested.
-    // Online streams keep the previous behavior because ensureOnDemandStream()
-    // is a no-op for activation modes other than "ondemand".
+    // V10.8.179: preview uses the same per-stream OnDemand gate as public media.
+    // The global bookkeeping mutex is never held across DVB tune/CA/codec start.
     bool isStreamActiveForHttpPreview(const std::string& id) {
         std::string demandError;
-        if (!ensureOnDemandStream(id, "preview", &demandError)) return false;
+        if (!ensureOnDemandStreamParallel(id, "preview", &demandError)) return false;
         return isStreamActive(id);
     }
 
