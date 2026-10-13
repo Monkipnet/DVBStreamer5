@@ -183,9 +183,13 @@ void StreamManager::prewarmOnDemandDvbInputs() {
         dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
     };
 
+    // Only an online stream that is going to auto-start competes with the boot
+    // prewarm worker. Merely configured/stopped online tiles must not prevent an
+    // OnDemand frontend from being warm; a later manual start may retune an idle
+    // warm bus safely because it has zero service subscribers.
     std::set<std::string> reservedByOnline;
     for (const auto& cfg : configManager.config.streams) {
-        if (toLower(cfg.activationMode) == "ondemand" ||
+        if (toLower(cfg.activationMode) == "ondemand" || !cfg.autoStart ||
             !DvbSatellite::isDvbUri(cfg.inputUri)) {
             continue;
         }
@@ -216,7 +220,7 @@ void StreamManager::prewarmOnDemandDvbInputs() {
         if (reservedByOnline.count(frontend)) {
             std::cerr << "ONDEMAND STANDBY prewarm skip stream=" << cfg.id
                       << " frontend=" << frontend
-                      << " reason=frontend-reserved-by-online" << std::endl;
+                      << " reason=frontend-reserved-by-online-autostart" << std::endl;
             continue;
         }
         if (selected.count(frontend)) continue;
