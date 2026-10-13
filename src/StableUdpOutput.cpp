@@ -23,7 +23,7 @@ namespace {
 
 bool makeWarmDvbTune(const StreamConfig& cfg,
                      DvbSatelliteParams& params,
-                     dvbstreamer5::media::LinuxDvbTuneConfig& tune,
+                     dvbstreamer5::media::network::LinuxDvbTuneConfig& tune,
                      std::string& error) {
     error.clear();
     if (!DvbSatellite::isDvbUri(cfg.inputUri)) {
@@ -110,7 +110,7 @@ bool StreamManager::ensureOnDemandStreamParallel(
     // service remap, decoder, transcoder or HLS segmenter in this state.
     if (DvbSatellite::isDvbUri(cfg.inputUri)) {
         DvbSatelliteParams params;
-        dvbstreamer5::media::LinuxDvbTuneConfig tune;
+        dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
         std::string warmError;
         if (!makeWarmDvbTune(cfg, params, tune, warmError)) {
             if (error) *error = warmError;
@@ -180,7 +180,7 @@ void StreamManager::prewarmOnDemandDvbInputs() {
         std::string streamId;
         std::string frontend;
         DvbSatelliteParams params;
-        dvbstreamer5::media::LinuxDvbTuneConfig tune;
+        dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
     };
 
     std::set<std::string> reservedByOnline;
@@ -190,7 +190,7 @@ void StreamManager::prewarmOnDemandDvbInputs() {
             continue;
         }
         DvbSatelliteParams params;
-        dvbstreamer5::media::LinuxDvbTuneConfig tune;
+        dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
         std::string ignored;
         if (makeWarmDvbTune(cfg, params, tune, ignored)) {
             reservedByOnline.insert(warmFrontendKey(params));
@@ -205,7 +205,7 @@ void StreamManager::prewarmOnDemandDvbInputs() {
         }
 
         DvbSatelliteParams params;
-        dvbstreamer5::media::LinuxDvbTuneConfig tune;
+        dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
         std::string parseError;
         if (!makeWarmDvbTune(cfg, params, tune, parseError)) {
             std::cerr << "ONDEMAND STANDBY prewarm skip stream=" << cfg.id
