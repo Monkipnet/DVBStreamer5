@@ -57,13 +57,13 @@ void injectSourcePcrTimelineUi(std::string& html) {
         }
     }
 
-    // Persist both controls in the existing private sub-kbps carrier. Physical
-    // CBR remains the exact whole-kbps value because CbrTsPacer strips it before
-    // all transport timing calculations.
+    // Persist both controls in the existing private sub-kbps carrier. Keep the
+    // ordinary default (3000 ms, source-PCR off) as a plain whole-kbps value so
+    // existing non-experimental streams remain byte-for-byte compatible.
     (void)replaceWebUiOnce(
         html,
         "    target_bitrate: Number(document.getElementById('streamBitrate').value) * 1000,",
-        "    target_bitrate: (() => { const base=Math.max(100,Math.round(Number(document.getElementById('streamBitrate').value)||2000))*1000; const requested=Number(document.getElementById('streamCbrBufferMs')?.value||3000); const bufferMs=Math.min(15000,Math.max(500,Math.round(requested/500)*500)); const code=Math.min(29,Math.max(0,Math.round(bufferMs/500)-1)); const source=document.getElementById('streamPcrSourcePll')?.checked===true; return base+(source?800:700)+code; })(),");
+        "    target_bitrate: (() => { const base=Math.max(100,Math.round(Number(document.getElementById('streamBitrate').value)||2000))*1000; const requested=Number(document.getElementById('streamCbrBufferMs')?.value||3000); const bufferMs=Math.min(15000,Math.max(500,Math.round(requested/500)*500)); const code=Math.min(29,Math.max(0,Math.round(bufferMs/500)-1)); const source=document.getElementById('streamPcrSourcePll')?.checked===true; if(!source&&bufferMs===3000)return base; if(source&&bufferMs===3000)return base+777; return base+(source?800:700)+code; })(),");
 
     // Disable the new controls together with the existing bitrate input when
     // the selected output is not using CBR.
