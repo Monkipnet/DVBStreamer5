@@ -18,8 +18,9 @@
 
 // Process composition: load durable configuration, apply fail-open host networking,
 // initialize CA/notifications/stream orchestration, start the HTTP control plane,
-// auto-start eligible channels in a bounded background pool, then keep the shared
-// Asio event loop alive. Slow tuner/network startup must never delay the Web UI.
+// auto-start eligible channels and prewarm OnDemand DVB frontends in bounded
+// background workers, then keep the shared Asio event loop alive. Slow tuner/network
+// startup must never delay the Web UI.
 
 int main() {
 #if defined(__GLIBC__)
@@ -67,6 +68,21 @@ int main() {
     }
 
     std::cerr << "HTTP server started" << std::endl;
+
+    // V10.8.179: keep only the transponder layer warm for OnDemand DVB. This
+    // runs after HTTP is already listening and never constructs service state,
+    // reserves CA, decodes, transcodes or starts HLS while a tile is sleeping.
+    std::thread standbyPrewarmWorker([&streamManager] {
+        try {
+            streamManager.prewarmOnDemandDvbInputs();
+        } catch (const std::exception& ex) {
+            std::cerr << "ONDEMAND STANDBY prewarm exception contained: "
+                      << ex.what() << std::endl;
+        } catch (...) {
+            std::cerr << "ONDEMAND STANDBY prewarm unknown exception contained"
+                      << std::endl;
+        }
+    });
 
     std::vector<StreamConfig> autoStartStreams;
     autoStartStreams.reserve(configManager.config.streams.size());
@@ -122,8 +138,8 @@ int main() {
         }
     }
 
-    // The control plane becomes responsive immediately. Auto-start workers keep
-    // bringing tiles online independently in the background.
+    // The control plane becomes responsive immediately. Auto-start workers and
+    // standby prewarm continue independently in the background.
     std::cout << "DVBStreamer5 running on port " << configManager.config.httpPort << std::endl;
     std::cerr << "Calling ioc.run()" << std::endl;
 
@@ -140,6 +156,7 @@ int main() {
         }
     }
 
+    if (standbyPrewarmWorker.joinable()) standbyPrewarmWorker.join();
     for (auto& worker : startupWorkers) {
         if (worker.joinable()) worker.join();
     }
