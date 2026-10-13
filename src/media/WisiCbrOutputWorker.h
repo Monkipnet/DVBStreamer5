@@ -55,6 +55,8 @@ public:
         : socket_(socket),
           outputIndex_(outputIndex),
           pacer_(targetBitrate),
+          startupBuffer_(std::chrono::milliseconds(
+              mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
           outputBytes_(outputBytes),
           relayRunning_(relayRunning),
           observer_(std::move(observer)),
@@ -160,7 +162,6 @@ private:
         std::chrono::steady_clock::time_point arrival {};
     };
 
-    static constexpr auto kStartupBuffer = std::chrono::milliseconds(3000);
     static constexpr std::size_t kObserverQueueDatagrams = 4096;
     static constexpr std::size_t kDatagramBytes =
         mpegts::kPacketsPerCbrDatagram * mpegts::kPacketSize;
@@ -388,9 +389,9 @@ private:
             configureSenderScheduling();
 
             // Wait only for the first useful TS packet. The physical transport
-            // clock is not started until the complete startup reservoir has been
-            // collected, so the intentional startup delay can never be reported
-            // as sender lateness.
+            // clock is not started until the configured startup reservoir has
+            // been collected, so that intentional delay is never reported as
+            // sender lateness.
             {
                 std::unique_lock<std::mutex> lock(ingressMutex_);
                 ingressReady_.wait(lock, [this] {
@@ -404,7 +405,7 @@ private:
                 }
             }
 
-            const auto startAt = firstPacketAt_ + kStartupBuffer;
+            const auto startAt = firstPacketAt_ + startupBuffer_;
             while (!stopping_.load(std::memory_order_acquire) &&
                    relayRunning_->load(std::memory_order_acquire) &&
                    std::chrono::steady_clock::now() < startAt) {
@@ -487,6 +488,7 @@ private:
                                   << (pacer_.usefulPaceBitrate() / 1000ULL)
                                   << " target_kbps="
                                   << (pacer_.targetBitrate() / 1000ULL)
+                                  << " startup_buffer_ms=" << startupBuffer_.count()
                                   << std::endl;
                     }
                 }
@@ -515,11 +517,13 @@ private:
                               << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                               << " datagram_bytes=" << kDatagramBytes
                               << " ts_packets_per_datagram=" << mpegts::kPacketsPerCbrDatagram
-                              << " startup_buffer_ms=" << kStartupBuffer.count()
+                              << " startup_buffer_ms=" << startupBuffer_.count()
                               << " ingress_clock=decoupled"
                               << " source_null=regenerated"
-                              << " source_pcr=restamped-all-pids"
-                              << " pcr_schedule=output-cbr-slot-clock"
+                              << " source_pcr="
+                              << (pacer_.sourcePllMode() ? "preserved" : "restamped-all-pids")
+                              << " pcr_schedule="
+                              << (pacer_.sourcePllMode() ? "source-timeline" : "output-cbr-slot-clock")
                               << " pts_dts=preserved"
                               << " auto_tune=off"
                               << " catchup_burst=off"
@@ -551,6 +555,7 @@ private:
     UdpSocket* socket_ = nullptr;
     std::size_t outputIndex_ = 0;
     mpegts::CbrTsPacer pacer_;
+    const std::chrono::milliseconds startupBuffer_;
     std::atomic<std::uint64_t>* outputBytes_ = nullptr;
     std::atomic<bool>* relayRunning_ = nullptr;
     Observer observer_;

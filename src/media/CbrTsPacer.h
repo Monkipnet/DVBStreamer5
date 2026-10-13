@@ -19,9 +19,8 @@ using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
 //
 // The physical UDP clock is intentionally owned by WisiCbrOutputWorker. This
 // class owns only MPEG-TS shaping: source NULL removal, useful/NULL slot
-// selection and PCR restamping to the configured fixed transport bitrate.
-// Keeping those responsibilities separate prevents input delivery jitter and
-// queue locks from moving the UDP transmission clock.
+// selection and PCR handling. Keeping those responsibilities separate prevents
+// input delivery jitter and queue locks from moving the UDP transmission clock.
 class CbrTsPacer {
 public:
     explicit CbrTsPacer(std::uint64_t targetBitrate);
@@ -61,23 +60,66 @@ public:
     std::uint64_t outputSlots() const noexcept;
     bool sourcePllMode() const noexcept { return sourcePllMode_; }
 
-    // V174 keeps the per-stream switch backward-compatible with the existing
-    // StreamManager wiring. The Web UI stores target bitrate in whole kbps; an
-    // opt-in source-PLL stream carries a private +777 bps marker through the
-    // configuration/runtime structs. The pacer removes that marker before any
-    // transport timing calculation, so the physical configured bitrate remains
-    // exactly unchanged. Existing normal kbps values never enter this path.
+    // V176 keeps the per-stream controls backward-compatible with the existing
+    // StreamManager wiring. The Web UI stores target bitrate in whole kbps and
+    // uses the otherwise-unused sub-kbps remainder as a private carrier.
+    //
+    //   +777       = legacy V175 source-PCR switch, default 3000-ms reservoir
+    //   +700..+729 = fixed-PCR mode, 500..15000-ms reservoir in 500-ms steps
+    //   +800..+829 = source-PCR mode, 500..15000-ms reservoir in 500-ms steps
+    //
+    // The pacer removes every recognised carrier before transport timing, so
+    // physical CBR remains the exact whole-kbps value shown in the UI.
     static constexpr std::uint64_t kSourcePllBitrateMarker = 777ULL;
+    static constexpr std::uint64_t kLegacyBufferMarkerBase = 700ULL;
+    static constexpr std::uint64_t kSourcePllBufferMarkerBase = 800ULL;
+    static constexpr std::uint64_t kBufferMarkerCount = 30ULL;
+    static constexpr std::uint64_t kStartupBufferStepMs = 500ULL;
+    static constexpr std::uint64_t kMinimumStartupBufferMs = 500ULL;
+    static constexpr std::uint64_t kMaximumStartupBufferMs = 15000ULL;
+    static constexpr std::uint64_t kDefaultStartupBufferMs = 3000ULL;
+
+    static constexpr bool startupBufferEncodedTargetBitrate(
+        std::uint64_t value) noexcept {
+        if (value < 100000ULL + kLegacyBufferMarkerBase) return false;
+        const std::uint64_t remainder = value % 1000ULL;
+        const bool legacy = remainder >= kLegacyBufferMarkerBase &&
+            remainder < kLegacyBufferMarkerBase + kBufferMarkerCount;
+        const bool sourcePcr = remainder >= kSourcePllBufferMarkerBase &&
+            remainder < kSourcePllBufferMarkerBase + kBufferMarkerCount;
+        return legacy || sourcePcr;
+    }
+
     static constexpr bool sourcePllEncodedTargetBitrate(
         std::uint64_t value) noexcept {
-        return value >= 100000ULL + kSourcePllBitrateMarker &&
-            (value % 1000ULL) == kSourcePllBitrateMarker;
+        if (value < 100000ULL + kLegacyBufferMarkerBase) return false;
+        const std::uint64_t remainder = value % 1000ULL;
+        return remainder == kSourcePllBitrateMarker ||
+            (remainder >= kSourcePllBufferMarkerBase &&
+             remainder < kSourcePllBufferMarkerBase + kBufferMarkerCount);
     }
+
     static constexpr std::uint64_t decodeTargetBitrate(
         std::uint64_t value) noexcept {
-        return sourcePllEncodedTargetBitrate(value)
-            ? value - kSourcePllBitrateMarker
+        if (value >= 100000ULL + kSourcePllBitrateMarker &&
+            (value % 1000ULL) == kSourcePllBitrateMarker) {
+            return value - kSourcePllBitrateMarker;
+        }
+        return startupBufferEncodedTargetBitrate(value)
+            ? value - (value % 1000ULL)
             : value;
+    }
+
+    static constexpr std::uint64_t startupBufferMilliseconds(
+        std::uint64_t value) noexcept {
+        if (!startupBufferEncodedTargetBitrate(value)) {
+            return kDefaultStartupBufferMs;
+        }
+        const std::uint64_t remainder = value % 1000ULL;
+        const std::uint64_t base = remainder >= kSourcePllBufferMarkerBase
+            ? kSourcePllBufferMarkerBase
+            : kLegacyBufferMarkerBase;
+        return (remainder - base + 1ULL) * kStartupBufferStepMs;
     }
 
     // Kept for the existing diagnostics interface.
@@ -96,8 +138,9 @@ private:
         std::uint64_t sourceAnchorTicks = 0;
         std::uint64_t outputAnchorSlot = 0;
 
-        // V174 source-PLL state. Fixed-CBR mode never reads these fields, so its
-        // V173 PCR formula stays byte-for-byte equivalent in behaviour.
+        // Historical V174 source-PLL state retained in the structure for binary
+        // simplicity. V175+ source-PCR mode preserves provider PCR instead of
+        // applying the failed output-slot phase chase.
         std::uint64_t previousSourceTicks = 0;
         std::uint64_t sourceElapsedTicks = 0;
         std::int64_t filteredPhaseTicks = 0;
@@ -165,9 +208,8 @@ private:
     std::chrono::steady_clock::time_point lastControllerUpdate_ {};
 
     // Output PCR clocks. Every PCR PID has its own anchor so SPTS and MPTS are
-    // both restamped against the same fixed output TS slot clock. Source-PLL is
-    // an explicit per-stream opt-in that applies only a bounded low-pass phase
-    // correction on top of that nominal slot clock.
+    // both supported. Legacy mode restamps PCR to output slot phase; Source-PCR
+    // mode preserves provider PCR and keeps media timestamps in one clock domain.
     std::uint64_t outputSlotCounter_ = 0;
     std::array<OutputPcrState, kPidCount> outputPcrStates_ {};
     std::uint64_t pcrRewriteCount_ = 0;
