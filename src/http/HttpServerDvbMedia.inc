@@ -402,7 +402,7 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
     if (id.empty()) return false;
     if (publicHttp) {
         std::string demandError;
-        if (!streamManager.ensureOnDemandStream(id, "http", &demandError)) {
+        if (!streamManager.ensureOnDemandStreamParallel(id, "http", &demandError)) {
             const std::string body = "On-demand stream unavailable\n";
             const std::string unavailable =
                 "HTTP/1.1 503 Service Unavailable\\r\\n"
@@ -449,23 +449,26 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
 
     const StreamConfig* cfg = findStreamConfigById(configManager.config.streams, id);
     if (!cfg) return false;
+
+    const bool wasActive = streamManager.isStreamActive(id);
+    const auto hlsStartupBegin = std::chrono::steady_clock::now();
     std::string demandError;
-    if (!streamManager.ensureOnDemandStream(id, "hls", &demandError)) {
+    if (!streamManager.ensureOnDemandStreamParallel(id, "hls", &demandError)) {
         res.result(http::status::service_unavailable);
         res.set(http::field::content_type, "text/plain");
         res.set("Retry-After", "1");
         res.body() = "On-demand stream unavailable";
         return true;
     }
+    const auto activationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - hlsStartupBegin).count();
+
     const std::filesystem::path filePath = hlsStorageDirectory(*cfg) / fileName;
     const std::string archivePlaylist = buildHlsArchivePlaylist(*cfg, fileName);
     if (archivePlaylist.empty() && cfg->activationMode == "ondemand" && filePath.extension() == ".m3u8") {
-        // V10.8.91: an old OnDemand playlist can survive the previous generation
-        // until the new segmenter clears its directory.  Waiting only for
-        // video.m3u8 to exist can therefore return that stale manifest while its
-        // referenced segment0000000000.ts is already being deleted by the new
-        // generation.  Treat a live playlist as ready only when the first media
-        // URI it advertises exists alongside it.
+        // An old OnDemand playlist can survive the previous generation until the
+        // new segmenter clears its directory. A live manifest is coherent only
+        // when its first advertised media URI also exists.
         const auto livePlaylistReady = [&filePath]() {
             std::error_code ec;
             if (!std::filesystem::exists(filePath, ec) || ec ||
@@ -489,25 +492,51 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
             return false;
         };
 
-        // Keep the V10.8.90 12-second startup budget, but spend it waiting for a
-        // coherent playlist+first-media pair rather than for the manifest alone.
-        for (int attempt = 0; attempt < 120 && !livePlaylistReady(); ++attempt) {
-            // V10.8.92: this HTTP request itself is an active OnDemand viewer.
-            // The decoder-safe first H.264/H.265 segment can legitimately take
-            // longer than the normal 10 s idle window. Refresh OnDemand activity
-            // while the request is blocked here so the monitor cannot stop the
-            // stream underneath the pending playlist request. Once the request
-            // completes, normal HLS playlist/segment requests keep activity alive
-            // and the historical 10 s post-view idle shutdown remains unchanged.
-            if ((attempt % 10) == 0) {
+        // V10.8.179: do not pin an HTTP worker for the old 12-second cold-start
+        // budget. Warm DVB normally removes tuner lock time, so give the service
+        // pipeline up to three seconds to publish a decoder-safe first segment.
+        // If a copy-mode source has a longer GOP, return 503 + Retry-After and
+        // let the client retry while the background service keeps running.
+        bool ready = livePlaylistReady();
+        int startupAttempts = 0;
+        for (; startupAttempts < 30 && !ready; ++startupAttempts) {
+            if ((startupAttempts % 10) == 0) {
                 std::string startupKeepaliveError;
-                if (!streamManager.ensureOnDemandStream(
+                if (!streamManager.ensureOnDemandStreamParallel(
                         id, "hls-startup-wait", &startupKeepaliveError)) {
                     demandError = startupKeepaliveError;
                     break;
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            ready = livePlaylistReady();
+        }
+
+        const auto coherentMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - hlsStartupBegin).count();
+        if (!ready) {
+            res.result(http::status::service_unavailable);
+            res.set(http::field::content_type, "text/plain");
+            res.set("Retry-After", "1");
+            res.set(http::field::cache_control, "no-cache, no-store, must-revalidate");
+            res.set("Access-Control-Allow-Origin", "*");
+            res.keep_alive(false);
+            res.body() = "HLS starting";
+            std::cerr << "HLS STARTUP PENDING stream=" << id
+                      << " activation_ms=" << activationMs
+                      << " coherent_wait_ms=" << coherentMs
+                      << " attempts=" << startupAttempts;
+            if (!demandError.empty()) std::cerr << " error=" << demandError;
+            std::cerr << std::endl;
+            return true;
+        }
+
+        if (!wasActive || startupAttempts > 0) {
+            std::cerr << "HLS STARTUP READY stream=" << id
+                      << " activation_ms=" << activationMs
+                      << " first_media_ms=" << coherentMs
+                      << " attempts=" << startupAttempts
+                      << std::endl;
         }
     }
     if (!archivePlaylist.empty()) {
