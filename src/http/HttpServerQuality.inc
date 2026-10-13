@@ -1,3 +1,106 @@
+namespace {
+
+constexpr const char* kQualityHistoryV2Dir = "/var/lib/dvbstreamer5/quality-history-v2";
+constexpr std::size_t kQualityMemorySamplesPerStream = 240;
+constexpr std::uintmax_t kQualityShardPruneBytes = 4ULL * 1024ULL * 1024ULL;
+
+std::mutex& qualityDiskMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::filesystem::path qualityShardPath(const std::string& id) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string encoded;
+    encoded.reserve(id.size() * 3U + 6U);
+    for (unsigned char ch : id) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_') {
+            encoded.push_back(static_cast<char>(ch));
+        } else {
+            encoded.push_back('_');
+            encoded.push_back(hex[(ch >> 4U) & 0x0fU]);
+            encoded.push_back(hex[ch & 0x0fU]);
+        }
+    }
+    if (encoded.empty()) encoded = "stream";
+    return std::filesystem::path(kQualityHistoryV2Dir) / (encoded + ".jsonl");
+}
+
+std::pair<std::string, std::string> classifyQualitySample(
+    bool active,
+    const std::string& status,
+    uint64_t inputKbps,
+    uint64_t outputKbps,
+    uint64_t targetKbps,
+    uint64_t inputCc,
+    uint64_t outputCc) {
+    const std::string statusLower = toLower(status);
+    if (!active) {
+        return {"offline", status == "stopped" ? "Поток остановлен" : "Поток не активен: " + status};
+    }
+    if (statusLower.find("error") != std::string::npos ||
+        statusLower.find("failed") != std::string::npos ||
+        statusLower.find("ended") != std::string::npos) {
+        return {"error", "Ошибка media engine: " + status};
+    }
+    if (inputKbps == 0) {
+        return {"warn", "Нет входного битрейта при активном потоке"};
+    }
+    if (inputCc > 0 || outputCc > 0) {
+        return {"error", "CC-errors MPEG-TS: вход=" + std::to_string(inputCc) +
+            ", выход=" + std::to_string(outputCc)};
+    }
+    if (targetKbps > 0 && outputKbps > 0) {
+        const double diff = std::abs(static_cast<double>(outputKbps) -
+                                     static_cast<double>(targetKbps));
+        const double deviation = diff / static_cast<double>(targetKbps);
+        if (deviation > 0.20) {
+            return {"warn", "Выходной битрейт отклоняется от цели больше чем на 20%"};
+        }
+    }
+    return {"ok", "Качество в норме"};
+}
+
+void pruneQualityShardIfNeeded(const std::filesystem::path& path, int64_t cutoff) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size <= kQualityShardPruneBytes) return;
+
+    const auto temp = path.string() + ".tmp";
+    std::ifstream input(path, std::ios::binary);
+    std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+    if (!input.is_open() || !output.is_open()) return;
+
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.size() < 4 || line.front() != '[') continue;
+        const auto comma = line.find(',');
+        if (comma == std::string::npos || comma <= 1) continue;
+        try {
+            const int64_t timestamp = std::stoll(line.substr(1, comma - 1));
+            if (timestamp >= cutoff) output << line << '\n';
+        } catch (...) {
+        }
+    }
+    output.flush();
+    if (!output.good()) {
+        output.close();
+        std::filesystem::remove(temp, ec);
+        return;
+    }
+    output.close();
+    input.close();
+    std::filesystem::rename(temp, path, ec);
+    if (ec) {
+        std::filesystem::remove(path, ec);
+        ec.clear();
+        std::filesystem::rename(temp, path, ec);
+    }
+    if (ec) std::filesystem::remove(temp, ec);
+}
+
+} // namespace
+
 void HttpServer::recordAllQualitySamples() {
     const auto snap = streamManager.snapshot();
     const auto configs = configManager.config.streams;
@@ -47,133 +150,102 @@ void HttpServer::scheduleQualitySampler() {
 }
 
 void HttpServer::loadQualityHistoryFromDisk() {
-    std::ifstream input(kQualityHistoryPath, std::ios::binary);
-    if (!input.is_open()) return;
-
-    Json::Value root;
-    Json::CharReaderBuilder reader;
-    std::string errors;
-    if (!Json::parseFromStream(reader, input, &root, &errors) ||
-        root.get("format", "").asString() != "dvbstreamer5-quality-history" ||
-        root.get("version", 0).asInt() != 1) {
-        std::cerr << "QUALITY HISTORY load ignored invalid file: " << errors << std::endl;
+    // V10.8.178: never deserialize the legacy all-stream JSON during startup.
+    // A 91-MB/292k-sample file was measured to delay HTTP readiness by ~2.6 s
+    // and inflate startup RSS from ~5 MB to hundreds of MB.  V2 history is
+    // sharded by stream and read lazily only when that stream's graph is opened.
+    std::error_code ec;
+    std::filesystem::create_directories(kQualityHistoryV2Dir, ec);
+    if (ec) {
+        std::cerr << "QUALITY HISTORY v2 mkdir failed: " << ec.message() << std::endl;
         return;
     }
 
-    std::set<std::string> configuredIds;
-    for (const auto& cfg : configManager.config.streams) configuredIds.insert(cfg.id);
-    const int64_t now = unixNowSeconds();
-    const int64_t cutoff = now - kQualityRetentionSeconds;
-
-    std::lock_guard<std::mutex> lock(qualityMutex);
-    qualitySamples.clear();
-    qualityLastCompaction.clear();
-
-    const Json::Value& streams = root["streams"];
-    if (!streams.isObject()) return;
-    for (const auto& id : streams.getMemberNames()) {
-        if (!configuredIds.count(id)) continue;
-        const Json::Value& rows = streams[id];
-        if (!rows.isArray()) continue;
-
-        auto& dst = qualitySamples[id];
-        for (const auto& row : rows) {
-            QualitySample sample;
-            sample.timestamp = row.get("ts", Json::Int64(0)).asInt64();
-            if (sample.timestamp < cutoff || sample.timestamp > now + 300) continue;
-            sample.active = row.get("active", false).asBool();
-            sample.inputKbps = row.get("input_kbps", Json::UInt64(0)).asUInt64();
-            sample.outputKbps = row.get("output_kbps", Json::UInt64(0)).asUInt64();
-            sample.targetKbps = row.get("target_kbps", Json::UInt64(0)).asUInt64();
-            sample.inputCcErrors = row.get("input_cc_errors", Json::UInt64(0)).asUInt64();
-            sample.outputCcErrors = row.get("output_cc_errors", Json::UInt64(0)).asUInt64();
-            sample.inputCcErrorsTotal = row.get("input_cc_errors_total", Json::UInt64(0)).asUInt64();
-            sample.outputCcErrorsTotal = row.get("output_cc_errors_total", Json::UInt64(0)).asUInt64();
-            sample.status = row.get("status", "").asString();
-            sample.level = row.get("level", "offline").asString();
-            sample.message = row.get("message", "").asString();
-            dst.push_back(std::move(sample));
-        }
-        std::sort(dst.begin(), dst.end(), [](const QualitySample& a, const QualitySample& b) {
-            return a.timestamp < b.timestamp;
-        });
-        while (dst.size() > kQualityMaxSamplesPerStream) dst.pop_front();
-        if (dst.empty()) qualitySamples.erase(id);
-        else qualityLastCompaction[id] = now;
+    const std::filesystem::path legacy(kQualityHistoryPath);
+    if (std::filesystem::exists(legacy, ec) && !ec) {
+        std::cerr << "QUALITY HISTORY v2 lazy mode: legacy file kept but not loaded path="
+                  << legacy.string() << std::endl;
+    } else {
+        std::cerr << "QUALITY HISTORY v2 lazy mode: startup_load=off dir="
+                  << kQualityHistoryV2Dir << std::endl;
     }
-
-    std::size_t restored = 0;
-    for (const auto& [id, rows] : qualitySamples) {
-        (void)id;
-        restored += rows.size();
-    }
-    std::cerr << "QUALITY HISTORY restored samples=" << restored
-              << " path=" << kQualityHistoryPath << std::endl;
 }
 
 void HttpServer::saveQualityHistoryToDisk() {
-    Json::Value root;
-    root["format"] = "dvbstreamer5-quality-history";
-    root["version"] = 1;
-    root["saved_at"] = Json::Int64(unixNowSeconds());
-    Json::Value streams(Json::objectValue);
+    // Persist one compact 5-minute point per stream.  Recent 30-second points
+    // stay only in the small in-memory ring; older history lives in per-stream
+    // shards so a process restart never has to parse every channel's history.
+    std::vector<std::pair<std::string, QualitySample>> snapshots;
+    const int64_t now = unixNowSeconds();
+    const int64_t aggregateCutoff = now - kQualityPersistIntervalSeconds;
 
     {
         std::lock_guard<std::mutex> lock(qualityMutex);
+        snapshots.reserve(qualitySamples.size());
         for (const auto& [id, rows] : qualitySamples) {
-            Json::Value array(Json::arrayValue);
-            for (const auto& sample : rows) {
-                Json::Value row;
-                row["ts"] = Json::Int64(sample.timestamp);
-                row["active"] = sample.active;
-                row["input_kbps"] = Json::UInt64(sample.inputKbps);
-                row["output_kbps"] = Json::UInt64(sample.outputKbps);
-                row["target_kbps"] = Json::UInt64(sample.targetKbps);
-                row["input_cc_errors"] = Json::UInt64(sample.inputCcErrors);
-                row["output_cc_errors"] = Json::UInt64(sample.outputCcErrors);
-                row["input_cc_errors_total"] = Json::UInt64(sample.inputCcErrorsTotal);
-                row["output_cc_errors_total"] = Json::UInt64(sample.outputCcErrorsTotal);
-                row["status"] = sample.status;
-                row["level"] = sample.level;
-                row["message"] = sample.message;
-                array.append(std::move(row));
+            if (rows.empty()) continue;
+            QualitySample persisted = rows.back();
+            uint64_t inputCc = 0;
+            uint64_t outputCc = 0;
+            for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+                if (it->timestamp < aggregateCutoff) break;
+                inputCc += it->inputCcErrors;
+                outputCc += it->outputCcErrors;
             }
-            streams[id] = std::move(array);
+            persisted.inputCcErrors = inputCc;
+            persisted.outputCcErrors = outputCc;
+            if (inputCc > 0 || outputCc > 0) {
+                persisted.level = "error";
+                persisted.message = "CC-errors MPEG-TS за интервал: вход=" +
+                    std::to_string(inputCc) + ", выход=" + std::to_string(outputCc);
+            }
+            snapshots.emplace_back(id, std::move(persisted));
         }
     }
-    root["streams"] = std::move(streams);
 
-    const std::filesystem::path path(kQualityHistoryPath);
-    const std::filesystem::path temp = path.string() + ".tmp";
+    if (snapshots.empty()) return;
+
     std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
+    std::filesystem::create_directories(kQualityHistoryV2Dir, ec);
     if (ec) {
-        std::cerr << "QUALITY HISTORY persist mkdir failed: " << ec.message() << std::endl;
+        std::cerr << "QUALITY HISTORY v2 persist mkdir failed: " << ec.message() << std::endl;
         return;
     }
 
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
-    {
-        std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+    const int64_t cutoff = now - kQualityRetentionSeconds;
+
+    std::lock_guard<std::mutex> diskLock(qualityDiskMutex());
+    for (const auto& [id, sample] : snapshots) {
+        Json::Value row(Json::arrayValue);
+        row.append(Json::Int64(sample.timestamp));
+        row.append(sample.active);
+        row.append(Json::UInt64(sample.inputKbps));
+        row.append(Json::UInt64(sample.outputKbps));
+        row.append(Json::UInt64(sample.targetKbps));
+        row.append(Json::UInt64(sample.inputCcErrors));
+        row.append(Json::UInt64(sample.outputCcErrors));
+        row.append(Json::UInt64(sample.inputCcErrorsTotal));
+        row.append(Json::UInt64(sample.outputCcErrorsTotal));
+        row.append(sample.status);
+        row.append(sample.level);
+        row.append(sample.message);
+
+        const auto path = qualityShardPath(id);
+        std::ofstream output(path, std::ios::binary | std::ios::app);
         if (!output.is_open()) {
-            std::cerr << "QUALITY HISTORY persist open failed: " << temp << std::endl;
-            return;
+            std::cerr << "QUALITY HISTORY v2 persist open failed: " << path << std::endl;
+            continue;
         }
-        output << Json::writeString(writer, root);
+        output << Json::writeString(writer, row) << '\n';
         output.flush();
         if (!output.good()) {
-            std::cerr << "QUALITY HISTORY persist write failed: " << temp << std::endl;
-            output.close();
-            std::filesystem::remove(temp, ec);
-            return;
+            std::cerr << "QUALITY HISTORY v2 persist write failed: " << path << std::endl;
+            continue;
         }
-    }
-
-    std::filesystem::rename(temp, path, ec);
-    if (ec) {
-        std::cerr << "QUALITY HISTORY persist rename failed: " << ec.message() << std::endl;
-        std::filesystem::remove(temp, ec);
+        output.close();
+        pruneQualityShardIfNeeded(path, cutoff);
     }
 }
 
@@ -182,20 +254,12 @@ std::string HttpServer::qualityHistory(const std::string& target) {
     uint64_t periodSeconds = 3600;
     try {
         const std::string period = queryValue(target, "period");
-        if (!period.empty()) {
-            periodSeconds = std::stoull(period);
-        }
+        if (!period.empty()) periodSeconds = std::stoull(period);
     } catch (const std::exception&) {
         periodSeconds = 3600;
     }
     periodSeconds = std::clamp<uint64_t>(periodSeconds, 60, 30ULL * 24ULL * 60ULL * 60ULL);
 
-    // 203.16: the quality modal is allowed to keep history alive by itself.
-    // Previously the history was recorded only while /api/state happened to be
-    // polled. If that polling was throttled/stalled by the browser, the chart
-    // ended tens of minutes before the right edge even though the stream was
-    // still running. Sample the requested live stream here as well; the normal
-    // 30-second recorder guard keeps memory/CPU bounded.
     Json::Value liveState;
     const StreamConfig* liveConfig = nullptr;
     for (const auto& cfg : configManager.config.streams) {
@@ -232,54 +296,88 @@ std::string HttpServer::qualityHistory(const std::string& target) {
     }
 
     const int64_t generatedAt = unixNowSeconds();
+    const int64_t cutoff = generatedAt - static_cast<int64_t>(periodSeconds);
+    std::map<int64_t, QualitySample> merged;
+
+    // Read only the requested stream's shard. A 30-day graph now touches at
+    // most one small file instead of materializing every stream at process boot.
+    {
+        std::lock_guard<std::mutex> diskLock(qualityDiskMutex());
+        std::ifstream input(qualityShardPath(id), std::ios::binary);
+        if (input.is_open()) {
+            Json::CharReaderBuilder readerBuilder;
+            std::string line;
+            while (std::getline(input, line)) {
+                if (line.empty()) continue;
+                Json::Value row;
+                std::string errors;
+                std::unique_ptr<Json::CharReader> reader(readerBuilder.newCharReader());
+                if (!reader->parse(line.data(), line.data() + line.size(), &row, &errors) ||
+                    !row.isArray() || row.size() < 12) {
+                    continue;
+                }
+                QualitySample sample;
+                sample.timestamp = row[0].asInt64();
+                if (sample.timestamp < cutoff || sample.timestamp > generatedAt + 300) continue;
+                sample.active = row[1].asBool();
+                sample.inputKbps = row[2].asUInt64();
+                sample.outputKbps = row[3].asUInt64();
+                sample.targetKbps = row[4].asUInt64();
+                sample.inputCcErrors = row[5].asUInt64();
+                sample.outputCcErrors = row[6].asUInt64();
+                sample.inputCcErrorsTotal = row[7].asUInt64();
+                sample.outputCcErrorsTotal = row[8].asUInt64();
+                sample.status = row[9].asString();
+                sample.level = row[10].asString();
+                sample.message = row[11].asString();
+                merged[sample.timestamp] = std::move(sample);
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(qualityMutex);
+        const auto found = qualitySamples.find(id);
+        if (found != qualitySamples.end()) {
+            for (const auto& sample : found->second) {
+                if (sample.timestamp >= cutoff) merged[sample.timestamp] = sample;
+            }
+        }
+    }
+
     Json::Value root;
     root["id"] = id;
     root["period_seconds"] = Json::UInt64(periodSeconds);
     root["generated_at"] = Json::Int64(generatedAt);
     Json::Value samples(Json::arrayValue);
-
-    const int64_t cutoff = generatedAt - static_cast<int64_t>(periodSeconds);
     std::map<std::string, unsigned int> totals = {
         {"ok", 0}, {"warn", 0}, {"error", 0}, {"offline", 0}
     };
+
     QualitySample newestStored;
     bool haveNewestStored = false;
-
-    {
-        std::lock_guard<std::mutex> lock(qualityMutex);
-        auto found = qualitySamples.find(id);
-        if (found != qualitySamples.end()) {
-            if (!found->second.empty()) {
-                newestStored = found->second.back();
-                haveNewestStored = true;
-            }
-            for (const auto& sample : found->second) {
-                if (sample.timestamp < cutoff) {
-                    continue;
-                }
-                Json::Value item;
-                item["ts"] = Json::Int64(sample.timestamp);
-                item["active"] = sample.active;
-                item["input_kbps"] = Json::UInt64(sample.inputKbps);
-                item["output_kbps"] = Json::UInt64(sample.outputKbps);
-                item["target_kbps"] = Json::UInt64(sample.targetKbps);
-                item["input_cc_errors"] = Json::UInt64(sample.inputCcErrors);
-                item["output_cc_errors"] = Json::UInt64(sample.outputCcErrors);
-                item["input_cc_errors_total"] = Json::UInt64(sample.inputCcErrorsTotal);
-                item["output_cc_errors_total"] = Json::UInt64(sample.outputCcErrorsTotal);
-                item["cc_errors"] = Json::UInt64(sample.inputCcErrors);
-                item["status"] = sample.status;
-                item["level"] = sample.level;
-                item["message"] = sample.message;
-                samples.append(item);
-                totals[sample.level]++;
-            }
-        }
+    for (const auto& [timestamp, sample] : merged) {
+        (void)timestamp;
+        Json::Value item;
+        item["ts"] = Json::Int64(sample.timestamp);
+        item["active"] = sample.active;
+        item["input_kbps"] = Json::UInt64(sample.inputKbps);
+        item["output_kbps"] = Json::UInt64(sample.outputKbps);
+        item["target_kbps"] = Json::UInt64(sample.targetKbps);
+        item["input_cc_errors"] = Json::UInt64(sample.inputCcErrors);
+        item["output_cc_errors"] = Json::UInt64(sample.outputCcErrors);
+        item["input_cc_errors_total"] = Json::UInt64(sample.inputCcErrorsTotal);
+        item["output_cc_errors_total"] = Json::UInt64(sample.outputCcErrorsTotal);
+        item["cc_errors"] = Json::UInt64(sample.inputCcErrors);
+        item["status"] = sample.status;
+        item["level"] = sample.level;
+        item["message"] = sample.message;
+        samples.append(item);
+        totals[sample.level]++;
+        newestStored = sample;
+        haveNewestStored = true;
     }
 
-    // Add a non-persistent live point at the exact right edge. This keeps the
-    // graph visually continuous even with the intentionally sparse 30-second
-    // retained history, without increasing the history allocation rate.
     if (liveConfig && !liveState.isNull()) {
         Json::Value live;
         live["ts"] = Json::Int64(generatedAt);
@@ -315,27 +413,10 @@ std::string HttpServer::qualityHistory(const std::string& target) {
         live["cc_errors"] = Json::UInt64(inputCc);
         const std::string status = liveState.get("status", "").asString();
         live["status"] = status;
-        const std::string statusLower = toLower(status);
-        std::string level = "ok";
-        std::string message = "Качество в норме";
-        if (!active) {
-            level = "offline";
-            message = status == "stopped" ? "Поток остановлен" : "Поток не активен: " + status;
-        } else if (statusLower.find("error") != std::string::npos ||
-                   statusLower.find("failed") != std::string::npos ||
-                   statusLower.find("ended") != std::string::npos) {
-            level = "error";
-            message = "Ошибка media engine: " + status;
-        } else if (inputKbps == 0) {
-            level = "warn";
-            message = "Нет входного битрейта при активном потоке";
-        } else if (inputCc > 0 || outputCc > 0) {
-            level = "error";
-            message = "CC-errors MPEG-TS: вход=" + std::to_string(inputCc) +
-                ", выход=" + std::to_string(outputCc);
-        }
-        live["level"] = level;
-        live["message"] = message;
+        const auto classified = classifyQualitySample(
+            active, status, inputKbps, outputKbps, targetKbps, inputCc, outputCc);
+        live["level"] = classified.first;
+        live["message"] = classified.second;
         root["live_sample"] = live;
     }
 
@@ -363,9 +444,6 @@ std::string HttpServer::qualityHistory(const std::string& target) {
 void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value& state) {
     const int64_t now = unixNowSeconds();
 
-    // 202.50: do not allocate/copy status/message strings for every /api/state
-    // poll.  The quality chart does not need 2-second resolution, and this early
-    // check also avoids allocator churn on the skipped polls.
     uint64_t previousInputCcTotal = 0;
     uint64_t previousOutputCcTotal = 0;
     bool havePreviousCcTotals = false;
@@ -373,9 +451,7 @@ void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value&
         std::lock_guard<std::mutex> lock(qualityMutex);
         const auto found = qualitySamples.find(cfg.id);
         if (found != qualitySamples.end() && !found->second.empty()) {
-            if (now - found->second.back().timestamp < kQualityRecordIntervalSeconds) {
-                return;
-            }
+            if (now - found->second.back().timestamp < kQualityRecordIntervalSeconds) return;
             previousInputCcTotal = found->second.back().inputCcErrorsTotal;
             previousOutputCcTotal = found->second.back().outputCcErrorsTotal;
             havePreviousCcTotals = true;
@@ -388,10 +464,13 @@ void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value&
     sample.inputKbps = state.get("bitrate_in_kbps", Json::UInt64(0)).asUInt64();
     sample.outputKbps = state.get("bitrate_out_kbps", Json::UInt64(0)).asUInt64();
     sample.targetKbps = (cfg.transcodeEnabled ? nativeMuxBitrate(cfg) : cfg.targetBitrate) / 1000;
-    const uint64_t fallbackInputCc = state.get("input_cc_errors", state.get("cc_errors", Json::UInt64(0))).asUInt64();
+    const uint64_t fallbackInputCc = state.get("input_cc_errors",
+        state.get("cc_errors", Json::UInt64(0))).asUInt64();
     const uint64_t fallbackOutputCc = state.get("output_cc_errors", Json::UInt64(0)).asUInt64();
-    sample.inputCcErrorsTotal = state.get("input_cc_errors_total", Json::UInt64(fallbackInputCc)).asUInt64();
-    sample.outputCcErrorsTotal = state.get("output_cc_errors_total", Json::UInt64(fallbackOutputCc)).asUInt64();
+    sample.inputCcErrorsTotal = state.get("input_cc_errors_total",
+        Json::UInt64(fallbackInputCc)).asUInt64();
+    sample.outputCcErrorsTotal = state.get("output_cc_errors_total",
+        Json::UInt64(fallbackOutputCc)).asUInt64();
     if (havePreviousCcTotals) {
         sample.inputCcErrors = sample.inputCcErrorsTotal >= previousInputCcTotal
             ? sample.inputCcErrorsTotal - previousInputCcTotal
@@ -400,104 +479,26 @@ void HttpServer::recordQualitySample(const StreamConfig& cfg, const Json::Value&
             ? sample.outputCcErrorsTotal - previousOutputCcTotal
             : sample.outputCcErrorsTotal;
     } else {
-        // First retained point has no previous 30-second baseline. Keep only the
-        // current StreamManager delta rather than treating lifetime totals as one
-        // enormous CC-error spike.
         sample.inputCcErrors = fallbackInputCc;
         sample.outputCcErrors = fallbackOutputCc;
     }
     sample.status = state.get("status", "").asString();
-
-    const std::string statusLower = toLower(sample.status);
-    if (!sample.active) {
-        sample.level = "offline";
-        sample.message = sample.status == "stopped" ? "Поток остановлен" : "Поток не активен: " + sample.status;
-    } else if (statusLower.find("error") != std::string::npos ||
-               statusLower.find("failed") != std::string::npos ||
-               statusLower.find("ended") != std::string::npos) {
-        sample.level = "error";
-        sample.message = "Ошибка media engine: " + sample.status;
-    } else if (sample.inputKbps == 0) {
-        sample.level = "warn";
-        sample.message = "Нет входного битрейта при активном потоке";
-    } else if (sample.inputCcErrors > 0 || sample.outputCcErrors > 0) {
-        sample.level = "error";
-        sample.message = "CC-errors MPEG-TS: вход=" + std::to_string(sample.inputCcErrors) +
-            ", выход=" + std::to_string(sample.outputCcErrors);
-    } else if (sample.targetKbps > 0 && sample.outputKbps > 0) {
-        const double diff = std::abs(static_cast<double>(sample.outputKbps) - static_cast<double>(sample.targetKbps));
-        const double deviation = diff / static_cast<double>(sample.targetKbps);
-        if (deviation > 0.20) {
-            sample.level = "warn";
-            sample.message = "Выходной битрейт отклоняется от цели больше чем на 20%";
-        } else {
-            sample.level = "ok";
-            sample.message = "Качество в норме";
-        }
-    } else {
-        sample.level = "ok";
-        sample.message = "Качество в норме";
-    }
+    const auto classified = classifyQualitySample(
+        sample.active, sample.status, sample.inputKbps, sample.outputKbps,
+        sample.targetKbps, sample.inputCcErrors, sample.outputCcErrors);
+    sample.level = classified.first;
+    sample.message = classified.second;
 
     std::lock_guard<std::mutex> lock(qualityMutex);
     auto& samples = qualitySamples[cfg.id];
-    // Another HTTP worker may have recorded this stream while the sample was
-    // being prepared.  Re-check under the owning mutex before appending.
-    if (!samples.empty() &&
-        now - samples.back().timestamp < kQualityRecordIntervalSeconds) {
-        return;
-    }
+    if (!samples.empty() && now - samples.back().timestamp < kQualityRecordIntervalSeconds) return;
     if (!samples.empty() && samples.back().timestamp == sample.timestamp) {
-        samples.back() = sample;
+        samples.back() = std::move(sample);
     } else {
-        samples.push_back(sample);
+        samples.push_back(std::move(sample));
     }
 
-    const int64_t cutoff = now - kQualityRetentionSeconds;
-    while (!samples.empty() && samples.front().timestamp < cutoff) {
-        samples.pop_front();
-    }
-
-    auto& lastCompaction = qualityLastCompaction[cfg.id];
-    if (lastCompaction == 0 || now - lastCompaction >= kQualityCompactionIntervalSeconds) {
-        std::deque<QualitySample> compacted;
-        int64_t previousBucket = -1;
-        int64_t previousStep = -1;
-        for (const auto& existing : samples) {
-            const int64_t age = std::max<int64_t>(0, now - existing.timestamp);
-            const int64_t step = age <= kQualityFullResolutionSeconds
-                ? 1LL
-                : (age <= 24LL * 60LL * 60LL
-                    ? kQualityDayResolutionSeconds
-                    : kQualityMonthResolutionSeconds);
-            const int64_t bucket = existing.timestamp / step;
-            if (!compacted.empty() && step == previousStep && bucket == previousBucket) {
-                // 203.16: bitrate/status use the newest sample in a compacted
-                // bucket, but CC errors are interval counters and must be summed.
-                // Replacing the whole sample used to erase continuity errors that
-                // happened earlier in the same 1-minute/5-minute history bucket.
-                const uint64_t inputCcInBucket = compacted.back().inputCcErrors + existing.inputCcErrors;
-                const uint64_t outputCcInBucket = compacted.back().outputCcErrors + existing.outputCcErrors;
-                compacted.back() = existing;
-                compacted.back().inputCcErrors = inputCcInBucket;
-                compacted.back().outputCcErrors = outputCcInBucket;
-                if ((inputCcInBucket > 0 || outputCcInBucket > 0) && compacted.back().level == "ok") {
-                    compacted.back().level = "error";
-                    compacted.back().message = "CC-errors MPEG-TS за интервал: вход=" +
-                        std::to_string(inputCcInBucket) + ", выход=" + std::to_string(outputCcInBucket);
-                }
-            } else {
-                compacted.push_back(existing);
-                previousStep = step;
-                previousBucket = bucket;
-            }
-        }
-        samples.swap(compacted);
-        lastCompaction = now;
-    }
-
-    while (samples.size() > kQualityMaxSamplesPerStream) {
-        samples.pop_front();
-    }
+    // Keep only a small high-resolution runtime ring. Long-term history is on
+    // disk in the requested stream's V2 shard and is never bulk-loaded.
+    while (samples.size() > kQualityMemorySamplesPerStream) samples.pop_front();
 }
-
