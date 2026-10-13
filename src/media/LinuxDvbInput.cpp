@@ -278,6 +278,20 @@ bool setFrontendProperties(
     return false;
 }
 
+void drainFrontendEvents(int fd) {
+    unsigned drained = 0;
+    for (;;) {
+        dvb_frontend_event event {};
+        if (ioctl(fd, FE_GET_EVENT, &event) == 0) {
+            ++drained;
+            continue;
+        }
+        if (errno == EINTR) continue;
+        break;
+    }
+    std::clog << "NATIVE DVB TUNE event_queue_drained count=" << drained << '\n';
+}
+
 bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) {
     if (config.adapter < 0 || config.adapter > 31 ||
         config.frontend < 0 || config.frontend > 31 ||
@@ -309,6 +323,10 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     const std::string module = frontendDriverModule(config);
     const int mode = driverMode(module);
     const bool stid135 = module == "stid135";
+    const bool cx23885Compat = module == "cx23885";
+    const int effectiveLockTimeoutMs = cx23885Compat
+        ? std::max(config.lockTimeoutMs, 8000)
+        : config.lockTimeoutMs;
 
     std::clog
         << "NATIVE DVB TUNE begin adapter=" << config.adapter
@@ -322,6 +340,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         << " band=" << (highBand ? "high" : "low")
         << " diseqc=" << config.diseqcSource
         << " stream_id=" << config.streamId
+        << " lock_timeout_ms=" << effectiveLockTimeoutMs
         << '\n';
 
     if (stid135 && mode == 2) {
@@ -360,6 +379,24 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
         }
+    } else if (cx23885Compat && config.diseqcSource < 0) {
+        // Prof Revolution 8000 (cx23885 -> STV090x -> STB6100) is sensitive
+        // to the satellite SEC/tune ordering.  Mirror MuMuDVB's proven path:
+        // voltage first, final band tone, 15 ms SEC settle, then an additional
+        // 100 ms before clearing stale frontend events and submitting S2API.
+        if (!setVoltage(fd, voltage,
+                        "cx23885 MuMuDVB-compatible LNB voltage", error)) {
+            return false;
+        }
+        if (!setTone(fd, bandTone,
+                     "cx23885 MuMuDVB-compatible LNB tone", error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        drainFrontendEvents(fd);
+        std::clog << "NATIVE DVB TUNE compat=mumudvb-cx23885 sec_order=voltage-tone"
+                  << " settle_ms=115\n";
     } else {
         if (!setTone(fd, SEC_TONE_OFF,
                      "satellite pre-DiSEqC tone off", error)) {
@@ -388,35 +425,82 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
-    std::vector<dtv_property> properties(10);
-    properties[0].cmd = DTV_CLEAR;
-    properties[1].cmd = DTV_DELIVERY_SYSTEM;
-    properties[1].u.data =
-        config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
-    properties[2].cmd = DTV_FREQUENCY;
-    properties[2].u.data = intermediateFrequency;
-    properties[3].cmd = DTV_SYMBOL_RATE;
-    properties[3].u.data = config.symbolRateK * 1000U;
-    properties[4].cmd = DTV_MODULATION;
-    properties[4].u.data = parseModulation(config);
-    properties[5].cmd = DTV_INNER_FEC;
-    properties[5].u.data = parseFec(config.fec);
-    properties[6].cmd = DTV_INVERSION;
-    properties[6].u.data = INVERSION_AUTO;
-    properties[7].cmd = DTV_PILOT;
-    properties[7].u.data = PILOT_AUTO;
-    properties[8].cmd = DTV_ROLLOFF;
-    properties[8].u.data = ROLLOFF_AUTO;
+    std::vector<dtv_property> properties;
+    if (cx23885Compat) {
+        // MuMuDVB sends DTV_CLEAR as its own FE_SET_PROPERTY ioctl before the
+        // actual tune property batch.  Keep that behavior isolated to cx23885
+        // so the already-working TBS/STiD135 path remains unchanged.
+        std::vector<dtv_property> clearProperties(1);
+        clearProperties[0].cmd = DTV_CLEAR;
+        if (!setFrontendProperties(fd, clearProperties, error)) {
+            std::clog << "NATIVE DVB TUNE clear_error error=" << error << '\n';
+            return false;
+        }
 
-    std::size_t count = 9;
-    if (config.streamId >= 0) {
-        properties[count].cmd = DTV_STREAM_ID;
-        properties[count].u.data =
-            static_cast<std::uint32_t>(config.streamId);
+        properties.resize(config.streamId >= 0 ? 10 : 9);
+        std::size_t count = 0;
+        properties[count].cmd = DTV_DELIVERY_SYSTEM;
+        properties[count++].u.data =
+            config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
+        properties[count].cmd = DTV_FREQUENCY;
+        properties[count++].u.data = intermediateFrequency;
+        properties[count].cmd = DTV_MODULATION;
+        properties[count++].u.data =
+            config.modulation == "auto" ? QPSK : parseModulation(config);
+        properties[count].cmd = DTV_SYMBOL_RATE;
+        properties[count++].u.data = config.symbolRateK * 1000U;
+        properties[count].cmd = DTV_INNER_FEC;
+        properties[count++].u.data = parseFec(config.fec);
+        properties[count].cmd = DTV_INVERSION;
+        properties[count++].u.data = INVERSION_AUTO;
+        properties[count].cmd = DTV_ROLLOFF;
+        properties[count++].u.data = ROLLOFF_35;
+        properties[count].cmd = DTV_PILOT;
+        properties[count++].u.data = PILOT_AUTO;
+        if (config.streamId >= 0) {
+            properties[count].cmd = DTV_STREAM_ID;
+            properties[count++].u.data = static_cast<std::uint32_t>(config.streamId);
+        }
+        properties[count].cmd = DTV_TUNE;
         ++count;
+        properties.resize(count);
+
+        std::clog << "NATIVE DVB TUNE compat=mumudvb-cx23885"
+                  << " modulation="
+                  << (config.modulation == "auto" ? "qpsk(auto-compat)" : config.modulation)
+                  << " rolloff=35"
+                  << " clear=separate\n";
+    } else {
+        properties.resize(10);
+        properties[0].cmd = DTV_CLEAR;
+        properties[1].cmd = DTV_DELIVERY_SYSTEM;
+        properties[1].u.data =
+            config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
+        properties[2].cmd = DTV_FREQUENCY;
+        properties[2].u.data = intermediateFrequency;
+        properties[3].cmd = DTV_SYMBOL_RATE;
+        properties[3].u.data = config.symbolRateK * 1000U;
+        properties[4].cmd = DTV_MODULATION;
+        properties[4].u.data = parseModulation(config);
+        properties[5].cmd = DTV_INNER_FEC;
+        properties[5].u.data = parseFec(config.fec);
+        properties[6].cmd = DTV_INVERSION;
+        properties[6].u.data = INVERSION_AUTO;
+        properties[7].cmd = DTV_PILOT;
+        properties[7].u.data = PILOT_AUTO;
+        properties[8].cmd = DTV_ROLLOFF;
+        properties[8].u.data = ROLLOFF_AUTO;
+
+        std::size_t count = 9;
+        if (config.streamId >= 0) {
+            properties[count].cmd = DTV_STREAM_ID;
+            properties[count].u.data =
+                static_cast<std::uint32_t>(config.streamId);
+            ++count;
+        }
+        properties.resize(count + 1);
+        properties[count].cmd = DTV_TUNE;
     }
-    properties.resize(count + 1);
-    properties[count].cmd = DTV_TUNE;
 
     if (!setFrontendProperties(fd, properties, error)) {
         std::clog
@@ -430,7 +514,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
 
     const auto started = std::chrono::steady_clock::now();
     const auto deadline =
-        started + std::chrono::milliseconds(config.lockTimeoutMs);
+        started + std::chrono::milliseconds(effectiveLockTimeoutMs);
     auto nextLog = started;
     fe_status_t lastStatus {};
     bool haveLastStatus = false;
@@ -475,7 +559,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
 
     error =
         "DVB frontend did not lock within " +
-        std::to_string(config.lockTimeoutMs) +
+        std::to_string(effectiveLockTimeoutMs) +
         " milliseconds";
 
     std::clog
