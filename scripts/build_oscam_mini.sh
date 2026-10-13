@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SRC="${1:?vendored source directory is required}"
-OUT="${2:?output directory is required}"
+SRC_INPUT="${1:?vendored source directory is required}"
+OUT_INPUT="${2:?output directory is required}"
+
+# Canonicalize paths before changing into the copied OSCam work tree below.
+# Callers commonly pass repository-relative paths such as
+#   third_party/oscam-mini build-10.8.179/oscam-mini
+# and keeping those paths relative after `cd "$WORK"` made CMake resolve them
+# underneath WORK again (for example .../src/build-10.8.179/.../src).
+SRC="$(cd "$SRC_INPUT" && pwd)"
+mkdir -p "$OUT_INPUT"
+OUT="$(cd "$OUT_INPUT" && pwd)"
 WORK="$OUT/src"
 BUILD="$OUT/cmake-build"
 BIN_OUT="$OUT/oscam-mini"
