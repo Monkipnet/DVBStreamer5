@@ -335,6 +335,7 @@ public:
     bool isStreamActive(const std::string& id);
     bool ensureOnDemandStream(const std::string& id, const std::string& source,
                               std::string* error = nullptr);
+    void prewarmOnDemandDvbInputs();
 
     // V10.8.77: the private browser-preview endpoint is a legitimate OnDemand
     // consumer.  HttpServer redirects its existing activity probes here so an
@@ -421,6 +422,7 @@ private:
     std::map<int, HttpClientSession> httpClients;
     std::map<std::string, HttpClientSession> adHocSessions;
     mutable std::mutex onDemandMutex;
+    std::map<std::string, std::shared_ptr<std::mutex>> onDemandStartMutexes;
     std::map<std::string, std::chrono::steady_clock::time_point> onDemandLastActivity;
     std::set<std::string> onDemandStartedStreams;
     std::atomic<bool> onDemandMonitorStop{false};
