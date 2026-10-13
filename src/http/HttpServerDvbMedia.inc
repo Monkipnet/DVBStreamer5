@@ -404,13 +404,16 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
         std::string demandError;
         if (!streamManager.ensureOnDemandStreamParallel(id, "http", &demandError)) {
             const std::string body = "On-demand stream unavailable\n";
+            const std::string crlf =
+                std::string(1, static_cast<char>(13)) +
+                std::string(1, static_cast<char>(10));
             const std::string unavailable =
-                "HTTP/1.1 503 Service Unavailable\\r\\n"
-                "Server: DVBStreamer5\\r\\n"
-                "Content-Type: text/plain; charset=utf-8\\r\\n"
-                "Retry-After: 1\\r\\n"
-                "Connection: close\\r\\n"
-                "Content-Length: " + std::to_string(body.size()) + "\\r\\n\\r\\n" + body;
+                "HTTP/1.1 503 Service Unavailable" + crlf +
+                "Server: DVBStreamer5" + crlf +
+                "Content-Type: text/plain; charset=utf-8" + crlf +
+                "Retry-After: 1" + crlf +
+                "Connection: close" + crlf +
+                "Content-Length: " + std::to_string(body.size()) + crlf + crlf + body;
             boost::asio::write(socket, boost::asio::buffer(unavailable));
             return true;
         }
