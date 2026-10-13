@@ -160,7 +160,7 @@ private:
         std::chrono::steady_clock::time_point arrival {};
     };
 
-    static constexpr auto kStartupBuffer = std::chrono::milliseconds(1200);
+    static constexpr auto kStartupBuffer = std::chrono::milliseconds(3000);
     static constexpr std::size_t kObserverQueueDatagrams = 4096;
     static constexpr std::size_t kDatagramBytes =
         mpegts::kPacketsPerCbrDatagram * mpegts::kPacketSize;
@@ -389,7 +389,7 @@ private:
 
             // Wait only for the first useful TS packet. The physical transport
             // clock is not started until the complete startup reservoir has been
-            // collected, so the intentional 1.2 s delay can never be reported
+            // collected, so the intentional startup delay can never be reported
             // as sender lateness.
             {
                 std::unique_lock<std::mutex> lock(ingressMutex_);
@@ -515,7 +515,7 @@ private:
                               << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                               << " datagram_bytes=" << kDatagramBytes
                               << " ts_packets_per_datagram=" << mpegts::kPacketsPerCbrDatagram
-                              << " startup_buffer_ms=1200"
+                              << " startup_buffer_ms=" << kStartupBuffer.count()
                               << " ingress_clock=decoupled"
                               << " source_null=regenerated"
                               << " source_pcr=restamped-all-pids"
