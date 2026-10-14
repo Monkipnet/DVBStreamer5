@@ -64,13 +64,17 @@ public:
     // StreamManager wiring. The Web UI stores target bitrate in whole kbps and
     // uses the otherwise-unused sub-kbps remainder as a private carrier.
     //
+    //   +699       = fixed-PCR mode, startup reservoir disabled (0 ms)
     //   +777       = legacy V175 source-PCR switch, default 3000-ms reservoir
+    //   +799       = source-PCR mode, startup reservoir disabled (0 ms)
     //   +700..+729 = fixed-PCR mode, 500..15000-ms reservoir in 500-ms steps
     //   +800..+829 = source-PCR mode, 500..15000-ms reservoir in 500-ms steps
     //
     // The pacer removes every recognised carrier before transport timing, so
     // physical CBR remains the exact whole-kbps value shown in the UI.
+    static constexpr std::uint64_t kNoStartupBufferMarker = 699ULL;
     static constexpr std::uint64_t kSourcePllBitrateMarker = 777ULL;
+    static constexpr std::uint64_t kSourcePllNoStartupBufferMarker = 799ULL;
     static constexpr std::uint64_t kLegacyBufferMarkerBase = 700ULL;
     static constexpr std::uint64_t kSourcePllBufferMarkerBase = 800ULL;
     static constexpr std::uint64_t kBufferMarkerCount = 30ULL;
@@ -78,6 +82,14 @@ public:
     static constexpr std::uint64_t kMinimumStartupBufferMs = 500ULL;
     static constexpr std::uint64_t kMaximumStartupBufferMs = 15000ULL;
     static constexpr std::uint64_t kDefaultStartupBufferMs = 3000ULL;
+
+    static constexpr bool startupBufferDisabledEncodedTargetBitrate(
+        std::uint64_t value) noexcept {
+        if (value < 100000ULL + kNoStartupBufferMarker) return false;
+        const std::uint64_t remainder = value % 1000ULL;
+        return remainder == kNoStartupBufferMarker ||
+            remainder == kSourcePllNoStartupBufferMarker;
+    }
 
     static constexpr bool startupBufferEncodedTargetBitrate(
         std::uint64_t value) noexcept {
@@ -95,12 +107,16 @@ public:
         if (value < 100000ULL + kLegacyBufferMarkerBase) return false;
         const std::uint64_t remainder = value % 1000ULL;
         return remainder == kSourcePllBitrateMarker ||
+            remainder == kSourcePllNoStartupBufferMarker ||
             (remainder >= kSourcePllBufferMarkerBase &&
              remainder < kSourcePllBufferMarkerBase + kBufferMarkerCount);
     }
 
     static constexpr std::uint64_t decodeTargetBitrate(
         std::uint64_t value) noexcept {
+        if (startupBufferDisabledEncodedTargetBitrate(value)) {
+            return value - (value % 1000ULL);
+        }
         if (value >= 100000ULL + kSourcePllBitrateMarker &&
             (value % 1000ULL) == kSourcePllBitrateMarker) {
             return value - kSourcePllBitrateMarker;
@@ -112,6 +128,7 @@ public:
 
     static constexpr std::uint64_t startupBufferMilliseconds(
         std::uint64_t value) noexcept {
+        if (startupBufferDisabledEncodedTargetBitrate(value)) return 0ULL;
         if (!startupBufferEncodedTargetBitrate(value)) {
             return kDefaultStartupBufferMs;
         }
@@ -215,5 +232,15 @@ private:
     std::uint64_t pcrRewriteCount_ = 0;
     std::uint64_t pcrPidCount_ = 0;
 };
+
+static_assert(CbrTsPacer::decodeTargetBitrate(6000699ULL) == 6000000ULL);
+static_assert(CbrTsPacer::startupBufferMilliseconds(6000699ULL) == 0ULL);
+static_assert(!CbrTsPacer::sourcePllEncodedTargetBitrate(6000699ULL));
+static_assert(CbrTsPacer::decodeTargetBitrate(6000799ULL) == 6000000ULL);
+static_assert(CbrTsPacer::startupBufferMilliseconds(6000799ULL) == 0ULL);
+static_assert(CbrTsPacer::sourcePllEncodedTargetBitrate(6000799ULL));
+static_assert(CbrTsPacer::startupBufferMilliseconds(6000700ULL) == 500ULL);
+static_assert(CbrTsPacer::startupBufferMilliseconds(6000800ULL) == 500ULL);
+static_assert(CbrTsPacer::startupBufferMilliseconds(6000777ULL) == 3000ULL);
 
 } // namespace dvbstreamer5::media::mpegts
