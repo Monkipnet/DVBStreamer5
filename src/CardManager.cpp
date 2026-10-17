@@ -4,10 +4,15 @@
 #include "OscamMiniManager.h"
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <set>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -17,7 +22,7 @@ Json::Value parseBackendConfig(const std::string& value) {
     Json::CharReaderBuilder builder;
     std::string errors;
     std::istringstream input(value.empty() ? "{}" : value);
-    if (!Json::parseFromStream(builder, input, &parsed, &errors)) return Json::Value(Json::objectValue);
+    if (!Json::parseFromStream(input, &parsed, &errors)) return Json::Value(Json::objectValue);
     return parsed;
 }
 
@@ -26,6 +31,113 @@ std::string endpointText(const Json::Value& config) {
     const int port = config.get("port", 0).asInt();
     if (host.empty() || port <= 0) return {};
     return host + ":" + std::to_string(port);
+}
+
+std::string trimLocal(std::string value) {
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char c) {
+        return !std::isspace(c);
+    }));
+    value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char c) {
+        return !std::isspace(c);
+    }).base(), value.end());
+    return value;
+}
+
+bool isLoopbackNewcamdHost(std::string host) {
+    host = trimLocal(std::move(host));
+    std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return host == "127.0.0.1" || host == "localhost" ||
+           host == "::1" || host == "[::1]";
+}
+
+bool procNetHasListener(const char* path, int port) {
+    std::ifstream file(path);
+    if (!file) return false;
+
+    std::string line;
+    std::getline(file, line); // header
+    while (std::getline(file, line)) {
+        std::istringstream row(line);
+        std::string slot;
+        std::string localAddress;
+        std::string remoteAddress;
+        std::string state;
+        if (!(row >> slot >> localAddress >> remoteAddress >> state)) continue;
+        if (state != "0A") continue; // TCP_LISTEN
+
+        const auto colon = localAddress.rfind(':');
+        if (colon == std::string::npos || colon + 1 >= localAddress.size()) continue;
+        try {
+            const int listedPort = static_cast<int>(
+                std::stoul(localAddress.substr(colon + 1), nullptr, 16));
+            if (listedPort == port) return true;
+        } catch (...) {
+        }
+    }
+    return false;
+}
+
+bool newcamdPortListening(int port) {
+    return procNetHasListener("/proc/net/tcp", port) ||
+           procNetHasListener("/proc/net/tcp6", port);
+}
+
+std::vector<int> localNewcamdPorts(const std::vector<CamClientConfig>& clients) {
+    std::set<int> uniquePorts;
+    for (const auto& client : clients) {
+        const std::string backendId = client.backendId.empty() ? "newcamd" : client.backendId;
+        if (backendId != "newcamd") continue;
+
+        const Json::Value config = parseBackendConfig(client.backendConfig);
+        const std::string host = config.get("host", "").asString();
+        const int port = config.get("port", 0).asInt();
+        if (!isLoopbackNewcamdHost(host) || port < 1 || port > 65535) continue;
+        uniquePorts.insert(port);
+    }
+    return {uniquePorts.begin(), uniquePorts.end()};
+}
+
+std::string portsText(const std::vector<int>& ports) {
+    std::ostringstream out;
+    for (std::size_t i = 0; i < ports.size(); ++i) {
+        if (i != 0) out << ',';
+        out << ports[i];
+    }
+    return out.str();
+}
+
+void waitForLocalNewcamdListeners(const std::vector<CamClientConfig>& clients) {
+    const std::vector<int> ports = localNewcamdPorts(clients);
+    if (ports.empty()) return;
+
+    constexpr auto kPollInterval = std::chrono::milliseconds(25);
+    constexpr auto kTimeout = std::chrono::seconds(5);
+    const auto started = std::chrono::steady_clock::now();
+
+    for (;;) {
+        const bool ready = std::all_of(ports.begin(), ports.end(), [](int port) {
+            return newcamdPortListening(port);
+        });
+        const auto now = std::chrono::steady_clock::now();
+        const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - started);
+
+        if (ready) {
+            std::cerr << "OSCam-mini Newcamd readiness ready ports=" << portsText(ports)
+                      << " wait_ms=" << waited.count() << std::endl;
+            return;
+        }
+        if (now - started >= kTimeout) {
+            std::cerr << "OSCam-mini Newcamd readiness timeout ports=" << portsText(ports)
+                      << " timeout_ms="
+                      << std::chrono::duration_cast<std::chrono::milliseconds>(kTimeout).count()
+                      << std::endl;
+            return; // Fail open: preserve the pre-V183 startup behavior on OSCam failure.
+        }
+        std::this_thread::sleep_for(kPollInterval);
+    }
 }
 
 } // namespace
@@ -53,8 +165,16 @@ void CardManager::configure(const std::vector<CamClientConfig>& clients) {
         configured = clients_;
     }
     std::string oscamSyncError;
-    if (!OscamMiniManager::instance().synchronizeCamClients(configured, oscamSyncError)) {
+    const bool oscamSyncOk =
+        OscamMiniManager::instance().synchronizeCamClients(configured, oscamSyncError);
+    if (!oscamSyncOk) {
         std::cerr << "OSCam-mini CAM listener synchronization failed: " << oscamSyncError << std::endl;
+    } else {
+        // synchronizeCamClients() can restart an already-active OSCam service.
+        // systemctl restart returns when Type=simple has started the process,
+        // a few milliseconds before OSCam opens its Newcamd sockets. Do not let
+        // parallel satellite auto-start race that listener initialization.
+        waitForLocalNewcamdListeners(configured);
     }
     CaBackendManager::instance().configure(configured);
 }
