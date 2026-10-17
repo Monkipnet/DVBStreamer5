@@ -22,7 +22,7 @@ Json::Value parseBackendConfig(const std::string& value) {
     Json::CharReaderBuilder builder;
     std::string errors;
     std::istringstream input(value.empty() ? "{}" : value);
-    if (!Json::parseFromStream(input, &parsed, &errors)) return Json::Value(Json::objectValue);
+    if (!Json::parseFromStream(builder, input, &parsed, &errors)) return Json::Value(Json::objectValue);
     return parsed;
 }
 
@@ -96,7 +96,7 @@ std::vector<int> localNewcamdPorts(const std::vector<CamClientConfig>& clients) 
         if (!isLoopbackNewcamdHost(host) || port < 1 || port > 65535) continue;
         uniquePorts.insert(port);
     }
-    return {uniquePorts.begin(), uniquePorts.end()};
+    return std::vector<int>(uniquePorts.begin(), uniquePorts.end());
 }
 
 std::string portsText(const std::vector<int>& ports) {
