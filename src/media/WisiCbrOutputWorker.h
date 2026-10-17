@@ -54,9 +54,11 @@ public:
         ErrorCallback errorCallback)
         : socket_(socket),
           outputIndex_(outputIndex),
+          workerId_(nextWorkerId_.fetch_add(1ULL, std::memory_order_relaxed)),
           pacer_(targetBitrate),
-          startupBuffer_(std::chrono::milliseconds(
+          requestedStartupBuffer_(std::chrono::milliseconds(
               mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
+          startupBuffer_(effectiveStartupBuffer(targetBitrate)),
           outputBytes_(outputBytes),
           relayRunning_(relayRunning),
           observer_(std::move(observer)),
@@ -88,19 +90,29 @@ public:
         while (!stopping_.load(std::memory_order_acquire) &&
                relayRunning_->load(std::memory_order_acquire) &&
                bufferedPackets_.load(std::memory_order_relaxed) >= kMaximumBufferedPackets) {
-            if (!backpressureLogged_) {
-                backpressureLogged_ = true;
-                std::cerr << "WISI CBR BACKPRESSURE index=" << outputIndex_
+            ++backpressureWaitEvents_;
+            const auto logNow = std::chrono::steady_clock::now();
+            if (lastBackpressureLog_ == std::chrono::steady_clock::time_point{} ||
+                logNow - lastBackpressureLog_ >= kBackpressureLogInterval) {
+                const std::uint64_t events = backpressureWaitEvents_;
+                backpressureWaitEvents_ = 0;
+                lastBackpressureLog_ = logNow;
+                std::cerr << "WISI CBR BACKPRESSURE worker=" << workerId_
+                          << " index=" << outputIndex_
                           << " buffered_kb="
                           << (bufferedPackets_.load(std::memory_order_relaxed) *
                               mpegts::kPacketSize / 1024U)
                           << " limit_kb="
                           << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
                           << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
+                          << " wait_events=" << events
                           << std::endl;
             }
+            queueSpaceProducerWaiting_.store(true, std::memory_order_release);
             queueSpace_.wait_for(lock, std::chrono::milliseconds(20));
+            queueSpaceProducerWaiting_.store(false, std::memory_order_release);
         }
+        queueSpaceProducerWaiting_.store(false, std::memory_order_release);
         if (stopping_.load(std::memory_order_acquire) ||
             !relayRunning_->load(std::memory_order_acquire)) {
             return false;
@@ -163,6 +175,7 @@ private:
     };
 
     static constexpr std::size_t kObserverQueueDatagrams = 4096;
+    static constexpr std::size_t kObserverBatchDatagrams = 4;
     static constexpr std::size_t kDatagramBytes =
         mpegts::kPacketsPerCbrDatagram * mpegts::kPacketSize;
     static constexpr std::size_t kMaximumBufferedPackets =
@@ -171,6 +184,33 @@ private:
     static constexpr std::uint64_t kSpinGuardNanoseconds = 30000ULL; // 30 us
     static constexpr std::uint64_t kPhaseCorrectionDivisor = 400ULL; // 0.25%
     static constexpr std::uint64_t kClockLogNanoseconds = 5ULL * kNanosecondsPerSecond;
+    static constexpr std::uint64_t kStartupQueueUsePercent = 70ULL;
+    static constexpr auto kBackpressureLogInterval = std::chrono::seconds(5);
+
+    static std::chrono::milliseconds effectiveStartupBuffer(
+        std::uint64_t encodedTargetBitrate) noexcept {
+        const std::uint64_t requestedMs =
+            mpegts::CbrTsPacer::startupBufferMilliseconds(encodedTargetBitrate);
+        if (requestedMs == 0ULL) return std::chrono::milliseconds(0);
+
+        const std::uint64_t physicalBitrate =
+            mpegts::CbrTsPacer::decodeTargetBitrate(encodedTargetBitrate);
+        if (physicalBitrate == 0ULL) {
+            return std::chrono::milliseconds(requestedMs);
+        }
+
+        // Keep 30% of the hard 8-MiB reservoir free for source jitter and
+        // short useful-payload bursts. V180 allowed a configured startup delay
+        // to exceed the physical queue capacity (9300 kbps / 9000 ms was
+        // reproduced in production); that can dead-pressure the producer before
+        // the sender clock has even started.
+        const std::uint64_t safeCapacityMs =
+            (static_cast<std::uint64_t>(mpegts::CbrTsPacer::maximumQueuedBytes()) *
+             8ULL * 1000ULL * kStartupQueueUsePercent) /
+            (physicalBitrate * 100ULL);
+        return std::chrono::milliseconds(
+            (std::min)(requestedMs, safeCapacityMs));
+    }
 
     void configureSenderScheduling() noexcept {
 #ifndef _WIN32
@@ -186,11 +226,13 @@ private:
         const int result = ::pthread_setschedparam(
             ::pthread_self(), SCHED_FIFO, &parameters);
         if (result == 0) {
-            std::cerr << "WISI CBR sender scheduling index=" << outputIndex_
+            std::cerr << "WISI CBR sender scheduling worker=" << workerId_
+                      << " index=" << outputIndex_
                       << " policy=SCHED_FIFO priority=" << parameters.sched_priority
                       << " timerslack_ns=1" << std::endl;
         } else {
-            std::cerr << "WISI CBR sender scheduling index=" << outputIndex_
+            std::cerr << "WISI CBR sender scheduling worker=" << workerId_
+                      << " index=" << outputIndex_
                       << " policy=CFS fallback_error=" << result
                       << " timerslack_ns=1" << std::endl;
         }
@@ -284,33 +326,67 @@ private:
 
     void queueObserverDatagram(const std::uint8_t* data, std::size_t size) noexcept {
         if (!observer_ || !data || size != kDatagramBytes) return;
-        std::array<std::uint8_t, kDatagramBytes> copy {};
-        std::memcpy(copy.data(), data, size);
+        bool notify = false;
         {
             std::lock_guard<std::mutex> lock(observerMutex_);
             if (observerQueue_.size() >= kObserverQueueDatagrams) {
                 observerQueue_.pop_front();
                 ++observerDrops_;
             }
-            observerQueue_.push_back(std::move(copy));
+            observerQueue_.emplace_back();
+            std::memcpy(observerQueue_.back().data(), data, size);
+
+            // The observer sees a contiguous MPEG-TS byte stream, so batching
+            // four physical UDP datagrams changes neither packet order nor the
+            // on-wire 7x188 layout. It removes roughly three out of four
+            // condition-variable wakeups measured by perf on the 42-CBR-stream
+            // production host.
+            if (!observerWakePending_ &&
+                observerQueue_.size() >= kObserverBatchDatagrams) {
+                observerWakePending_ = true;
+                notify = true;
+            }
         }
-        observerReady_.notify_one();
+        if (notify) observerReady_.notify_one();
     }
 
     void observerLoop() noexcept {
         try {
+            std::array<std::uint8_t, kObserverBatchDatagrams * kDatagramBytes> batch {};
             while (true) {
-                std::array<std::uint8_t, kDatagramBytes> datagram {};
+                std::size_t batchDatagrams = 0;
+                bool continueImmediately = false;
                 {
                     std::unique_lock<std::mutex> lock(observerMutex_);
                     observerReady_.wait(lock, [this] {
-                        return observerStopping_ || !observerQueue_.empty();
+                        return observerStopping_ || observerWakePending_;
                     });
                     if (observerStopping_ && observerQueue_.empty()) break;
-                    datagram = std::move(observerQueue_.front());
-                    observerQueue_.pop_front();
+
+                    batchDatagrams = (std::min)(
+                        observerQueue_.size(), kObserverBatchDatagrams);
+                    for (std::size_t index = 0; index < batchDatagrams; ++index) {
+                        const auto& datagram = observerQueue_.front();
+                        std::memcpy(
+                            batch.data() + index * kDatagramBytes,
+                            datagram.data(),
+                            kDatagramBytes);
+                        observerQueue_.pop_front();
+                    }
+
+                    continueImmediately =
+                        observerQueue_.size() >= kObserverBatchDatagrams ||
+                        (observerStopping_ && !observerQueue_.empty());
+                    observerWakePending_ = continueImmediately;
                 }
-                observer_(datagram.data(), datagram.size());
+
+                if (batchDatagrams > 0) {
+                    observer_(batch.data(), batchDatagrams * kDatagramBytes);
+                }
+
+                // If a backlog already contains another complete batch, the
+                // predicate remains true and the next iteration does not sleep.
+                (void)continueImmediately;
             }
         } catch (const std::exception& ex) {
             fail(std::string("WISI CBR observer failed: ") + ex.what());
@@ -360,7 +436,8 @@ private:
             clockMinGapNs_ == (std::numeric_limits<std::uint64_t>::max)()
                 ? 0ULL : clockMinGapNs_ / 1000ULL;
 
-        std::cerr << "WISI CBR CLOCK index=" << outputIndex_
+        std::cerr << "WISI CBR CLOCK worker=" << workerId_
+                  << " index=" << outputIndex_
                   << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                   << " actual_kbps=" << (actualBps / 1000ULL)
                   << " min_gap_us=" << minGapUs
@@ -387,6 +464,19 @@ private:
     void senderLoop() noexcept {
         try {
             configureSenderScheduling();
+
+            if (startupBuffer_ < requestedStartupBuffer_) {
+                std::cerr << "WISI CBR STARTUP CAP worker=" << workerId_
+                          << " index=" << outputIndex_
+                          << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
+                          << " requested_ms=" << requestedStartupBuffer_.count()
+                          << " effective_ms=" << startupBuffer_.count()
+                          << " queue_limit_kb="
+                          << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
+                          << " reserved_headroom_pct="
+                          << (100ULL - kStartupQueueUsePercent)
+                          << std::endl;
+            }
 
             // Wait only for the first useful TS packet. The physical transport
             // clock is not started until the configured startup reservoir has
@@ -469,15 +559,22 @@ private:
                     if (previous < useful) {
                         bufferedPackets_.store(0, std::memory_order_relaxed);
                     }
-                    backpressureLogged_ = false;
-                    queueSpace_.notify_all();
+                    // Production profiling showed that notify_all() here was
+                    // executed for every useful CBR datagram even when no
+                    // producer was blocked, creating tens of thousands of
+                    // futex wakeups per second. Keep the 20-ms timed wait as a
+                    // lost-wakeup safety net and notify only an actual waiter.
+                    if (queueSpaceProducerWaiting_.load(std::memory_order_acquire)) {
+                        queueSpace_.notify_one();
+                    }
                 } else if (pacer_.timingLocked()) {
                     ++usefulUnderflowDatagrams_;
                     const auto logNow = std::chrono::steady_clock::now();
                     if (lastUnderflowLog_ == std::chrono::steady_clock::time_point{} ||
                         logNow - lastUnderflowLog_ >= std::chrono::seconds(5)) {
                         lastUnderflowLog_ = logNow;
-                        std::cerr << "WISI CBR USEFUL UNDERFLOW index=" << outputIndex_
+                        std::cerr << "WISI CBR USEFUL UNDERFLOW worker=" << workerId_
+                                  << " index=" << outputIndex_
                                   << " null_only_datagrams=" << usefulUnderflowDatagrams_
                                   << " buffered_kb="
                                   << (bufferedPackets_.load(std::memory_order_relaxed) *
@@ -513,10 +610,13 @@ private:
 
                 if (!firstSendLogged_) {
                     firstSendLogged_ = true;
-                    std::cerr << "WISI CBR start index=" << outputIndex_
+                    std::cerr << "WISI CBR start worker=" << workerId_
+                              << " index=" << outputIndex_
                               << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                               << " datagram_bytes=" << kDatagramBytes
                               << " ts_packets_per_datagram=" << mpegts::kPacketsPerCbrDatagram
+                              << " requested_startup_buffer_ms="
+                              << requestedStartupBuffer_.count()
                               << " startup_buffer_ms=" << startupBuffer_.count()
                               << " ingress_clock=decoupled"
                               << " source_null=regenerated"
@@ -529,8 +629,11 @@ private:
                               << " catchup_burst=off"
                               << " phase_recovery_max_pct=0.25"
                               << " sender_clock=CLOCK_MONOTONIC_ABSTIME"
+                              << " observer_batch_datagrams="
+                              << (observer_ ? kObserverBatchDatagrams : 0U)
                               << std::endl;
-                    std::cerr << "NATIVE UDP OUTPUT first_send index=" << outputIndex_
+                    std::cerr << "NATIVE UDP OUTPUT first_send worker=" << workerId_
+                              << " index=" << outputIndex_
                               << " type=udp-cbr profile=wisi-fixed-cbr-v172"
                               << " sender_thread=dedicated"
                               << std::endl;
@@ -554,7 +657,10 @@ private:
 
     UdpSocket* socket_ = nullptr;
     std::size_t outputIndex_ = 0;
+    inline static std::atomic<std::uint64_t> nextWorkerId_ {1ULL};
+    const std::uint64_t workerId_;
     mpegts::CbrTsPacer pacer_;
+    const std::chrono::milliseconds requestedStartupBuffer_;
     const std::chrono::milliseconds startupBuffer_;
     std::atomic<std::uint64_t>* outputBytes_ = nullptr;
     std::atomic<bool>* relayRunning_ = nullptr;
@@ -565,13 +671,15 @@ private:
     std::atomic<bool> inputStarted_ {false};
     std::atomic<std::size_t> bufferedPackets_ {0};
     std::atomic<std::int64_t> nextDeadlineSteadyNs_ {0};
+    std::atomic<bool> queueSpaceProducerWaiting_ {false};
 
     std::mutex ingressMutex_;
     std::condition_variable ingressReady_;
     std::condition_variable queueSpace_;
     std::deque<IngressPacket> ingressQueue_;
     std::chrono::steady_clock::time_point firstPacketAt_ {};
-    bool backpressureLogged_ = false;
+    std::chrono::steady_clock::time_point lastBackpressureLog_ {};
+    std::uint64_t backpressureWaitEvents_ = 0;
     std::size_t queuePeakPackets_ = 0;
 
     bool firstSendLogged_ = false;
@@ -593,6 +701,7 @@ private:
     std::condition_variable observerReady_;
     std::deque<std::array<std::uint8_t, kDatagramBytes>> observerQueue_;
     bool observerStopping_ = false;
+    bool observerWakePending_ = false;
     std::uint64_t observerDrops_ = 0;
     std::thread observerThread_;
 };
