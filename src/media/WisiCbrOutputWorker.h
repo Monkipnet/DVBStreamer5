@@ -218,6 +218,42 @@ private:
         // 2-4 ms UDP periods and is safe even when SCHED_FIFO is unavailable.
         (void)::prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
 
+        // V182: production A/B testing with 42 CBR senders on four CPUs showed
+        // that stable round-robin affinity cuts CPU migrations without changing
+        // the transport clock. Derive the pool from this thread's inherited
+        // allowed mask, so systemd/cpuset restrictions remain authoritative.
+        int affinityCpu = -1;
+        int affinityError = 0;
+        std::size_t allowedCpuCount = 0;
+        cpu_set_t allowedMask {};
+        CPU_ZERO(&allowedMask);
+        affinityError = ::pthread_getaffinity_np(
+            ::pthread_self(), sizeof(allowedMask), &allowedMask);
+        if (affinityError == 0) {
+            for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+                if (CPU_ISSET(cpu, &allowedMask)) ++allowedCpuCount;
+            }
+            if (allowedCpuCount > 0) {
+                const std::size_t targetSlot = static_cast<std::size_t>(
+                    (workerId_ - 1ULL) % allowedCpuCount);
+                std::size_t currentSlot = 0;
+                for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+                    if (!CPU_ISSET(cpu, &allowedMask)) continue;
+                    if (currentSlot++ != targetSlot) continue;
+
+                    cpu_set_t targetMask {};
+                    CPU_ZERO(&targetMask);
+                    CPU_SET(cpu, &targetMask);
+                    affinityError = ::pthread_setaffinity_np(
+                        ::pthread_self(), sizeof(targetMask), &targetMask);
+                    if (affinityError == 0) affinityCpu = cpu;
+                    break;
+                }
+            } else {
+                affinityError = EINVAL;
+            }
+        }
+
         sched_param parameters {};
         const int minimum = ::sched_get_priority_min(SCHED_FIFO);
         const int maximum = ::sched_get_priority_max(SCHED_FIFO);
@@ -229,12 +265,24 @@ private:
             std::cerr << "WISI CBR sender scheduling worker=" << workerId_
                       << " index=" << outputIndex_
                       << " policy=SCHED_FIFO priority=" << parameters.sched_priority
-                      << " timerslack_ns=1" << std::endl;
+                      << " timerslack_ns=1"
+                      << " affinity_cpu=" << affinityCpu
+                      << " affinity_pool=" << allowedCpuCount;
+            if (affinityError != 0) {
+                std::cerr << " affinity_error=" << affinityError;
+            }
+            std::cerr << std::endl;
         } else {
             std::cerr << "WISI CBR sender scheduling worker=" << workerId_
                       << " index=" << outputIndex_
                       << " policy=CFS fallback_error=" << result
-                      << " timerslack_ns=1" << std::endl;
+                      << " timerslack_ns=1"
+                      << " affinity_cpu=" << affinityCpu
+                      << " affinity_pool=" << allowedCpuCount;
+            if (affinityError != 0) {
+                std::cerr << " affinity_error=" << affinityError;
+            }
+            std::cerr << std::endl;
         }
 #endif
     }
