@@ -1477,6 +1477,20 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
         size_t scrambledPayloadSize = 0;
         uint8_t* scrambledPayload = ts_payload_mut(packet, &scrambledPayloadSize);
         if (!scrambledPayload || scrambledPayloadSize == 0) {
+            // v184: TSC describes scrambling of TS payload. Selected service
+            // packets that contain only an adaptation field have no payload to
+            // decrypt, so do not leak stale EVEN/ODD TSC bits to downstream
+            // remultiplexers. Keep header/adaptation/PCR/CC bytes untouched.
+            const uint8_t adaptationControl = static_cast<uint8_t>((packet[3] >> 4) & 0x03);
+            const bool validNoPayload = adaptationControl == 2 ||
+                (adaptationControl == 3 &&
+                 static_cast<size_t>(5 + packet[4]) == kTsPacketSize);
+            if (validNoPayload) {
+                packet[3] &= 0x3F;
+                result->packets_changed++;
+                changed = true;
+                continue;
+            }
             waitingForKey = true;
             continue;
         }
