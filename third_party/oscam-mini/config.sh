@@ -480,6 +480,7 @@ menu_protocols() {
 		MODULE_CONSTCW		"constant CW"		$(check_test "MODULE_CONSTCW") \
 		MODULE_PANDORA		"Pandora"			$(check_test "MODULE_PANDORA") \
 		MODULE_GHTTP		"Ghttp"				$(check_test "MODULE_GHTTP") \
+		MODULE_STREAMRELAY	"StreamRelay"			$(check_test "MODULE_STREAMRELAY") \
 		MODULE_SCAM			"scam"				$(check_test "MODULE_SCAM") \
 		2> ${tempfile}
 
