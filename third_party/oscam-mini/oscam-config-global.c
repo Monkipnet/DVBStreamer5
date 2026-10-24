@@ -803,6 +803,31 @@ static const struct config_list scam_opts[] =
 #else
 static const struct config_list scam_opts[] = { DEF_LAST_OPT };
 #endif
+#ifdef MODULE_STREAMRELAY
+static bool streamrelay_should_save_fn(void *UNUSED(var))
+{
+	return cfg.stream_relay_enabled;
+}
+static const struct config_list streamrelay_opts[] =
+{
+	DEF_OPT_SAVE_FUNC(streamrelay_should_save_fn),
+	DEF_OPT_STR("stream_source_host"          , OFS(stream_source_host),          "127.0.0.1"),
+	DEF_OPT_INT32("stream_source_port"        , OFS(stream_source_port),          DEFAULT_STREAM_SOURCE_PORT),
+	DEF_OPT_STR("stream_source_auth_user"     , OFS(stream_source_auth_user),     NULL),
+	DEF_OPT_STR("stream_source_auth_password" , OFS(stream_source_auth_password), NULL),
+#ifdef MODULE_RADEGAST
+	DEF_OPT_INT8("stream_client_source_host"  , OFS(stream_client_source_host),   0),
+#endif
+	DEF_OPT_INT32("stream_relay_port"         , OFS(stream_relay_port),           17999),
+	DEF_OPT_INT8("stream_relay_enabled"       , OFS(stream_relay_enabled),        0),
+	DEF_OPT_UINT32("stream_relay_buffer_time" , OFS(stream_relay_buffer_time),    0),
+	DEF_OPT_FUNC("stream_relay_ctab"          , OFS(stream_relay_ctab),           check_caidtab_fn),
+	DEF_LAST_OPT
+};
+#else
+static const struct config_list streamrelay_opts[] = { DEF_LAST_OPT };
+#endif
+
 #ifdef MODULE_RADEGAST
 static bool radegast_should_save_fn(void *UNUSED(var))
 {
@@ -1062,6 +1087,7 @@ static const struct config_sections oscam_conf[] =
 	{ "cccam",	cccam_opts },
 	{ "pandora",	pandora_opts },
 	{ "scam",	scam_opts },
+	{ "streamrelay", streamrelay_opts },
 	{ "dvbapi",	dvbapi_opts },
 	{ "monitor",	monitor_opts },
 	{ "webif",	webif_opts },
