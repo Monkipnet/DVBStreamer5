@@ -236,6 +236,12 @@ DvbSatelliteParams paramsFromJson(const Json::Value& root, std::string& error) {
     params.unicablePosition = root.get("unicable_position", 0).asInt();
     params.unicablePin = root.get("unicable_pin", -1).asInt();
     params.streamId = std::clamp(root.get("stream_id", -1).asInt(), -1, 255);
+    if (params.unicableMode == "none") {
+        params.unicableUserBand = -1;
+        params.unicableFrequencyKHz = 0;
+        params.unicablePosition = 0;
+        params.unicablePin = -1;
+    }
     if (!validateUnicableParams(params, error)) return params;
     return params;
 }
@@ -1007,6 +1013,12 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
     if (const auto it = query.find("fec"); it != query.end()) params.fec = lower(it->second);
     if (const auto it = query.find("unicable_mode"); it != query.end()) params.unicableMode = lower(it->second);
     if (const auto it = query.find("pids"); it != query.end() && !it->second.empty()) params.pids = it->second;
+    if (params.unicableMode == "none") {
+        params.unicableUserBand = -1;
+        params.unicableFrequencyKHz = 0;
+        params.unicablePosition = 0;
+        params.unicablePin = -1;
+    }
 
     if (params.frequencyKHz < 900000 || params.frequencyKHz > 14000000 ||
         params.symbolRateK < 100 || params.symbolRateK > 60000 ||
