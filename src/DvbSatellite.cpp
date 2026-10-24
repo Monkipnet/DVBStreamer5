@@ -160,6 +160,36 @@ bool parseUInt(const std::map<std::string, std::string>& query, const std::strin
     }
 }
 
+bool validateUnicableParams(const DvbSatelliteParams& params, std::string& error) {
+    if (params.unicableMode == "none") return true;
+    if (params.unicableMode != "en50494" && params.unicableMode != "en50607") {
+        error = "Unicable mode must be none, en50494 or en50607";
+        return false;
+    }
+    const bool en50494 = params.unicableMode == "en50494";
+    const int maxUserBand = en50494 ? 7 : 31;
+    const int maxPosition = en50494 ? 1 : 63;
+    if (params.unicableUserBand < 0 || params.unicableUserBand > maxUserBand) {
+        error = en50494 ? "EN50494 User Band ID must be 0..7"
+                        : "EN50607 User Band ID must be 0..31";
+        return false;
+    }
+    if (params.unicableFrequencyKHz < 950000 || params.unicableFrequencyKHz > 2150000) {
+        error = "Unicable User Band frequency must be 950..2150 MHz";
+        return false;
+    }
+    if (params.unicablePosition < 0 || params.unicablePosition > maxPosition) {
+        error = en50494 ? "EN50494 satellite position must be 0..1"
+                        : "EN50607 satellite position must be 0..63";
+        return false;
+    }
+    if (params.unicablePin < -1 || params.unicablePin > 255) {
+        error = "Unicable PIN must be -1 (disabled) or 0..255";
+        return false;
+    }
+    return true;
+}
+
 DvbSatelliteParams paramsFromJson(const Json::Value& root, std::string& error) {
     DvbSatelliteParams params;
     params.adapter = std::clamp(root.get("adapter", 0).asInt(), 0, 31);
@@ -197,7 +227,16 @@ DvbSatelliteParams paramsFromJson(const Json::Value& root, std::string& error) {
     params.lnbLof1KHz = root.get("lnb_lof1_mhz", 9750).asUInt() * 1000U;
     params.lnbLof2KHz = root.get("lnb_lof2_mhz", 10600).asUInt() * 1000U;
     params.lnbSlofKHz = root.get("lnb_slof_mhz", 11700).asUInt() * 1000U;
+    params.unicableMode = lower(root.get("unicable_mode", "none").asString());
+    params.unicableUserBand = root.get("unicable_user_band", -1).asInt();
+    const double unicableFrequencyMHz = root.get("unicable_frequency_mhz", 0.0).asDouble();
+    if (std::isfinite(unicableFrequencyMHz) && unicableFrequencyMHz > 0.0)
+        params.unicableFrequencyKHz =
+            static_cast<uint32_t>(std::llround(unicableFrequencyMHz * 1000.0));
+    params.unicablePosition = root.get("unicable_position", 0).asInt();
+    params.unicablePin = root.get("unicable_pin", -1).asInt();
     params.streamId = std::clamp(root.get("stream_id", -1).asInt(), -1, 255);
+    if (!validateUnicableParams(params, error)) return params;
     return params;
 }
 
@@ -741,6 +780,11 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
     result["device"] = device;
     result["stream_id"] = params.streamId;
     result["diseqc_source"] = params.diseqcSource;
+    result["unicable_mode"] = params.unicableMode;
+    result["unicable_user_band"] = params.unicableUserBand;
+    result["unicable_frequency_khz"] = params.unicableFrequencyKHz;
+    result["unicable_position"] = params.unicablePosition;
+    result["unicable_pin"] = params.unicablePin;
     const FrontendMetadata metadata = readFrontendMetadata(params.adapter, params.frontend);
     result["frontend_name"] = metadata.name;
     result["frontend_model"] = metadata.model;
@@ -756,6 +800,10 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
               << " polarity=" << params.polarity
               << " isi=" << params.streamId
               << " diseqc_source=" << params.diseqcSource
+              << " unicable=" << params.unicableMode
+              << " ub=" << params.unicableUserBand
+              << " ub_khz=" << params.unicableFrequencyKHz
+              << " position=" << params.unicablePosition
               << " frontend_model=" << metadata.model
               << " driver_mode=" << metadata.driverMode
               << std::endl;
@@ -792,6 +840,11 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         tune.lnbLof1KHz = params.lnbLof1KHz;
         tune.lnbLof2KHz = params.lnbLof2KHz;
         tune.lnbSlofKHz = params.lnbSlofKHz;
+        tune.unicableMode = params.unicableMode;
+        tune.unicableUserBand = params.unicableUserBand;
+        tune.unicableFrequencyKHz = params.unicableFrequencyKHz;
+        tune.unicablePosition = params.unicablePosition;
+        tune.unicablePin = params.unicablePin;
         tune.streamId = params.streamId;
         tune.pids = "8192";
         tune.lockTimeoutMs = timeoutMs;
@@ -940,6 +993,10 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
         !parseUInt(query, "lnb_lof1_khz", params.lnbLof1KHz) ||
         !parseUInt(query, "lnb_lof2_khz", params.lnbLof2KHz) ||
         !parseUInt(query, "lnb_slof_khz", params.lnbSlofKHz) ||
+        !parseInt(query, "unicable_user_band", params.unicableUserBand) ||
+        !parseUInt(query, "unicable_frequency_khz", params.unicableFrequencyKHz) ||
+        !parseInt(query, "unicable_position", params.unicablePosition) ||
+        !parseInt(query, "unicable_pin", params.unicablePin) ||
         !parseInt(query, "stream_id", params.streamId)) {
         error = "Invalid DVB URI numeric parameter";
         return false;
@@ -948,6 +1005,7 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
     if (const auto it = query.find("delivery_system"); it != query.end()) params.deliverySystem = lower(it->second);
     if (const auto it = query.find("modulation"); it != query.end()) params.modulation = lower(it->second);
     if (const auto it = query.find("fec"); it != query.end()) params.fec = lower(it->second);
+    if (const auto it = query.find("unicable_mode"); it != query.end()) params.unicableMode = lower(it->second);
     if (const auto it = query.find("pids"); it != query.end() && !it->second.empty()) params.pids = it->second;
 
     if (params.frequencyKHz < 900000 || params.frequencyKHz > 14000000 ||
@@ -957,7 +1015,7 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
         error = "Invalid DVB-S/S2 tuning parameters";
         return false;
     }
-    return true;
+    return validateUnicableParams(params, error);
 }
 
 std::string buildUri(const DvbSatelliteParams& params) {
@@ -974,6 +1032,11 @@ std::string buildUri(const DvbSatelliteParams& params) {
         << "&lnb_lof1_khz=" << params.lnbLof1KHz
         << "&lnb_lof2_khz=" << params.lnbLof2KHz
         << "&lnb_slof_khz=" << params.lnbSlofKHz
+        << "&unicable_mode=" << percentEncode(params.unicableMode)
+        << "&unicable_user_band=" << params.unicableUserBand
+        << "&unicable_frequency_khz=" << params.unicableFrequencyKHz
+        << "&unicable_position=" << params.unicablePosition
+        << "&unicable_pin=" << params.unicablePin
         << "&stream_id=" << params.streamId
         << "&pids=" << percentEncode(params.pids.empty() ? "8192" : params.pids);
     return uri.str();
@@ -1023,6 +1086,7 @@ Json::Value adapters() {
     root["native_dvb_available"] = nativeDvbAvailable;
     root["native_stream_id_supported"] = true;
     root["native_diseqc_source_supported"] = true;
+    root["native_unicable_supported"] = true;
     return root;
 }
 
@@ -1045,6 +1109,11 @@ Json::Value scan(const Json::Value& request) {
     result["polarity"] = params.polarity;
     result["delivery_system"] = params.deliverySystem;
     result["modulation"] = params.modulation;
+    result["unicable_mode"] = params.unicableMode;
+    result["unicable_user_band"] = params.unicableUserBand;
+    result["unicable_frequency_khz"] = params.unicableFrequencyKHz;
+    result["unicable_position"] = params.unicablePosition;
+    result["unicable_pin"] = params.unicablePin;
     return result;
 }
 
@@ -1081,6 +1150,11 @@ Json::Value signalFromUri(const std::string& uri) {
     result["frontend"] = params.frontend;
     result["stream_id"] = params.streamId;
     result["diseqc_source"] = params.diseqcSource;
+    result["unicable_mode"] = params.unicableMode;
+    result["unicable_user_band"] = params.unicableUserBand;
+    result["unicable_frequency_khz"] = params.unicableFrequencyKHz;
+    result["unicable_position"] = params.unicablePosition;
+    result["unicable_pin"] = params.unicablePin;
     const FrontendMetadata metadata = readFrontendMetadata(params.adapter, params.frontend);
     result["frontend_name"] = metadata.name;
     result["frontend_model"] = metadata.model;
