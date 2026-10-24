@@ -735,6 +735,11 @@ std::string HttpServer::currentState() {
                 item["dvb_frontend"] = configuredDvbParams.frontend;
                 item["dvb_stream_id"] = configuredDvbParams.streamId;
                 item["dvb_diseqc_source"] = configuredDvbParams.diseqcSource;
+                item["dvb_unicable_mode"] = configuredDvbParams.unicableMode;
+                item["dvb_unicable_user_band"] = configuredDvbParams.unicableUserBand;
+                item["dvb_unicable_frequency_khz"] = configuredDvbParams.unicableFrequencyKHz;
+                item["dvb_unicable_position"] = configuredDvbParams.unicablePosition;
+                item["dvb_unicable_pin"] = configuredDvbParams.unicablePin;
             }
         }
         item["dvb_signal_available"] = false;

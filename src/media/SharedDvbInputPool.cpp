@@ -40,6 +40,11 @@ std::string transponderKey(const LinuxDvbTuneConfig& config) {
         << "|lof1=" << config.lnbLof1KHz
         << "|lof2=" << config.lnbLof2KHz
         << "|slof=" << config.lnbSlofKHz
+        << "|unicable=" << config.unicableMode
+        << "|ub=" << config.unicableUserBand
+        << "|ubfreq=" << config.unicableFrequencyKHz
+        << "|position=" << config.unicablePosition
+        << "|pin=" << config.unicablePin
         << "|isi=" << config.streamId;
     return out.str();
 }

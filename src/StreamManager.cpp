@@ -973,6 +973,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.dvbTuneConfig.lnbLof1KHz = dvbParams.lnbLof1KHz;
         relay.dvbTuneConfig.lnbLof2KHz = dvbParams.lnbLof2KHz;
         relay.dvbTuneConfig.lnbSlofKHz = dvbParams.lnbSlofKHz;
+        relay.dvbTuneConfig.unicableMode = dvbParams.unicableMode;
+        relay.dvbTuneConfig.unicableUserBand = dvbParams.unicableUserBand;
+        relay.dvbTuneConfig.unicableFrequencyKHz = dvbParams.unicableFrequencyKHz;
+        relay.dvbTuneConfig.unicablePosition = dvbParams.unicablePosition;
+        relay.dvbTuneConfig.unicablePin = dvbParams.unicablePin;
         relay.dvbTuneConfig.streamId = dvbParams.streamId;
         // The shared reader still owns one full-MPTS demux for the frontend.
         // V10.8.117 moves only per-service PAT/PMT filtering ahead of the relay

@@ -19,6 +19,11 @@ struct DvbSatelliteParams {
     uint32_t lnbLof1KHz = 9750000;
     uint32_t lnbLof2KHz = 10600000;
     uint32_t lnbSlofKHz = 11700000;
+    std::string unicableMode = "none";
+    int unicableUserBand = -1;
+    uint32_t unicableFrequencyKHz = 0;
+    int unicablePosition = 0;
+    int unicablePin = -1;
     int streamId = -1;
     // Colon-separated DVB PID filter. 8192 means full transport stream.
     std::string pids = "8192";
