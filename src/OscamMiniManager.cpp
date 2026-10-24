@@ -1391,7 +1391,7 @@ std::string OscamMiniManager::serviceActionJson(const std::string& body) {
 
 std::string OscamMiniManager::renderPage() {
     return R"HTML(<!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1419,6 +1419,173 @@ body{font-family:Arial,sans-serif;background:#0f1218;color:#eee;margin:0}.w{max-
 <div class="c"><h3>Процесс / журнал</h3><pre id="proc"></pre><pre id="log"></pre></div>
 </div>
 <script>
+function normalizeLanguage(value){return value==='ru'?'ru':'en'}
+let language=normalizeLanguage(localStorage.getItem('dvbstreamer5-language')||'en');
+
+const oscamRuToEn=new Map([
+['Старт','Start'],
+['Перезапуск','Restart'],
+['Стоп','Stop'],
+['Обновить','Refresh'],
+['Конфиги:','Configs:'],
+['Пользователи / порты','Users / ports'],
+['+ Пользователь','+ User'],
+['Строка пользователя свернута по умолчанию. Нажмите на неё, чтобы открыть настройки.','The user row is collapsed by default. Click it to open the settings.'],
+['Ридеры / Remote CA OSCam-mini','Readers / Remote CA OSCam-mini'],
+['+ Ридер','+ Reader'],
+['Найти локальные ридеры','Detect local readers'],
+['Локальные: mouse/phoenix/PCSC. Remote CA: Newcamd, Camd35/CS357x, CS378x, CCcam, Radegast, Gbox, Scam, GHTTP и Camd33. Выберите протокол — показываются только относящиеся к нему поля.','Local: mouse/phoenix/PCSC. Remote CA: Newcamd, Camd35/CS357x, CS378x, CCcam, Radegast, Gbox, Scam, GHTTP and Camd33. Select a protocol to show only its relevant fields.'],
+['Включить','Enable'],
+['StreamRelay использует выбранные выше Remote CA readers. Встроенный Radegast loopback передаёт ECM в OSCam; CA credentials здесь не хранятся.','StreamRelay uses the Remote CA readers selected above. The built-in Radegast loopback forwards ECM to OSCam; CA credentials are not stored here.'],
+['Сохранить и перезапустить','Save and restart'],
+['Процесс / журнал','Process / log'],
+['Пользователь','User'],
+['Пароль','Password'],
+['Порт','Port'],
+['Группы','Groups'],
+['Удалить пользователя','Delete user'],
+['— ручной ввод —','— manual input —'],
+['Найдено ридеров:','Readers found:'],
+['Поиск…','Searching…'],
+['Имя','Name'],
+['Найденный ридер','Detected reader'],
+['Устройство / индекс PC/SC','Device / PC/SC index'],
+['Протокол','Protocol'],
+['Удалить ридер','Delete reader'],
+['неактивен','inactive'],
+['работает','running'],
+['остановлен','stopped'],
+['процесс не запущен','process not running'],
+['Сохранение…','Saving…'],
+['Сохранено и перезапущено','Saved and restarted'],
+['Ошибка','Error'],
+['OSCam-mini остановлен','OSCam-mini stopped'],
+['Newcamd клиент подключён','Newcamd client connected'],
+['Ожидание подключения','Waiting for connection'],
+['Ридер отключён','Reader disabled'],
+['Карта готова','Card ready'],
+['Ошибка ридера','Reader error'],
+['Инициализация карты','Initializing card'],
+['Ожидание карты','Waiting for card'],
+['DES key должен содержать ровно 28 HEX-символов','DES key must contain exactly 28 HEX characters'],
+['Добавьте хотя бы одного пользователя Newcamd','Add at least one Newcamd user'],
+['StreamRelay: проверьте Source Host/Port, Relay Port и Radegast Port','StreamRelay: check Source Host/Port, Relay Port and Radegast Port'],
+['StreamRelay CAID filter должен содержать CAID/маски OSCam, например 098C,09C4','StreamRelay CAID filter must contain OSCam CAIDs/masks, for example 098C,09C4'],
+['StreamRelay buffer time должен быть 0..30000 мс','StreamRelay buffer time must be 0..30000 ms'],
+['У ридера отсутствует имя','Reader name is missing']
+]);
+
+function translateOscamText(value){
+  const source=String(value??'');
+  if(language!=='en'||!/[А-Яа-яЁё]/.test(source))return source;
+  const match=source.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  const lead=match?match[1]:'', core=match?match[2]:source, tail=match?match[3]:'';
+  if(oscamRuToEn.has(core))return lead+oscamRuToEn.get(core)+tail;
+  let text=core;
+  const replacements=[
+    [/^Найдено ридеров: (\d+)$/,'Readers found: $1'],
+    [/^Ошибка поиска: (.+)$/,'Search error: $1'],
+    [/^⚠ текущий: (.+) — не найден$/,'⚠ current: $1 — not found'],
+    [/^Remote CA (.+) подключён$/,'Remote CA $1 connected'],
+    [/^Ошибка Remote CA (.+)$/,'Remote CA $1 error'],
+    [/^Remote CA (.+) активируется$/,'Remote CA $1 is starting'],
+    [/^Ожидание Remote CA (.+)$/,'Waiting for Remote CA $1'],
+    [/^Некорректное имя пользователя: (.+)$/,'Invalid username: $1'],
+    [/^Некорректный пароль пользователя (.+)$/,'Invalid password for user $1'],
+    [/^Некорректный порт пользователя (.+)$/,'Invalid port for user $1'],
+    [/^Порт (\d+) используется более одного раза$/,'Port $1 is used more than once'],
+    [/^Пользователь (.+) указан более одного раза$/,'User $1 is specified more than once'],
+    [/^CAID пользователя (.+) должен содержать 4 HEX-символа$/,'CAID for user $1 must contain 4 HEX characters'],
+    [/^Provider пользователя (.+) должен содержать 6 HEX-символов$/,'Provider for user $1 must contain 6 HEX characters'],
+    [/^Некорректные группы пользователя (.+)$/,'Invalid groups for user $1'],
+    [/^Для Remote CA укажите корректные Host и Port: (.+)$/,'Specify a valid Host and Port for Remote CA: $1'],
+    [/^Некорректный Local Port Remote CA: (.+)$/,'Invalid Remote CA Local Port: $1'],
+    [/^Для (.+) укажите корректные User и Password: (.+)$/,'Specify valid User and Password for $1: $2'],
+    [/^DES key (.+) ридера (.+) должен содержать 28 HEX-символов$/,'DES key for $1 reader $2 must contain 28 HEX characters'],
+    [/^Remote key ридера (.+) должен содержать 28 HEX-символов$/,'Remote key for reader $1 must contain 28 HEX characters'],
+    [/^CCcam max hops должен быть от -1 до 20: (.+)$/,'CCcam max hops must be between -1 and 20: $1'],
+    [/^CAID ридера (.+) должен содержать 4 HEX-символа$/,'Reader $1 CAID must contain 4 HEX characters'],
+    [/^Некорректная группа ридера (.+)$/,'Invalid group for reader $1'],
+    [/^Некорректная частота ридера (.+)$/,'Invalid frequency for reader $1'],
+    [/^Неподдерживаемый протокол OSCam reader: (.+)$/,'Unsupported OSCam reader protocol: $1'],
+    [/^BoxKey ридера (.+) должен содержать 16 HEX-символов$/,'Reader $1 BoxKey must contain 16 HEX characters'],
+    [/^RSAKey ридера (.+) должен содержать HEX-строку чётной длины$/,'Reader $1 RSAKey must contain an even-length HEX string'],
+    [/^AU Provider ридера (.+) должен содержать 6 HEX-символов$/,'Reader $1 AU Provider must contain 6 HEX characters'],
+    [/^Конфигурация сохранена, но OSCam-mini не перезапущен: (.+)$/,'Configuration was saved, but OSCam-mini was not restarted: $1']
+  ];
+  for(const [pattern,replacement] of replacements)text=text.replace(pattern,replacement);
+  text=text
+    .replaceAll('устройство не выбрано','no device selected')
+    .replaceAll('обязателен для Newcamd','required for Newcamd');
+  return lead+text+tail;
+}
+
+const oscamOriginalText=new WeakMap();
+const oscamOriginalAttrs=new WeakMap();
+const oscamLocalizedAttrs=['title','placeholder','aria-label'];
+
+function localizeOscamTextNode(node){
+  if(!node||node.nodeType!==Node.TEXT_NODE||['SCRIPT','STYLE','PRE','CODE'].includes(node.parentElement?.tagName))return;
+  const current=node.nodeValue||'';
+  if(language==='en'){
+    if(/[А-Яа-яЁё]/.test(current))oscamOriginalText.set(node,current);
+    const source=oscamOriginalText.get(node)??current;
+    const translated=translateOscamText(source);
+    if(translated!==current)node.nodeValue=translated;
+  }else if(oscamOriginalText.has(node)){
+    const original=oscamOriginalText.get(node);
+    if(current!==original)node.nodeValue=original;
+  }
+}
+
+function localizeOscamAttributes(element){
+  if(!element||element.nodeType!==Node.ELEMENT_NODE||['SCRIPT','STYLE','PRE','CODE'].includes(element.tagName))return;
+  let originals=oscamOriginalAttrs.get(element);
+  if(!originals){originals=new Map();oscamOriginalAttrs.set(element,originals)}
+  for(const name of oscamLocalizedAttrs){
+    if(!element.hasAttribute(name))continue;
+    const current=element.getAttribute(name)||'';
+    if(language==='en'){
+      if(/[А-Яа-яЁё]/.test(current))originals.set(name,current);
+      const source=originals.get(name)??current;
+      const translated=translateOscamText(source);
+      if(translated!==current)element.setAttribute(name,translated);
+    }else if(originals.has(name)){
+      const original=originals.get(name);
+      if(current!==original)element.setAttribute(name,original);
+    }
+  }
+}
+
+function applyOscamLanguage(root=document.body){
+  document.documentElement.lang=language;
+  if(!root)return;
+  if(root.nodeType===Node.TEXT_NODE)localizeOscamTextNode(root);
+  if(root.nodeType===Node.ELEMENT_NODE)localizeOscamAttributes(root);
+  const walker=document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT|NodeFilter.SHOW_TEXT);
+  let node;
+  while((node=walker.nextNode())){
+    if(node.nodeType===Node.TEXT_NODE)localizeOscamTextNode(node);
+    else localizeOscamAttributes(node);
+  }
+}
+
+const oscamLocaleObserver=new MutationObserver(mutations=>{
+  for(const mutation of mutations){
+    if(mutation.type==='characterData')localizeOscamTextNode(mutation.target);
+    else if(mutation.type==='attributes')localizeOscamAttributes(mutation.target);
+    else for(const node of mutation.addedNodes)applyOscamLanguage(node);
+  }
+});
+oscamLocaleObserver.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:oscamLocalizedAttrs});
+
+function syncOscamLanguage(){
+  const selected=normalizeLanguage(localStorage.getItem('dvbstreamer5-language')||language);
+  if(selected!==language){language=selected;applyOscamLanguage(document.body)}
+}
+window.addEventListener('storage',event=>{if(event.key==='dvbstreamer5-language')syncOscamLanguage()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncOscamLanguage()});
+
 let devices=[];
 let detectedReaders=[];
 let lastStatus={};
@@ -1500,8 +1667,9 @@ async function loadAll(){try{const st=await api('/api/oscam-mini/status');lastSt
 async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_local_port:+e.querySelector('.reader-remote-local-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),ccc_version:e.querySelector('.reader-ccc-version').value.trim(),ccc_max_hops:+e.querySelector('.reader-ccc-max-hops').value,ccc_keepalive:e.querySelector('.reader-ccc-keepalive').checked,remote_keepalive:e.querySelector('.reader-remote-keepalive').checked,remote_use_ssl:e.querySelector('.reader-remote-use-ssl').checked,detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),key:key.value.trim(),keepalive:true,stream_relay_enabled:stream_relay_enabled.checked,stream_relay_port:+stream_relay_port.value,stream_source_host:stream_source_host.value.trim(),stream_source_port:+stream_source_port.value,stream_client_source_host:stream_client_source_host.checked,stream_relay_buffer_time:+stream_relay_buffer_time.value,stream_relay_caid:stream_relay_caid.value.trim(),stream_radegast_port:+stream_radegast_port.value,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error||'Ошибка');msg.className=x.ok?'msg success':'msg error';await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
 async function act(action){try{const x=await api('/api/oscam-mini/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if(!x.ok){msg.textContent=x.error||'Ошибка';msg.className='msg error'}await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
+applyOscamLanguage(document.body);
 loadAll();
-setInterval(refreshStatus,3000);
+setInterval(()=>{syncOscamLanguage();refreshStatus()},3000);
 </script>
 </body></html>)HTML";
 }
