@@ -772,7 +772,7 @@ static int32_t connect_to_stream(char *http_buf, int32_t http_buf_len, char *str
 				"Connection: keep-alive\n\n", stream_path, stream_source_host, cfg.stream_source_port);
 	}
 
-	if (send(streamfd, http_buf, cs_strlen(http_buf), 0) == -1) { return -1; }
+	if (send(streamfd, http_buf, strlen(http_buf), 0) == -1) { return -1; }
 	return streamfd;
 }
 
@@ -924,7 +924,7 @@ static void *stream_client_handler(void *arg)
 				conndata->connid, data->srvid, data->tsid, data->onid, data->ens);
 
 	snprintf(http_buf, 1024, "HTTP/1.0 200 OK\nConnection: Close\nContent-Type: video/mpeg\nServer: stream_enigma2\n\n");
-	clientStatus = send(conndata->connfd, http_buf, cs_strlen(http_buf), 0);
+	clientStatus = send(conndata->connfd, http_buf, strlen(http_buf), 0);
 
 	data->connid = conndata->connid;
 	data->caid = NO_CAID_VALUE;
@@ -1261,7 +1261,7 @@ void init_stream_server(void)
 		if (cfg.stream_source_auth_user && cfg.stream_source_auth_password)
 		{
 			snprintf(authtmp, sizeof(authtmp), "%s:%s", cfg.stream_source_auth_user, cfg.stream_source_auth_password);
-			b64encode(authtmp, cs_strlen(authtmp), &stream_source_auth);
+			b64encode(authtmp, strlen(authtmp), &stream_source_auth);
 		}
 
 		start_thread("stream_server", stream_server, NULL, NULL, 1, 1);
