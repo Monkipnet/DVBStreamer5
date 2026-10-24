@@ -31,6 +31,11 @@ std::string HttpServer::dvbAdapters() {
             item["lnb_lof1_khz"] = params.lnbLof1KHz;
             item["lnb_lof2_khz"] = params.lnbLof2KHz;
             item["lnb_slof_khz"] = params.lnbSlofKHz;
+            item["unicable_mode"] = params.unicableMode;
+            item["unicable_user_band"] = params.unicableUserBand;
+            item["unicable_frequency_khz"] = params.unicableFrequencyKHz;
+            item["unicable_position"] = params.unicablePosition;
+            item["unicable_pin"] = params.unicablePin;
         }
         if (!item.isMember("streams")) item["streams"] = Json::Value(Json::arrayValue);
         Json::Value stream;
@@ -64,6 +69,11 @@ std::string HttpServer::dvbAdapters() {
         item["lnb_lof1_khz"] = params.lnbLof1KHz;
         item["lnb_lof2_khz"] = params.lnbLof2KHz;
         item["lnb_slof_khz"] = params.lnbSlofKHz;
+        item["unicable_mode"] = params.unicableMode;
+        item["unicable_user_band"] = params.unicableUserBand;
+        item["unicable_frequency_khz"] = params.unicableFrequencyKHz;
+        item["unicable_position"] = params.unicablePosition;
+        item["unicable_pin"] = params.unicablePin;
     }
 
     if (root.isMember("adapters") && root["adapters"].isArray()) {
@@ -95,6 +105,11 @@ std::string HttpServer::dvbAdapters() {
                     adapter["lnb_lof1_khz"] = found->second.get("lnb_lof1_khz", 9750000);
                     adapter["lnb_lof2_khz"] = found->second.get("lnb_lof2_khz", 10600000);
                     adapter["lnb_slof_khz"] = found->second.get("lnb_slof_khz", 11700000);
+                    adapter["unicable_mode"] = found->second.get("unicable_mode", "none");
+                    adapter["unicable_user_band"] = found->second.get("unicable_user_band", -1);
+                    adapter["unicable_frequency_khz"] = found->second.get("unicable_frequency_khz", 0);
+                    adapter["unicable_position"] = found->second.get("unicable_position", 0);
+                    adapter["unicable_pin"] = found->second.get("unicable_pin", -1);
                 }
                 if (found->second.isMember("streams")) {
                     adapter["streams"] = found->second["streams"];
