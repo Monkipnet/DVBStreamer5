@@ -69,6 +69,14 @@ private:
         bool keepalive = true;
         std::vector<NewcamdUser> users;
         std::vector<Reader> readers;
+        bool streamRelayEnabled = false;
+        int streamRelayPort = 17999;
+        std::string streamSourceHost = "127.0.0.1";
+        int streamSourcePort = 8001;
+        bool streamClientSourceHost = false;
+        int streamRelayBufferTime = 0;
+        std::string streamRelayCaid;
+        int streamRadegastPort = 9090;
     };
 
     Settings loadLocked();
