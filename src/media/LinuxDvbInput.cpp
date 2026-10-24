@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -42,6 +43,11 @@ std::mutex& activeFrontendRegistryMutex() {
 std::map<FrontendRegistryKey, int>& activeFrontendRegistry() {
     static std::map<FrontendRegistryKey, int> registry;
     return registry;
+}
+
+std::mutex& unicableCommandMutex() {
+    static std::mutex mutex;
+    return mutex;
 }
 
 bool registerActiveFrontend(int adapter, int frontend, int fd) {
@@ -245,6 +251,139 @@ bool sendSwitchCommands(int fd, int source, bool horizontal,
                              "DiSEqC committed switch", error);
 }
 
+bool unicableEnabled(const LinuxDvbTuneConfig& config) {
+    return config.unicableMode == "en50494" || config.unicableMode == "en50607";
+}
+
+bool configureUnicable(int fd, const LinuxDvbTuneConfig& config,
+                       std::uint32_t intermediateFrequency,
+                       bool horizontal, bool highBand,
+                       std::uint32_t& frontendFrequency,
+                       std::string& error) {
+    const bool en50494 = config.unicableMode == "en50494";
+    const bool en50607 = config.unicableMode == "en50607";
+    if (!en50494 && !en50607) {
+        error = "unsupported Unicable mode";
+        return false;
+    }
+
+    const int maxUserBand = en50494 ? 7 : 31;
+    const int maxPosition = en50494 ? 1 : 63;
+    if (config.unicableUserBand < 0 || config.unicableUserBand > maxUserBand ||
+        config.unicableFrequencyKHz < 950000 || config.unicableFrequencyKHz > 2150000 ||
+        config.unicablePosition < 0 || config.unicablePosition > maxPosition ||
+        config.unicablePin < -1 || config.unicablePin > 255) {
+        error = "invalid Unicable User Band/frequency/position/PIN parameters";
+        return false;
+    }
+
+    long transponder = 0;
+    std::uint8_t data1 = 0;
+    std::uint8_t data2 = 0;
+    std::uint8_t data3 = 0;
+
+    if (en50494) {
+        const double ifMHz = static_cast<double>(intermediateFrequency) / 1000.0;
+        const double ubMHz = static_cast<double>(config.unicableFrequencyKHz) / 1000.0;
+        transponder = std::lround(((ifMHz + 2.0 + ubMHz) / 4.0) - 350.0);
+        if (transponder < 0 || transponder > 1023) {
+            error = "EN50494 calculated transponder value is outside 0..1023";
+            return false;
+        }
+        const std::int64_t tuned =
+            (static_cast<std::int64_t>(transponder) + 350LL) * 4000LL -
+            static_cast<std::int64_t>(intermediateFrequency);
+        if (tuned <= 0 || tuned > std::numeric_limits<std::uint32_t>::max()) {
+            error = "EN50494 calculated frontend frequency is invalid";
+            return false;
+        }
+        frontendFrequency = static_cast<std::uint32_t>(tuned);
+        data1 = static_cast<std::uint8_t>(
+            ((config.unicableUserBand & 0x07) << 5) |
+            ((config.unicablePosition & 0x01) << 4) |
+            (horizontal ? 0x08 : 0x00) |
+            (highBand ? 0x04 : 0x00) |
+            ((transponder >> 8) & 0x03));
+        data2 = static_cast<std::uint8_t>(transponder & 0xff);
+    } else {
+        transponder = std::lround(
+            static_cast<double>(intermediateFrequency) / 1000.0) - 100L;
+        if (transponder < 0 || transponder > 2047) {
+            error = "EN50607 calculated transponder value is outside 0..2047";
+            return false;
+        }
+        frontendFrequency = config.unicableFrequencyKHz;
+        data1 = static_cast<std::uint8_t>(
+            ((config.unicableUserBand & 0x1f) << 3) |
+            ((transponder >> 8) & 0x07));
+        data2 = static_cast<std::uint8_t>(transponder & 0xff);
+        data3 = static_cast<std::uint8_t>(
+            ((config.unicablePosition & 0x3f) << 2) |
+            (horizontal ? 0x02 : 0x00) |
+            (highBand ? 0x01 : 0x00));
+    }
+
+    dvb_diseqc_master_cmd command {};
+    if (en50494) {
+        command.msg[0] = 0xe0;
+        command.msg[1] = 0x10;
+        command.msg[2] = config.unicablePin >= 0 ? 0x5c : 0x5a;
+        command.msg[3] = data1;
+        command.msg[4] = data2;
+        command.msg_len = 5;
+        if (config.unicablePin >= 0) {
+            command.msg[5] = static_cast<std::uint8_t>(config.unicablePin);
+            command.msg_len = 6;
+        }
+    } else {
+        command.msg[0] = config.unicablePin >= 0 ? 0x71 : 0x70;
+        command.msg[1] = data1;
+        command.msg[2] = data2;
+        command.msg[3] = data3;
+        command.msg_len = 4;
+        if (config.unicablePin >= 0) {
+            command.msg[4] = static_cast<std::uint8_t>(config.unicablePin);
+            command.msg_len = 5;
+        }
+    }
+
+    // All Unicable commands on a shared coax must be serialized to avoid
+    // overlapping DiSEqC bursts from simultaneous frontend starts.
+    std::lock_guard<std::mutex> commandLock(unicableCommandMutex());
+
+    if (!setTone(fd, SEC_TONE_OFF, "Unicable pre-command tone off", error))
+        return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    if (!setVoltage(fd, SEC_VOLTAGE_18, "Unicable command voltage 18V", error))
+        return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    if (!sendMasterCommand(
+            fd, command,
+            en50494 ? "EN50494 tune command" : "EN50607 tune command",
+            error)) {
+        return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    if (!setVoltage(fd, SEC_VOLTAGE_13, "Unicable idle voltage 13V", error))
+        return false;
+    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+
+    std::clog
+        << "NATIVE DVB UNICABLE command standard="
+        << (en50494 ? "EN50494" : "EN50607")
+        << " ub=" << config.unicableUserBand
+        << " ub_khz=" << config.unicableFrequencyKHz
+        << " position=" << config.unicablePosition
+        << " pin=" << config.unicablePin
+        << " transponder=" << transponder
+        << " frontend_khz=" << frontendFrequency
+        << '\n';
+    return true;
+}
+
 fe_code_rate_t parseFec(const std::string& fec) {
     if (fec == "1/2") return FEC_1_2;
     if (fec == "2/3") return FEC_2_3;
@@ -299,6 +438,9 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         config.symbolRateK < 100 || config.symbolRateK > 60000 ||
         (config.polarity != "H" && config.polarity != "V") ||
         (config.deliverySystem != "dvb-s" && config.deliverySystem != "dvb-s2") ||
+        (config.unicableMode != "none" &&
+         config.unicableMode != "en50494" &&
+         config.unicableMode != "en50607") ||
         config.diseqcSource < -1 || config.diseqcSource > 7 ||
         config.streamId < -1 || config.streamId > 255 ||
         config.lockTimeoutMs <= 0 || config.lockTimeoutMs > 120000) {
@@ -313,6 +455,8 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         config.frequencyKHz > lof
         ? config.frequencyKHz - lof
         : lof - config.frequencyKHz;
+    std::uint32_t frontendFrequency = intermediateFrequency;
+    const bool useUnicable = unicableEnabled(config);
     if (intermediateFrequency == 0 ||
         intermediateFrequency >
             static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
@@ -339,18 +483,28 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         << " pol=" << config.polarity
         << " band=" << (highBand ? "high" : "low")
         << " diseqc=" << config.diseqcSource
+        << " unicable=" << config.unicableMode
+        << " ub=" << config.unicableUserBand
+        << " ub_khz=" << config.unicableFrequencyKHz
+        << " position=" << config.unicablePosition
         << " stream_id=" << config.streamId
         << " lock_timeout_ms=" << effectiveLockTimeoutMs
         << '\n';
 
-    if (stid135 && mode == 2) {
+    if (stid135 && mode == 2 && !useUnicable) {
         error =
-            "STiD135 mode=2 (Unicable) detected, but DVBStreamer5 currently "
-            "has no SCR/user-band frequency parameters in LinuxDvbTuneConfig; "
-            "refusing legacy 13/18V + 22kHz tuning";
+            "STiD135 mode=2 (Unicable) requires EN50494/EN50607 User Band parameters";
         std::clog
             << "NATIVE DVB TUNE reject "
                "reason=stid135_unicable_parameters_missing\n";
+        return false;
+    }
+    if (stid135 && mode != 2 && useUnicable) {
+        error = "STiD135 Unicable tuning requires driver mode=2; current mode=" +
+            std::to_string(mode);
+        std::clog
+            << "NATIVE DVB TUNE reject reason=stid135_unicable_driver_mode"
+            << " mode=" << mode << '\n';
         return false;
     }
 
@@ -359,7 +513,13 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     const fe_sec_tone_mode bandTone =
         highBand ? SEC_TONE_ON : SEC_TONE_OFF;
 
-    if (stid135 && mode == 0) {
+    if (useUnicable) {
+        if (!configureUnicable(
+                fd, config, intermediateFrequency,
+                horizontal, highBand, frontendFrequency, error)) {
+            return false;
+        }
+    } else if (stid135 && mode == 0) {
         if (!setVoltage(fd, voltage,
                         "STiD135 mode0 RF polarity select", error)) {
             return false;
@@ -443,7 +603,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         properties[count++].u.data =
             config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
         properties[count].cmd = DTV_FREQUENCY;
-        properties[count++].u.data = intermediateFrequency;
+        properties[count++].u.data = frontendFrequency;
         properties[count].cmd = DTV_MODULATION;
         properties[count++].u.data =
             config.modulation == "auto" ? QPSK : parseModulation(config);
@@ -477,7 +637,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         properties[1].u.data =
             config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
         properties[2].cmd = DTV_FREQUENCY;
-        properties[2].u.data = intermediateFrequency;
+        properties[2].u.data = frontendFrequency;
         properties[3].cmd = DTV_SYMBOL_RATE;
         properties[3].u.data = config.symbolRateK * 1000U;
         properties[4].cmd = DTV_MODULATION;
