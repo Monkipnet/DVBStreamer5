@@ -1498,6 +1498,10 @@ function translateOscamText(value){
     [/^CAID пользователя (.+) должен содержать 4 HEX-символа$/,'CAID for user $1 must contain 4 HEX characters'],
     [/^Provider пользователя (.+) должен содержать 6 HEX-символов$/,'Provider for user $1 must contain 6 HEX characters'],
     [/^Некорректные группы пользователя (.+)$/,'Invalid groups for user $1'],
+    [/^Не удалось создать временный файл (.+)$/,'Failed to create temporary file $1'],
+    [/^Ошибка записи (.+)$/,'Write error $1'],
+    [/^Для PC\/SC укажите индекс ридера \(0, 1, \.\.\.\): (.+)$/,'Specify the PC/SC reader index (0, 1, ...): $1'],
+    [/^Некорректное устройство ридера (.+)$/,'Invalid reader device $1'],
     [/^Для Remote CA укажите корректные Host и Port: (.+)$/,'Specify a valid Host and Port for Remote CA: $1'],
     [/^Некорректный Local Port Remote CA: (.+)$/,'Invalid Remote CA Local Port: $1'],
     [/^Для (.+) укажите корректные User и Password: (.+)$/,'Specify valid User and Password for $1: $2'],
@@ -1515,6 +1519,7 @@ function translateOscamText(value){
   ];
   for(const [pattern,replacement] of replacements)text=text.replace(pattern,replacement);
   text=text
+    .replaceAll('Конфиги:','Configs:')
     .replaceAll('устройство не выбрано','no device selected')
     .replaceAll('обязателен для Newcamd','required for Newcamd');
   return lead+text+tail;
