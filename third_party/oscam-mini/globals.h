@@ -2141,6 +2141,26 @@ struct s_config
 	IN_ADDR_T   scam_srvip;
 	struct s_ip *scam_allowed;
 #endif
+
+#ifdef MODULE_STREAMRELAY
+	char            *stream_source_host;
+	int32_t         stream_source_port;
+	char            *stream_source_auth_user;
+	char            *stream_source_auth_password;
+	int32_t         stream_relay_port;
+#ifdef MODULE_RADEGAST
+	int8_t          stream_client_source_host;
+#endif
+	int8_t          stream_relay_enabled;
+	uint32_t        stream_relay_buffer_time;
+	CAIDTAB         stream_relay_ctab;
+#ifdef WITH_NEUTRINO
+#define DEFAULT_STREAM_SOURCE_PORT 31339
+#else
+#define DEFAULT_STREAM_SOURCE_PORT 8001
+#endif
+#endif
+
 	int32_t    max_cache_time;  //seconds ecms are stored in ecmcwcache
 	int32_t    max_hitcache_time;  //seconds hits are stored in cspec_hitcache (to detect dyn wait_time)
 
