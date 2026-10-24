@@ -70,7 +70,7 @@ cd "$WORK"
 # Enable all network proxy/client modules supported by this OSCam snapshot plus
 # the existing card-system handlers. Runtime access still depends on explicit
 # reader/listener configuration; enabling a module does not grant access rights.
-./config.sh --enable MODULE_NEWCAMD MODULE_CAMD33 MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_CCCSHARE MODULE_GBOX MODULE_RADEGAST MODULE_SCAM MODULE_GHTTP MODULE_STREAMRELAY readers CARDREADER_PHOENIX
+./config.sh --enable WITH_SSL MODULE_NEWCAMD MODULE_CAMD33 MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_CCCSHARE MODULE_GBOX MODULE_RADEGAST MODULE_SCAM MODULE_GHTTP MODULE_STREAMRELAY readers CARDREADER_PHOENIX
 
 printf '\nEnabled OSCam-mini modules:\n'
 ./config.sh --show-enabled all
