@@ -242,6 +242,13 @@ bool remoteReaderNeedsCredentials(const std::string& protocol) {
            protocol == "scam" || protocol == "ghttp";
 }
 
+bool validCaidTable(const std::string& value) {
+    if (value.empty() || value.size() > 256) return false;
+    return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+        return std::isxdigit(ch) || ch == ',' || ch == ':' || ch == '&';
+    });
+}
+
 Json::Value parseCamBackendConfigText(const std::string& text) {
     Json::Value parsed(Json::objectValue);
     Json::CharReaderBuilder builder;
@@ -456,10 +463,23 @@ Json::Value OscamMiniManager::parse(const std::string& body, std::string& error)
 OscamMiniManager::Settings OscamMiniManager::loadLocked() {
     Settings settings;
 
-    const auto newcamd = parseFirstSection(readFile(configDir() + "/oscam.conf"), "newcamd");
+    const std::string oscamConfText = readFile(configDir() + "/oscam.conf");
+    const auto newcamd = parseFirstSection(oscamConfText, "newcamd");
     settings.bindIp = getValue(newcamd, "serverip", "127.0.0.1");
     settings.key = getValue(newcamd, "key", settings.key);
     settings.keepalive = isTrue(getValue(newcamd, "keepalive", "1"));
+
+    const auto streamrelay = parseFirstSection(oscamConfText, "streamrelay");
+    settings.streamRelayEnabled = isTrue(getValue(streamrelay, "stream_relay_enabled", "0"));
+    settings.streamRelayPort = getInt(streamrelay, "stream_relay_port", 17999);
+    settings.streamSourceHost = getValue(streamrelay, "stream_source_host", "127.0.0.1");
+    settings.streamSourcePort = getInt(streamrelay, "stream_source_port", 8001);
+    settings.streamClientSourceHost = isTrue(getValue(streamrelay, "stream_client_source_host", "0"));
+    settings.streamRelayBufferTime = getInt(streamrelay, "stream_relay_buffer_time", 0);
+    settings.streamRelayCaid = getValue(streamrelay, "stream_relay_ctab", "");
+
+    const auto radegast = parseFirstSection(oscamConfText, "radegast");
+    settings.streamRadegastPort = getInt(radegast, "port", 9090);
 
     auto ports = parsePortDefs(getValue(newcamd, "port", ""));
     auto accounts = parseIniSections(readFile(configDir() + "/oscam.user"), "account");
@@ -788,6 +808,25 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
         }
     }
 
+    if (settings.streamRelayEnabled) {
+        const bool sourceHostOk = !settings.streamSourceHost.empty() && settings.streamSourceHost.size() <= 255 &&
+            settings.streamSourceHost.find_first_of("\r\n,;# \t") == std::string::npos;
+        if (!sourceHostOk || settings.streamSourcePort < 1 || settings.streamSourcePort > 65535 ||
+            settings.streamRelayPort < 1 || settings.streamRelayPort > 65535 ||
+            settings.streamRadegastPort < 1 || settings.streamRadegastPort > 65535) {
+            error = "StreamRelay: проверьте Source Host/Port, Relay Port и Radegast Port";
+            return false;
+        }
+        if (!validCaidTable(settings.streamRelayCaid)) {
+            error = "StreamRelay CAID filter должен содержать CAID/маски OSCam, например 098C,09C4";
+            return false;
+        }
+        if (settings.streamRelayBufferTime < 0 || settings.streamRelayBufferTime > 30000) {
+            error = "StreamRelay buffer time должен быть 0..30000 мс";
+            return false;
+        }
+    }
+
     std::ostringstream conf;
     conf << "[global]\n"
          << "logfile = stdout\n"
@@ -806,6 +845,21 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
     }
     conf << "\nkey = " << safeIni(settings.key) << "\n"
          << "keepalive = " << (settings.keepalive ? 1 : 0) << "\n";
+
+    if (settings.streamRelayEnabled) {
+        conf << "\n[radegast]\n"
+             << "serverip = 127.0.0.1\n"
+             << "port = " << settings.streamRadegastPort << "\n"
+             << "allowed = 127.0.0.1\n"
+             << "\n[streamrelay]\n"
+             << "stream_relay_enabled = 1\n"
+             << "stream_relay_port = " << settings.streamRelayPort << "\n"
+             << "stream_source_host = " << safeIni(settings.streamSourceHost) << "\n"
+             << "stream_source_port = " << settings.streamSourcePort << "\n"
+             << "stream_client_source_host = " << (settings.streamClientSourceHost ? 1 : 0) << "\n"
+             << "stream_relay_buffer_time = " << settings.streamRelayBufferTime << "\n"
+             << "stream_relay_ctab = " << safeIni(settings.streamRelayCaid) << "\n";
+    }
 
     std::ostringstream users;
     for (const auto& user : settings.users) {
@@ -1056,19 +1110,21 @@ Json::Value OscamMiniManager::statusLocked() {
             state = "disabled";
             detail = "Ридер отключён";
         } else if (serviceActive) {
-            const bool remoteReader = reader.protocol == "newcamd";
+            const bool remoteReader = isRemoteReaderProtocol(reader.protocol);
             const std::string remoteEndpoint = reader.remoteHost + ":" + std::to_string(reader.remotePort);
+            const std::string protocolTag = "[" + reader.protocol + "]";
             const std::string readyNeedle = reader.label + " [irdeto] ready for requests";
             const std::string readyMouseNeedle = reader.label + " [mouse] ready for requests";
             const bool remoteSocketReady = remoteReader && oscamSocketOnPort(reader.remotePort);
             const bool remoteLoggedReady = remoteReader &&
-                log.find(reader.label + " [newcamd] Newcamd Server: " + remoteEndpoint + " - UserID:") != std::string::npos;
+                (log.find(reader.label + " " + protocolTag + " proxy initialized") != std::string::npos ||
+                 log.find(reader.label + " [newcamd] Newcamd Server: " + remoteEndpoint + " - UserID:") != std::string::npos);
             const bool ready = remoteReader
-                ? remoteSocketReady
+                ? (remoteSocketReady || remoteLoggedReady)
                 : (log.find(readyNeedle) != std::string::npos ||
                    log.find(readyMouseNeedle) != std::string::npos);
             const bool initializing = remoteReader
-                ? log.find(reader.label + " [newcamd] proxy " + remoteEndpoint + " newcamd52") != std::string::npos
+                ? log.find(reader.label + " " + protocolTag) != std::string::npos
                 : (log.find(reader.label + " [mouse] card detected") != std::string::npos
                    || log.find(reader.label + " [mouse] detect irdeto card") != std::string::npos
                    || log.find(reader.label + " [mouse] found card system") != std::string::npos
@@ -1076,9 +1132,10 @@ Json::Value OscamMiniManager::statusLocked() {
                    || log.find(reader.label + " [pcsc] found card system") != std::string::npos
                    || log.find(reader.label + " [irdeto] THIS WAS A SUCCESSFUL START ATTEMPT") != std::string::npos);
             const bool error = remoteReader
-                ? (log.find(reader.label + " [newcamd] login failed for user") != std::string::npos
-                   || log.find(reader.label + " [newcamd] server does not return 14 bytes") != std::string::npos
-                   || log.find(reader.label + " [newcamd] expected MSG_CLIENT_2_SERVER_LOGIN_ACK") != std::string::npos)
+                ? (log.find(reader.label + " " + protocolTag + " ERROR") != std::string::npos ||
+                   log.find(reader.label + " [newcamd] login failed for user") != std::string::npos ||
+                   log.find(reader.label + " [newcamd] server does not return 14 bytes") != std::string::npos ||
+                   log.find(reader.label + " [newcamd] expected MSG_CLIENT_2_SERVER_LOGIN_ACK") != std::string::npos)
                 : (log.find(reader.label + " [mouse] Error activating card") != std::string::npos
                    || log.find(reader.label + " [mouse] ERROR") != std::string::npos
                    || log.find(reader.label + " [pcsc] ERROR") != std::string::npos
@@ -1087,16 +1144,16 @@ Json::Value OscamMiniManager::statusLocked() {
 
             if (ready) {
                 state = "active";
-                detail = remoteReader ? "Remote Newcamd подключён" : "Карта готова";
+                detail = remoteReader ? ("Remote CA " + reader.protocol + " подключён") : "Карта готова";
             } else if (error) {
                 state = "down";
-                detail = remoteReader ? "Ошибка Remote Newcamd" : "Ошибка ридера";
-            } else if (initializing || remoteLoggedReady) {
+                detail = remoteReader ? ("Ошибка Remote CA " + reader.protocol) : "Ошибка ридера";
+            } else if (initializing) {
                 state = "idle";
-                detail = remoteReader ? "Подключение к Remote Newcamd" : "Инициализация карты";
+                detail = remoteReader ? ("Remote CA " + reader.protocol + " активируется") : "Инициализация карты";
             } else {
                 state = "idle";
-                detail = remoteReader ? "Ожидание Remote Newcamd" : "Ожидание карты";
+                detail = remoteReader ? ("Ожидание Remote CA " + reader.protocol) : "Ожидание карты";
             }
         }
 
@@ -1122,6 +1179,14 @@ std::string OscamMiniManager::settingsJson() {
     result["bind_ip"] = settings.bindIp;
     result["key"] = settings.key;
     result["keepalive"] = settings.keepalive;
+    result["stream_relay_enabled"] = settings.streamRelayEnabled;
+    result["stream_relay_port"] = settings.streamRelayPort;
+    result["stream_source_host"] = settings.streamSourceHost;
+    result["stream_source_port"] = settings.streamSourcePort;
+    result["stream_client_source_host"] = settings.streamClientSourceHost;
+    result["stream_relay_buffer_time"] = settings.streamRelayBufferTime;
+    result["stream_relay_caid"] = settings.streamRelayCaid;
+    result["stream_radegast_port"] = settings.streamRadegastPort;
 
     Json::Value users(Json::arrayValue);
     for (const auto& user : settings.users) {
@@ -1200,6 +1265,14 @@ std::string OscamMiniManager::saveSettingsJson(const std::string& body) {
     settings.bindIp = input.get("bind_ip", "127.0.0.1").asString();
     settings.key = input.get("key", "0102030405060708091011121314").asString();
     settings.keepalive = input.get("keepalive", true).asBool();
+    settings.streamRelayEnabled = input.get("stream_relay_enabled", false).asBool();
+    settings.streamRelayPort = input.get("stream_relay_port", 17999).asInt();
+    settings.streamSourceHost = input.get("stream_source_host", "127.0.0.1").asString();
+    settings.streamSourcePort = input.get("stream_source_port", 8001).asInt();
+    settings.streamClientSourceHost = input.get("stream_client_source_host", false).asBool();
+    settings.streamRelayBufferTime = input.get("stream_relay_buffer_time", 0).asInt();
+    settings.streamRelayCaid = input.get("stream_relay_caid", "").asString();
+    settings.streamRadegastPort = input.get("stream_radegast_port", 9090).asInt();
 
     if (input["users"].isArray()) {
         for (const auto& item : input["users"]) {
@@ -1341,6 +1414,7 @@ body{font-family:Arial,sans-serif;background:#0f1218;color:#eee;margin:0}.w{max-
 </div>
 
 <div class="c"><div class="row"><h3 style="margin:0">Ридеры / Remote CA OSCam-mini</h3><button onclick="addReader()">+ Ридер</button><button class="alt" onclick="rescanReaders()">Найти локальные ридеры</button><span id="readerScan" class="hint" style="margin:0"></span></div><div class="hint">Локальные: mouse/phoenix/PCSC. Remote CA: Newcamd, Camd35/CS357x, CS378x, CCcam, Radegast, Gbox, Scam, GHTTP и Camd33. Выберите протокол — показываются только относящиеся к нему поля.</div><div id="readers"></div></div>
+<div class="c"><div class="row"><h3 style="margin:0">StreamRelay / iCAM</h3><label style="flex-direction:row;align-items:center"><input id="stream_relay_enabled" type="checkbox" onchange="streamRelayChanged()"> Включить</label></div><div class="hint">StreamRelay использует выбранные выше Remote CA readers. Встроенный Radegast loopback передаёт ECM в OSCam; CA credentials здесь не хранятся.</div><div id="streamRelayFields" class="g" style="margin-top:12px"><label>Relay Port<input id="stream_relay_port" type="number" min="1" max="65535" value="17999"></label><label>Source Host<input id="stream_source_host" value="127.0.0.1"></label><label>Source Port<input id="stream_source_port" type="number" min="1" max="65535" value="8001"></label><label>CAID filter<input id="stream_relay_caid" placeholder="098C,09C4"></label><label>Radegast loopback Port<input id="stream_radegast_port" type="number" min="1" max="65535" value="9090"></label><label>Buffer time, ms<input id="stream_relay_buffer_time" type="number" min="0" max="30000" value="0"></label><label style="flex-direction:row;align-items:center"><input id="stream_client_source_host" type="checkbox"> Source host from client</label></div></div>
 <div class="c"><button onclick="save()">Сохранить и перезапустить</button><span id="msg" class="msg"></span></div>
 <div class="c"><h3>Процесс / журнал</h3><pre id="proc"></pre><pre id="log"></pre></div>
 </div>
@@ -1353,6 +1427,7 @@ async function api(url,opt){const r=await fetch(url,opt);let data;try{data=await
 function stateClass(s){return ['active','idle','down','disabled'].includes(s)?s:'down'}
 function activityDot(s){s=stateClass(s);return `<span class="dot dot-${s}"></span>`}
 function toggleItem(head){head.closest('.compact-item').classList.toggle('open')}
+function streamRelayChanged(){const on=stream_relay_enabled.checked;streamRelayFields.style.opacity=on?'1':'.45';streamRelayFields.querySelectorAll('input').forEach(e=>e.disabled=!on)}
 
 function userHtml(u={},i=0){const name=u.user||('user'+(i+1));return `<div class="compact-item user" data-user="${esc(name)}">
 <button type="button" class="compact-head" onclick="toggleItem(this)">
@@ -1420,9 +1495,9 @@ function setActivity(el,info){if(!el)return;const s=stateClass(info?.state||'dow
 function applyActivity(st){lastStatus=st||{};document.querySelectorAll('.user').forEach(el=>setActivity(el,(st.user_activity||{})[el.dataset.user]));document.querySelectorAll('.reader').forEach(el=>setActivity(el,(st.reader_activity||{})[el.dataset.reader]))}
 async function refreshStatus(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';applyActivity(st)}catch(e){}}
 
-async function loadAll(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;devices=st.devices||[];state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';const s=await api('/api/oscam-mini/settings');detectedReaders=s.detected_readers||[];bind_ip.value=s.bind_ip||'127.0.0.1';key.value=s.key||'';users.innerHTML='';(s.users||[]).forEach(addUser);readers.innerHTML='';(s.readers||[]).forEach(addReader);readerScan.textContent='Найдено ридеров: '+detectedReaders.length;applyActivity(st)}catch(e){msg.textContent=e.message;msg.className='msg error'}}
+async function loadAll(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;devices=st.devices||[];state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';const s=await api('/api/oscam-mini/settings');detectedReaders=s.detected_readers||[];bind_ip.value=s.bind_ip||'127.0.0.1';key.value=s.key||'';stream_relay_enabled.checked=!!s.stream_relay_enabled;stream_relay_port.value=s.stream_relay_port||17999;stream_source_host.value=s.stream_source_host||'127.0.0.1';stream_source_port.value=s.stream_source_port||8001;stream_client_source_host.checked=!!s.stream_client_source_host;stream_relay_buffer_time.value=s.stream_relay_buffer_time??0;stream_relay_caid.value=s.stream_relay_caid||'';stream_radegast_port.value=s.stream_radegast_port||9090;streamRelayChanged();users.innerHTML='';(s.users||[]).forEach(addUser);readers.innerHTML='';(s.readers||[]).forEach(addReader);readerScan.textContent='Найдено ридеров: '+detectedReaders.length;applyActivity(st)}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
-async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_local_port:+e.querySelector('.reader-remote-local-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),ccc_version:e.querySelector('.reader-ccc-version').value.trim(),ccc_max_hops:+e.querySelector('.reader-ccc-max-hops').value,ccc_keepalive:e.querySelector('.reader-ccc-keepalive').checked,remote_keepalive:e.querySelector('.reader-remote-keepalive').checked,remote_use_ssl:e.querySelector('.reader-remote-use-ssl').checked,detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),key:key.value.trim(),keepalive:true,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error||'Ошибка');msg.className=x.ok?'msg success':'msg error';await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
+async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_local_port:+e.querySelector('.reader-remote-local-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),ccc_version:e.querySelector('.reader-ccc-version').value.trim(),ccc_max_hops:+e.querySelector('.reader-ccc-max-hops').value,ccc_keepalive:e.querySelector('.reader-ccc-keepalive').checked,remote_keepalive:e.querySelector('.reader-remote-keepalive').checked,remote_use_ssl:e.querySelector('.reader-remote-use-ssl').checked,detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),key:key.value.trim(),keepalive:true,stream_relay_enabled:stream_relay_enabled.checked,stream_relay_port:+stream_relay_port.value,stream_source_host:stream_source_host.value.trim(),stream_source_port:+stream_source_port.value,stream_client_source_host:stream_client_source_host.checked,stream_relay_buffer_time:+stream_relay_buffer_time.value,stream_relay_caid:stream_relay_caid.value.trim(),stream_radegast_port:+stream_radegast_port.value,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error||'Ошибка');msg.className=x.ok?'msg success':'msg error';await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
 async function act(action){try{const x=await api('/api/oscam-mini/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if(!x.ok){msg.textContent=x.error||'Ошибка';msg.className='msg error'}await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 loadAll();
