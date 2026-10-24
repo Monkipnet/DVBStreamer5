@@ -41,9 +41,15 @@ private:
         std::string device;
         std::string remoteHost;
         int remotePort = 0;
+        int remoteLocalPort = 0;
         std::string remoteUser;
         std::string remotePassword;
         std::string remoteKey;
+        std::string cccVersion;
+        int cccMaxHops = 10;
+        bool cccKeepalive = false;
+        bool remoteKeepalive = false;
+        bool remoteUseSsl = false;
         std::string caid;
         std::string detect = "cd";
         std::string ident;

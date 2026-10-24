@@ -61,9 +61,10 @@ sed -i 's/\r$//' "$WORK/webif/pages_index.txt"
 
 cd "$WORK"
 ./config.sh --disable all
-# Enable the card-system handlers shipped by this OSCam snapshot.  Only Newcamd
-# remains a network listener; enabling readers does not grant new access rights.
-./config.sh --enable MODULE_NEWCAMD readers CARDREADER_PHOENIX
+# Enable all network proxy/client modules supported by this OSCam snapshot plus
+# the existing card-system handlers. Runtime access still depends on explicit
+# reader/listener configuration; enabling a module does not grant access rights.
+./config.sh --enable MODULE_NEWCAMD MODULE_CAMD33 MODULE_CAMD35 MODULE_CAMD35_TCP MODULE_CCCAM MODULE_CCCSHARE MODULE_GBOX MODULE_RADEGAST MODULE_SCAM MODULE_GHTTP readers CARDREADER_PHOENIX
 
 printf '\nEnabled OSCam-mini modules:\n'
 ./config.sh --show-enabled all

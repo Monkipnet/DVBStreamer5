@@ -215,3 +215,15 @@ Activity indicator:
 - gray: reader is disabled.
 
 The status endpoint exposes `user_activity` and `reader_activity` and the page refreshes these indicators every 3 seconds without rebuilding the form.
+
+
+## Remote CA protocols (V10.8.186 staging)
+
+The OSCam-mini UI supports the network proxy/client protocols already implemented
+by the vendored OSCam snapshot: Newcamd 524/525, Camd35/CS357x, CS378x, CCcam,
+CCcam Extended, Radegast, Gbox, Scam, GHTTP and Camd33. Local mouse, Phoenix and
+PC/SC readers remain available in the same reader list.
+
+The existing downstream Newcamd listener and DVBStreamer5 synchronization remain
+unchanged. Remote protocol credentials are written only to the runtime
+`oscam.server`; do not commit CA credentials to the repository.
