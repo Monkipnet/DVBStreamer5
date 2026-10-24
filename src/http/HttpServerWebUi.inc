@@ -1300,7 +1300,11 @@ function diseqcSourceLabel(value) {
 }
 function dvbTuneDetails(stream) {
   const isi = Number(stream?.dvb_stream_id ?? -1);
-  return `ISI: ${isi >= 0 ? isi : (language === 'en' ? 'Auto' : 'Авто')} · DiSEqC: ${diseqcSourceLabel(stream?.dvb_diseqc_source)}`;
+  const mode = String(stream?.dvb_unicable_mode || 'none');
+  const unicable = mode === 'en50494' || mode === 'en50607'
+    ? ` · ${mode === 'en50494' ? 'EN50494' : 'EN50607'} UB${Number(stream?.dvb_unicable_user_band ?? -1)} @ ${(Number(stream?.dvb_unicable_frequency_khz || 0)/1000).toFixed(0)} MHz`
+    : ` · DiSEqC: ${diseqcSourceLabel(stream?.dvb_diseqc_source)}`;
+  return `ISI: ${isi >= 0 ? isi : (language === 'en' ? 'Auto' : 'Авто')}${unicable}`;
 }
 function dvbFrontendDetails(stream) {
   const adapter = Number(stream?.dvb_adapter ?? 0);
@@ -2537,6 +2541,12 @@ function applySelectedDvbFrontendTuneToForm() {
   if (lof1KHz > 0) setValue('satLof1', lof1KHz / 1000);
   if (lof2KHz > 0) setValue('satLof2', lof2KHz / 1000);
   if (slofKHz > 0) setValue('satSlof', slofKHz / 1000);
+  setValue('satUnicableMode', item.unicable_mode || 'none');
+  setValue('satUnicableUserBand', Number(item.unicable_user_band ?? 0));
+  const ubKHz = Number(item.unicable_frequency_khz || 0);
+  if (ubKHz > 0) setValue('satUnicableFrequency', ubKHz / 1000);
+  setValue('satUnicablePosition', Number(item.unicable_position ?? 0));
+  setValue('satUnicablePin', Number(item.unicable_pin ?? -1));
   applyTbsDriverModeUi();
   return true;
 }
@@ -2569,25 +2579,55 @@ function updateSatelliteCapabilityInfo() {
   const no = language === 'en' ? 'no' : 'нет';
   info.textContent = `Native Linux DVB · stream-id: ${dvbCapabilities.streamIdSupported ? yes : no} · diseqc-source: ${dvbCapabilities.diseqcSourceSupported ? yes : no}`;
 }
+function updateSatelliteUnicableUi(triggerSignal=false) {
+  const item = selectedDvbFrontend();
+  const driverMode = Number(item?.driver_mode ?? -1);
+  const mode = String(document.getElementById('satUnicableMode')?.value || 'none');
+  const enabled = mode === 'en50494' || mode === 'en50607';
+  document.querySelectorAll('.sat-unicable-field').forEach(el => {
+    el.style.display = enabled ? '' : 'none';
+  });
+  const userBand = document.getElementById('satUnicableUserBand');
+  const position = document.getElementById('satUnicablePosition');
+  if (userBand) {
+    userBand.max = mode === 'en50494' ? '7' : '31';
+    if (Number(userBand.value) > Number(userBand.max)) userBand.value = userBand.max;
+  }
+  if (position) {
+    position.max = mode === 'en50494' ? '1' : '63';
+    if (Number(position.value) > Number(position.max)) position.value = position.max;
+  }
+  const diseqc = document.getElementById('satDiseqc');
+  if (diseqc) {
+    diseqc.disabled = enabled || driverMode === 2;
+    if (diseqc.disabled) diseqc.value = '-1';
+  }
+  if (triggerSignal) {
+    resetSatelliteServicesForTuneChange();
+    updateSatelliteSignal();
+  }
+}
+
 function applyTbsDriverModeUi() {
   const item = selectedDvbFrontend();
   const mode = Number(item?.driver_mode ?? -1);
-  const diseqc = document.getElementById('satDiseqc');
+  updateSatelliteUnicableUi(false);
   const hint = document.getElementById('satDriverModeHint');
-  if (diseqc) {
-    diseqc.disabled = mode === 2;
-    if (mode === 2) diseqc.value = '-1';
-  }
   if (!hint) return;
+  const selectedUnicable = String(document.getElementById('satUnicableMode')?.value || 'none');
   const ru = [
     'Mode 0: multiswitch / quattro или quad LNB; выбор A–D доступен для спутникового входа.',
     'Mode 1: прямое подключение LNB; DiSEqC A–D передаётся выбранному frontend.',
-    'Mode 2: Unicable; обычный DiSEqC A–D отключён. User Band/SCR должен быть настроен драйвером или внешним оборудованием.'
+    selectedUnicable === 'none'
+      ? 'Mode 2: Unicable. Выберите EN50494 или EN50607/JESS и задайте User Band/SCR.'
+      : 'Mode 2: Unicable активен. Обычный DiSEqC A–D отключён; позиция передаётся в SCR/JESS-команде.'
   ];
   const en = [
     'Mode 0: multiswitch / quattro or quad LNB; A–D remains available for satellite selection.',
     'Mode 1: direct LNB connection; DiSEqC A–D is sent to the selected frontend.',
-    'Mode 2: Unicable; committed DiSEqC A–D is disabled. User Band/SCR must be configured by the driver or external equipment.'
+    selectedUnicable === 'none'
+      ? 'Mode 2: Unicable. Select EN50494 or EN50607/JESS and configure the User Band/SCR.'
+      : 'Mode 2: Unicable enabled. Normal committed DiSEqC A–D is disabled; position is carried by the SCR/JESS command.'
   ];
   hint.textContent = mode >= 0 && mode <= 2 ? (language === 'en' ? en[mode] : ru[mode]) : '';
 }
@@ -2633,6 +2673,11 @@ function satelliteTunePayload() {
     lnb_lof1_mhz:Number(document.getElementById('satLof1')?.value || 9750),
     lnb_lof2_mhz:Number(document.getElementById('satLof2')?.value || 10600),
     lnb_slof_mhz:Number(document.getElementById('satSlof')?.value || 11700),
+    unicable_mode:document.getElementById('satUnicableMode')?.value || 'none',
+    unicable_user_band:Number(document.getElementById('satUnicableUserBand')?.value ?? -1),
+    unicable_frequency_mhz:Number(document.getElementById('satUnicableFrequency')?.value || 0),
+    unicable_position:Number(document.getElementById('satUnicablePosition')?.value ?? 0),
+    unicable_pin:Number(document.getElementById('satUnicablePin')?.value ?? -1),
     stream_id:Number(document.getElementById('satStreamId')?.value ?? -1),
     hold_lock:!!document.getElementById('satHoldLock')?.checked
   };
@@ -2980,6 +3025,11 @@ function openAddChannelModal() {
       <div class="sat-field"><label>Модуляция</label><select id="satModulation" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option value="qpsk">QPSK</option><option value="8psk">8PSK</option><option value="16apsk">16APSK</option><option value="32apsk">32APSK</option></select></div>
       <div class="sat-field"><label>FEC</label><select id="satFec" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option>1/2</option><option>2/3</option><option>3/4</option><option>4/5</option><option>5/6</option><option>7/8</option><option>8/9</option><option>9/10</option><option>3/5</option></select></div>
       <div class="sat-field"><label>DiSEqC source</label><select id="satDiseqc" onchange="updateSatelliteSignal()"><option value="-1">Отключён</option><option value="0">A (1)</option><option value="1">B (2)</option><option value="2">C (3)</option><option value="3">D (4)</option></select></div>
+      <div class="sat-field"><label>LNB / SCR режим</label><select id="satUnicableMode" onchange="updateSatelliteUnicableUi(true)"><option value="none">Universal / Legacy</option><option value="en50494">Unicable I — EN50494</option><option value="en50607">Unicable II / JESS — EN50607</option></select></div>
+      <div class="sat-field sat-unicable-field" style="display:none"><label>User Band ID (0-based)</label><input id="satUnicableUserBand" type="number" min="0" max="31" value="0" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-unicable-field" style="display:none"><label>User Band frequency, MHz</label><input id="satUnicableFrequency" type="number" min="950" max="2150" step="1" value="1210" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-unicable-field" style="display:none"><label>Satellite position</label><input id="satUnicablePosition" type="number" min="0" max="63" value="0" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-unicable-field" style="display:none"><label>PIN (-1 = off)</label><input id="satUnicablePin" type="number" min="-1" max="255" value="-1" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB LOF1, MHz</label><input id="satLof1" type="number" value="9750" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB LOF2, MHz</label><input id="satLof2" type="number" value="10600" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB SLOF, MHz</label><input id="satSlof" type="number" value="11700" onchange="updateSatelliteSignal()" /></div>
@@ -3024,6 +3074,7 @@ function openAddChannelModal() {
   document.getElementById('modalContent').classList.add('satellite-modal');
   updateHeaderHeight();
   document.getElementById('modal').classList.add('satellite-open');
+  updateSatelliteUnicableUi(false);
   loadSatelliteAdapters();
   updateSatelliteOutputHints(false);
   scheduleSatelliteSignalPolling();
