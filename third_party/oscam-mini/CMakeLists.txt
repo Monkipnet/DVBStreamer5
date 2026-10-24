@@ -401,6 +401,20 @@ if (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 endif (OSCamOperatingSystem MATCHES "Windows/Cygwin")
 endif (HAVE_PCSC)
 
+execute_process (COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/config.sh --enabled MODULE_STREAMRELAY OUTPUT_VARIABLE CONFIG_STREAMRELAY OUTPUT_STRIP_TRAILING_WHITESPACE)
+if (CONFIG_STREAMRELAY MATCHES "Y")
+    check_include_file ("dvbcsa/dvbcsa.h" FOUND_LIBDVBCSA)
+    find_library (LIBDVBCSA_LIBRARY NAMES dvbcsa)
+    if (NOT FOUND_LIBDVBCSA OR NOT LIBDVBCSA_LIBRARY)
+        message(FATAL_ERROR "MODULE_STREAMRELAY requires libdvbcsa development files (Ubuntu: libdvbcsa-dev)")
+    endif()
+    add_library(imp_libdvbcsa SHARED IMPORTED)
+    set_property(TARGET imp_libdvbcsa PROPERTY IMPORTED_LOCATION ${LIBDVBCSA_LIBRARY})
+    set(dvbcsa_link "imp_libdvbcsa")
+    set(dl_link "dl")
+    add_definitions ("-DSTATIC_LIBDVBCSA=0")
+endif()
+
 # Manage config.h based on command line parameters
 # Manipulate config file based on given parameters and read unset parameters
 
@@ -604,7 +618,7 @@ elseif (OSCamOperatingSystem MATCHES "SU980")
     target_link_libraries (${exe_name} rt entropic)
 endif (OSCamOperatingSystem MATCHES "Linux")
 
-target_link_libraries (${exe_name} ${libusb_link} ${rt_link} ${setupapi_link} ${ole32_link} ${shell32_link} ${pthread_link} ${dl_link} ${xcas_link})
+target_link_libraries (${exe_name} ${libusb_link} ${rt_link} ${setupapi_link} ${ole32_link} ${shell32_link} ${pthread_link} ${dl_link} ${xcas_link} ${dvbcsa_link})
 
 #----------------------- put svnversion in the build ------------------------------
 # at every target rebuild, we re-build the oscam.c compilation...
