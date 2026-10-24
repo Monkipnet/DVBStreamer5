@@ -23,6 +23,7 @@
 #include "module-webif.h"
 #include "module-webif-tpl.h"
 #include "module-cw-cycle-check.h"
+#include "module-streamrelay.h"
 #include "oscam-chk.h"
 #include "oscam-cache.h"
 #include "oscam-client.h"
@@ -429,6 +430,7 @@ static void write_versionfile(bool use_stdout)
 	write_conf(MODULE_CONSTCW, "constant CW");
 	write_conf(MODULE_PANDORA, "Pandora");
 	write_conf(MODULE_GHTTP, "ghttp");
+	write_conf(MODULE_STREAMRELAY, "Streamrelay");
 
 	fprintf(fp, "\n");
 	write_conf(WITH_CARDREADER, "Reader support");
@@ -1759,6 +1761,9 @@ int32_t main(int32_t argc, char *argv[])
 
 	init_sidtab();
 	init_readerdb();
+#ifdef MODULE_STREAMRELAY
+	init_stream_server();
+#endif
 	cfg.account = init_userdb();
 	init_signal();
 	init_provid();
@@ -1844,6 +1849,9 @@ int32_t main(int32_t argc, char *argv[])
 	// Cleanup
 #ifdef MODULE_GBOX	
 	stop_sms_sender();
+#endif
+#ifdef MODULE_STREAMRELAY
+	stop_stream_server();
 #endif
 	webif_close();
 	azbox_close();
