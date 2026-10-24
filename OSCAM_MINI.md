@@ -227,3 +227,21 @@ PC/SC readers remain available in the same reader list.
 The existing downstream Newcamd listener and DVBStreamer5 synchronization remain
 unchanged. Remote protocol credentials are written only to the runtime
 `oscam.server`; do not commit CA credentials to the repository.
+
+
+## StreamRelay / iCAM (V10.8.186)
+
+StreamRelay is compiled into OSCam-mini and disabled at runtime by default.
+Enable it from the DVBStreamer5 OSCam-mini page only for an authorized CA setup.
+The selected Remote CA reader remains the upstream CA transport; StreamRelay
+uses a loopback Radegast listener for ECM/CW exchange and libdvbcsa for MPEG-TS
+descrambling.
+
+Ubuntu build dependency:
+
+```bash
+sudo apt-get install libdvbcsa-dev
+```
+
+The portable bundler recursively inspects OSCam-mini with `ldd`, therefore
+`libdvbcsa.so` is copied into the portable archive automatically.
