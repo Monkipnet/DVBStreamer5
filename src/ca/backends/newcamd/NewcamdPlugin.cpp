@@ -259,6 +259,7 @@ struct NewcamdSession {
     uint64_t currentStartedMs = 0;
     std::string currentSignature;
     uint8_t currentEcmMode = 0;
+    uint8_t currentEcmTableId = 0;
     bool currentIsIrdeto = false;
     bool currentHasIrdetoChid = false;
     uint16_t currentIrdetoChid = 0;
@@ -664,6 +665,7 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
     session->currentStartedMs = startedMs;
     session->currentSignature = item.signature;
     session->currentEcmMode = icam_ecm_mode(item.caid, item.section);
+    session->currentEcmTableId = item.section.empty() ? 0 : item.section[0];
     session->currentIsIrdeto = item.isIrdeto;
     session->currentHasIrdetoChid = item.hasIrdetoChid;
     session->currentIrdetoChid = item.irdetoChid;
@@ -851,7 +853,7 @@ void configure_service_callback(NewcamdInstance* inst,
         [inst, clientKey, streamId,
          weakBinding = std::weak_ptr<ServiceBinding>(binding),
          weakSession = std::weak_ptr<NewcamdSession>(session)]
-        (uint16_t messageId, uint8_t parity, const uint8_t* cw) {
+        (uint16_t messageId, uint8_t responseCommand, uint8_t parity, const uint8_t* cw) {
         if (!inst || messageId == 0) return;
         auto session = weakSession.lock();
         if (!session) return;
@@ -859,6 +861,7 @@ void configure_service_callback(NewcamdInstance* inst,
         uint16_t expectedMessageId = 0;
         uint64_t startedMs = 0;
         uint8_t currentEcmMode = 0;
+        uint8_t currentEcmTableId = 0;
         bool currentIsIrdeto = false;
         bool currentHasIrdetoChid = false;
         uint16_t currentIrdetoChid = 0;
@@ -879,6 +882,7 @@ void configure_service_callback(NewcamdInstance* inst,
             currentIrdetoChid = session->currentIrdetoChid;
             currentSignature = session->currentSignature;
             currentEcmMode = session->currentEcmMode;
+            currentEcmTableId = session->currentEcmTableId;
         }
 
         if (messageId != expectedMessageId) {
@@ -906,6 +910,7 @@ void configure_service_callback(NewcamdInstance* inst,
                     session->currentStartedMs = 0;
                     session->currentSignature.clear();
                     session->currentEcmMode = 0;
+                    session->currentEcmTableId = 0;
                     session->currentIsIrdeto = false;
                     session->currentHasIrdetoChid = false;
                     session->currentIrdetoChid = 0;
@@ -947,30 +952,45 @@ void configure_service_callback(NewcamdInstance* inst,
             bool newlySelectedChid = false;
             {
                 std::lock_guard<std::mutex> serviceLock(target->mutex);
+                const bool fastEcm =
+                    currentEcmMode != 0 && is_fast_ecm_caid(target->defaultCaid);
+                const uint8_t expectedParity =
+                    currentEcmTableId == 0x81 ? 1U : 0U;
+                const bool responseMatchesEcm =
+                    currentEcmTableId == 0 ||
+                    responseCommand == currentEcmTableId;
+                const bool parityMatchesEcm =
+                    !fastEcm || (parity & 1U) == expectedParity;
+
                 ControlWordSlot& slot = (parity & 1) ? target->odd : target->even;
                 if (!slot.scalarKey || !slot.bsKey) return;
 
                 const uint8_t tscParity = (parity & 1) ? 3U : 2U;
-                const bool fastEcm =
-                    currentEcmMode != 0 && is_fast_ecm_caid(target->defaultCaid);
                 const bool zeroCw = cw_is_zero(cw);
                 const bool changedCw = !zeroCw && cw_differs(slot, cw);
 
                 bool installed = false;
                 bool staged = false;
+                bool acceptedCw = false;
                 const char* fastAction = "install";
 
-                if (fastEcm && zeroCw) {
+                if (fastEcm && !responseMatchesEcm) {
+                    fastAction = "ignore-response-table";
+                } else if (fastEcm && !parityMatchesEcm) {
+                    fastAction = "ignore-nonmatching-half";
+                } else if (fastEcm && zeroCw) {
                     ++target->fastEcmZeroCwSkips;
                     fastAction = "skip-zero";
                 } else if (fastEcm && !changedCw) {
                     ++target->fastEcmUnchangedCwSkips;
+                    acceptedCw = true;
                     fastAction = "skip-unchanged";
                 } else {
                     if (fastEcm) {
                         std::memcpy(
                             slot.lastReceivedCw.data(), cw, slot.lastReceivedCw.size());
                         slot.haveLastReceivedCw = true;
+                        acceptedCw = true;
 
                         // Sky FastECM can deliver the next CW before the transport
                         // changes TSC parity. Replacing the key for the parity that
@@ -991,6 +1011,7 @@ void configure_service_callback(NewcamdInstance* inst,
                     } else {
                         install_control_word(slot, currentEcmMode, cw);
                         installed = true;
+                        acceptedCw = !zeroCw;
                     }
 
                     if (installed) ++target->cwUpdates;
@@ -1005,17 +1026,23 @@ void configure_service_callback(NewcamdInstance* inst,
                               << std::endl;
                 }
                 if (fastEcm && (caDiagnosticsEnabled() || staged ||
-                                std::string(fastAction).rfind("skip-", 0) == 0)) {
+                                std::string(fastAction).rfind("skip-", 0) == 0 ||
+                                std::string(fastAction).rfind("ignore-", 0) == 0)) {
                     std::cerr << "NEWCAMD FASTECM CW: stream=" << streamId
                               << " sid=" << target->serviceId
                               << " parity=" << ((parity & 1) ? "ODD" : "EVEN")
+                              << " ecm_table=0x" << std::hex
+                              << static_cast<unsigned>(currentEcmTableId) << std::dec
+                              << " response_table=0x" << std::hex
+                              << static_cast<unsigned>(responseCommand) << std::dec
                               << " observed_tsc="
                               << static_cast<unsigned>(target->fastEcmObservedParity)
                               << " action=" << fastAction
                               << std::endl;
                 }
                 sid = target->serviceId;
-                if ((parity & 1) && !currentSignature.empty()) {
+                if ((!fastEcm && (parity & 1) && !currentSignature.empty()) ||
+                    (fastEcm && acceptedCw && !currentSignature.empty())) {
                     target->lastSuccessfulEcmSignature = currentSignature;
                 }
 
@@ -1060,6 +1087,7 @@ void configure_service_callback(NewcamdInstance* inst,
                     session->currentStartedMs = 0;
                     session->currentSignature.clear();
                     session->currentEcmMode = 0;
+                    session->currentEcmTableId = 0;
                     session->currentIsIrdeto = false;
                     session->currentHasIrdetoChid = false;
                     session->currentIrdetoChid = 0;
