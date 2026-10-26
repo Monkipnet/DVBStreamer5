@@ -1,0 +1,9 @@
+Vendored AC-3 decoder for DVBStreamer5 native audio transcoding.
+
+Upstream: https://github.com/pschatzmann/codec-ac3
+Pinned commit: b0fc07e0acf674f38d3d90accd1089c6b19b5e32
+License: MIT
+Purpose: AC-3 -> PCM stereo decode for the existing native AAC/MP2 encoders.
+E-AC-3 is not supported by this decoder and remains on safe compressed-audio passthrough.
+
+The upstream source files and LICENSE are preserved under third_party/codec-ac3/.
