@@ -52,6 +52,9 @@ void dvbcsa_key_free(struct dvbcsa_key_s *key);
 
 void dvbcsa_key_set (const dvbcsa_cw_t cw, struct dvbcsa_key_s *key);
 
+/** setup a scalar CSA key with the VideoGuard/iCAM ECM key-schedule mode */
+void dvbcsa_key_set_ecm(const unsigned char ecm, const dvbcsa_cw_t cw, struct dvbcsa_key_s *key);
+
 /** decrypt a packet payload */
 
 void dvbcsa_decrypt (const struct dvbcsa_key_s *key,
@@ -90,6 +93,9 @@ void dvbcsa_bs_key_free(struct dvbcsa_bs_key_s *key);
 
 void dvbcsa_bs_key_set(const dvbcsa_cw_t cw, struct dvbcsa_bs_key_s *key);
 
+#ifndef DVBCSA_KEY_ECM
+#define DVBCSA_KEY_ECM 1
+#endif
 void dvbcsa_bs_key_set_ecm(const unsigned char ecm, const dvbcsa_cw_t cw, struct dvbcsa_bs_key_s *key);
 
 /** get maximum number of packet per batch */
