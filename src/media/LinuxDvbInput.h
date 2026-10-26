@@ -16,6 +16,7 @@ struct LinuxDvbFrontendStats {
     double cnrDb = 0.0;
     bool hasSignalDb = false;
     bool hasCnrDb = false;
+    bool qualityEstimated = false;
 };
 
 struct LinuxDvbTuneConfig {
@@ -77,6 +78,7 @@ private:
     int dvrFd_ = -1;
     std::vector<int> demuxFds_;
     std::uint64_t overflowCount_ = 0;
+    std::uint64_t zeroReadCount_ = 0;
 };
 
 } // namespace dvbstreamer5::media::network
