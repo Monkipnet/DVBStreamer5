@@ -494,6 +494,7 @@ private:
     std::uint16_t inputAudioPid_ = 0xffff;
     bool videoEncoderConfigured_ = false;
     bool audioEncoderConfigured_ = false;
+    bool unsupportedAudioPassthroughLogged_ = false;
     bool videoStartupReady_ = false;
     std::uint64_t videoStartupDropped_ = 0;
     std::uint64_t inputVideoSamples_ = 0;

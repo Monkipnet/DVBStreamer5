@@ -226,8 +226,34 @@ else()
 endif()
 
 if(DVBSTREAMER5_ENABLE_NVENC)
-    find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
-    find_path(DVBSTREAMER5_NVDEC_INCLUDE_DIR NAMES dynlink_nvcuvid.h PATH_SUFFIXES ffnvcodec nvcodec)
+    # Prefer the pinned vendored headers so portable/release builds cannot
+    # silently lose NVENC/NVDEC support when the build host lacks
+    # libffmpeg-nvenc-dev. SDK 13.0 is intentionally pinned for compatibility
+    # with NVIDIA 570/580 drivers used by Pascal/Maxwell systems.
+    set(DVBSTREAMER5_NV_CODEC_VENDOR_INCLUDE
+        "${CMAKE_SOURCE_DIR}/third_party/nv-codec-headers/include")
+
+    find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR
+        NAMES nvEncodeAPI.h
+        PATHS "${DVBSTREAMER5_NV_CODEC_VENDOR_INCLUDE}"
+        PATH_SUFFIXES ffnvcodec
+        NO_DEFAULT_PATH)
+    find_path(DVBSTREAMER5_NVDEC_INCLUDE_DIR
+        NAMES dynlink_nvcuvid.h
+        PATHS "${DVBSTREAMER5_NV_CODEC_VENDOR_INCLUDE}"
+        PATH_SUFFIXES ffnvcodec
+        NO_DEFAULT_PATH)
+
+    # Keep a system-header fallback for developer builds if the vendored tree
+    # is intentionally removed.
+    if(NOT DVBSTREAMER5_NVENC_INCLUDE_DIR)
+        find_path(DVBSTREAMER5_NVENC_INCLUDE_DIR
+            NAMES nvEncodeAPI.h PATH_SUFFIXES ffnvcodec nvcodec)
+    endif()
+    if(NOT DVBSTREAMER5_NVDEC_INCLUDE_DIR)
+        find_path(DVBSTREAMER5_NVDEC_INCLUDE_DIR
+            NAMES dynlink_nvcuvid.h PATH_SUFFIXES ffnvcodec nvcodec)
+    endif()
 endif()
 if(DVBSTREAMER5_ENABLE_NVENC AND DVBSTREAMER5_NVENC_INCLUDE_DIR)
     target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_NVENC_HEADERS=1)

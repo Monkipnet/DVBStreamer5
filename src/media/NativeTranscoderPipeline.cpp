@@ -354,6 +354,7 @@ void NativeTranscoderPipeline::reset() {
     inputAudioPid_ = 0xffff;
     videoEncoderConfigured_ = false;
     audioEncoderConfigured_ = false;
+    unsupportedAudioPassthroughLogged_ = false;
     videoStartupReady_ = false;
     videoStartupDropped_ = 0;
     inputVideoSamples_ = 0;
@@ -1308,6 +1309,31 @@ bool NativeTranscoderPipeline::handleAudio(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
     if (config_.audioCodec == "copy") return emitCopy(std::move(sample), error);
+
+    // V10.8.198: AC-3/E-AC-3 decoding is not implemented by the current
+    // native codec core. Previously a configured AAC/MP2 transcode attempted
+    // to create a decoder, failed asynchronously and stopped the entire relay,
+    // which made the channel tile go OFFLINE. Preserve the source compressed
+    // audio instead so video transcoding and the service stay live. The UI
+    // configuration remains unchanged; the runtime log makes the fallback
+    // explicit until a native AC-3 decoder is added.
+    if (sample.stream.codec == mpegts::ElementaryCodec::Ac3 ||
+        sample.stream.codec == mpegts::ElementaryCodec::Eac3) {
+        if (!unsupportedAudioPassthroughLogged_) {
+            unsupportedAudioPassthroughLogged_ = true;
+            std::cerr << "NATIVE AUDIO TRANSCODE FALLBACK"
+                      << " input="
+                      << (sample.stream.codec == mpegts::ElementaryCodec::Ac3
+                              ? "ac3" : "eac3")
+                      << " requested=" << config_.audioCodec
+                      << " fallback=copy"
+                      << " reason=native_decoder_unavailable"
+                      << std::endl;
+        }
+        error.clear();
+        return emitCopy(std::move(sample), error);
+    }
+
     if (!ensureAudioDecoder(sample.stream.codec, error)) return false;
     std::vector<codec::PcmAudioFrame> decoded;
     if (!audioDecoder_->decode(sample.data.data(), sample.data.size(), sample.pts90k, sample.hasPts, decoded, error)) return false;
