@@ -3,6 +3,8 @@ set -euo pipefail
 
 SRC_INPUT="${1:?vendored source directory is required}"
 OUT_INPUT="${2:?output directory is required}"
+DVBCSA_INCLUDE_INPUT="${3:?vendored libdvbcsa include directory is required}"
+DVBCSA_LIBRARY_INPUT="${4:?vendored ECM-aware libdvbcsa library is required}"
 
 # Canonicalize paths before changing into the copied OSCam work tree below.
 # Callers commonly pass repository-relative paths such as
@@ -12,11 +14,13 @@ OUT_INPUT="${2:?output directory is required}"
 SRC="$(cd "$SRC_INPUT" && pwd)"
 mkdir -p "$OUT_INPUT"
 OUT="$(cd "$OUT_INPUT" && pwd)"
+DVBCSA_INCLUDE="$(cd "$DVBCSA_INCLUDE_INPUT" && pwd)"
+DVBCSA_LIBRARY="$(cd "$(dirname "$DVBCSA_LIBRARY_INPUT")" && pwd)/$(basename "$DVBCSA_LIBRARY_INPUT")"
 WORK="$OUT/src"
 BUILD="$OUT/cmake-build"
 BIN_OUT="$OUT/oscam-mini"
 
-for cmd in cmake gcc make pkg-config; do
+for cmd in cmake gcc make pkg-config nm; do
   command -v "$cmd" >/dev/null || { echo "Missing build dependency: $cmd" >&2; exit 1; }
 done
 
@@ -26,10 +30,19 @@ if ! pkg-config --exists openssl; then
   exit 6
 fi
 
-if [[ ! -f /usr/include/dvbcsa/dvbcsa.h ]] || ! ldconfig -p 2>/dev/null | grep -q "libdvbcsa\.so"; then
-  echo "OSCam-mini StreamRelay/iCAM support requires libdvbcsa-dev." >&2
-  echo "Install: sudo apt-get install libdvbcsa-dev" >&2
+if [[ ! -f "$DVBCSA_INCLUDE/dvbcsa/dvbcsa.h" || ! -f "$DVBCSA_LIBRARY" ]]; then
+  echo "OSCam-mini requires the vendored DVBStreamer5 ECM-aware libdvbcsa build." >&2
+  echo "Header:  $DVBCSA_INCLUDE/dvbcsa/dvbcsa.h" >&2
+  echo "Library: $DVBCSA_LIBRARY" >&2
   exit 7
+fi
+if ! grep -q 'DVBCSA_KEY_ECM' "$DVBCSA_INCLUDE/dvbcsa/dvbcsa.h"; then
+  echo "Vendored libdvbcsa header is missing DVBCSA_KEY_ECM." >&2
+  exit 8
+fi
+if ! nm -g --defined-only "$DVBCSA_LIBRARY" 2>/dev/null | grep -q 'dvbcsa_bs_key_set_ecm'; then
+  echo "Vendored libdvbcsa library is missing dvbcsa_bs_key_set_ecm()." >&2
+  exit 9
 fi
 
 if [[ ! -f "$SRC/config.sh" || ! -f "$SRC/CMakeLists.txt" ]]; then
@@ -81,6 +94,8 @@ printf '\nEnabled OSCam-mini modules:\n'
 cmake -S "$WORK" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
   -DHAVE_PCSC=1 \
+  -DDVBSTREAMER5_DVBCSA_INCLUDE_DIR="$DVBCSA_INCLUDE" \
+  -DDVBSTREAMER5_DVBCSA_LIBRARY="$DVBCSA_LIBRARY" \
   -DCS_CONFDIR=/opt/DVBStreamer5/oscam-mini/config
 # Detect any unexpected configure fallback to non-PC/SC mode.
 if ! grep -Eq '(^CONFIG_CARDREADER_PCSC=y$|^USE_PCSC[=: ]|^WITH_PCSC[=: ]|^HAVE_PCSC(:INTERNAL|:UNINITIALIZED|:BOOL)?=1$)' \
@@ -96,4 +111,15 @@ if [[ ! -x "$BUILD/oscam" ]]; then
 fi
 
 install -m0755 "$BUILD/oscam" "$BIN_OUT"
-echo "OSCam-mini built: $BIN_OUT"
+
+if ldd "$BIN_OUT" 2>/dev/null | grep -q 'libdvbcsa'; then
+  echo "ERROR: OSCam-mini unexpectedly links system/dynamic libdvbcsa." >&2
+  ldd "$BIN_OUT" | grep 'libdvbcsa' >&2 || true
+  exit 10
+fi
+if ! "$BIN_OUT" -V 2>&1 | grep -q 'Streamrelay:.*yes'; then
+  echo "ERROR: OSCam-mini was built without StreamRelay." >&2
+  exit 11
+fi
+
+echo "OSCam-mini built with vendored ECM-aware static libdvbcsa: $BIN_OUT"
