@@ -1,0 +1,19 @@
+Vendored NVIDIA codec headers for DVBStreamer5 hardware transcoding.
+
+Upstream: https://github.com/FFmpeg/nv-codec-headers
+Upstream tag: n13.0.19.1
+Video Codec SDK: 13.0.19
+Minimum NVIDIA Linux driver: 570.0
+
+Reason for pinning 13.0:
+- DVBStreamer5 targets Pascal/Maxwell systems that may use NVIDIA 570/580 drivers.
+- nv-codec-headers 13.1 requires NVIDIA Linux driver 610.0 or newer.
+- The headers are build-time only; CUDA/NVDEC/NVENC shared libraries are loaded dynamically at runtime.
+
+Vendored files:
+- include/ffnvcodec/nvEncodeAPI.h
+- include/ffnvcodec/dynlink_cuda.h
+- include/ffnvcodec/dynlink_cuviddec.h
+- include/ffnvcodec/dynlink_nvcuvid.h
+
+Each upstream header retains its original NVIDIA/MIT-style copyright and permission notice.
