@@ -1364,13 +1364,9 @@ bool NativeTranscoderPipeline::handleAudio(mpegts::DemuxSample&& sample, std::st
     }
     if (config_.audioCodec == "copy") return emitCopy(std::move(sample), error);
 
-    // V10.8.198: AC-3/E-AC-3 decoding is not implemented by the current
-    // native codec core. Previously a configured AAC/MP2 transcode attempted
-    // to create a decoder, failed asynchronously and stopped the entire relay,
-    // which made the channel tile go OFFLINE. Preserve the source compressed
-    // audio instead so video transcoding and the service stay live. The UI
-    // configuration remains unchanged; the runtime log makes the fallback
-    // explicit until a native AC-3 decoder is added.
+    // E-AC-3 is not yet decoded by the current portable native codec core.
+    // Preserve it instead of failing the whole relay. AC-3 is handled above
+    // by the vendored native codec-ac3 decoder and can be transcoded to AAC/MP2.
     if (sample.stream.codec == mpegts::ElementaryCodec::Eac3) {
         if (!unsupportedAudioPassthroughLogged_) {
             unsupportedAudioPassthroughLogged_ = true;

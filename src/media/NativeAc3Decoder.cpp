@@ -3,6 +3,7 @@
 #include <AC3Decoder.h>
 
 #include <cstdint>
+#include <iostream>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -114,6 +115,9 @@ std::unique_ptr<AudioDecoder> createNativeAc3Decoder(std::string& error) {
         error = "native AC-3 decoder initialization failed";
         return {};
     }
+    std::cerr << "NATIVE AC3 DECODER selected=codec-ac3"
+              << " output=stereo-downmix"
+              << std::endl;
     return decoder;
 }
 
