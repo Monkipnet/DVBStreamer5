@@ -3319,6 +3319,82 @@ function updateInputModeVisibility() {
   const isSrt = mode?.value === 'caller' || mode?.value === 'listener' || String(document.getElementById('streamInput')?.value || '').toLowerCase().startsWith('srt://');
   if (srtRow) srtRow.style.display = isSrt ? '' : 'none';
 }
+
+function streamCaModeFor(stream={}) {
+  const input = String(stream.input_uri || '').trim().toLowerCase();
+  if (stream.ci_plus_input === true || input.startsWith('vdr://')) return 'ciplus';
+  if (String(stream.conditional_access_client || '').trim()) return 'icam';
+  return 'fta';
+}
+function parseVdrCiPlusUri(value='') {
+  const result = {host:'127.0.0.1', port:3000, channel:''};
+  const input = String(value || '').trim();
+  if (!input.toLowerCase().startsWith('vdr://')) return result;
+  const rest = input.slice(6).split('#', 1)[0];
+  const slash = rest.indexOf('/');
+  if (slash <= 0) return result;
+  const authority = rest.slice(0, slash);
+  result.channel = rest.slice(slash + 1).replace(/^TS\//i, '');
+  if (authority.startsWith('[')) {
+    const close = authority.indexOf(']');
+    if (close > 0) {
+      result.host = authority.slice(0, close + 1);
+      if (authority[close + 1] === ':') {
+        const parsed = Number(authority.slice(close + 2));
+        if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) result.port = parsed;
+      }
+    }
+  } else {
+    const colon = authority.lastIndexOf(':');
+    if (colon > 0 && authority.indexOf(':') === colon) {
+      result.host = authority.slice(0, colon);
+      const parsed = Number(authority.slice(colon + 1));
+      if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) result.port = parsed;
+    } else if (authority) {
+      result.host = authority;
+    }
+  }
+  return result;
+}
+function buildVdrCiPlusUri(host, port, channel) {
+  const cleanHost = String(host || '').trim();
+  const cleanChannel = String(channel || '').trim().replace(/^\/+/, '').replace(/^TS\//i, '');
+  const cleanPort = Math.max(1, Math.min(65535, Number(port || 3000)));
+  if (!cleanHost || !cleanChannel) return '';
+  return `vdr://${cleanHost}:${cleanPort}/${cleanChannel}`;
+}
+function updateVdrCiPlusPreview() {
+  const preview = document.getElementById('streamVdrCiPlusPreview');
+  const input = document.getElementById('streamInput');
+  const mode = document.getElementById('streamCaMode')?.value || 'fta';
+  if (mode !== 'ciplus') {
+    if (preview) preview.textContent = '';
+    return;
+  }
+  const uri = buildVdrCiPlusUri(
+    document.getElementById('streamVdrHost')?.value,
+    document.getElementById('streamVdrPort')?.value,
+    document.getElementById('streamVdrChannel')?.value
+  );
+  if (preview) preview.textContent = uri ? `Источник: ${uri}` : 'Укажите VDR host и канал.';
+  if (input && uri) input.value = uri;
+}
+function updateStreamCaMode() {
+  const caMode = document.getElementById('streamCaMode')?.value || 'fta';
+  const camRow = document.getElementById('streamCamRow');
+  const ciPlusRow = document.getElementById('streamCiPlusRow');
+  const input = document.getElementById('streamInput');
+  const inputMode = document.getElementById('streamInputMode');
+  if (camRow) camRow.style.display = caMode === 'icam' ? '' : 'none';
+  if (ciPlusRow) ciPlusRow.style.display = caMode === 'ciplus' ? '' : 'none';
+  if (input) input.readOnly = caMode === 'ciplus';
+  if (inputMode) {
+    if (caMode === 'ciplus') inputMode.value = 'vdr';
+    else if (inputMode.value === 'vdr') inputMode.value = 'auto';
+  }
+  updateVdrCiPlusPreview();
+  updateInputModeVisibility();
+}
 function openStreamForm(stream) {
   const renderStreamForm = () => {
     const ifaceOptions = state.interfaces || [];
@@ -3334,6 +3410,8 @@ function openStreamForm(stream) {
     const transcoderAvailable = transcoderInfo.available === true;
     const transcoderMissing = Array.isArray(transcoderInfo.missing_elements) ? transcoderInfo.missing_elements.join(', ') : '';
     const camOptions = camClientOptions(stream.conditional_access_client || '');
+    const caMode = streamCaModeFor(stream);
+    const vdrCiPlus = parseVdrCiPlusUri(stream.input_uri || '');
     const transcoderStatus = transcoderAvailable
       ? `Доступно: H.264=${transcoderInfo.video_encoder || 'нет'}, HEVC=${transcoderInfo.hevc_video_encoder || 'нет'}, NVENC ${transcoderInfo.nvenc_available ? 'да' : 'нет'}, Intel ${transcoderInfo.intel_available ? (transcoderInfo.intel_encoder || 'да') : 'нет'}, x264 ${transcoderInfo.x264_available ? 'да' : 'нет'}, x265 ${transcoderInfo.x265_available ? 'да' : 'нет'}, AAC ${transcoderInfo.aac_encoder || 'нет'}, MP3 ${transcoderInfo.mp3_encoder || 'нет'}, MP2 ${transcoderInfo.mp2_encoder_available ? 'TwoLAME' : 'нет'}, deinterlace ${transcoderInfo.deinterlace ? 'да' : 'нет'}`
       : `Недоступно: ${transcoderMissing || transcoderInfo.message || 'native transcoder components are not available'}`;
@@ -3341,10 +3419,12 @@ function openStreamForm(stream) {
       <h2>${stream.name ? 'Редактирование трансляции' : 'Настройка трансляции'}</h2>
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
-        <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234 или https://host/live.m3u8" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility()"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
+        <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility()"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
         <div class="form-row full" id="streamSrtInputRow" style="display:${(stream.input_mode==='caller'||stream.input_mode==='listener'||String(stream.input_uri||'').toLowerCase().startsWith('srt://'))?'':'none'}"><label>SRT вход</label><div class="row-inline compact-row"><input id="streamSrtInputLatency" type="number" min="20" max="60000" value="${Number(stream.srt_input_latency_ms||120)}" placeholder="latency ms" /><select id="streamSrtInputPbKeyLen"><option value="16" ${Number(stream.srt_input_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(stream.srt_input_pbkeylen)===24?'selected':''}>AES-192</option><option value="32" ${Number(stream.srt_input_pbkeylen)===32?'selected':''}>AES-256</option></select><input id="streamSrtInputStreamId" value="${escapeHtmlValue(stream.srt_input_streamid||'')}" placeholder="Stream ID (optional)" /><input id="streamSrtInputPassphrase" type="password" value="${escapeHtmlValue(stream.srt_input_passphrase||'')}" autocomplete="new-password" placeholder="Passphrase 10–79 chars (optional)" /></div><small>Native SRT Caller/Listener. Passphrase пустой = без шифрования. Для шифрования минимум 10 символов.</small></div>
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
-        <div class="form-row full" id="streamCamRow" style="display:${String(stream.input_uri||'').startsWith('dvb://')?'': 'none'}"><label>CAM client (scrambled DVB)</label><select id="streamConditionalAccessClient">${camOptions}</select><small>Select a CAM/Newcamd client for encrypted DVB services. FTA streams do not use this setting.</small></div>
+        <div class="form-row full"><label>Conditional Access</label><select id="streamCaMode" onchange="updateStreamCaMode()"><option value="fta" ${caMode==='fta'?'selected':''}>FTA / без CAM</option><option value="icam" ${caMode==='icam'?'selected':''}>iCAM / Newcamd — native DVB-S/S2</option><option value="ciplus" ${caMode==='ciplus'?'selected':''}>DVB-CI+ / VDR — external CAM</option></select><small>Режим выбирается отдельно для каждого канала. iCAM/Newcamd использует существующий native DVB тракт; DVB-CI+ использует VDR/streamdev и не запускает внутренний Newcamd для этого канала.</small></div>
+        <div class="form-row full" id="streamCamRow" style="display:${caMode==='icam'?'':'none'}"><label>iCAM / Newcamd client</label><select id="streamConditionalAccessClient">${camOptions}</select><small>Для зашифрованного native DVB-S/S2 выберите CAM/Newcamd client. Проверенный iCAM 098D mode4 остаётся на существующем тракте.</small></div>
+        <div class="form-row full" id="streamCiPlusRow" style="display:${caMode==='ciplus'?'':'none'}"><label>DVB-CI+ / VDR</label><div class="row-inline compact-row"><input id="streamVdrHost" value="${escapeHtmlValue(vdrCiPlus.host)}" placeholder="127.0.0.1" oninput="updateVdrCiPlusPreview()" /><input id="streamVdrPort" type="number" min="1" max="65535" value="${Number(vdrCiPlus.port||3000)}" placeholder="3000" oninput="updateVdrCiPlusPreview()" /><input id="streamVdrChannel" value="${escapeHtmlValue(vdrCiPlus.channel)}" placeholder="VDR channel number or channel ID" oninput="updateVdrCiPlusPreview()" /></div><small id="streamVdrCiPlusPreview"></small><small>VDR владеет DVB frontend и CI/CI+ CAM. DVBStreamer5 получает уже разрешённый MPEG-TS через streamdev; pairing/authentication остаются в поддерживаемом VDR/vendor CAM stack.</small></div>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
         <div class="form-row full" id="streamBackupFileLoopRow"><label>Зациклить файл замены</label><div class="checkbox-inline"><input id="streamBackupFileLoop" type="checkbox" ${stream.backup_file_loop ? 'checked' : ''} /><span>Повторять до появления основного потока</span></div></div>
         <div class="form-row full"><label>Тестовая таблица</label><div class="checkbox-inline"><input id="streamTestPattern" type="checkbox" ${stream.test_pattern ? 'checked' : ''} /><span>Использовать вместо входных потоков</span></div></div>
@@ -3374,6 +3454,7 @@ function openStreamForm(stream) {
     document.getElementById('modal').classList.add('stream-open');
     document.getElementById('streamCbr').checked = outputType === 'udp-cbr' || (outputType !== 'udp-vbr' && stream.cbr);
     updateInputModeVisibility();
+    updateStreamCaMode();
     updateBackupInputMode();
     updateTranscodeControls();
     loadUploadedBackupFiles();
@@ -3382,7 +3463,7 @@ function openStreamForm(stream) {
 
   const formLoaders = [];
   if (!state.interfaces || !state.interfaces.length) formLoaders.push(loadInterfaces());
-  if (String(stream.input_uri || '').startsWith('dvb://') && !camClientsLoaded) formLoaders.push(loadCamClients().then(()=>{ camClientsLoaded = true; }));
+  if (!camClientsLoaded) formLoaders.push(loadCamClients().then(()=>{ camClientsLoaded = true; }));
   if (formLoaders.length) Promise.all(formLoaders).then(renderStreamForm);
   else renderStreamForm();
 }
@@ -3604,7 +3685,38 @@ function saveStream(id) {
   const selectedCbr = selectedOutputType === 'udp-cbr'
     ? true
     : (selectedOutputType === 'udp-vbr' ? false : Boolean(cbrCheckbox?.checked));
-  const selectedInputMode = document.getElementById('streamInputMode').value;
+  let selectedInputMode = document.getElementById('streamInputMode').value;
+  const selectedCaMode = document.getElementById('streamCaMode')?.value || 'fta';
+  let selectedInputUri = document.getElementById('streamInput').value.trim();
+  let selectedConditionalAccessClient = '';
+  if (selectedCaMode === 'ciplus') {
+    const vdrHost = document.getElementById('streamVdrHost')?.value.trim() || '';
+    const vdrPort = Number(document.getElementById('streamVdrPort')?.value || 3000);
+    const vdrChannel = document.getElementById('streamVdrChannel')?.value.trim() || '';
+    selectedInputUri = buildVdrCiPlusUri(vdrHost, vdrPort, vdrChannel);
+    if (!selectedInputUri) {
+      uiError('DVB-CI+: укажите VDR host и номер/ID канала.');
+      return;
+    }
+    selectedInputMode = 'vdr';
+  } else {
+    if (selectedInputUri.toLowerCase().startsWith('vdr://')) {
+      uiError('Для vdr:// выберите режим DVB-CI+ / VDR или замените основной URL.');
+      return;
+    }
+    if (selectedInputMode === 'vdr') selectedInputMode = 'auto';
+    if (selectedCaMode === 'icam') {
+      if (!selectedInputUri.toLowerCase().startsWith('dvb://')) {
+        uiError('iCAM / Newcamd доступен только для native DVB-S/S2 входа dvb://.');
+        return;
+      }
+      selectedConditionalAccessClient = document.getElementById('streamConditionalAccessClient')?.value || '';
+      if (!selectedConditionalAccessClient) {
+        uiError('iCAM / Newcamd: выберите CAM client.');
+        return;
+      }
+    }
+  }
   const activationMode = document.getElementById('streamActivationMode')?.value === 'ondemand' ? 'ondemand' : 'online';
   if (activationMode === 'ondemand' && !outputs.some(output => ['http','hls'].includes(String(output.output_type || '').toLowerCase()))) {
     uiError('OnDemand требует хотя бы один выход HTTP или HLS, где сервер может определить подключение клиента.');
@@ -3613,7 +3725,7 @@ function saveStream(id) {
   const payload = {
     id: id,
     name: document.getElementById('streamName').value,
-    input_uri: document.getElementById('streamInput').value.trim(),
+    input_uri: selectedInputUri,
     output_type: selectedOutputType,
     output_mode: primaryOutput.output_mode,
     output_host: primaryOutput.output_host,
@@ -3664,7 +3776,7 @@ function saveStream(id) {
     service_id: Number(document.getElementById('streamServiceId').value),
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,
-    conditional_access_client: document.getElementById('streamConditionalAccessClient')?.value || ''
+    conditional_access_client: selectedConditionalAccessClient
   };
   const existingIndex = state.streams.findIndex(s=>s.id===id);
   if (existingIndex >= 0) {
