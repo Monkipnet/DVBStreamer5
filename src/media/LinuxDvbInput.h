@@ -79,6 +79,7 @@ private:
     std::vector<int> demuxFds_;
     std::uint64_t overflowCount_ = 0;
     std::uint64_t zeroReadCount_ = 0;
+    std::uint64_t ioErrorCount_ = 0;
 };
 
 } // namespace dvbstreamer5::media::network
