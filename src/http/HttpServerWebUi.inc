@@ -1283,7 +1283,7 @@ function dvbMeterColor(value, locked) {
   if (value >= 35) return '#ffb84d';
   return '#fb5f5f';
 }
-function updateDvbMeter(tile, kind, value, available, locked) {
+function updateDvbMeter(tile, kind, value, available, locked, estimated=false) {
   const fill = tile.querySelector(`[data-role="dvb-${kind}-fill"]`);
   const label = tile.querySelector(`[data-role="dvb-${kind}-label"]`);
   if (!fill || !label) return;
@@ -1291,7 +1291,11 @@ function updateDvbMeter(tile, kind, value, available, locked) {
   const shown = available ? Math.round(numeric) : 0;
   fill.style.width = `${shown}%`;
   fill.style.background = available ? dvbMeterColor(numeric, locked) : 'rgba(255,255,255,.12)';
-  label.textContent = `${kind === 'signal' ? 'S' : 'Q'} ${available ? `${shown}%` : '—'}`;
+  const prefix = kind === 'signal' ? 'S' : (estimated ? 'Q~' : 'Q');
+  label.textContent = `${prefix} ${available ? `${shown}%` : '—'}`;
+  label.title = estimated
+    ? (language === 'en' ? 'Estimated quality: frontend does not report CNR/SNR' : 'Оценка качества: frontend не отдаёт CNR/SNR')
+    : '';
 }
 function diseqcSourceLabel(value) {
   const source = Number(value);
@@ -1350,8 +1354,8 @@ function updateStreamTile(tile, stream) {
   if (stream.dvb_input) {
     const available = !!stream.dvb_signal_available;
     const locked = !!stream.dvb_locked;
-    updateDvbMeter(tile, 'signal', stream.dvb_signal, available, locked);
-    updateDvbMeter(tile, 'quality', stream.dvb_quality, available, locked);
+    updateDvbMeter(tile, 'signal', stream.dvb_signal, available, locked, false);
+    updateDvbMeter(tile, 'quality', stream.dvb_quality, available, locked, !!stream.dvb_quality_estimated);
     const tuneDetails = tile.querySelector('[data-role="dvb-tune-details"]');
     if (tuneDetails) tuneDetails.textContent = dvbTuneDetails(stream);
     const frontendDetails = tile.querySelector('[data-role="dvb-frontend-details"]');
