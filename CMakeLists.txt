@@ -139,6 +139,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeMpegTsMux.cpp
     ${DVBSTREAMER5_CODEC_SOURCE}
     src/media/NativeIttiamAvc.cpp
+    src/media/NativeAc3Decoder.cpp
     src/media/NativeHardwareCodec.cpp
     src/media/NativeIntelZeroCopy.cpp
     src/media/NativeNvidiaZeroCopy.cpp
@@ -167,6 +168,7 @@ target_include_directories(dvbstreamer5_media_core
     PRIVATE
         ${DVBSTREAMER5_CODEC_PREFIX}/include
         ${DVBSTREAMER5_CODEC_PREFIX}/include/ittiam-mpeg2
+        ${CMAKE_SOURCE_DIR}/third_party/codec-ac3/src
 )
 target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads

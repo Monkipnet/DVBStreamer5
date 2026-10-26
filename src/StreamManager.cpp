@@ -616,11 +616,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
     // V10.8.83: browser preview is adaptive. Do not start decoder/encoder
     // worker threads for streams that mpegts.js can consume directly. The
-    // H.264/AAC CPU transcoder is constructed lazily only after PMT probing says
+    // H.264/AAC transcoder is constructed lazily only after PMT probing says
     // that the source A/V combination is not browser-safe.
     dvbstreamer5::media::transcode::NativeTranscoderConfig previewTc;
     previewTc.videoCodec = "h264";
-    previewTc.videoEncoder = "cpu";
+    previewTc.videoEncoder = "auto";
     previewTc.audioCodec = "aac";
     previewTc.width = 1280;
     previewTc.height = 720;
@@ -644,7 +644,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::cerr << "NATIVE BROWSER PREVIEW adaptive ready stream="
               << streamConfig.name
               << " direct=h264/aac fallback=h264/aac"
-              << " size=1280x720 encoder=cpu"
+              << " size=1280x720 encoder=auto"
               << std::endl;
 
     if (streamConfig.transcodeEnabled) {
@@ -1194,6 +1194,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                               << previewState->config.name
                               << " codec=h264/aac size=1280x720"
                               << " video_kbps=1800 audio_kbps=128"
+                              << " encoder=auto"
                               << std::endl;
                 }
 

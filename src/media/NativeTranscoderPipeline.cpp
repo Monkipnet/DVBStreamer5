@@ -934,12 +934,66 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
 
 bool NativeTranscoderPipeline::ensureVideoEncoder(std::string& error) {
     if (videoEncoderConfigured_ && videoEncoder_) return true;
-    videoEncoder_ = codec::createVideoEncoder(videoCodecFromName(config_.videoCodec), config_.videoEncoder, error);
-    if (!videoEncoder_) return false;
-    if (!videoEncoder_->configure(config_.width, config_.height, config_.fps,
-                                  config_.videoBitrate, error)) return false;
-    videoEncoderConfigured_ = true;
-    return true;
+
+    const auto outputCodec = videoCodecFromName(config_.videoCodec);
+    const auto configureBackend = [&](const std::string& backend,
+                                      std::string& backendError) -> bool {
+        backendError.clear();
+        auto candidate = codec::createVideoEncoder(
+            outputCodec, backend, backendError);
+        if (!candidate) return false;
+        if (!candidate->configure(
+                config_.width, config_.height, config_.fps,
+                config_.videoBitrate, backendError)) {
+            return false;
+        }
+        videoEncoder_ = std::move(candidate);
+        videoEncoderConfigured_ = true;
+        return true;
+    };
+
+    if (config_.videoEncoder == "auto") {
+        std::string nvencError;
+        if (configureBackend("nvenc", nvencError)) {
+            std::cerr << "NATIVE VIDEO ENCODER auto selected=nvenc"
+                      << std::endl;
+            error.clear();
+            return true;
+        }
+        if (!nvencError.empty()) {
+            std::cerr << "NATIVE VIDEO ENCODER auto fallback"
+                      << " backend=nvenc error=" << nvencError
+                      << std::endl;
+        }
+
+        std::string intelError;
+        if (configureBackend("qsv", intelError)) {
+            std::cerr << "NATIVE VIDEO ENCODER auto selected=qsv-vaapi"
+                      << std::endl;
+            error.clear();
+            return true;
+        }
+        if (!intelError.empty()) {
+            std::cerr << "NATIVE VIDEO ENCODER auto fallback"
+                      << " backend=qsv-vaapi error=" << intelError
+                      << std::endl;
+        }
+
+        std::string cpuError;
+        if (configureBackend("cpu", cpuError)) {
+            std::cerr << "NATIVE VIDEO ENCODER auto selected=cpu"
+                      << std::endl;
+            error.clear();
+            return true;
+        }
+
+        error = cpuError.empty()
+            ? "no usable native video encoder backend"
+            : cpuError;
+        return false;
+    }
+
+    return configureBackend(config_.videoEncoder, error);
 }
 
 bool NativeTranscoderPipeline::ensureAudioDecoder(mpegts::ElementaryCodec codecType, std::string& error) {
@@ -1317,17 +1371,14 @@ bool NativeTranscoderPipeline::handleAudio(mpegts::DemuxSample&& sample, std::st
     // audio instead so video transcoding and the service stay live. The UI
     // configuration remains unchanged; the runtime log makes the fallback
     // explicit until a native AC-3 decoder is added.
-    if (sample.stream.codec == mpegts::ElementaryCodec::Ac3 ||
-        sample.stream.codec == mpegts::ElementaryCodec::Eac3) {
+    if (sample.stream.codec == mpegts::ElementaryCodec::Eac3) {
         if (!unsupportedAudioPassthroughLogged_) {
             unsupportedAudioPassthroughLogged_ = true;
             std::cerr << "NATIVE AUDIO TRANSCODE FALLBACK"
-                      << " input="
-                      << (sample.stream.codec == mpegts::ElementaryCodec::Ac3
-                              ? "ac3" : "eac3")
+                      << " input=eac3"
                       << " requested=" << config_.audioCodec
                       << " fallback=copy"
-                      << " reason=native_decoder_unavailable"
+                      << " reason=native_eac3_decoder_unavailable"
                       << std::endl;
         }
         error.clear();

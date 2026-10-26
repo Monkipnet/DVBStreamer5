@@ -1,6 +1,7 @@
 #include "media/NativeCodecRuntime.h"
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeIttiamAvc.h"
+#include "media/NativeAc3Decoder.h"
 
 #include <wels/codec_api.h>
 #include <libde265/de265.h>
@@ -1428,7 +1429,7 @@ std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::
 static std::unique_ptr<VideoEncoder> createCpuVideoEncoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Encoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<KvazaarEncoder>();if(p->valid())return p;}error="built-in CPU encoder does not support/initialize requested codec";return{};}
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec c,std::string&error){return createVideoEncoder(c,"auto",error);}
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec c,const std::string&backend,std::string&error){std::string b=backend;std::transform(b.begin(),b.end(),b.begin(),[](unsigned char x){return static_cast<char>(std::tolower(x));});if(b.empty())b="auto";if(b=="x264"||b=="x265"||b=="cpu")return createCpuVideoEncoder(c,error);if(b=="nvenc"||b=="intel"||b=="qsv"||b=="vaapi")return createNativeHardwareVideoEncoder(c,b,error);if(b=="auto"){const auto hw=inspectNativeHardwareCapabilities();std::string ignored;if(hw.nvencAvailable){auto p=createNativeHardwareVideoEncoder(c,"nvenc",ignored);if(p){std::cerr<<"NATIVE VIDEO ENCODER auto selected=nvenc\n";return p;}}if(hw.qsvAvailable){auto p=createNativeHardwareVideoEncoder(c,"qsv",ignored);if(p){std::cerr<<"NATIVE VIDEO ENCODER auto selected=qsv-vaapi\n";return p;}}auto p=createCpuVideoEncoder(c,error);if(p)std::cerr<<"NATIVE VIDEO ENCODER auto selected=cpu\n";return p;}error="unsupported native video encoder backend: "+backend;return{};}
-std::unique_ptr<AudioDecoder> createAudioDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::AacAdts){auto p=std::make_unique<FdkAacDecoder>(TT_MP4_ADTS);if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::AacLatm){auto p=std::make_unique<FdkAacDecoder>(TT_MP4_LOAS,TT_MP4_LATM_MCP1);if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::MpegAudio){auto p=std::make_unique<PlMpegMp2Decoder>();if(p->valid())return p;}error="built-in audio decoder does not support/initialize requested codec";return{};}
+std::unique_ptr<AudioDecoder> createAudioDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::AacAdts){auto p=std::make_unique<FdkAacDecoder>(TT_MP4_ADTS);if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::AacLatm){auto p=std::make_unique<FdkAacDecoder>(TT_MP4_LOAS,TT_MP4_LATM_MCP1);if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::MpegAudio){auto p=std::make_unique<PlMpegMp2Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::Ac3){return createNativeAc3Decoder(error);}error="built-in audio decoder does not support/initialize requested codec";return{};}
 std::unique_ptr<AudioEncoder> createAacEncoder(std::string&error){auto p=std::make_unique<FdkAacEncoder>();error.clear();return p;}
 
 } // namespace dvbstreamer5::media::codec
