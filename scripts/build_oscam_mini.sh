@@ -40,7 +40,7 @@ if ! grep -q 'DVBCSA_KEY_ECM' "$DVBCSA_INCLUDE/dvbcsa/dvbcsa.h"; then
   echo "Vendored libdvbcsa header is missing DVBCSA_KEY_ECM." >&2
   exit 8
 fi
-if ! nm -g --defined-only "$DVBCSA_LIBRARY" 2>/dev/null | grep -q 'dvbcsa_bs_key_set_ecm'; then
+if ! nm -g --defined-only "$DVBCSA_LIBRARY" 2>/dev/null | grep 'dvbcsa_bs_key_set_ecm' >/dev/null; then
   echo "Vendored libdvbcsa library is missing dvbcsa_bs_key_set_ecm()." >&2
   exit 9
 fi
@@ -112,12 +112,12 @@ fi
 
 install -m0755 "$BUILD/oscam" "$BIN_OUT"
 
-if ldd "$BIN_OUT" 2>/dev/null | grep -q 'libdvbcsa'; then
+if ldd "$BIN_OUT" 2>/dev/null | grep 'libdvbcsa' >/dev/null; then
   echo "ERROR: OSCam-mini unexpectedly links system/dynamic libdvbcsa." >&2
   ldd "$BIN_OUT" | grep 'libdvbcsa' >&2 || true
   exit 10
 fi
-if ! "$BIN_OUT" -V 2>&1 | grep -q 'Streamrelay:.*yes'; then
+if ! "$BIN_OUT" -V 2>&1 | grep 'Streamrelay:.*yes' >/dev/null; then
   echo "ERROR: OSCam-mini was built without StreamRelay." >&2
   exit 11
 fi
