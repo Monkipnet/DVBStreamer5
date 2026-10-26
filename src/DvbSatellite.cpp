@@ -409,8 +409,12 @@ FrontendStats readFrontendStats(const DvbSatelliteParams& params) {
     if (signalRelative >= 0) result.signalPercent = signalRelative;
     else if (result.hasSignalDb) result.signalPercent = clampPercent((result.signalDb + 100.0) * 1.5);
 
-    if (qualityRelative >= 0) result.qualityPercent = qualityRelative;
+    if (qualityRelative > 0) result.qualityPercent = qualityRelative;
     else if (result.hasCnrDb) result.qualityPercent = clampPercent(result.cnrDb * 100.0 / 18.0);
+    else if (result.locked && result.signalPercent > 0) {
+        result.qualityPercent = result.signalPercent;
+        result.qualityEstimated = true;
+    }
 
     close(fd);
     return result;
