@@ -291,6 +291,7 @@ add_executable(DVBStreamer5
     src/protocols/stream/StreamOutputProtocol.cpp
     src/protocols/stream/inputs/StreamTestInputProtocol.cpp
     src/protocols/stream/inputs/StreamHttpInputProtocol.cpp
+    src/protocols/stream/inputs/StreamVdrInputProtocol.cpp
     src/protocols/stream/inputs/StreamHlsInputProtocol.cpp
     src/protocols/stream/inputs/StreamUdpInputProtocol.cpp
     src/protocols/stream/inputs/StreamRtpInputProtocol.cpp
