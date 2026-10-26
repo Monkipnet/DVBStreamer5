@@ -51,6 +51,7 @@ struct FrontendStats {
     double cnrDb = 0.0;
     bool hasSignalDb = false;
     bool hasCnrDb = false;
+    bool qualityEstimated = false;
 };
 
 struct FrontendMetadata {
@@ -377,6 +378,7 @@ FrontendStats readFrontendStats(const DvbSatelliteParams& params) {
         result.cnrDb = live.cnrDb;
         result.hasSignalDb = live.hasSignalDb;
         result.hasCnrDb = live.hasCnrDb;
+        result.qualityEstimated = live.qualityEstimated;
         return result;
     }
     const int fd = open(frontendPath(params).c_str(), O_RDONLY | O_NONBLOCK);
@@ -420,6 +422,7 @@ Json::Value statsToJson(const FrontendStats& stats) {
     root["locked"] = stats.locked;
     root["signal"] = stats.signalPercent;
     root["quality"] = stats.qualityPercent;
+    root["quality_estimated"] = stats.qualityEstimated;
     if (stats.hasSignalDb) root["signal_db"] = stats.signalDb;
     if (stats.hasCnrDb) root["cnr_db"] = stats.cnrDb;
     return root;
