@@ -1578,7 +1578,21 @@ int32_t write_ecm_answer(struct s_reader *reader, ECM_REQUEST *er, int8_t rc, ui
 
 	if(reader && cw && rc < E_NOTFOUND)
 	{
-		if(reader->disablecrccws == 0)
+		/*
+		 * DVBStreamer5 V10.8.195 iCAM fix:
+		 * VideoGuard 098D@000000 iCAM / CSA-ALT control words do not use
+		 * the legacy DVB-CSA 3-byte + checksum-byte layout. Rewriting each
+		 * fourth byte here corrupts an otherwise valid CW before StreamRelay
+		 * or the local Newcamd client can use it. Runtime A/B on Universal TV
+		 * proved PES_OK=0 with the legacy rewrite and valid PES when the
+		 * checksum rewrite is bypassed.
+		 *
+		 * Keep the historic checksum behavior unchanged for every other CAID.
+		 */
+		const int8_t icam_disablecrccws =
+			(er->caid == 0x098D && er->prid == 0x000000);
+
+		if(reader->disablecrccws == 0 && !icam_disablecrccws)
 		{
 			for(i = 0; i < 16; i += 4)
 			{
@@ -1623,7 +1637,14 @@ int32_t write_ecm_answer(struct s_reader *reader, ECM_REQUEST *er, int8_t rc, ui
 		}
 		else
 		{
-			cs_log_dbg(D_TRACE, "notice: CW checksum check disabled");
+			if(icam_disablecrccws && reader->disablecrccws == 0)
+			{
+				cs_log_dbg(D_TRACE, "notice: CW checksum check selectively disabled for iCAM %04X@%06X", er->caid, er->prid);
+			}
+			else
+			{
+				cs_log_dbg(D_TRACE, "notice: CW checksum check disabled");
+			}
 		}
 	}
 
