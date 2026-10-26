@@ -155,6 +155,11 @@ static void radegast_process_ecm(uchar *buf, int32_t l)
 			break;
 		case  8:      // ECM PROCESS PID ?? don't know, not needed
 			break;
+		case  9:      // SRVID from StreamRelay
+			if(i+4 >= l)
+				{ break; }
+			er->srvid = (buf[i + 4] << 8) | buf[i + 2];
+			break;
 		}
 	}
 	if(l != i)
