@@ -199,6 +199,7 @@ struct ServiceBinding {
     uint64_t diagParitySwapPesOk = 0;
     uint64_t diagParitySwapEvenToOdd = 0;
     uint64_t diagParitySwapOddToEven = 0;
+    bool icamModeLogged = false;
     uint16_t diagVerifySamplePid = 0;
     uint16_t diagSamplePid = 0;
     uint8_t diagSampleScrambling = 0;
@@ -900,6 +901,14 @@ void configure_service_callback(NewcamdInstance* inst,
                 if (currentEcmMode != 0) {
                     dvbcsa_key_set_ecm(currentEcmMode, cw, slot.scalarKey);
                     dvbcsa_bs_key_set_ecm(currentEcmMode, cw, slot.bsKey);
+                    if (!target->icamModeLogged) {
+                        target->icamModeLogged = true;
+                        std::cerr << "NEWCAMD ICAM MODE: stream=" << streamId
+                                  << " sid=" << target->serviceId
+                                  << " caid=0x" << std::hex << target->defaultCaid << std::dec
+                                  << " ecm_mode=" << static_cast<unsigned>(currentEcmMode)
+                                  << std::endl;
+                    }
                 } else {
                     dvbcsa_key_set(cw, slot.scalarKey);
                     dvbcsa_bs_key_set(cw, slot.bsKey);
