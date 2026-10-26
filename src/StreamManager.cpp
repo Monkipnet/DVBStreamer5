@@ -645,6 +645,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
               << streamConfig.name
               << " direct=h264/aac fallback=h264/aac"
               << " size=1280x720 encoder=auto"
+              << " policy=nvenc->qsv-vaapi->cpu"
               << std::endl;
 
     if (streamConfig.transcodeEnabled) {

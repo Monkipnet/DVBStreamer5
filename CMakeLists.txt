@@ -94,6 +94,14 @@ endif()
 add_subdirectory(third_party/twolame)
 add_subdirectory(third_party/libdvbcsa)
 
+set(DVBSTREAMER5_AC3_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/codec-ac3/src")
+if(NOT EXISTS "${DVBSTREAMER5_AC3_INCLUDE_DIR}/AC3Decoder.h")
+    message(FATAL_ERROR
+        "Vendored native AC-3 decoder is missing at "
+        "${DVBSTREAMER5_AC3_INCLUDE_DIR}/AC3Decoder.h")
+endif()
+message(STATUS "Native AC-3 decoder: enabled (vendored codec-ac3, MIT)")
+
 # Stage 9: codec backends are project-local static libraries built from
 # locked vendored source snapshots. There is intentionally no runtime codec
 # dlopen fallback.
@@ -168,7 +176,7 @@ target_include_directories(dvbstreamer5_media_core
     PRIVATE
         ${DVBSTREAMER5_CODEC_PREFIX}/include
         ${DVBSTREAMER5_CODEC_PREFIX}/include/ittiam-mpeg2
-        ${CMAKE_SOURCE_DIR}/third_party/codec-ac3/src
+        ${DVBSTREAMER5_AC3_INCLUDE_DIR}
 )
 target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
