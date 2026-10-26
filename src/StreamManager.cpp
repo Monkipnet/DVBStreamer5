@@ -6,6 +6,7 @@
 #include "TranscoderModule.h"
 #include "mpts/MptsOutputManager.h"
 #include "protocols/SrtVpsProfile.h"
+#include "protocols/stream/inputs/StreamVdrInputProtocol.h"
 #include "utils.h"
 #include "media/NativeSampleAes.h"
 #include "media/MpegTsRemapper.h"
@@ -463,9 +464,19 @@ std::string StreamManager::normalizedOutputType(const StreamConfig& cfg,
 }
 
 bool StreamManager::isNativeInputSupported(const StreamConfig& cfg, std::string& reason) {
-    const std::string input = toLower(normalizeInputUri(cfg.inputUri));
+    const std::string normalizedInput = normalizeInputUri(cfg.inputUri);
+    const std::string input = toLower(normalizedInput);
     const std::string mode = toLower(cfg.inputMode);
     if (cfg.testPattern || mode == "test" || input == "test://bars" || input == "testsrc://bars" || input == "bars://hd") {
+        return true;
+    }
+    if (dvbstreamer5::stream_protocols::inputs::isVdrInput(
+            input, mode, cfg.testPattern)) {
+        std::string resolved;
+        if (!dvbstreamer5::stream_protocols::inputs::resolveVdrStreamdevUri(
+                normalizedInput, resolved, reason)) {
+            return false;
+        }
         return true;
     }
     if (startsWith(input, "udp://") || startsWith(input, "rtp://") ||
@@ -496,6 +507,26 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (!isNativeInputSupported(streamConfig, reason)) {
         if (error) *error = reason;
         return false;
+    }
+
+    const std::string configuredInputUri = normalizeInputUri(streamConfig.inputUri);
+    const std::string configuredInputMode = toLower(streamConfig.inputMode);
+    const bool vdrCiPlusInput =
+        dvbstreamer5::stream_protocols::inputs::isVdrInput(
+            toLower(configuredInputUri), configuredInputMode, streamConfig.testPattern);
+    std::string resolvedInputUri = configuredInputUri;
+    if (vdrCiPlusInput) {
+        if (!dvbstreamer5::stream_protocols::inputs::resolveVdrStreamdevUri(
+                configuredInputUri, resolvedInputUri, reason)) {
+            if (error) *error = reason;
+            return false;
+        }
+        std::cerr << "CI+ VDR bridge input"
+                  << " stream=" << streamConfig.id
+                  << " source=" << configuredInputUri
+                  << " resolved=" << resolvedInputUri
+                  << " internal_ca=disabled"
+                  << std::endl;
     }
 
     std::vector<dvbstreamer5::media::network::NativeUdpRelayOutputConfig> nativeOutputs;
@@ -569,7 +600,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     std::string caError;
-    if (!CardManager::instance().reserveService(streamConfig, &caError)) {
+    if (!vdrCiPlusInput &&
+        !CardManager::instance().reserveService(streamConfig, &caError)) {
         if (error) *error = caError.empty() ? "CAM reservation failed" : caError;
         return false;
     }
@@ -577,7 +609,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     auto state = std::make_unique<StreamState>();
     std::uint64_t effectivePrimaryVideoBitrate = streamConfig.transcodeVideoBitrate;
     state->config = streamConfig;
-    state->activeInputUri = streamConfig.inputUri;
+    state->activeInputUri = resolvedInputUri;
     state->nativeHttpHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
@@ -826,8 +858,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         }
     }
-    const std::string normalizedInput = normalizeInputUri(streamConfig.inputUri);
-    const std::string inputMode = toLower(streamConfig.inputMode);
+    const std::string normalizedInput = resolvedInputUri;
+    const std::string inputMode = configuredInputMode;
     const bool hlsInput = inputMode == "hls" || toLower(normalizedInput).find(".m3u8") != std::string::npos ||
         toLower(normalizedInput).rfind("hls://", 0) == 0;
     const bool srtInput = toLower(normalizedInput).rfind("srt://", 0) == 0;
@@ -1038,7 +1070,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                   << std::endl;
     }
 
-    if (!streamConfig.conditionalAccessClient.empty()) {
+    if (!vdrCiPlusInput && !streamConfig.conditionalAccessClient.empty()) {
         const std::string streamId = streamConfig.id;
         relay.processTransport = [streamId](uint8_t* data, std::size_t size) {
             return CaBackendManager::instance().processTransport(streamId, data, size);
@@ -1655,15 +1687,19 @@ void StreamManager::monitorNativeStream(StreamState* state) {
             if (lastIn == 0 || recoveredFromInputLoss) {
                 const std::string normalized = normalizeInputUri(state->config.inputUri);
                 const std::string mode = toLower(state->config.inputMode);
+                const bool vdrCiPlus =
+                    dvbstreamer5::stream_protocols::inputs::isVdrInput(
+                        toLower(normalized), mode, state->config.testPattern);
                 const bool hls = mode == "hls" || toLower(normalized).find(".m3u8") != std::string::npos ||
                     toLower(normalized).rfind("hls://", 0) == 0;
                 const bool srt = toLower(normalized).rfind("srt://", 0) == 0;
                 const bool rtsp = toLower(normalized).rfind("rtsp://", 0) == 0;
                 const bool rtmp = toLower(normalized).rfind("rtmp://", 0) == 0 || toLower(normalized).rfind("rtmps://", 0) == 0;
-                state->statusMessage = hls ? "running (native HLS input)" :
+                state->statusMessage = vdrCiPlus ? "running (VDR CI+ input)" :
+                    (hls ? "running (native HLS input)" :
                     (srt ? "running (native SRT input)" :
                     (rtsp ? "running (native RTSP input)" :
-                    (rtmp ? "running (native RTMP input)" : "running (native media engine)")));
+                    (rtmp ? "running (native RTMP input)" : "running (native media engine)"))));
                 if (state->config.transcodeEnabled) state->statusMessage += " + native transcoder";
             }
         } else {
