@@ -527,13 +527,13 @@ void NewcamdClient::receiver_loop() {
             if (pending > 0) pending_ecms_.fetch_sub(1, std::memory_order_acq_rel);
             if (!callback) continue;
             if (message.payload.size() >= 19) {
-                callback(message.id, 0, message.payload.data() + 3);
-                callback(message.id, 1, message.payload.data() + 11);
+                callback(message.id, command, 0, message.payload.data() + 3);
+                callback(message.id, command, 1, message.payload.data() + 11);
             } else {
                 set_error("Newcamd ECM response did not contain a control word");
                 // Notify the plugin that this transaction completed negatively.
                 // 0xFF is an internal sentinel and is never a DVB CSA parity.
-                callback(message.id, 0xFF, nullptr);
+                callback(message.id, command, 0xFF, nullptr);
             }
         } else if (command >= 0x82 && command <= 0x8F && emmAckCallback) {
             // Astra serializes EMM requests and waits for the matching Newcamd
