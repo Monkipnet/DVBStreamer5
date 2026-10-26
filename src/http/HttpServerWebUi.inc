@@ -383,6 +383,7 @@ let language = normalizeLanguage(localStorage.getItem('dvbstreamer5-language') |
 // English mode keeps the numeric program version and appends " EN"
 // to the displayed version in the About dialog.
 const uiRuToEn = new Map([
+  ['Пользователи Newcamd из OSCam-mini появляются здесь автоматически. Ручные CAM-клиенты можно настроить в System / Newcamd.', 'OSCam-mini Newcamd users appear here automatically. Manual CAM clients can be configured in System / Newcamd.'],
   ['Конфигурация', 'Configuration'],
   ['Тест', 'Test'],
   ['Файл замены', 'Replacement file'],
@@ -3042,7 +3043,7 @@ function openAddChannelModal() {
     <div class="cam-panel">
       <div class="cam-head"><strong>CAM clients / Newcamd</strong><button id="satCamRefresh" class="button-secondary" type="button" onclick="refreshCamClients()">Refresh</button></div>
       <div id="satCamClients" class="cam-list"><div class="cam-empty">Loading CAM clients...</div></div>
-      <div class="cam-select"><div class="sat-field"><label>CAM for scrambled channels</label><select id="satCamClientSelect"><option value="">Do not use CAM / FTA</option></select></div><small>Select the CAM client used to descramble saved encrypted services. Configure Newcamd/OSCam in System / Newcamd.</small></div>
+      <div class="cam-select"><div class="sat-field"><label>CAM for scrambled channels</label><select id="satCamClientSelect"><option value="">Do not use CAM / FTA</option></select></div><small>Пользователи Newcamd из OSCam-mini появляются здесь автоматически. Ручные CAM-клиенты можно настроить в System / Newcamd.</small></div>
     </div>
     <div class="sat-actions">
       <button id="satScanButton" class="button-primary" onclick="startSatelliteScan()">Сканировать каналы</button>
