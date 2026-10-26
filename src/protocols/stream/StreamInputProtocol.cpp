@@ -10,6 +10,7 @@
 #include "protocols/stream/inputs/StreamSrtInputProtocol.h"
 #include "protocols/stream/inputs/StreamTestInputProtocol.h"
 #include "protocols/stream/inputs/StreamUdpInputProtocol.h"
+#include "protocols/stream/inputs/StreamVdrInputProtocol.h"
 #include "DvbSatellite.h"
 
 namespace dvbstreamer5::stream_protocols {
@@ -25,6 +26,7 @@ InputProtocolKind inputKind(const StreamConfig& cfg) {
     if (inputs::isRtspInput(input, mode, cfg.testPattern)) return InputProtocolKind::Rtsp;
     if (inputs::isRtmpInput(input, mode, cfg.testPattern)) return InputProtocolKind::Rtmp;
     if (inputs::isHlsInput(input, mode, cfg.testPattern)) return InputProtocolKind::Hls;
+    if (inputs::isVdrInput(input, mode, cfg.testPattern)) return InputProtocolKind::Vdr;
     if (inputs::isHttpInput(input, mode, cfg.testPattern)) return InputProtocolKind::Http;
     if (DvbSatellite::isDvbUri(normalizedInput)) return InputProtocolKind::Dvb;
     if (inputs::isFileInput(input, mode, cfg.testPattern)) return InputProtocolKind::File;
@@ -41,6 +43,7 @@ std::string inputKindName(InputProtocolKind kind) {
         case InputProtocolKind::Srt: return "srt";
         case InputProtocolKind::Rtsp: return "rtsp";
         case InputProtocolKind::Rtmp: return "rtmp";
+        case InputProtocolKind::Vdr: return "vdr-ci+";
         case InputProtocolKind::Dvb: return "dvb";
         case InputProtocolKind::File: return "file";
         default: return "unknown";
@@ -60,7 +63,12 @@ bool isUdpLikeInput(InputProtocolKind kind) {
 }
 
 bool isHttpLikeInput(InputProtocolKind kind) {
-    return kind == InputProtocolKind::Http || kind == InputProtocolKind::Hls;
+    return kind == InputProtocolKind::Http || kind == InputProtocolKind::Hls ||
+        kind == InputProtocolKind::Vdr;
+}
+
+bool isVdrInput(InputProtocolKind kind) {
+    return kind == InputProtocolKind::Vdr;
 }
 
 bool isFileInput(InputProtocolKind kind) {
