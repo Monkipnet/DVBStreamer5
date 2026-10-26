@@ -118,8 +118,18 @@ void readFrontendStatsFromFd(int fd, LinuxDvbFrontendStats& result) {
     }
     if (signalRelative >= 0) result.signalPercent = signalRelative;
     else if (result.hasSignalDb) result.signalPercent = clampFrontendPercent((result.signalDb + 100.0) * 1.5);
-    if (qualityRelative >= 0) result.qualityPercent = qualityRelative;
-    else if (result.hasCnrDb) result.qualityPercent = clampFrontendPercent(result.cnrDb * 100.0 / 18.0);
+    if (qualityRelative > 0) {
+        result.qualityPercent = qualityRelative;
+    } else if (result.hasCnrDb) {
+        result.qualityPercent = clampFrontendPercent(result.cnrDb * 100.0 / 18.0);
+    } else if (result.locked && result.signalPercent > 0) {
+        // Several TBS DVB-S/S2 frontends report FE_HAS_LOCK and signal strength
+        // but expose neither DTV_STAT_CNR nor a useful legacy FE_READ_SNR value.
+        // Do not render a misleading Q=0 for a locked carrier; expose a clearly
+        // marked estimate based on the available relative signal metric.
+        result.qualityPercent = result.signalPercent;
+        result.qualityEstimated = true;
+    }
 }
 #endif
 
@@ -932,9 +942,20 @@ bool LinuxDvbInput::read(
         return false;
     }
     if (bytes == 0) {
-        error = "DVB transport-stream tap reached end of stream";
-        return false;
+        // A DVB DVR node is a live character device, not a finite file. Some
+        // drivers can transiently return zero bytes around demux/driver timing
+        // events even though FE lock and the open frontend remain valid. Treat
+        // that exactly like an empty poll interval instead of tearing down the
+        // whole shared-DVB bus and turning every service OFFLINE.
+        ++zeroReadCount_;
+        if (zeroReadCount_ <= 3 || (zeroReadCount_ & (zeroReadCount_ - 1)) == 0) {
+            std::clog << "NATIVE DVB DVR zero-read recovered count="
+                      << zeroReadCount_ << '\n';
+        }
+        error.clear();
+        return true;
     }
+    zeroReadCount_ = 0;
     received = static_cast<std::size_t>(bytes);
     error.clear();
     return true;
