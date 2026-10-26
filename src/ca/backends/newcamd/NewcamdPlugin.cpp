@@ -419,12 +419,14 @@ void install_control_word(ControlWordSlot& slot, uint8_t ecmMode, const uint8_t*
 }
 
 uint8_t icam_ecm_mode(uint16_t caid, const std::vector<uint8_t>& section) {
-    // OSCam StreamRelay uses ECM mode 4 for the VideoGuard/iCAM profile when
-    // byte 4 carries the short-header marker and section_length-marker == 4.
+    // Match OSCam/NCam get_ecm_mode(): select CSA-ALT from the VideoGuard
+    // short-header shape, then derive the actual key-schedule mode from the
+    // low nibble of the final ECM byte.  The value is not a constant 4.
     if (!is_videoguard_caid(caid) || section.size() < 5) return 0;
     const int sectionLengthByte = static_cast<int>(section[2]);
     const int marker = static_cast<int>(section[4]);
-    return marker != 0 && (sectionLengthByte - marker) == 4 ? 4 : 0;
+    if (marker == 0 || (sectionLengthByte - marker) != 4) return 0;
+    return static_cast<uint8_t>(section.back() & 0x0Fu);
 }
 
 bool extract_irdeto_chid(const std::vector<uint8_t>& section, uint16_t& chid) {
