@@ -938,6 +938,11 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
               << "allowedprotocols = newcamd\n\n";
     }
 
+    std::set<int> localNewcamdPorts;
+    for (const auto& user : settings.users) {
+        if (user.port >= 1 && user.port <= 65535) localNewcamdPorts.insert(user.port);
+    }
+
     std::ostringstream server;
     for (const auto& reader : settings.readers) {
         if (reader.label.empty()) {
@@ -963,6 +968,12 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
                 reader.remoteHost.find_first_of("\r\n,;# \t") == std::string::npos;
             if (!hostOk || reader.remotePort < 1 || reader.remotePort > 65535) {
                 error = "Для Remote CA укажите корректные Host и Port: " + reader.label;
+                return false;
+            }
+            if (isLoopbackNewcamdHost(reader.remoteHost) &&
+                localNewcamdPorts.count(reader.remotePort) != 0) {
+                error = "Remote CA ридер " + reader.label +
+                    " указывает на локальный Newcamd listener OSCam-mini и создаёт петлю";
                 return false;
             }
             if (reader.remoteLocalPort < 0 || reader.remoteLocalPort > 65535) {
@@ -1569,6 +1580,7 @@ function translateOscamText(value){
     [/^Некорректное устройство ридера (.+)$/,'Invalid reader device $1'],
     [/^Для Remote CA укажите корректные Host и Port: (.+)$/,'Specify a valid Host and Port for Remote CA: $1'],
     [/^Некорректный Local Port Remote CA: (.+)$/,'Invalid Remote CA Local Port: $1'],
+    [/^Remote CA ридер (.+) указывает на локальный Newcamd listener OSCam-mini и создаёт петлю$/,'Remote CA reader $1 points to the local OSCam-mini Newcamd listener and creates a loop'],
     [/^Для (.+) укажите корректные User и Password: (.+)$/,'Specify valid User and Password for $1: $2'],
     [/^DES key (.+) ридера (.+) должен содержать 28 HEX-символов$/,'DES key for $1 reader $2 must contain 28 HEX characters'],
     [/^Remote key ридера (.+) должен содержать 28 HEX-символов$/,'Remote key for reader $1 must contain 28 HEX characters'],
