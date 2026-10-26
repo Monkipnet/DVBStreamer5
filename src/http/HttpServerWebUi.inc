@@ -945,7 +945,7 @@ function markStreamStoppedInUi(id, message='stopped') {
   stream.using_backup = false;
   stream.bitrate_in_kbps = 0;
   stream.bitrate_out_kbps = 0;
-  if (stream.conditional_access_client) stream.ca_decode_state = 'offline';
+  if (stream.conditional_access_client || stream.ci_plus_input) stream.ca_decode_state = 'offline';
   render(false);
 }
 function restoreStreamButton(button, text) {
@@ -1265,6 +1265,8 @@ function streamTileStructureSignature(stream) {
     input_service_id: stream.input_service_id,
     service_id: stream.service_id,
     conditional_access_client: stream.conditional_access_client,
+    ci_plus_input: stream.ci_plus_input === true,
+    ci_plus_backend: stream.ci_plus_backend || '',
     activation_mode: stream.activation_mode || 'online',
     cbr: stream.cbr,
     outputs: outputConfigsForStream(stream),
@@ -1319,7 +1321,8 @@ function dvbFrontendDetails(stream) {
   return `/dev/dvb/adapter${adapter}/frontend${frontend}${model ? ` · ${model}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}`;
 }
 function caDecodeInfo(stream) {
-  if (!stream?.conditional_access_client) return {cls:'offline', text:'FTA', detail:'Не требуется'};
+  const ciPlus = stream?.ci_plus_input === true;
+  if (!stream?.conditional_access_client && !ciPlus) return {cls:'offline', text:'FTA', detail:'Не требуется'};
   const mode = String(stream.ca_decode_state || (stream.active ? 'waiting' : 'offline'));
   const scrambled = Number(stream.ca_output_scrambled_packets || 0);
   const payload = Number(stream.ca_output_payload_packets || 0);
@@ -1456,7 +1459,7 @@ function render(force=false) {
         <div class="info-row"><strong>${t('sid')}</strong><span>${stream.service_id || '—'}</span></div>
         ${stream.dvb_input ? `<div class="info-row"><strong>Frontend</strong><span data-role="dvb-frontend-details">${escapeHtmlValue(dvbFrontendDetails(stream))}</span></div>
         <div class="info-row"><strong>ISI / DiSEqC</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
-        ${stream.conditional_access_client ? `<div class="info-row"><strong>CA</strong><span data-role="ca-status">${caStreamStatusText(stream)}</span></div>
+        ${(stream.conditional_access_client || stream.ci_plus_input) ? `<div class="info-row"><strong>CA</strong><span data-role="ca-status">${caStreamStatusText(stream)}</span></div>
         <div class="info-row decode-row"><strong>Декодирование</strong><span data-role="decode-status" class="decode-pill ${caDecodeInfo(stream).cls}" title="Контроль по A/V PID, scrambling_control и валидному PES">${caDecodeInfo(stream).text}</span></div>` : `<div class="info-row placeholder"><strong>CA</strong><span>—</span></div>
         <div class="info-row placeholder decode-row"><strong>Декодирование</strong><span>—</span></div>`}
         <div class="info-row"><strong>${t('bitrateIn')}</strong><span data-role="bitrate-in">${stream.bitrate_in_kbps ? stream.bitrate_in_kbps + ' kbps' : '—'}</span></div>
@@ -2322,6 +2325,9 @@ function camClientSummary(id) {
 }
 function caStreamStatusText(stream) {
   const ca = stream?.ca || {};
+  if (stream?.ci_plus_input === true) {
+    return 'CI+ / VDR streamdev / external CAM';
+  }
   if (!stream?.conditional_access_client) return 'FTA / no CAM';
   if (!ca.managed) return camClientSummary(stream.conditional_access_client) || 'CAM client configured / slot free';
   const client = ca.client_name || ca.client_display_name || ca.client || stream.conditional_access_client;
