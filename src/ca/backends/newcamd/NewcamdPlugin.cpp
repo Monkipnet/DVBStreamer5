@@ -248,6 +248,7 @@ struct NewcamdSession {
     uint16_t currentEcmPid = 0;
     uint64_t currentStartedMs = 0;
     std::string currentSignature;
+    uint8_t currentEcmMode = 0;
     bool currentIsIrdeto = false;
     bool currentHasIrdetoChid = false;
     uint16_t currentIrdetoChid = 0;
@@ -361,6 +362,19 @@ uint32_t parse_hex_value(const char* text, uint32_t maxValue) {
 
 bool is_irdeto_caid(uint16_t caid) {
     return ((caid & 0xFF00u) == 0x0600u) || caid == 0x1702u;
+}
+
+bool is_videoguard_caid(uint16_t caid) {
+    return (caid & 0xFF00u) == 0x0900u;
+}
+
+uint8_t icam_ecm_mode(uint16_t caid, const std::vector<uint8_t>& section) {
+    // OSCam StreamRelay uses ECM mode 4 for the VideoGuard/iCAM profile when
+    // byte 4 carries the short-header marker and section_length-marker == 4.
+    if (!is_videoguard_caid(caid) || section.size() < 5) return 0;
+    const int sectionLengthByte = static_cast<int>(section[2]);
+    const int marker = static_cast<int>(section[4]);
+    return marker != 0 && (sectionLengthByte - marker) == 4 ? 4 : 0;
 }
 
 bool extract_irdeto_chid(const std::vector<uint8_t>& section, uint16_t& chid) {
@@ -597,6 +611,7 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
     session->currentEcmPid = item.ecmPid;
     session->currentStartedMs = startedMs;
     session->currentSignature = item.signature;
+    session->currentEcmMode = icam_ecm_mode(item.caid, item.section);
     session->currentIsIrdeto = item.isIrdeto;
     session->currentHasIrdetoChid = item.hasIrdetoChid;
     session->currentIrdetoChid = item.irdetoChid;
@@ -609,7 +624,8 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
                   << " sid=" << item.serviceId
                   << " ecm_pid=" << item.ecmPid
                   << " queue_depth=" << queueDepth
-                  << " queued_ms=" << (startedMs >= item.queuedMs ? startedMs - item.queuedMs : 0);
+                  << " queued_ms=" << (startedMs >= item.queuedMs ? startedMs - item.queuedMs : 0)
+                  << " ecm_mode=" << static_cast<unsigned>(session->currentEcmMode);
         if (item.isIrdeto && item.hasIrdetoChid) {
             std::cerr << " irdeto_chid=0x" << std::hex << item.irdetoChid << std::dec;
         }
@@ -790,6 +806,7 @@ void configure_service_callback(NewcamdInstance* inst,
 
         uint16_t expectedMessageId = 0;
         uint64_t startedMs = 0;
+        uint8_t currentEcmMode = 0;
         bool currentIsIrdeto = false;
         bool currentHasIrdetoChid = false;
         uint16_t currentIrdetoChid = 0;
@@ -809,6 +826,7 @@ void configure_service_callback(NewcamdInstance* inst,
             currentHasIrdetoChid = session->currentHasIrdetoChid;
             currentIrdetoChid = session->currentIrdetoChid;
             currentSignature = session->currentSignature;
+            currentEcmMode = session->currentEcmMode;
         }
 
         if (messageId != expectedMessageId) {
@@ -835,6 +853,7 @@ void configure_service_callback(NewcamdInstance* inst,
                     session->currentEcmPid = 0;
                     session->currentStartedMs = 0;
                     session->currentSignature.clear();
+                    session->currentEcmMode = 0;
                     session->currentIsIrdeto = false;
                     session->currentHasIrdetoChid = false;
                     session->currentIrdetoChid = 0;
@@ -878,8 +897,13 @@ void configure_service_callback(NewcamdInstance* inst,
                 std::lock_guard<std::mutex> serviceLock(target->mutex);
                 ControlWordSlot& slot = (parity & 1) ? target->odd : target->even;
                 if (!slot.scalarKey || !slot.bsKey) return;
-                dvbcsa_key_set(cw, slot.scalarKey);
-                dvbcsa_bs_key_set(cw, slot.bsKey);
+                if (currentEcmMode != 0) {
+                    dvbcsa_key_set_ecm(currentEcmMode, cw, slot.scalarKey);
+                    dvbcsa_bs_key_set_ecm(currentEcmMode, cw, slot.bsKey);
+                } else {
+                    dvbcsa_key_set(cw, slot.scalarKey);
+                    dvbcsa_bs_key_set(cw, slot.bsKey);
+                }
                 slot.valid = true;
                 ++slot.updates;
                 ++target->cwUpdates;
@@ -910,6 +934,7 @@ void configure_service_callback(NewcamdInstance* inst,
                           << " msg=" << messageId
                           << " sid=" << sid
                           << " parity=" << ((parity & 1) ? "ODD" : "EVEN")
+                          << " ecm_mode=" << static_cast<unsigned>(currentEcmMode)
                           << " latency_ms=" << (now >= startedMs ? now - startedMs : 0)
                           << std::endl;
             }
@@ -927,6 +952,7 @@ void configure_service_callback(NewcamdInstance* inst,
                     session->currentEcmPid = 0;
                     session->currentStartedMs = 0;
                     session->currentSignature.clear();
+                    session->currentEcmMode = 0;
                     session->currentIsIrdeto = false;
                     session->currentHasIrdetoChid = false;
                     session->currentIrdetoChid = 0;
