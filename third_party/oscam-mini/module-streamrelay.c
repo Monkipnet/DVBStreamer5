@@ -149,7 +149,10 @@ void ParseEcmData(stream_client_data *cdata)
 static void write_cw(ECM_REQUEST *er, int32_t connid)
 {
 #if DVBCSA_KEY_ECM
-	const uint8_t ecm = (caid_is_videoguard(er->caid) && (er->ecm[4] != 0 && (er->ecm[2] - er->ecm[4]) == 4)) ? 4 : 0;
+	const uint8_t ecm = (caid_is_videoguard(er->caid) && er->ecmlen >= 5 &&
+						 er->ecm[4] != 0 && (er->ecm[2] - er->ecm[4]) == 4)
+		? (er->ecm[er->ecmlen - 1] & 0x0F)
+		: 0;
 #endif
 	if (memcmp(er->cw, "\x00\x00\x00\x00\x00\x00\x00\x00", 8) != 0)
 	{
