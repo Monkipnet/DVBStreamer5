@@ -1,0 +1,10 @@
+#pragma once
+#include "AC3Decoder.h"
+#include "decoder/AC3BitAllocation.h"
+#include "decoder/AC3BitReader.h"
+#include "decoder/AC3Config.h"
+#include "decoder/AC3Decoder.h"
+#include "decoder/AC3Downmix.h"
+#include "decoder/AC3FrameHeader.h"
+#include "decoder/AC3Imdct.h"
+#include "decoder/AC3Tables.h"
