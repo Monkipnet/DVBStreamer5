@@ -104,6 +104,11 @@ struct ControlWordSlot {
     struct dvbcsa_bs_key_s* bsKey = nullptr;
     bool valid = false;
     uint64_t updates = 0;
+    std::array<uint8_t, 8> lastReceivedCw{};
+    bool haveLastReceivedCw = false;
+    std::array<uint8_t, 8> pendingCw{};
+    bool pendingValid = false;
+    uint8_t pendingEcmMode = 0;
     ControlWordSlot() {
         scalarKey = dvbcsa_key_alloc();
         bsKey = dvbcsa_bs_key_alloc();
@@ -200,6 +205,10 @@ struct ServiceBinding {
     uint64_t diagParitySwapEvenToOdd = 0;
     uint64_t diagParitySwapOddToEven = 0;
     bool icamModeLogged = false;
+    uint8_t fastEcmObservedParity = 0; // MPEG-TS scrambling_control: 2=EVEN, 3=ODD
+    uint64_t fastEcmPendingActivations = 0;
+    uint64_t fastEcmZeroCwSkips = 0;
+    uint64_t fastEcmUnchangedCwSkips = 0;
     uint16_t diagVerifySamplePid = 0;
     uint16_t diagSamplePid = 0;
     uint8_t diagSampleScrambling = 0;
@@ -367,6 +376,46 @@ bool is_irdeto_caid(uint16_t caid) {
 
 bool is_videoguard_caid(uint16_t caid) {
     return (caid & 0xFF00u) == 0x0900u;
+}
+
+bool is_fast_ecm_caid(uint16_t caid) {
+    switch (caid) {
+        case 0x09C4:
+        case 0x098C:
+        case 0x098D:
+        case 0x09AF:
+        case 0x09CD:
+        case 0x0963:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool cw_is_zero(const uint8_t* cw) {
+    if (!cw) return true;
+    for (size_t i = 0; i < 8; ++i) {
+        if (cw[i] != 0) return false;
+    }
+    return true;
+}
+
+bool cw_differs(const ControlWordSlot& slot, const uint8_t* cw) {
+    return !slot.haveLastReceivedCw ||
+        std::memcmp(slot.lastReceivedCw.data(), cw, slot.lastReceivedCw.size()) != 0;
+}
+
+void install_control_word(ControlWordSlot& slot, uint8_t ecmMode, const uint8_t* cw) {
+    if (!slot.scalarKey || !slot.bsKey || !cw) return;
+    if (ecmMode != 0) {
+        dvbcsa_key_set_ecm(ecmMode, cw, slot.scalarKey);
+        dvbcsa_bs_key_set_ecm(ecmMode, cw, slot.bsKey);
+    } else {
+        dvbcsa_key_set(cw, slot.scalarKey);
+        dvbcsa_bs_key_set(cw, slot.bsKey);
+    }
+    slot.valid = true;
+    ++slot.updates;
 }
 
 uint8_t icam_ecm_mode(uint16_t caid, const std::vector<uint8_t>& section) {
@@ -898,24 +947,71 @@ void configure_service_callback(NewcamdInstance* inst,
                 std::lock_guard<std::mutex> serviceLock(target->mutex);
                 ControlWordSlot& slot = (parity & 1) ? target->odd : target->even;
                 if (!slot.scalarKey || !slot.bsKey) return;
-                if (currentEcmMode != 0) {
-                    dvbcsa_key_set_ecm(currentEcmMode, cw, slot.scalarKey);
-                    dvbcsa_bs_key_set_ecm(currentEcmMode, cw, slot.bsKey);
-                    if (!target->icamModeLogged) {
-                        target->icamModeLogged = true;
-                        std::cerr << "NEWCAMD ICAM MODE: stream=" << streamId
-                                  << " sid=" << target->serviceId
-                                  << " caid=0x" << std::hex << target->defaultCaid << std::dec
-                                  << " ecm_mode=" << static_cast<unsigned>(currentEcmMode)
-                                  << std::endl;
-                    }
+
+                const uint8_t tscParity = (parity & 1) ? 3U : 2U;
+                const bool fastEcm =
+                    currentEcmMode != 0 && is_fast_ecm_caid(target->defaultCaid);
+                const bool zeroCw = cw_is_zero(cw);
+                const bool changedCw = !zeroCw && cw_differs(slot, cw);
+
+                bool installed = false;
+                bool staged = false;
+                const char* fastAction = "install";
+
+                if (fastEcm && zeroCw) {
+                    ++target->fastEcmZeroCwSkips;
+                    fastAction = "skip-zero";
+                } else if (fastEcm && !changedCw) {
+                    ++target->fastEcmUnchangedCwSkips;
+                    fastAction = "skip-unchanged";
                 } else {
-                    dvbcsa_key_set(cw, slot.scalarKey);
-                    dvbcsa_bs_key_set(cw, slot.bsKey);
+                    if (fastEcm) {
+                        std::memcpy(
+                            slot.lastReceivedCw.data(), cw, slot.lastReceivedCw.size());
+                        slot.haveLastReceivedCw = true;
+
+                        // Sky FastECM can deliver the next CW before the transport
+                        // changes TSC parity. Replacing the key for the parity that
+                        // is still on-air corrupts every packet until that change.
+                        // Preserve the current key and arm the new one for the next
+                        // entry into the same parity.
+                        if (slot.valid && target->fastEcmObservedParity == tscParity) {
+                            std::memcpy(
+                                slot.pendingCw.data(), cw, slot.pendingCw.size());
+                            slot.pendingEcmMode = currentEcmMode;
+                            slot.pendingValid = true;
+                            staged = true;
+                            fastAction = "stage";
+                        } else {
+                            install_control_word(slot, currentEcmMode, cw);
+                            installed = true;
+                        }
+                    } else {
+                        install_control_word(slot, currentEcmMode, cw);
+                        installed = true;
+                    }
+
+                    if (installed) ++target->cwUpdates;
                 }
-                slot.valid = true;
-                ++slot.updates;
-                ++target->cwUpdates;
+
+                if (currentEcmMode != 0 && !target->icamModeLogged) {
+                    target->icamModeLogged = true;
+                    std::cerr << "NEWCAMD ICAM MODE: stream=" << streamId
+                              << " sid=" << target->serviceId
+                              << " caid=0x" << std::hex << target->defaultCaid << std::dec
+                              << " ecm_mode=" << static_cast<unsigned>(currentEcmMode)
+                              << std::endl;
+                }
+                if (fastEcm && (caDiagnosticsEnabled() || staged ||
+                                std::string(fastAction).rfind("skip-", 0) == 0)) {
+                    std::cerr << "NEWCAMD FASTECM CW: stream=" << streamId
+                              << " sid=" << target->serviceId
+                              << " parity=" << ((parity & 1) ? "ODD" : "EVEN")
+                              << " observed_tsc="
+                              << static_cast<unsigned>(target->fastEcmObservedParity)
+                              << " action=" << fastAction
+                              << std::endl;
+                }
                 sid = target->serviceId;
                 if ((parity & 1) && !currentSignature.empty()) {
                     target->lastSuccessfulEcmSignature = currentSignature;
@@ -1530,6 +1626,29 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             continue;
         }
 
+        if (is_fast_ecm_caid(binding.defaultCaid) &&
+            (scramblingControl == 2 || scramblingControl == 3) &&
+            binding.fastEcmObservedParity != scramblingControl) {
+            binding.fastEcmObservedParity = scramblingControl;
+            ControlWordSlot& enteringSlot =
+                scramblingControl == 3 ? binding.odd : binding.even;
+            if (enteringSlot.pendingValid) {
+                install_control_word(
+                    enteringSlot,
+                    enteringSlot.pendingEcmMode,
+                    enteringSlot.pendingCw.data());
+                enteringSlot.pendingValid = false;
+                enteringSlot.pendingEcmMode = 0;
+                ++binding.cwUpdates;
+                ++binding.fastEcmPendingActivations;
+                std::cerr << "NEWCAMD FASTECM ACTIVATE: stream=" << stream_id
+                          << " sid=" << binding.serviceId
+                          << " parity=" << (scramblingControl == 3 ? "ODD" : "EVEN")
+                          << " activations=" << binding.fastEcmPendingActivations
+                          << std::endl;
+            }
+        }
+
         ControlWordSlot& slot = scramblingControl == 3 ? binding.odd : binding.even;
         if (!slot.valid || !slot.scalarKey || !slot.bsKey) {
             waitingForKey = true;
@@ -1623,6 +1742,10 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             << " sample_cc=" << static_cast<unsigned>(binding.diagSampleCc)
             << " sample_pusi=" << (binding.diagSamplePusi ? 1 : 0)
             << " sample_tei=" << (binding.diagSampleTei ? 1 : 0)
+            << " fast_tsc=" << static_cast<unsigned>(binding.fastEcmObservedParity)
+            << " fast_activations=" << binding.fastEcmPendingActivations
+            << " fast_zero_skips=" << binding.fastEcmZeroCwSkips
+            << " fast_unchanged_skips=" << binding.fastEcmUnchangedCwSkips
             << std::endl;
         std::cerr
             << "CSA VERIFY: stream=" << stream_id
