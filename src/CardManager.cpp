@@ -148,9 +148,12 @@ CardManager& CardManager::instance() {
 }
 
 void CardManager::configure(const std::vector<CamClientConfig>& clients) {
+    std::vector<CamClientConfig> merged = clients;
+    OscamMiniManager::instance().appendRuntimeCamClients(merged);
+
     std::vector<CamClientConfig> normalized;
-    normalized.reserve(clients.size());
-    for (auto client : clients) {
+    normalized.reserve(merged.size());
+    for (auto client : merged) {
         if (client.id.empty()) continue;
         client.maxServices = std::clamp(client.maxServices, 1u, kMaxConfigurableServices);
         if (client.name.empty()) client.name = client.id;
