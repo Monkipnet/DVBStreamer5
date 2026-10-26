@@ -524,6 +524,76 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         highBand ? SEC_TONE_ON : SEC_TONE_OFF;
 
     if (useUnicable) {
+        if (cx23885Compat) {
+            // Some cx23885 satellite frontends need one S2API setup/tune
+            // before the first DiSEqC/SCR transaction after a cold start.
+            // This mirrors the "early tune" workaround used by mature Linux
+            // DVB stacks and removes the need to prime the tuner with Astra.
+            if (!setTone(fd, SEC_TONE_OFF,
+                         "cx23885 Unicable cold-start tone off", error)) {
+                return false;
+            }
+            if (!setVoltage(fd, SEC_VOLTAGE_13,
+                            "cx23885 Unicable cold-start 13V baseline", error)) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+            std::vector<dtv_property> clearProperties(1);
+            clearProperties[0].cmd = DTV_CLEAR;
+            if (!setFrontendProperties(fd, clearProperties, error)) {
+                std::clog
+                    << "NATIVE DVB UNICABLE early_tune clear_error error="
+                    << error << '\n';
+                return false;
+            }
+
+            std::vector<dtv_property> primeProperties(
+                config.streamId >= 0 ? 10 : 9);
+            std::size_t primeCount = 0;
+            primeProperties[primeCount].cmd = DTV_DELIVERY_SYSTEM;
+            primeProperties[primeCount++].u.data =
+                config.deliverySystem == "dvb-s" ? SYS_DVBS : SYS_DVBS2;
+            primeProperties[primeCount].cmd = DTV_FREQUENCY;
+            primeProperties[primeCount++].u.data = config.unicableFrequencyKHz;
+            primeProperties[primeCount].cmd = DTV_MODULATION;
+            primeProperties[primeCount++].u.data =
+                config.modulation == "auto" ? QPSK : parseModulation(config);
+            primeProperties[primeCount].cmd = DTV_SYMBOL_RATE;
+            primeProperties[primeCount++].u.data = config.symbolRateK * 1000U;
+            primeProperties[primeCount].cmd = DTV_INNER_FEC;
+            primeProperties[primeCount++].u.data = parseFec(config.fec);
+            primeProperties[primeCount].cmd = DTV_INVERSION;
+            primeProperties[primeCount++].u.data = INVERSION_AUTO;
+            primeProperties[primeCount].cmd = DTV_ROLLOFF;
+            primeProperties[primeCount++].u.data = ROLLOFF_35;
+            primeProperties[primeCount].cmd = DTV_PILOT;
+            primeProperties[primeCount++].u.data = PILOT_AUTO;
+            if (config.streamId >= 0) {
+                primeProperties[primeCount].cmd = DTV_STREAM_ID;
+                primeProperties[primeCount++].u.data =
+                    static_cast<std::uint32_t>(config.streamId);
+            }
+            primeProperties[primeCount].cmd = DTV_TUNE;
+            ++primeCount;
+            primeProperties.resize(primeCount);
+
+            if (!setFrontendProperties(fd, primeProperties, error)) {
+                std::clog
+                    << "NATIVE DVB UNICABLE early_tune property_error error="
+                    << error << '\n';
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            drainFrontendEvents(fd);
+            std::clog
+                << "NATIVE DVB UNICABLE early_tune"
+                << " compat=cx23885"
+                << " frontend_khz=" << config.unicableFrequencyKHz
+                << " baseline_13v_ms=250"
+                << " settle_ms=150\n";
+        }
+
         if (!configureUnicable(
                 fd, config, intermediateFrequency,
                 horizontal, highBand, frontendFrequency, error)) {
