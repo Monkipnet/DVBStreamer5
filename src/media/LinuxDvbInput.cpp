@@ -938,6 +938,18 @@ bool LinuxDvbInput::read(
             error.clear();
             return true;
         }
+        if (errno == EIO) {
+            ++ioErrorCount_;
+            // Satellite demodulators may transiently return EIO while lock is
+            // changing. Keep the live DVR tap attached so a recovered carrier
+            // resumes automatically instead of tearing down every shared service.
+            if (ioErrorCount_ <= 3 || (ioErrorCount_ & (ioErrorCount_ - 1)) == 0) {
+                std::clog << "NATIVE DVB DVR EIO recovered count="
+                          << ioErrorCount_ << '\n';
+            }
+            error.clear();
+            return true;
+        }
         error = "DVB transport-stream read failed: " + std::string(std::strerror(errno));
         return false;
     }
@@ -956,6 +968,7 @@ bool LinuxDvbInput::read(
         return true;
     }
     zeroReadCount_ = 0;
+    ioErrorCount_ = 0;
     received = static_cast<std::size_t>(bytes);
     error.clear();
     return true;
