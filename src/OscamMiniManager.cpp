@@ -761,6 +761,71 @@ bool OscamMiniManager::synchronizeCamClients(const std::vector<CamClientConfig>&
     return true;
 }
 
+void OscamMiniManager::appendRuntimeCamClients(std::vector<CamClientConfig>& clients) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const Settings settings = loadLocked();
+
+    const bool hasEnabledReader = std::any_of(settings.readers.begin(), settings.readers.end(),
+                                              [](const Reader& reader) { return reader.enabled; });
+    if (!hasEnabledReader || !isHex(settings.key, 28)) return;
+
+    std::string host = trimLocal(settings.bindIp);
+    if (host.empty() || host == "0.0.0.0" || host == "::" || host == "[::]") host = "127.0.0.1";
+
+    auto equivalentClientExists = [&](const NewcamdUser& user) {
+        return std::any_of(clients.begin(), clients.end(), [&](const CamClientConfig& client) {
+            const std::string backend = client.backendId.empty() ? "newcamd" : client.backendId;
+            if (backend != "newcamd") return false;
+            const Json::Value cfg = parseCamBackendConfigText(client.backendConfig);
+            const int clientPort = cfg.get("port", 0).asInt();
+            const std::string clientUser = cfg.get("user", "").asString();
+            const std::string clientHost = trimLocal(cfg.get("host", "").asString());
+            const bool sameHost = clientHost == host ||
+                                  (isLoopbackNewcamdHost(clientHost) && isLoopbackNewcamdHost(host));
+            return sameHost && clientPort == user.port && clientUser == user.user;
+        });
+    };
+
+    std::set<std::string> usedIds;
+    for (const auto& client : clients) {
+        if (!client.id.empty()) usedIds.insert(client.id);
+    }
+
+    for (const auto& user : settings.users) {
+        if (!isSafeName(user.user) || user.password.empty() ||
+            user.port < 1 || user.port > 65535 || equivalentClientExists(user)) {
+            continue;
+        }
+
+        std::string token = normalizedCamToken(user.user);
+        if (token.empty()) token = std::to_string(user.port);
+        std::string id = "oscam-mini-" + token;
+        if (usedIds.count(id)) id += "-" + std::to_string(user.port);
+        unsigned duplicateIndex = 2;
+        const std::string idBase = id;
+        while (usedIds.count(id)) id = idBase + "-" + std::to_string(duplicateIndex++);
+
+        Json::Value backendConfig(Json::objectValue);
+        backendConfig["host"] = host;
+        backendConfig["port"] = user.port;
+        backendConfig["user"] = user.user;
+        backendConfig["pass"] = user.password;
+        backendConfig["des"] = settings.key;
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+
+        CamClientConfig client;
+        client.id = id;
+        client.name = "OSCam-mini " + user.user;
+        if (isHex(user.caid, 4)) client.name += " / CAID " + user.caid;
+        client.maxServices = 10;
+        client.backendId = "newcamd";
+        client.backendConfig = Json::writeString(writer, backendConfig);
+        clients.push_back(std::move(client));
+        usedIds.insert(id);
+    }
+}
+
 bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) {
     if (!isHex(settings.key, 28)) {
         error = "DES key должен содержать ровно 28 HEX-символов";
