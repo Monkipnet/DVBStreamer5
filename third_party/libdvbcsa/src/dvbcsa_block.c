@@ -34,6 +34,16 @@ void dvbcsa_key_set (const dvbcsa_cw_t cw, struct dvbcsa_key_s *key)
   dvbcsa_key_schedule_block(cw, key->sch);
 }
 
+void dvbcsa_key_set_ecm(const unsigned char ecm, const dvbcsa_cw_t cw, struct dvbcsa_key_s *key)
+{
+  uint64_t a = dvbcsa_load_le64(cw);
+  dvbcsa_store_le64(key->cw,  a);
+  dvbcsa_store_le64(key->cws, ((a & 0xf0f0f0f0f0f0f0f0ULL) >> 4) |
+		              ((a & 0x0f0f0f0f0f0f0f0fULL) << 4));
+
+  dvbcsa_key_schedule_block_ecm(ecm, cw, key->sch);
+}
+
 static const uint8_t		csa_block_perm[256] =
   {
     0x00, 0x02, 0x80, 0x82, 0x20, 0x22, 0xa0, 0xa2, 0x10, 0x12, 0x90, 0x92, 0x30, 0x32, 0xb0, 0xb2,
