@@ -658,6 +658,12 @@ std::string HttpServer::currentState() {
     std::map<std::string, Json::Value> dvbSignalCache;
     for (const auto& cfg : configManager.config.streams) {
         Json::Value item = cfg.toJson();
+        const std::string configuredInput = normalizeInputUri(cfg.inputUri);
+        const bool configuredVdrCiPlus =
+            dvbstreamer5::stream_protocols::inputs::isVdrInput(
+                toLower(configuredInput), toLower(cfg.inputMode), cfg.testPattern);
+        item["ci_plus_input"] = configuredVdrCiPlus;
+        item["ci_plus_backend"] = configuredVdrCiPlus ? "vdr-streamdev" : "";
         if (snap.count(cfg.id)) {
             auto* streamState = snap.at(cfg.id);
             item["active"] = streamState->active.load();
@@ -689,7 +695,7 @@ std::string HttpServer::currentState() {
                 : 0.0;
             std::string rawCaDecodeState;
             const bool streamActive = streamState->active.load();
-            if (cfg.conditionalAccessClient.empty()) {
+            if (cfg.conditionalAccessClient.empty() && !configuredVdrCiPlus) {
                 rawCaDecodeState = "not_applicable";
             } else if (!streamActive) {
                 rawCaDecodeState = "offline";
@@ -721,7 +727,9 @@ std::string HttpServer::currentState() {
             item["ca_output_scrambled_packets"] = Json::UInt64(0);
             item["ca_output_clear_pes_starts"] = Json::UInt64(0);
             item["ca_output_scrambled_percent"] = 0.0;
-            item["ca_decode_state"] = cfg.conditionalAccessClient.empty() ? "not_applicable" : "offline";
+            item["ca_decode_state"] =
+                (cfg.conditionalAccessClient.empty() && !configuredVdrCiPlus)
+                    ? "not_applicable" : "offline";
             item["cc_errors"] = Json::UInt64(0);
             item["cc_errors_total"] = Json::UInt64(0);
         }

@@ -10,6 +10,7 @@
 #include "OscamMiniManager.h"
 #include "UdpInputFirewall.h"
 #include "protocols/SrtVpsProfile.h"
+#include "protocols/stream/inputs/StreamVdrInputProtocol.h"
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
