@@ -746,6 +746,7 @@ std::string HttpServer::currentState() {
         item["dvb_locked"] = false;
         item["dvb_signal"] = 0;
         item["dvb_quality"] = 0;
+        item["dvb_quality_estimated"] = false;
         if (configuredDvb && item.get("active", false).asBool() &&
             !item.get("using_backup", false).asBool() && !cfg.testPattern) {
             const std::string liveDvbUri = item.get("active_input_uri", cfg.inputUri).asString();
@@ -760,6 +761,7 @@ std::string HttpServer::currentState() {
                 item["dvb_locked"] = dvbStats.get("locked", false).asBool();
                 item["dvb_signal"] = dvbStats.get("signal", 0).asInt();
                 item["dvb_quality"] = dvbStats.get("quality", 0).asInt();
+                item["dvb_quality_estimated"] = dvbStats.get("quality_estimated", false).asBool();
                 item["dvb_frontend_name"] = dvbStats.get("frontend_name", "");
                 item["dvb_frontend_model"] = dvbStats.get("frontend_model", "");
                 item["dvb_driver_mode"] = dvbStats.get("driver_mode", -1).asInt();
