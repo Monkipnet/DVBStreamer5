@@ -16,6 +16,7 @@ enum class InputProtocolKind {
     Srt,
     Rtsp,
     Rtmp,
+    Vdr,
     Dvb,
     File,
     Unknown
@@ -28,6 +29,7 @@ std::vector<const char*> requiredElementsForInput(InputProtocolKind kind);
 bool isTestPatternInput(InputProtocolKind kind);
 bool isUdpLikeInput(InputProtocolKind kind);
 bool isHttpLikeInput(InputProtocolKind kind);
+bool isVdrInput(InputProtocolKind kind);
 bool isFileInput(InputProtocolKind kind);
 bool isDvbInput(InputProtocolKind kind);
 
