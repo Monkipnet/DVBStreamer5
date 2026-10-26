@@ -15,7 +15,7 @@
 
 class NewcamdClient {
 public:
-    using KeyUpdateCallback = std::function<void(uint16_t, uint8_t, const uint8_t*)>;
+    using KeyUpdateCallback = std::function<void(uint16_t, uint8_t, uint8_t, const uint8_t*)>;
     using EmmAckCallback = std::function<void(uint16_t, uint8_t)>;
 
     struct ProviderInfo {
