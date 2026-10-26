@@ -103,6 +103,7 @@ struct ControlWordSlot {
     dvbcsa_key_t* scalarKey = nullptr;
     struct dvbcsa_bs_key_s* bsKey = nullptr;
     bool valid = false;
+    uint8_t activeEcmMode = 0;
     uint64_t updates = 0;
     std::array<uint8_t, 8> lastReceivedCw{};
     bool haveLastReceivedCw = false;
@@ -196,6 +197,7 @@ struct ServiceBinding {
     uint64_t diagBsFullChunks = 0;
     uint64_t diagBsTailChunks = 0;
     uint64_t diagScalarTailPackets = 0;
+    uint64_t diagIcamForcedBitsliceChunks = 0;
     uint64_t diagDecryptEvenPackets = 0;
     uint64_t diagDecryptOddPackets = 0;
     uint64_t diagPusiChecked = 0;
@@ -415,6 +417,7 @@ void install_control_word(ControlWordSlot& slot, uint8_t ecmMode, const uint8_t*
         dvbcsa_key_set(cw, slot.scalarKey);
         dvbcsa_bs_key_set(cw, slot.bsKey);
     }
+    slot.activeEcmMode = ecmMode;
     slot.valid = true;
     ++slot.updates;
 }
@@ -1384,10 +1387,18 @@ static void decrypt_csa_batch_chunk(ControlWordSlot& slot,
     batch[count].data = nullptr;
     batch[count].len = 0;
 
-    if (count >= bitsliceThreshold) {
+    // The upstream OSCam/libdvbcsa iCAM integration uses the bitslice API
+    // even for a single packet.  Keep ordinary CSA's small-tail scalar fast
+    // path, but never send ECM-aware (CSA-ALT/iCAM) packets through our custom
+    // scalar key wrapper.  This gives iCAM the exact decrypt path validated by
+    // OSCam's StreamRelay and the official dvbcsa_bs_key_set_ecm() patch.
+    const bool forceBitsliceForIcam = slot.activeEcmMode != 0;
+    if (forceBitsliceForIcam || count >= bitsliceThreshold) {
         dvbcsa_bs_decrypt(
             slot.bsKey, batch.data(), static_cast<unsigned int>(kTsPacketSize - 4));
         if (diagnostics) {
+            if (forceBitsliceForIcam && count < bitsliceThreshold)
+                ++binding.diagIcamForcedBitsliceChunks;
             if (fullNativeChunk && count == nativeBatch) ++binding.diagBsFullChunks;
             else ++binding.diagBsTailChunks;
         }
@@ -1766,6 +1777,7 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             << " bs_full_chunks=" << binding.diagBsFullChunks
             << " bs_tail_chunks=" << binding.diagBsTailChunks
             << " scalar_tail_packets=" << binding.diagScalarTailPackets
+            << " icam_forced_bs_chunks=" << binding.diagIcamForcedBitsliceChunks
             << " sample_pid=" << binding.diagSamplePid
             << " sample_sc=" << static_cast<unsigned>(binding.diagSampleScrambling)
             << " sample_afc=" << static_cast<unsigned>(binding.diagSampleAdaptation)
