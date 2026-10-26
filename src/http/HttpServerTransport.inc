@@ -430,7 +430,17 @@ void HttpServer::handleSession(tcp::socket socket) {
                 res.body() = Json::writeString(writer, reply);
             } else if (target == "/api/oscam-mini/save") {
                 res.set(http::field::content_type, "application/json");
-                res.body() = OscamMiniManager::instance().saveSettingsJson(req.body());
+                const std::string oscamSaveResult = OscamMiniManager::instance().saveSettingsJson(req.body());
+                res.body() = oscamSaveResult;
+
+                Json::Value oscamSaveJson;
+                Json::CharReaderBuilder oscamSaveReader;
+                std::string oscamSaveErrors;
+                std::istringstream oscamSaveInput(oscamSaveResult);
+                if (Json::parseFromStream(oscamSaveReader, oscamSaveInput, &oscamSaveJson, &oscamSaveErrors) &&
+                    oscamSaveJson.get("ok", false).asBool()) {
+                    CardManager::instance().configure(configManager.config.camClients);
+                }
             } else if (target == "/api/oscam-mini/action") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = OscamMiniManager::instance().serviceActionJson(req.body());
