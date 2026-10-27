@@ -6065,6 +6065,53 @@ function rebuildDvbInputUriFromFields() {
   set('stream_id', Number(document.getElementById('streamDvbStreamId')?.value ?? -1));
   input.value = base + '?' + params.toString();
 }
+function renderDvbSubtitleLanguageOptions(current) {
+  const languages = [
+    ['auto', 'Авто — все языки', 'Auto — all languages', 'Automatski — svi jezici'],
+    ['rus', 'Русский', 'Russian', 'Ruski'],
+    ['eng', 'Английский', 'English', 'Engleski'],
+    ['bel', 'Белорусский', 'Belarusian', 'Bjeloruski'],
+    ['ukr', 'Украинский', 'Ukrainian', 'Ukrajinski'],
+    ['pol', 'Польский', 'Polish', 'Poljski'],
+    ['deu', 'Немецкий', 'German', 'Njemački'],
+    ['ger', 'Немецкий (ger)', 'German (ger)', 'Njemački (ger)'],
+    ['fra', 'Французский', 'French', 'Francuski'],
+    ['fre', 'Французский (fre)', 'French (fre)', 'Francuski (fre)'],
+    ['spa', 'Испанский', 'Spanish', 'Španjolski'],
+    ['hrv', 'Хорватский', 'Croatian', 'Hrvatski'],
+    ['ita', 'Итальянский', 'Italian', 'Talijanski'],
+    ['por', 'Португальский', 'Portuguese', 'Portugalski'],
+    ['tur', 'Турецкий', 'Turkish', 'Turski'],
+    ['ara', 'Арабский', 'Arabic', 'Arapski'],
+    ['ces', 'Чешский', 'Czech', 'Češki'],
+    ['cze', 'Чешский (cze)', 'Czech (cze)', 'Češki (cze)'],
+    ['slk', 'Словацкий', 'Slovak', 'Slovački'],
+    ['slo', 'Словацкий (slo)', 'Slovak (slo)', 'Slovački (slo)'],
+    ['nld', 'Нидерландский', 'Dutch', 'Nizozemski'],
+    ['dut', 'Нидерландский (dut)', 'Dutch (dut)', 'Nizozemski (dut)']
+  ];
+  const match = languages.some(item => item[0] === current);
+  const selected = match ? current : 'custom';
+  const choiceLabel = item => language === 'ru' ? item[1] :
+    language === 'hr' ? item[3] : item[2];
+  return languages.map(item =>
+      '<option value="' + item[0] + '"' + (selected === item[0] ? ' selected' : '') +
+      '>' + choiceLabel(item) + (item[0] === 'auto' ? '' : ' (' + item[0] + ')') + '</option>'
+    ).join('') + '<option value="custom"' + (selected === 'custom' ? ' selected' : '') +
+    '>' + (language === 'ru' ? 'Другой код ISO 639-2' :
+      language === 'hr' ? 'Drugi ISO 639-2 kod' : 'Other ISO 639-2 code') + '</option>';
+}
+function updateDvbSubtitleLanguageControls() {
+  const enabled = document.getElementById('streamDvbSubtitlesEnabled')?.checked === true;
+  const choice = document.getElementById('streamDvbSubtitlesLanguage');
+  const custom = document.getElementById('streamDvbSubtitlesCustomLanguage');
+  if (choice) choice.disabled = !enabled;
+  if (custom) {
+    custom.style.display = choice?.value === 'custom' && enabled ? '' : 'none';
+    custom.disabled = !enabled || choice?.value !== 'custom';
+  }
+}
+
 function openStreamForm(stream) {
   const renderStreamForm = () => {
     const ifaceOptions = state.interfaces || [];
@@ -6193,7 +6240,13 @@ function openStreamForm(stream) {
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
         <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.round((stream.target_bitrate||2000000)/1000)}" placeholder="2000" /></div>
         <div class="form-row full edit-section">
-          <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('DVB-субтитры','DVB subtitles')}>${uiBiText('DVB-субтитры','DVB subtitles')}</div><small class="field-help" ${uiBiAttrs('При транскодировании сохранять DVB-субтитры и PMT; CMAF не поддерживается.','Preserve DVB subtitle PID/PMT during transcoding; CMAF unsupported.')}>${uiBiText('При транскодировании сохранять DVB-субтитры и PMT; CMAF не поддерживается.','Preserve DVB subtitle PID/PMT during transcoding; CMAF unsupported.')}</small><label class="checkbox-inline"><input id="streamDvbSubtitlesEnabled" type="checkbox" ${stream.dvb_subtitles_enabled===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
+          <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('DVB-субтитры','DVB subtitles')}>${uiBiText('DVB-субтитры','DVB subtitles')}</div><small class="field-help" ${uiBiAttrs('При транскодировании сохранять DVB-субтитры и PMT; CMAF не поддерживается.','Preserve DVB subtitle PID/PMT during transcoding; CMAF unsupported.')}>${uiBiText('При транскодировании сохранять DVB-субтитры и PMT; CMAF не поддерживается.','Preserve DVB subtitle PID/PMT during transcoding; CMAF unsupported.')}</small><label class="checkbox-inline"><input id="streamDvbSubtitlesEnabled" type="checkbox" ${stream.dvb_subtitles_enabled===true?'checked':''} onchange="updateDvbSubtitleLanguageControls()"/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
+        </div>
+        <div class="form-row full edit-section">
+          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Язык DVB-субтитров','DVB subtitle language')}>${uiBiText('Язык DVB-субтитров','DVB subtitle language')}</div>
+          <small class="field-help" ${uiBiAttrs('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.')}>${uiBiText('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.')}</small>
+          <div class="row-inline compact-row"><select id="streamDvbSubtitlesLanguage" onchange="updateDvbSubtitleLanguageControls()">${renderDvbSubtitleLanguageOptions(stream.dvb_subtitles_language || 'auto')}</select>
+          <input id="streamDvbSubtitlesCustomLanguage" type="text" maxlength="3" pattern="[a-zA-Z]{3}" autocomplete="off" placeholder="ISO 639-2" value="${!['auto','rus','eng','bel','ukr','pol','deu','ger','fra','fre','spa','hrv','ita','por','tur','ara','ces','cze','slk','slo','nld','dut'].includes(stream.dvb_subtitles_language || 'auto') ? escapeHtmlValue(stream.dvb_subtitles_language || '') : ''}" style="max-width:130px" /></div></div>
         </div>
         <div class="form-row full"><label>Транскодирование</label><div class="checkbox-inline"><input id="streamTranscodeEnabled" type="checkbox" ${(stream.transcode_enabled && transcoderAvailable) ? 'checked' : ''} ${transcoderAvailable ? '' : 'disabled'} onchange="updateTranscodeControls()" /><span>Обрабатывать видео/аудио: транскодирование или независимый проброс оригинальных потоков</span></div><small style="color:${transcoderAvailable ? '#7ee2a8' : '#ff9f9f'}" ${uiBiAttrs(transcoderStatusRu, transcoderStatusEn)}>${uiBiText(transcoderStatusRu, transcoderStatusEn)}</small></div>
         <div class="form-row full"><label>HLS архив (DVR)</label><div class="row-inline compact-row"><label class="checkbox-inline"><input id="streamHlsArchiveEnabled" type="checkbox" ${stream.hls_archive_enabled?'checked':''} /><span>Записывать архив</span></label><input id="streamHlsArchiveHours" type="number" min="1" max="168" value="${stream.hls_archive_hours||24}" style="max-width:110px" /><span>часов</span><input id="streamHlsArchivePath" value="${stream.hls_archive_path||'/var/lib/dvbstreamer5/archive'}" placeholder="/var/lib/dvbstreamer5/archive" /></div><small>Архив сохраняет HLS TS-сегменты на диск. Совместимые URL: /КАНАЛ/archive-UTC-ДЛИТЕЛЬНОСТЬ.m3u8, /КАНАЛ/rewind-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_rel-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_abs-UTC.m3u8.</small></div>
@@ -6256,6 +6309,7 @@ function openStreamForm(stream) {
     updateStreamCaMode();
     updateBackupInputMode();
     updateTranscodeControls();
+    updateDvbSubtitleLanguageControls();
     loadUploadedBackupFiles();
     updateOutputHints();
     // Closed by default. Request the possibly large channel-name catalog
@@ -6687,6 +6741,15 @@ function saveStream(id) {
     uiError('OnDemand требует хотя бы один выход HTTP или HLS, где сервер может определить подключение клиента.');
     return;
   }
+  const subtitleLangChoice = document.getElementById('streamDvbSubtitlesLanguage')?.value || 'auto';
+  const subtitleLang = subtitleLangChoice === 'custom'
+    ? (document.getElementById('streamDvbSubtitlesCustomLanguage')?.value || '').trim().toLowerCase()
+    : subtitleLangChoice;
+  if (subtitleLang !== 'auto' && !/^[a-z]{3}$/.test(subtitleLang)) {
+    uiError(uiBiText('Укажите трёхбуквенный код языка субтитров ISO 639-2.',
+                     'Enter a three-letter ISO 639-2 subtitle language code.'));
+    return;
+  }
   const payload = {
     id: id,
     name: document.getElementById('streamName').value,
@@ -6754,6 +6817,7 @@ function saveStream(id) {
     epg_enabled: document.getElementById('streamEpgEnabled')?.checked === true,
     epg_eit_output: document.getElementById('streamEpgEitOutput')?.checked === true,
     dvb_subtitles_enabled: document.getElementById('streamDvbSubtitlesEnabled')?.checked === true,
+    dvb_subtitles_language: subtitleLang,
     epg_days: Math.max(1, Math.min(7, Number(document.getElementById('streamEpgDays')?.value || 3))),
     epg_mode: document.getElementById('streamEpgMode')?.value || 'auto',
     xmltv_source_id: document.getElementById('streamXmltvSourceId')?.value || '',
