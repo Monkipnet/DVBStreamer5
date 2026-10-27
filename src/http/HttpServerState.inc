@@ -600,7 +600,11 @@ std::string HttpServer::currentState() {
       const std::string backupIp = normalizeIpAddress(subscriber.backupIp);
       for (const auto& session : activeStreamSessions) {
         const std::string sessionIp = normalizeIpAddress(session.clientIp);
-        if (sessionIp == primaryIp || (!backupIp.empty() && sessionIp == backupIp)) {
+        const bool matchingIp = sessionIp == primaryIp ||
+          (!backupIp.empty() && sessionIp == backupIp);
+        const bool assignedStream = std::find(subscriber.streamIds.begin(),
+          subscriber.streamIds.end(), session.streamId) != subscriber.streamIds.end();
+        if (subscriber.enabled && matchingIp && assignedStream) {
           subscriberStreams.append(sessionToJson(session));
           longestConnectedSeconds = std::max(longestConnectedSeconds, session.connectedSeconds);
         }
