@@ -180,9 +180,15 @@ void ExternalXmltvManager::configure(
         if (cfg.id.empty() || next.size() >= 32) continue;
         Source data;
         const auto it = sources_.find(cfg.id);
-        if (it != sources_.end() && it->second.settings.url == cfg.url)
+        if (it != sources_.end() && it->second.settings.url == cfg.url) {
             data = it->second;
-        else data.queued = cfg.enabled;
+            if (data.settings.refreshTime != cfg.refreshTime ||
+                data.settings.refreshPeriod != cfg.refreshPeriod ||
+                data.settings.refreshWeekday != cfg.refreshWeekday)
+                data.lastSuccessDay = -1;
+        } else {
+            data.queued = cfg.enabled;
+        }
         data.settings = cfg;
         next.emplace(cfg.id, std::move(data));
     }
