@@ -2660,6 +2660,19 @@ for (const [en,hr] of [
   ['Enter an HTTP(S) URL for every source.','Unesite HTTP(S) URL za svaki izvor.'],
   ['Server local time','Lokalno vrijeme poslužitelja'],
   ['Refresh now','Osvježi sada'],
+  ['Last successful update: ','Posljednje uspješno ažuriranje: '],
+  ['Refresh queued…','Ažuriranje čeka u redu…'],
+  ['Error: ','Pogreška: '],
+  ['Source not downloaded yet','Izvor još nije preuzet'],
+  ['Queued…','Na čekanju…'],
+  ['Saving source settings…','Spremanje postavki izvora…'],
+  ['XMLTV source removed','XMLTV izvor je uklonjen'],
+  ['XMLTV source not found','XMLTV izvor nije pronađen'],
+  ['XMLTV is still downloading; check the service logs.','XMLTV se još preuzima; provjerite zapisnik servisa.'],
+  ['Status check failed: ','Provjera statusa nije uspjela: '],
+  ['Refresh failed to start: ','Pokretanje ažuriranja nije uspjelo: '],
+  ['Enter an HTTP(S) URL for every source.','Unesite HTTP(S) URL za svaki izvor.'],
+  ['Last successful update','Posljednje uspješno ažuriranje'],
   ['Select or enter XMLTV channel ID','Odaberite ili unesite XMLTV ID kanala'],
   ['Use when satellite EPG is unavailable','Koristi se kada satelitski EPG nije dostupan'],
   ['XMLTV source URL','URL XMLTV izvora'],
@@ -3571,6 +3584,7 @@ function openModal(html) {
 }
 function closeModal() {
   subscribersModalOpen = false;
+  stopXmltvRefreshPolling();
   stopQualityAutoRefresh();
   stopSatelliteSignalPolling();
   document.getElementById('modal').classList.remove('active', 'quality-open', 'stream-open', 'satellite-open');
@@ -6171,11 +6185,17 @@ function openStreamForm(stream) {
     updateTranscodeControls();
     loadUploadedBackupFiles();
     updateOutputHints();
-    if (!xmltvCatalog.length) void loadXmltvCatalog();
-    else {
-      refreshXmltvChannelOptions();
-      populateXmltvSelectedName();
-    }
+    // Closed by default. Request the possibly large channel-name catalog
+    // only after the user expands EPG, not for every tile edit.
+    const epgPanel = document.getElementById('streamEpgOptions');
+    epgPanel?.addEventListener('toggle', () => {
+      if (!epgPanel.open) return;
+      if (!xmltvCatalog.length) void loadXmltvCatalog();
+      else {
+        refreshXmltvChannelOptions();
+        populateXmltvSelectedName();
+      }
+    });
   };
 
   const formLoaders = [];
