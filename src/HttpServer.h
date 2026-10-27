@@ -103,6 +103,9 @@ private:
     std::atomic<uint64_t> acceptGeneration{0};
     ConfigManager& configManager;
     StreamManager& streamManager;
+    // Monotonic uptime of this HTTP/control-plane instance, created at startup.
+    const std::chrono::steady_clock::time_point startedAt_ =
+        std::chrono::steady_clock::now();
     std::mutex qualityMutex;
     std::mutex metricsMutex;
     uint64_t previousCpuTotal = 0;
