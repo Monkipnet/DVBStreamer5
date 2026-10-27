@@ -1313,13 +1313,18 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                                                 std::size_t size) {
             subtitles->observe(data, size);
         };
-        if (state->nativeTranscoder && streamConfig.dvbSubtitlesEnabled) {
-            // Only an enabled transcoder path modifies output MPEG-TS.
-            relay.injectDvbSubtitles = [subtitles](
+        if (streamConfig.dvbSubtitlesEnabled) {
+            // After transcoding we must reattach missing DVB PES and PMT.
+            // With no transcoder the remapper already passes subtitle PES:
+            // filter the original PMT/PIDs instead of duplicating packets.
+            const bool transcoding = static_cast<bool>(state->nativeTranscoder);
+            relay.injectDvbSubtitles = [subtitles, transcoding](
                 std::vector<dvbstreamer5::media::mpegts::Packet>& packets) {
-                subtitles->inject(packets);
+                if (transcoding) subtitles->inject(packets);
+                else subtitles->filterPassthrough(packets);
             };
             std::cerr << "DVB SUBTITLES enabled stream=" << streamConfig.id
+                      << " mode=" << (transcoding ? "post-transcode" : "native-pass")
                       << " language=" << streamConfig.dvbSubtitlesLanguage
                       << " track=" << streamConfig.dvbSubtitlesTrack
                       << std::endl;
