@@ -8,6 +8,8 @@
 #include <iostream>
 #include <memory>
 #include <system_error>
+#include <vector>
+#include <sys/stat.h>
 
 #include <fcntl.h>
 #include <unistd.h>
