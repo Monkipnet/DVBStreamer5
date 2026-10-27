@@ -1918,8 +1918,13 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->monitorThread.joinable()) state->monitorThread.join();
     // Persist the last complete EPG before this stopped/restarted/OnDemand
     // collector is destroyed. Never perform file I/O under managerMutex.
-    if (state->epgCollector && !state->epgCacheKey.empty())
+    if (state->epgCollector && !state->epgCacheKey.empty()) {
         (void)state->epgCollector->persistToDisk(state->epgCacheKey);
+        // The EPG API and IPTV XMLTV sidecar must remain usable while a
+        // source is temporarily offline or an OnDemand stream is idle.
+        std::lock_guard<std::mutex> cacheLock(dormantEpgMutex_);
+        dormantEpg_[id] = {state->epgCacheKey, state->epgCollector};
+    }
     state->running.store(false);
     state->active.store(false);
     CardManager::instance().releaseService(id);
@@ -2383,6 +2388,25 @@ Json::Value StreamManager::epgSnapshot(const std::string& id) const {
         const auto it = streams.find(id);
         if (it != streams.end() && it->second)
             collector = it->second->epgCollector;
+    }
+    if (!collector && cfg->epgMode != "xmltv") {
+        const std::string key = cfg->id + "|" + cfg->inputUri + "|" +
+            std::to_string(cfg->inputServiceId);
+        std::lock_guard<std::mutex> lock(dormantEpgMutex_);
+        auto it = dormantEpg_.find(id);
+        if (it != dormantEpg_.end() && it->second.first == key)
+            collector = it->second.second;
+        else {
+            // Read persistent EIT only once per inactive channel. This does
+            // not start DVB hardware and is safe for OnDemand/failed feeds.
+            auto cached = std::make_shared<dvbstreamer5::media::epg::DvbEpgCollector>(
+                cfg->inputServiceId <= 0xffffU
+                    ? static_cast<std::uint16_t>(cfg->inputServiceId) : 0,
+                cfg->epgDays);
+            (void)cached->restoreFromDisk(key);
+            dormantEpg_[id] = {key, cached};
+            collector = std::move(cached);
+        }
     }
 
     const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
