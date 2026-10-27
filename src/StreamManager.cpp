@@ -2428,8 +2428,12 @@ Json::Value StreamManager::epgSnapshot(const std::string& id) const {
     Json::Value events(Json::arrayValue);
     const dvbstreamer5::media::epg::DvbEpgEvent* current = nullptr;
     const dvbstreamer5::media::epg::DvbEpgEvent* next = nullptr;
+    // Keep the backing event storage alive until current/next are serialized.
+    // A block-local snapshot left these pointers dangling after the if block,
+    // causing Json::LogicError or SIGSEGV when DVB EIT output requested EPG.
+    dvbstreamer5::media::epg::DvbEpgSnapshot snapshot;
     if (collector) {
-        const auto snapshot = collector->snapshot(512);
+        snapshot = collector->snapshot(512);
         root["service_id"] = snapshot.serviceId;
         root["sections"] = Json::UInt64(snapshot.sectionsParsed);
         for (const auto& event : snapshot.events) {
