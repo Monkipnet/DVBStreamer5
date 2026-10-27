@@ -506,6 +506,11 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.serviceProvider = root.get("service_provider", "").asString();
     config.epgEnabled = root.get("epg_enabled", false).asBool();
     config.epgDays = std::clamp(root.get("epg_days", 3).asUInt(), 1u, 7u);
+    config.epgMode = root.get("epg_mode", "auto").asString();
+    if (config.epgMode != "dvb" && config.epgMode != "xmltv")
+        config.epgMode = "auto";
+    config.xmltvSourceId = root.get("xmltv_source_id", "").asString().substr(0, 128);
+    config.xmltvChannelId = root.get("xmltv_channel_id", "").asString().substr(0, 256);
     config.conditionalAccessClient = root.get("conditional_access_client", "").asString();
     if (root.isMember("outputs") && root["outputs"].isArray() && root["outputs"].size() > 0) {
         const auto primary = StreamOutputConfig::fromJson(root["outputs"][0]);
@@ -608,6 +613,9 @@ Json::Value StreamConfig::toJson() const {
     root["service_provider"] = serviceProvider;
     root["epg_enabled"] = epgEnabled;
     root["epg_days"] = std::clamp(epgDays, 1u, 7u);
+    root["epg_mode"] = epgMode;
+    root["xmltv_source_id"] = xmltvSourceId;
+    root["xmltv_channel_id"] = xmltvChannelId;
     root["conditional_access_client"] = conditionalAccessClient;
     Json::Value extraOutputs(Json::arrayValue);
     for (const auto& output : additionalOutputs) {
@@ -638,6 +646,33 @@ Json::Value CamClientConfig::toJson() const {
     root["backend_config"] = backendConfig.empty() ? "{}" : backendConfig;
     return root;
 }
+Json::Value XmltvSourceConfig::toJson() const {
+    Json::Value result(Json::objectValue);
+    result["id"] = id;
+    result["name"] = name;
+    result["url"] = url;
+    result["enabled"] = enabled;
+    result["refresh_time"] = refreshTime;
+    return result;
+}
+
+XmltvSourceConfig XmltvSourceConfig::fromJson(const Json::Value& root) {
+    XmltvSourceConfig result;
+    result.id = root.get("id", "").asString().substr(0, 128);
+    result.name = root.get("name", "").asString().substr(0, 128);
+    result.url = root.get("url", "").asString().substr(0, 2048);
+    result.enabled = root.get("enabled", true).asBool();
+    result.refreshTime = root.get("refresh_time", "03:00").asString();
+    if (result.refreshTime.size() != 5 || result.refreshTime[2] != ':' ||
+        result.refreshTime.substr(0, 2).find_first_not_of("0123456789") != std::string::npos ||
+        result.refreshTime.substr(3, 2).find_first_not_of("0123456789") != std::string::npos ||
+        std::stoi(result.refreshTime.substr(0, 2)) > 23 ||
+        std::stoi(result.refreshTime.substr(3, 2)) > 59) {
+        result.refreshTime = "03:00";
+    }
+    return result;
+}
+
 Json::Value AppConfig::toJson() const {
     Json::Value root;
     root["login"] = login;
@@ -664,6 +699,9 @@ Json::Value AppConfig::toJson() const {
     Json::Value mptsList(Json::arrayValue);
     for (const auto& output : mptsOutputs) mptsList.append(output.toJson());
     root["mpts_outputs"] = mptsList;
+    Json::Value xmltvList(Json::arrayValue);
+    for (const auto& source : xmltvSources) xmltvList.append(source.toJson());
+    root["xmltv_sources"] = xmltvList;
     return root;
 }
 
@@ -698,6 +736,15 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
             auto stream = StreamConfig::fromJson(item);
             stream.srtVpsVdsOptimization = config.srtVpsVdsOptimization;
             config.streams.push_back(std::move(stream));
+        }
+    }
+    if (root.isMember("xmltv_sources") && root["xmltv_sources"].isArray()) {
+        std::set<std::string> ids;
+        for (const auto& item : root["xmltv_sources"]) {
+            if (!item.isObject() || config.xmltvSources.size() >= 32) break;
+            auto source = XmltvSourceConfig::fromJson(item);
+            if (!source.id.empty() && ids.insert(source.id).second)
+                config.xmltvSources.push_back(std::move(source));
         }
     }
     if (root.isMember("mpts_outputs") && root["mpts_outputs"].isArray()) {
