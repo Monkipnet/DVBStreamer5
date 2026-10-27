@@ -508,6 +508,17 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.epgDays = std::clamp(root.get("epg_days", 3).asUInt(), 1u, 7u);
     config.epgEitOutput = root.get("epg_eit_output", false).asBool();
     config.dvbSubtitlesEnabled = root.get("dvb_subtitles_enabled", false).asBool();
+    config.dvbSubtitlesLanguage = toLower(
+        root.get("dvb_subtitles_language", "auto").asString());
+    // Accept only a three-letter ISO 639-2 language code or the legacy
+    // all-languages mode. Never let arbitrary config strings reach PSI parsing.
+    if (config.dvbSubtitlesLanguage != "auto" &&
+        (config.dvbSubtitlesLanguage.size() != 3U ||
+         !std::all_of(config.dvbSubtitlesLanguage.begin(),
+                      config.dvbSubtitlesLanguage.end(),
+                      [](unsigned char c) { return c >= 'a' && c <= 'z'; }))) {
+        config.dvbSubtitlesLanguage = "auto";
+    }
     config.epgMode = root.get("epg_mode", "auto").asString();
     if (config.epgMode != "dvb" && config.epgMode != "xmltv")
         config.epgMode = "auto";
@@ -617,6 +628,7 @@ Json::Value StreamConfig::toJson() const {
     root["epg_days"] = std::clamp(epgDays, 1u, 7u);
     root["epg_eit_output"] = epgEitOutput;
     root["dvb_subtitles_enabled"] = dvbSubtitlesEnabled;
+    root["dvb_subtitles_language"] = dvbSubtitlesLanguage;
     root["epg_mode"] = epgMode;
     root["xmltv_source_id"] = xmltvSourceId;
     root["xmltv_channel_id"] = xmltvChannelId;
