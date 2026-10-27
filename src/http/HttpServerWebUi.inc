@@ -2713,7 +2713,8 @@ function localizeUiTextNode(node) {
 }
 
 function localizeUiAttributes(element) {
-  if (!element || element.nodeType !== Node.ELEMENT_NODE || ['SCRIPT','STYLE'].includes(element.tagName)) return;
+  if (!element || element.nodeType !== Node.ELEMENT_NODE || ['SCRIPT','STYLE'].includes(element.tagName) ||
+      element.id === 'languageButton') return;
   let originals = uiOriginalAttrs.get(element);
   if (!originals) { originals = new Map(); uiOriginalAttrs.set(element, originals); }
   for (const name of uiLocalizedAttributes) {
@@ -2976,7 +2977,7 @@ function fetchState() {
       allowEmptyStreamStateOnce = false;
       const storedLanguage = localStorage.getItem('dvbstreamer5-language');
       const serverLanguage = normalizeLanguage(data.language);
-      language = normalizeLanguage(storedLanguage || language);
+      language = normalizeLanguage(storedLanguage || data.language || language);
       localStorage.setItem('dvbstreamer5-language', language);
       data.language = language;
       const cachedInterfaces = Array.isArray(state.interfaces) ? state.interfaces : [];
