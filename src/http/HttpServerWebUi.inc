@@ -2844,12 +2844,12 @@ function updateDvbMeter(tile, kind, value, available, locked, estimated=false) {
   const prefix = kind === 'signal' ? 'S' : (estimated ? 'Q~' : 'Q');
   label.textContent = `${prefix} ${available ? `${shown}%` : '—'}`;
   label.title = estimated
-    ? (language === 'en' ? 'Estimated quality: frontend does not report CNR/SNR' : 'Оценка качества: frontend не отдаёт CNR/SNR')
+    ? (uiBiText('Оценка качества: frontend не отдаёт CNR/SNR', 'Estimated quality: frontend does not report CNR/SNR'))
     : '';
 }
 function diseqcSourceLabel(value) {
   const source = Number(value);
-  if (!Number.isFinite(source) || source < 0) return language === 'en' ? 'Disabled' : 'Отключён';
+  if (!Number.isFinite(source) || source < 0) return uiBiText('Отключён','Disabled');
   if (source >= 0 && source < 4) return `${String.fromCharCode(65 + source)} (${source + 1})`;
   return String(source + 1);
 }
@@ -2859,7 +2859,7 @@ function dvbTuneDetails(stream) {
   const unicable = mode === 'en50494' || mode === 'en50607'
     ? ` · ${mode === 'en50494' ? 'EN50494' : 'EN50607'} UB${Number(stream?.dvb_unicable_user_band ?? -1)} @ ${(Number(stream?.dvb_unicable_frequency_khz || 0)/1000).toFixed(0)} MHz`
     : ` · DiSEqC: ${diseqcSourceLabel(stream?.dvb_diseqc_source)}`;
-  return `ISI: ${isi >= 0 ? isi : (language === 'en' ? 'Auto' : 'Авто')}${unicable}`;
+  return `ISI: ${isi >= 0 ? isi : uiBiText('Авто','Auto')}${unicable}`;
 }
 function dvbFrontendDetails(stream) {
   const adapter = Number(stream?.dvb_adapter ?? 0);
@@ -2887,21 +2887,21 @@ function formatEpgClock(timestamp) {
   const value = Number(timestamp || 0);
   if (!value) return '—';
   return new Date(value * 1000).toLocaleTimeString(
-    language === 'ru' ? 'ru-RU' : 'en-GB',
+    language === 'ru' ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : 'en-GB'),
     {hour:'2-digit', minute:'2-digit'});
 }
 function formatEpgDate(timestamp) {
   const value = Number(timestamp || 0);
   if (!value) return '—';
   return new Date(value * 1000).toLocaleDateString(
-    language === 'ru' ? 'ru-RU' : 'en-GB',
+    language === 'ru' ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : 'en-GB'),
     {day:'2-digit', month:'2-digit'});
 }
 function epgTileText(event, enabled=true, active=true) {
   if (!enabled) return '—';
   if (!event || !event.title) {
-    if (!active) return language === 'en' ? 'Stopped' : 'Остановлен';
-    return language === 'en' ? 'Waiting for EIT…' : 'Ожидание EIT…';
+    if (!active) return uiBiText('Остановлен','Stopped');
+    return uiBiText('Ожидание EIT…','Waiting for EIT…');
   }
   return `${formatEpgClock(event.start_utc)} · ${event.title}`;
 }
@@ -3770,15 +3770,16 @@ function exportSubscribers() {
     };
   });
   entries.sort((left, right) =>
-    left.name.localeCompare(right.name, language === 'ru' ? 'ru' : 'en', {sensitivity:'base'})
+    left.name.localeCompare(right.name, language, {sensitivity:'base'})
   );
 
-  const header = language === 'ru'
-    ? 'Имя абонента, IP адрес, Статус'
-    : 'Subscriber, IP address, Status';
+  const header = language === 'ru' ? 'Имя абонента, IP адрес, Статус' :
+    (language === 'hr' ? 'Pretplatnik, IP adresa, Status' : 'Subscriber, IP address, Status');
   const sectionNames = language === 'ru'
     ? {'HD':'HD ПОТОКИ', 'HD+SD':'HD + SD ПОТОКИ', 'SD':'SD ПОТОКИ', 'OTHER':'БЕЗ МЕТКИ HD/SD'}
-    : {'HD':'HD STREAMS', 'HD+SD':'HD + SD STREAMS', 'SD':'SD STREAMS', 'OTHER':'NO HD/SD TAG'};
+    : language === 'hr'
+      ? {'HD':'HD TOKOVI', 'HD+SD':'HD + SD TOKOVI', 'SD':'SD TOKOVI', 'OTHER':'BEZ HD/SD OZNAKE'}
+      : {'HD':'HD STREAMS', 'HD+SD':'HD + SD STREAMS', 'SD':'SD STREAMS', 'OTHER':'NO HD/SD TAG'};
   const orderedClasses = ['HD', 'HD+SD', 'SD', 'OTHER'];
   const lines = [];
 
@@ -3790,8 +3791,8 @@ function exportSubscribers() {
     lines.push(header);
     group.forEach(entry => {
       const status = entry.online
-        ? (language === 'ru' ? 'онлайн' : 'online')
-        : (language === 'ru' ? 'офлайн' : 'offline');
+        ? (language === 'ru' ? 'онлайн' : (language === 'hr' ? 'na mreži' : 'online'))
+        : (language === 'ru' ? 'офлайн' : (language === 'hr' ? 'izvan mreže' : 'offline'));
       lines.push(`${entry.name}, ${entry.ip}, ${status}`);
     });
   });
@@ -3817,7 +3818,7 @@ function openAboutModal() {
     <h2>${t('about')}</h2>
     <div class="about-list">
       <div class="about-row"><strong>${t('product')}</strong><span>DVBStreamer5</span></div>
-      <div class="about-row"><strong>${t('version')}</strong><span>${state.program_version||'—'}${language === 'en' ? ' EN' : ''}</span></div>
+      <div class="about-row"><strong>${t('version')}</strong><span>${state.program_version||'—'}${language === 'en' ? ' EN' : (language === 'hr' ? ' HR' : '')}</span></div>
       <div class="about-row"><strong>${t('name')}</strong><span>Лукомский Виталий</span></div>
       <div class="about-row"><strong>${t('country')}</strong><span>Беларусь, г. Борисов</span></div>
       <div class="about-row"><strong>${t('contactEmail')}</strong><a href="mailto:monkipnet@gmail.com">monkipnet@gmail.com</a></div>
@@ -3854,7 +3855,7 @@ function openLoginModal() {
   `);
 }
 let pendingConfigImportPayload = null;
-function configTransferText(ru, en) { return language === 'ru' ? ru : en; }
+function configTransferText(ru, en) { return uiBiText(ru, en); }
 function openConfigTransferModal() {
   pendingConfigImportPayload = null;
   openModal(`
@@ -4259,24 +4260,23 @@ function updateSatelliteDeviceInfo(prefix=null) {
   const device = String(item?.device || `/dev/dvb/adapter${adapter}/frontend${frontend}`);
   const model = String(item?.model || item?.frontend_name || '').trim();
   const mode = Number(item?.driver_mode ?? -1);
-  const modeNames = language === 'en'
-    ? ['multiswitch', 'direct / DiSEqC', 'Unicable']
-    : ['мультисвитч', 'прямой / DiSEqC', 'Unicable'];
+  const modeNames = language === 'ru'
+    ? ['мультисвитч', 'прямой / DiSEqC', 'Unicable']
+    : (language === 'hr' ? ['multiswitch', 'izravno / DiSEqC', 'Unicable'] :
+      ['multiswitch', 'direct / DiSEqC', 'Unicable']);
   const modeText = mode >= 0 && mode <= 2 ? ` · Mode ${mode}: ${modeNames[mode]}` : '';
-  const shownPrefix = prefix || (language === 'en' ? 'Selected' : 'Выбран');
+  const shownPrefix = prefix || uiBiText('Выбран','Selected');
   info.textContent = `${shownPrefix} ${device}${model ? ` · ${model}` : ''}${modeText}`;
 }
 function updateSatelliteCapabilityInfo() {
   const info = document.getElementById('satDvbInfo');
   if (!info) return;
   if (!dvbCapabilities.dvbsrcAvailable) {
-    info.textContent = language === 'en'
-      ? 'Native Linux DVB is unavailable on this host.'
-      : 'Native Linux DVB недоступен на этом хосте.';
+    info.textContent = uiBiText('Native Linux DVB недоступен на этом хосте.','Native Linux DVB is unavailable on this host.');
     return;
   }
-  const yes = language === 'en' ? 'yes' : 'да';
-  const no = language === 'en' ? 'no' : 'нет';
+  const yes = language === 'ru' ? 'да' : (language === 'hr' ? 'da' : 'yes');
+  const no = language === 'ru' ? 'нет' : (language === 'hr' ? 'ne' : 'no');
   info.textContent = `Native Linux DVB · stream-id: ${dvbCapabilities.streamIdSupported ? yes : no} · diseqc-source: ${dvbCapabilities.diseqcSourceSupported ? yes : no}`;
 }
 function updateSatelliteUnicableUi(triggerSignal=false) {
@@ -4329,7 +4329,7 @@ function applyTbsDriverModeUi() {
       ? 'Mode 2: Unicable. Select EN50494 or EN50607/JESS and configure the User Band/SCR.'
       : 'Mode 2: Unicable enabled. Normal committed DiSEqC A–D is disabled; position is carried by the SCR/JESS command.'
   ];
-  hint.textContent = mode >= 0 && mode <= 2 ? (language === 'en' ? en[mode] : ru[mode]) : '';
+  hint.textContent = mode >= 0 && mode <= 2 ? uiBiText(ru[mode], en[mode]) : '';
 }
 
 function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend=null) {
