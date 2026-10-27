@@ -991,6 +991,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         state->epgCollector =
             std::make_shared<dvbstreamer5::media::epg::DvbEpgCollector>(
                 epgServiceId, streamConfig.epgDays);
+        std::cerr << "DVB EPG enabled stream=" << streamConfig.id
+                  << " sid=" << epgServiceId
+                  << " days=" << streamConfig.epgDays
+                  << " source=eit-pid-0x12"
+                  << std::endl;
     }
 
     DvbSatelliteParams dvbParams;

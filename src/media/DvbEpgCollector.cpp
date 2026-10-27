@@ -6,6 +6,7 @@
 #include <cctype>
 #include <chrono>
 #include <limits>
+#include <utility>
 
 namespace dvbstreamer5::media::epg {
 namespace {
