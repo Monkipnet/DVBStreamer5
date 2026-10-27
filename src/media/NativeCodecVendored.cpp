@@ -972,10 +972,33 @@ public:
     OpenH264Encoder(){ WelsCreateSVCEncoder(&encoder_); }
     ~OpenH264Encoder() override { close(); if(encoder_){WelsDestroySVCEncoder(encoder_);encoder_=nullptr;} }
     bool valid() const noexcept { return encoder_ != nullptr; }
+    void setOptions(const VideoEncoderOptions& options) override { options_=options; }
     bool configure(int w,int h,double fps,std::uint64_t bitrate,std::string&error) override {
         error.clear(); if(!encoder_){error="OpenH264 encoder unavailable";return false;} close(); haveTimestampBase_=false; timestampBase90k_=0;
         SEncParamBase p{};p.iUsageType=CAMERA_VIDEO_REAL_TIME;p.iPicWidth=w;p.iPicHeight=h;p.iTargetBitrate=static_cast<int>(std::min<std::uint64_t>(bitrate,INT_MAX));p.iRCMode=RC_BITRATE_MODE;p.fMaxFrameRate=static_cast<float>(fps>0?fps:25.0);
-        if(encoder_->Initialize(&p)!=cmResultSuccess){error="OpenH264 Initialize failed";return false;} int fmt=videoFormatI420;encoder_->SetOption(ENCODER_OPTION_DATAFORMAT,&fmt);w_=w;h_=h;fps_=fps>0?fps:25.0;gopFrames_=std::max<std::uint64_t>(1,static_cast<std::uint64_t>(std::llround(fps_*2.0)));frameIndex_=0;configured_=true;return true;
+        if(encoder_->Initialize(&p)!=cmResultSuccess){error="OpenH264 Initialize failed";return false;} int fmt=videoFormatI420;encoder_->SetOption(ENCODER_OPTION_DATAFORMAT,&fmt);w_=w;h_=h;fps_=fps>0?fps:25.0;gopFrames_=std::max<std::uint64_t>(1,static_cast<std::uint64_t>(options_.gopFrames>0?options_.gopFrames:std::llround(fps_*2.0)));frameIndex_=0;configured_=true;
+        std::cerr << "NATIVE CPU ENCODER backend=openh264 codec=h264"
+                  << " size=" << w_ << "x" << h_
+                  << " fps=" << fps_
+                  << " bitrate_kbps=" << (bitrate/1000ULL)
+                  << " preset=" << options_.preset
+                  << " profile=" << options_.profile
+                  << " level=" << options_.level
+                  << " gop_frames=" << gopFrames_
+                  << " bframes=0"
+                  << " refs=encoder-default"
+                  << std::endl;
+        if(options_.bFrames>0||options_.openGop||options_.refFrames>0||options_.profile!="auto"||options_.level!="auto"){
+            std::cerr << "NATIVE VIDEO OPTIONS backend=openh264"
+                      << " safe_subset=gop,fps"
+                      << " ignored_profile=" << options_.profile
+                      << " ignored_level=" << options_.level
+                      << " ignored_bframes=" << options_.bFrames
+                      << " ignored_refs=" << options_.refFrames
+                      << " ignored_open_gop=" << (options_.openGop?1:0)
+                      << std::endl;
+        }
+        return true;
     }
     bool encode(const RawVideoFrame&in,std::vector<EncodedVideoFrame>&out,std::string&error) override {
         error.clear();if(!configured_){error="OpenH264 encoder not configured";return false;}if(in.width!=w_||in.height!=h_){error="OpenH264 geometry mismatch";return false;}
@@ -999,6 +1022,7 @@ public:
     bool flush(std::vector<EncodedVideoFrame>&,std::string&error) override {error.clear();return true;}
 private:
     void close(){if(configured_&&encoder_){encoder_->Uninitialize();configured_=false;}sps_.clear();pps_.clear();}
+    VideoEncoderOptions options_{};
     ISVCEncoder*encoder_=nullptr;int w_=0,h_=0;double fps_=25.0;bool configured_=false;std::uint64_t nextPts_=0;std::uint64_t frameIndex_=0,gopFrames_=50;bool haveTimestampBase_=false;std::uint64_t timestampBase90k_=0;std::vector<std::uint8_t>sps_,pps_;
 };
 
@@ -1040,6 +1064,7 @@ public:
     KvazaarEncoder(){api_=kvz_api_get(8);}
     ~KvazaarEncoder() override {close();}
     bool valid()const noexcept{return api_!=nullptr;}
+    void setOptions(const VideoEncoderOptions& options) override { options_=options; }
     bool configure(int w,int h,double fps,std::uint64_t bitrate,std::string&error)override{
         error.clear();
         close();
@@ -1085,13 +1110,20 @@ public:
         if (pixels > 2560ULL * 1440ULL) { realtimeThreads = 12; realtimeOwf = 3; }
         const std::string threadsValue = std::to_string(realtimeThreads);
         const std::string owfValue = std::to_string(realtimeOwf);
-        if (!parseKvazaar("preset", "ultrafast") ||
+        const char* cpuPreset =
+            options_.preset == "fastest" ? "ultrafast" :
+            options_.preset == "fast" ? "superfast" :
+            options_.preset == "quality" ? "medium" :
+            options_.preset == "best" ? "slow" : "fast";
+        if (!parseKvazaar("preset", cpuPreset) ||
             !parseKvazaar("threads", threadsValue.c_str()) ||
             !parseKvazaar("owf", owfValue.c_str())) {
             close();
             return false;
         }
-        std::cerr << "NATIVE H265 REALTIME PROFILE preset=ultrafast threads=" << realtimeThreads
+        std::cerr << "NATIVE H265 REALTIME PROFILE preset=" << cpuPreset
+                  << " requested_preset=" << options_.preset
+                  << " threads=" << realtimeThreads
                   << " owf=" << realtimeOwf
                   << " size=" << w << "x" << h
                   << " fps=" << cfg_->framerate_num
@@ -1198,6 +1230,7 @@ private:
         if(in)nextPts_=(in->hasPts?in->pts90k:nextPts_)+static_cast<std::uint64_t>(90000.0/fps_);
         return true;}
     void close(){if(enc_){api_->encoder_close(enc_);enc_=nullptr;}if(cfg_){api_->config_destroy(cfg_);cfg_=nullptr;}pts_.clear();vps_.clear();sps_.clear();pps_.clear();}
+    VideoEncoderOptions options_{};
     const kvz_api*api_=nullptr;kvz_config*cfg_=nullptr;kvz_encoder*enc_=nullptr;int w_=0,h_=0;double fps_=25.0;std::vector<std::uint8_t>vps_,sps_,pps_;std::uint64_t nextPts_=0;std::deque<std::uint64_t>pts_;
 };
 
