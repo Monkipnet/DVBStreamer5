@@ -916,6 +916,8 @@ document.addEventListener('click', event => {
       deleteStream(id);
     } else if (action === 'quality') {
       openQualityModal(id);
+    } else if (action === 'epg') {
+      openEpgModal(id);
     } else if (action === 'copy') {
       copyStreamLinks(id, button);
     }
@@ -1409,6 +1411,93 @@ function caDecodeInfo(stream) {
   return {cls:'waiting', text:'ДЕКОД: …', detail:'ОЖИДАНИЕ A/V ПАКЕТОВ'};
 }
 
+function formatEpgClock(timestamp) {
+  const value = Number(timestamp || 0);
+  if (!value) return '—';
+  return new Date(value * 1000).toLocaleTimeString(
+    language === 'ru' ? 'ru-RU' : 'en-GB',
+    {hour:'2-digit', minute:'2-digit'});
+}
+function formatEpgDate(timestamp) {
+  const value = Number(timestamp || 0);
+  if (!value) return '—';
+  return new Date(value * 1000).toLocaleDateString(
+    language === 'ru' ? 'ru-RU' : 'en-GB',
+    {day:'2-digit', month:'2-digit'});
+}
+function epgTileText(event, enabled=true, active=true) {
+  if (!enabled) return '—';
+  if (!event || !event.title) {
+    if (!active) return language === 'en' ? 'Stopped' : 'Остановлен';
+    return language === 'en' ? 'Waiting for EIT…' : 'Ожидание EIT…';
+  }
+  return `${formatEpgClock(event.start_utc)} · ${event.title}`;
+}
+async function openEpgModal(id) {
+  const stream = streamById(id);
+  if (!stream) return;
+  openModal(`
+    <h2>EPG · ${escapeHtmlValue(stream.name || stream.id)}</h2>
+    <div class="epg-empty">${uiBiText('Загрузка EPG…','Loading EPG…')}</div>
+  `);
+  document.getElementById('modalContent').classList.add('epg-modal');
+
+  try {
+    const data = await fetchJson(
+      '/api/epg?stream_id=' + encodeURIComponent(String(id)),
+      {cache:'no-store'});
+    if (!data.enabled) {
+      openModal(`
+        <h2>EPG · ${escapeHtmlValue(stream.name || stream.id)}</h2>
+        <div class="epg-empty">${uiBiText('EPG выключен для этого канала.','EPG is disabled for this channel.')}</div>
+        <div class="modal-actions"><button class="button-secondary" onclick="closeModal()">${t('close')}</button></div>
+      `);
+      document.getElementById('modalContent').classList.add('epg-modal');
+      return;
+    }
+
+    const events = Array.isArray(data.events) ? data.events : [];
+    const currentId = Number(data.now?.event_id ?? -1);
+    const currentStart = Number(data.now?.start_utc ?? -1);
+    const rows = events.length ? events.map(event => {
+      const start = Number(event.start_utc || 0);
+      const end = Number(event.end_utc || 0);
+      const current =
+        Number(event.event_id ?? -2) === currentId &&
+        start === currentStart;
+      return `
+        <div class="epg-event${current ? ' current' : ''}">
+          <div class="epg-time">${formatEpgDate(start)}<br>${formatEpgClock(start)}–${formatEpgClock(end)}</div>
+          <div>
+            <div class="epg-title">${escapeHtmlValue(event.title || uiBiText('Без названия','Untitled'))}</div>
+            ${event.description ? `<div class="epg-description">${escapeHtmlValue(event.description)}</div>` : ''}
+          </div>
+        </div>`;
+    }).join('') : `<div class="epg-empty">${uiBiText('EIT ещё не получен.','EIT has not been received yet.')}</div>`;
+
+    openModal(`
+      <h2>EPG · ${escapeHtmlValue(stream.name || stream.id)}</h2>
+      <div class="epg-headline">
+        <span>SID ${Number(data.service_id || stream.input_service_id || 0)}</span>
+        <span>·</span>
+        <span>${Number(data.sections || 0)} EIT</span>
+        <span>·</span>
+        <span>${events.length} ${uiBiText('событий','events')}</span>
+      </div>
+      <div class="epg-list">${rows}</div>
+      <div class="modal-actions"><button class="button-secondary" onclick="closeModal()">${t('close')}</button></div>
+    `);
+    document.getElementById('modalContent').classList.add('epg-modal');
+  } catch (error) {
+    openModal(`
+      <h2>EPG · ${escapeHtmlValue(stream.name || stream.id)}</h2>
+      <div class="epg-empty">${escapeHtmlValue(error?.message || String(error))}</div>
+      <div class="modal-actions"><button class="button-secondary" onclick="closeModal()">${t('close')}</button></div>
+    `);
+    document.getElementById('modalContent').classList.add('epg-modal');
+  }
+}
+
 function updateStreamTile(tile, stream) {
   if (!tile || !stream) return;
   tile.classList.toggle('active', !!stream.active);
@@ -1443,6 +1532,19 @@ function updateStreamTile(tile, stream) {
   if (activeInput) {
     activeInput.textContent = `${stream.active_input_label || t('primary')} · ${stream.active_input_uri || stream.input_uri || '—'}`;
     activeInput.title = activeInput.textContent;
+  }
+
+  const epgNow = tile.querySelector('[data-role="epg-now"]');
+  if (epgNow) {
+    epgNow.textContent = epgTileText(
+      stream.epg_now, stream.epg_enabled === true, !!stream.active);
+    epgNow.title = stream.epg_now?.title || epgNow.textContent;
+  }
+  const epgNext = tile.querySelector('[data-role="epg-next"]');
+  if (epgNext) {
+    epgNext.textContent = epgTileText(
+      stream.epg_next, stream.epg_enabled === true, !!stream.active);
+    epgNext.title = stream.epg_next?.title || epgNext.textContent;
   }
 
   const bitrateIn = tile.querySelector('[data-role="bitrate-in"]');
@@ -1531,6 +1633,8 @@ function render(force=false) {
         <div class="info-row"><strong>${t('primary')}</strong><span title="${escapeHtmlValue(stream.input_uri || '—')}">${escapeHtmlValue(stream.input_uri || '—')}</span></div>
         <div class="info-row"><strong>${t('backup')}</strong><span title="${escapeHtmlValue((stream.backup_input_uri || '—') + (stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''))}">${escapeHtmlValue(stream.backup_input_uri || '—')}${stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''}</span></div>
         <div class="info-row"><strong>${t('sid')}</strong><span>${stream.service_id || '—'}</span></div>
+        ${stream.epg_enabled === true ? `<div class="info-row epg-row" data-stream-action="epg" data-stream-id="${escapeHtmlValue(stream.id)}" ondblclick="event.stopPropagation()"><strong>${language === 'en' ? 'Now' : 'Сейчас'}</strong><span data-role="epg-now">${escapeHtmlValue(epgTileText(stream.epg_now, true, !!stream.active))}</span></div>
+        <div class="info-row epg-row" data-stream-action="epg" data-stream-id="${escapeHtmlValue(stream.id)}" ondblclick="event.stopPropagation()"><strong>${language === 'en' ? 'Next' : 'Далее'}</strong><span data-role="epg-next">${escapeHtmlValue(epgTileText(stream.epg_next, true, !!stream.active))}</span></div>` : ''}
         ${stream.dvb_input ? `<div class="info-row"><strong>Frontend</strong><span data-role="dvb-frontend-details">${escapeHtmlValue(dvbFrontendDetails(stream))}</span></div>
         <div class="info-row"><strong>ISI / DiSEqC</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
         ${(stream.conditional_access_client || stream.ci_plus_input) ? `<div class="info-row"><strong>CA</strong><span data-role="ca-status">${caStreamStatusText(stream)}</span></div>
@@ -3567,7 +3671,7 @@ function openStreamForm(stream) {
       ? `Доступно: H.264=${transcoderInfo.video_encoder || 'нет'}, HEVC=${transcoderInfo.hevc_video_encoder || 'нет'}, NVENC ${transcoderInfo.nvenc_available ? 'да' : 'нет'}, Intel ${transcoderInfo.intel_available ? (transcoderInfo.intel_encoder || 'да') : 'нет'}, x264 ${transcoderInfo.x264_available ? 'да' : 'нет'}, x265 ${transcoderInfo.x265_available ? 'да' : 'нет'}, AAC ${transcoderInfo.aac_encoder || 'нет'}, MP3 ${transcoderInfo.mp3_encoder || 'нет'}, MP2 ${transcoderInfo.mp2_encoder_available ? 'TwoLAME' : 'нет'}, deinterlace ${transcoderInfo.deinterlace ? 'да' : 'нет'}`
       : `Недоступно: ${transcoderMissing || transcoderInfo.message || 'native transcoder components are not available'}`;
     openModal(`
-      <h2>${stream.name ? 'Редактирование трансляции' : 'Настройка трансляции'}</h2>
+      <h2>${stream.name ? uiBiText('Редактирование канала','Edit channel') : uiBiText('Новый канал','New channel')}</h2>
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
         <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} oninput="updateDvbTunerVisibility()" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility();if(this.value==='vdr'){const ca=document.getElementById('streamCaMode');if(ca){ca.value='ciplus';updateStreamCaMode();}}"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
