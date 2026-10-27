@@ -2932,6 +2932,8 @@ let streamActionBusy = new Set();
 let mptsState = {outputs:[]};
 let xmltvModalSources = [];
 let xmltvCatalog = [];
+let xmltvRefreshPollTimer = null;
+let xmltvRefreshPollToken = 0;
 function uiError(message) {
   console.error(message);
   const text = translateUiText(String(message || 'UI error'));
@@ -3227,16 +3229,30 @@ function populateXmltvSelectedName() {
     ch.id === channelId && (!sourceId || ch.source_id === sourceId));
   if (found) search.value = found.name || found.id;
 }
-function xmltvSourceRow(src, index) {
-  const date = Number(src.last_success || 0) > 0
-    ? new Date(Number(src.last_success) * 1000).toLocaleString(language === 'ru'
-        ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : 'en-GB'))
+function xmltvRuntimeText(src) {
+  const updated = Number(src.last_success || 0)
+    ? new Date(Number(src.last_success) * 1000).toLocaleString(
+      language === 'ru' ? 'ru-RU' : language === 'hr' ? 'hr-HR' : 'en-GB')
     : '—';
-  const status = src.last_error
-    ? String(src.last_error)
-    : (src.downloading ? uiBiText('Загрузка…','Downloading…') :
-       ((src.channel_count || 0) + ' ' + uiBiText('каналов','channels') +
-        ' / ' + (src.event_count || 0) + ' ' + uiBiText('передач','programmes')));
+  const prefix = uiBiText('Последнее успешное обновление: ', 'Last successful update: ');
+  let state = '';
+  if (src.downloading) {
+    state = uiBiText('Загрузка выполняется…', 'Downloading…');
+  } else if (src.queued ||
+      Number(src.refresh_requested || 0) > Number(src.refresh_completed || 0)) {
+    state = uiBiText('Запрос принят, ожидает загрузки…', 'Refresh queued…');
+  } else if (src.last_error) {
+    state = uiBiText('Ошибка: ', 'Error: ') + String(src.last_error);
+  } else if (Number(src.last_success || 0)) {
+    state = String(src.channel_count || 0) + ' ' + uiBiText('каналов', 'channels') +
+      ', ' + String(src.event_count || 0) + ' ' + uiBiText('передач', 'programmes');
+  } else {
+    state = uiBiText('Источник ещё не загружен', 'Source not downloaded yet');
+  }
+  if (src.last_warning && !src.downloading && !src.queued) state += '. ' + src.last_warning;
+  return prefix + updated + '. ' + state;
+}
+function xmltvSourceRow(src, index) {
   return '<div class="form-row full" data-xmltv-row="' + index +
     '" style="border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:10px;margin:5px 0">' +
     '<div class="row-inline compact-row">' +
@@ -3267,10 +3283,14 @@ function xmltvSourceRow(src, index) {
           '</option>').join('') + '</select>' +
     '<input data-xmltv-field="refresh_time" type="time" value="' +
       escapeHtmlValue(src.refresh_time || '03:00') + '" /></div>' +
-    '<small class="field-help">' + uiBiText('Последнее успешное обновление','Last successful update') +
-      ': ' + date + '. ' + escapeHtmlValue(status) + '</small>' +
-    '<div class="modal-actions"><button class="button-secondary" type="button" onclick="refreshXmltvSource(' +
-      index + ')">' + uiBiText('Обновить сейчас','Refresh now') + '</button></div>' +
+    '<small class="field-help" data-xmltv-runtime="' + escapeHtmlValue(src.id) +
+      '" aria-live="polite">' + escapeHtmlValue(xmltvRuntimeText(src)) + '</small>' +
+    '<div class="modal-actions"><button class="button-secondary" type="button" data-xmltv-refresh="' +
+      escapeHtmlValue(src.id) + '" onclick="refreshXmltvSource(' + index + ')" ' +
+      (src.downloading || src.queued ? 'disabled' : '') + '>' +
+      (src.downloading ? uiBiText('Загрузка…','Downloading…') :
+        src.queued ? uiBiText('В очереди…','Queued…') :
+        uiBiText('Обновить сейчас','Refresh now')) + '</button></div>' +
     '</div>';
 }
 function syncXmltvModalFields() {
@@ -3287,7 +3307,13 @@ function syncXmltvModalFields() {
     if (enabled) source.enabled = enabled.checked;
   });
 }
+function stopXmltvRefreshPolling() {
+  ++xmltvRefreshPollToken;
+  if (xmltvRefreshPollTimer !== null) clearTimeout(xmltvRefreshPollTimer);
+  xmltvRefreshPollTimer = null;
+}
 function renderXmltvModal() {
+  stopXmltvRefreshPolling();
   openModal('<h2>' + uiBiText('Внешние источники XMLTV','External XMLTV sources') + '</h2>' +
     '<small class="field-help">' +
     uiBiText('Добавьте несколько URL и время автоматического обновления. Расписание сохраняется при ошибке сети.',
@@ -3306,6 +3332,7 @@ function renderXmltvModal() {
     t('save') + '</button></div>');
 }
 async function openXmltvModal() {
+  stopXmltvRefreshPolling();
   try {
     const result = await fetchJson('/api/xmltv/status', {cache:'no-store'});
     xmltvModalSources = Array.isArray(result.sources) ? result.sources : [];
@@ -3324,39 +3351,127 @@ function removeXmltvSource(index) {
   xmltvModalSources.splice(index, 1);
   renderXmltvModal();
 }
+function setXmltvRowStatus(sourceId, text) {
+  const src = xmltvModalSources.find(item => item.id === sourceId);
+  if (!src) return;
+  const index = xmltvModalSources.indexOf(src);
+  const row = Array.from(document.querySelectorAll('[data-xmltv-row]'))
+    .find(el => Number(el.dataset.xmltvRow) === index);
+  const label = row?.querySelector('[data-xmltv-runtime]');
+  if (label) label.textContent = text;
+}
+function updateXmltvRuntime(status) {
+  if (!status || !Array.isArray(status.sources)) return;
+  for (const remote of status.sources) {
+    const local = xmltvModalSources.find(x => x.id === remote.id);
+    if (!local) continue;
+    for (const key of ['last_success','last_attempt','last_error','last_warning',
+                       'downloading','queued','channel_count','event_count',
+                       'refresh_requested','refresh_completed']) {
+      local[key] = remote[key];
+    }
+    const index = xmltvModalSources.indexOf(local);
+    const row = Array.from(document.querySelectorAll('[data-xmltv-row]'))
+      .find(el => Number(el.dataset.xmltvRow) === index);
+    const label = row?.querySelector('[data-xmltv-runtime]');
+    if (label) label.textContent = xmltvRuntimeText(local);
+    const button = row?.querySelector('[data-xmltv-refresh]');
+    if (button) {
+      button.disabled = Boolean(remote.downloading || remote.queued);
+      button.textContent = remote.downloading ? uiBiText('Загрузка…','Downloading…') :
+        remote.queued ? uiBiText('В очереди…','Queued…') :
+        uiBiText('Обновить сейчас','Refresh now');
+    }
+  }
+}
+async function persistXmltvSources() {
+  const sources = xmltvModalSources.map(src => ({
+    id:src.id, name:src.name, url:src.url, enabled:src.enabled,
+    refresh_time:src.refresh_time, refresh_period:src.refresh_period,
+    refresh_weekday:Number(src.refresh_weekday ?? 1)
+  }));
+  if (sources.some(src => !/^https?:\/\//i.test(src.url || ''))) {
+    throw new Error(uiBiText('Укажите HTTP(S) URL каждого источника.',
+      'Enter an HTTP(S) URL for every source.'));
+  }
+  const result = await fetchJson('/api/xmltv/save', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sources})
+  });
+  if (result.result !== 'ok') throw new Error(result.error || 'XMLTV save error');
+  state.xmltv_sources = sources;
+  updateXmltvRuntime(result.status);
+  return result;
+}
 async function saveXmltvSources() {
   syncXmltvModalFields();
-  if (xmltvModalSources.some(src => !/^https?:\/\//i.test(src.url || ''))) {
-    uiError(uiBiText('Укажите HTTP(S) URL для каждого источника.',
-                     'Enter an HTTP(S) URL for every source.'));
-    return;
-  }
   try {
-    const result = await fetchJson('/api/xmltv/save', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({sources:xmltvModalSources.map(src=>({
-        id:src.id,name:src.name,url:src.url,enabled:src.enabled,
-        refresh_time:src.refresh_time, refresh_period:src.refresh_period,
-        refresh_weekday:Number(src.refresh_weekday ?? 1)
-      }))})
-    });
-    if (result.result !== 'ok') throw new Error(result.error || 'XMLTV save error');
-    state.xmltv_sources = xmltvModalSources.map(src=>({...src}));
+    await persistXmltvSources();
     await openXmltvModal();
   } catch (error) { uiError(error?.message || error); }
 }
+async function pollXmltvRefresh(sourceId, requestId, token, attempt=0) {
+  if (token !== xmltvRefreshPollToken ||
+      !document.getElementById('modal')?.classList.contains('active')) return;
+  try {
+    const data = await fetchJson('/api/xmltv/status', {cache:'no-store'}, 15000);
+    if (token !== xmltvRefreshPollToken) return;
+    updateXmltvRuntime(data);
+    const src = (data.sources || []).find(x => x.id === sourceId);
+    if (!src) throw new Error(uiBiText('Источник XMLTV удалён', 'XMLTV source removed'));
+    if (Number(src.refresh_completed || 0) >= requestId &&
+        !src.downloading && !src.queued) {
+      if (src.last_error) uiError(src.last_error);
+      return;
+    }
+    if (attempt >= 180) throw new Error(uiBiText(
+      'XMLTV всё ещё загружается; проверьте журнал сервиса.',
+      'XMLTV is still downloading; check the service logs.'));
+    xmltvRefreshPollTimer = setTimeout(() =>
+      pollXmltvRefresh(sourceId, requestId, token, attempt + 1), 2000);
+  } catch (error) {
+    if (token !== xmltvRefreshPollToken) return;
+    setXmltvRowStatus(sourceId, uiBiText('Ошибка проверки: ','Status check failed: ') +
+      String(error?.message || error));
+    uiError(error?.message || error);
+  }
+}
 async function refreshXmltvSource(index) {
   syncXmltvModalFields();
-  const source = xmltvModalSources[index];
-  if (!source || !source.id) return;
+  const src = xmltvModalSources[index];
+  if (!src || !src.id) return;
+  const sourceId = src.id;
+  const token = ++xmltvRefreshPollToken;
+  if (xmltvRefreshPollTimer !== null) clearTimeout(xmltvRefreshPollTimer);
+  const row = Array.from(document.querySelectorAll('[data-xmltv-row]'))
+    .find(el => Number(el.dataset.xmltvRow) === index);
+  const button = row?.querySelector('[data-xmltv-refresh]');
+  if (button) button.disabled = true;
+  setXmltvRowStatus(sourceId, uiBiText('Сохранение настроек…','Saving source settings…'));
   try {
-    const res = await fetchJson('/api/xmltv/refresh', {
+    // Users can edit a URL and press Refresh directly; save the edited value
+    // before scheduling the download to avoid refreshing the old URL.
+    await persistXmltvSources();
+    const result = await fetchJson('/api/xmltv/refresh', {
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id:source.id})
+      body:JSON.stringify({id:sourceId})
     });
-    if (res.result !== 'ok') throw new Error(res.error || 'XMLTV refresh error');
-    await openXmltvModal();
-  } catch (error) { uiError(error?.message || error); }
+    if (result.result !== 'ok') throw new Error(result.error || 'XMLTV refresh error');
+    const remote = (result.status?.sources || []).find(x => x.id === sourceId);
+    if (!remote) throw new Error(uiBiText('Источник XMLTV не найден','XMLTV source not found'));
+    const requestId = Number(remote.refresh_requested || 0);
+    updateXmltvRuntime(result.status);
+    // Acknowledgement is immediate, downloading is asynchronous; keep the
+    // dialog open and follow status until this specific request completes.
+    if (token === xmltvRefreshPollToken)
+      await pollXmltvRefresh(sourceId, requestId, token);
+  } catch (error) {
+    if (token !== xmltvRefreshPollToken) return;
+    if (button) button.disabled = false;
+    setXmltvRowStatus(sourceId, uiBiText('Не удалось запустить обновление: ',
+      'Refresh failed to start: ') + String(error?.message || error));
+    uiError(error?.message || error);
+  }
 }
 function openPlaylistModal() {
   const streams = state.streams || [];
