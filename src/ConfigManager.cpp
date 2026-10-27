@@ -487,7 +487,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     }
     config.transcodeAudioBitrate = root.get("transcode_audio_bitrate", Json::UInt64(192000)).asUInt64();
     config.transcodeAudioBitrate = std::clamp<uint64_t>(config.transcodeAudioBitrate, 64000, 320000);
-    if (config.transcodeAudioCodec == "mp2" &&
+    if ((config.transcodeAudioCodec == "mp2" || config.transcodeAudioCodec == "mp3") &&
         config.transcodeAudioBitrate != 96000 && config.transcodeAudioBitrate != 128000 &&
         config.transcodeAudioBitrate != 160000 && config.transcodeAudioBitrate != 192000 &&
         config.transcodeAudioBitrate != 256000 && config.transcodeAudioBitrate != 320000) {
