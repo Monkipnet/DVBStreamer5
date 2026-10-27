@@ -372,6 +372,16 @@ void HttpServer::handleSession(tcp::socket socket) {
             } else if (target == "/api/backup-files") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listBackupFiles();
+            } else if (target == "/api/xmltv/status") {
+                res.set(http::field::content_type, "application/json");
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer,
+                    streamManager.externalXmltvStatus());
+            } else if (target == "/api/xmltv/channels") {
+                res.set(http::field::content_type, "application/json");
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer,
+                    streamManager.externalXmltvChannels());
             } else if (target.rfind("/api/epg?stream_id=", 0) == 0) {
                 res.set(http::field::content_type, "application/json");
                 std::string streamId = target.substr(
@@ -528,6 +538,78 @@ void HttpServer::handleSession(tcp::socket socket) {
             } else if (target == "/api/oscam-mini/action") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = OscamMiniManager::instance().serviceActionJson(req.body());
+            } else if (target == "/api/xmltv/save" ||
+                       target == "/api/xmltv/refresh") {
+                res.set(http::field::content_type, "application/json");
+                Json::Value result(Json::objectValue);
+                Json::CharReaderBuilder parser;
+                Json::Value payload;
+                std::string parseError;
+                std::istringstream input(req.body());
+                if (req.body().size() > 64U * 1024U ||
+                    !Json::parseFromStream(parser, input, &payload, &parseError)) {
+                    res.result(http::status::bad_request);
+                    result["result"] = "error";
+                    result["error"] = "Invalid XMLTV request (64 KiB maximum)";
+                } else if (target == "/api/xmltv/refresh") {
+                    const std::string id = payload.get("id", "").asString();
+                    if (!streamManager.refreshExternalXmltv(id)) {
+                        res.result(http::status::not_found);
+                        result["result"] = "error";
+                        result["error"] = "Unknown XMLTV source";
+                    } else {
+                        result["result"] = "ok";
+                        result["status"] = streamManager.externalXmltvStatus();
+                    }
+                } else if (!payload.isMember("sources") ||
+                           !payload["sources"].isArray() ||
+                           payload["sources"].size() > 32U) {
+                    res.result(http::status::bad_request);
+                    result["result"] = "error";
+                    result["error"] = "Expected XMLTV sources array (up to 32)";
+                } else {
+                    std::set<std::string> ids;
+                    std::vector<XmltvSourceConfig> sources;
+                    std::string validationError;
+                    for (const auto& entry : payload["sources"]) {
+                        if (!entry.isObject()) {
+                            validationError = "XMLTV source must be an object"; break;
+                        }
+                        XmltvSourceConfig cfg = XmltvSourceConfig::fromJson(entry);
+                        if (cfg.id.empty() || cfg.id.size() > 64U ||
+                            !std::all_of(cfg.id.begin(), cfg.id.end(), [](unsigned char c) {
+                                return std::isalnum(c) || c == '-' || c == '_';
+                            }) || !ids.insert(cfg.id).second) {
+                            validationError = "Invalid or duplicate XMLTV source ID"; break;
+                        }
+                        if (cfg.url.size() > 2048U ||
+                            (cfg.url.rfind("https://", 0) != 0 &&
+                             cfg.url.rfind("http://", 0) != 0)) {
+                            validationError = "XMLTV source URL must use HTTP(S)"; break;
+                        }
+                        sources.push_back(std::move(cfg));
+                    }
+                    if (!validationError.empty()) {
+                        res.result(http::status::bad_request);
+                        result["result"] = "error";
+                        result["error"] = validationError;
+                    } else {
+                        const auto previous = configManager.config.xmltvSources;
+                        configManager.config.xmltvSources = std::move(sources);
+                        if (!configManager.save()) {
+                            configManager.config.xmltvSources = previous;
+                            res.result(http::status::internal_server_error);
+                            result["result"] = "error";
+                            result["error"] = "Failed to save XMLTV sources";
+                        } else {
+                            streamManager.configureExternalXmltvSources();
+                            result["result"] = "ok";
+                            result["status"] = streamManager.externalXmltvStatus();
+                        }
+                    }
+                }
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer, result);
             } else if (target == "/api/config/export") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleConfigExport();
