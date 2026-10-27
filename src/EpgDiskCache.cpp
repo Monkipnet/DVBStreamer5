@@ -82,8 +82,13 @@ Writer::~Writer() {
 }
 bool Writer::append(const Json::Value& item) {
     if (!file_) return false;
-    const auto line = jsonCompact(item);
-    if (line.size() > kMaximumLine - 2U) return false;
+    auto line = jsonCompact(item);
+    // Some JsonCpp builds add a trailing newline even in compact mode.
+    // Guarantee exactly one JSON record per cache line on every platform.
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+        line.pop_back();
+    if (line.find_first_of("\r\n") != std::string::npos ||
+        line.size() > kMaximumLine - 2U) return false;
     if (gzwrite(file_, line.data(), static_cast<unsigned>(line.size())) !=
         static_cast<int>(line.size())) return false;
     return gzwrite(file_, "\n", 1) == 1;
