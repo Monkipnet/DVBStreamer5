@@ -88,6 +88,8 @@ void DvbSubtitlePassthrough::readPat(const Packet& packet) {
             sourcePmt_ = {};
             sourceTracks_.clear();
             sourcePmtParsed_ = false;
+            passthroughExcludedPids_.fill(false);
+            passthroughFilterActive_ = false;
             {
                 std::lock_guard<std::mutex> lock(availableMutex_);
                 availableTracks_.clear();
@@ -442,7 +444,13 @@ void DvbSubtitlePassthrough::filterPassthrough(std::vector<Packet>& output) {
             pos = esEnd;
         }
         if (malformed || !subtitleFound ||
-            start + section.size() + 4U > kPacketSize) continue;
+            start + section.size() + 4U > kPacketSize) {
+            // A new or unsupported PMT must never inherit exclusion flags
+            // from a previous PMT revision or selected service.
+            passthroughExcludedPids_.fill(false);
+            passthroughFilterActive_ = false;
+            continue;
+        }
         const auto newLength = section.size() - 3U + 4U;
         section[1] = static_cast<std::uint8_t>((section[1] & 0xf0U) |
                                                 ((newLength >> 8U) & 0x0fU));
