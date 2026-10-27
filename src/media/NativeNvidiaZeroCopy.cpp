@@ -690,12 +690,10 @@ private:
         GUID presetGuid = NV_ENC_PRESET_P5_GUID;
         const char* presetName = "p5";
         const auto selectPreset = [&](const std::string& name) {
-            if (name == "p1") { presetName = "p1"; return NV_ENC_PRESET_P1_GUID; }
-            if (name == "p2") { presetName = "p2"; return NV_ENC_PRESET_P2_GUID; }
-            if (name == "p3") { presetName = "p3"; return NV_ENC_PRESET_P3_GUID; }
-            if (name == "p4") { presetName = "p4"; return NV_ENC_PRESET_P4_GUID; }
-            if (name == "p6") { presetName = "p6"; return NV_ENC_PRESET_P6_GUID; }
-            if (name == "p7") { presetName = "p7"; return NV_ENC_PRESET_P7_GUID; }
+            if (name == "fastest" || name == "p1") { presetName = "p1"; return NV_ENC_PRESET_P1_GUID; }
+            if (name == "fast" || name == "p2" || name == "p3") { presetName = "p2"; return NV_ENC_PRESET_P2_GUID; }
+            if (name == "quality" || name == "p6") { presetName = "p6"; return NV_ENC_PRESET_P6_GUID; }
+            if (name == "best" || name == "p7") { presetName = "p7"; return NV_ENC_PRESET_P7_GUID; }
             presetName = "p5";
             return NV_ENC_PRESET_P5_GUID;
         };
@@ -742,6 +740,14 @@ private:
                 std::llround(fps * 2.0)));
         encodeConfig.gopLength = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(gopFrames_, 0xffffffffULL));
+        if (config_.bFrames > 0 || config_.openGop) {
+            std::cerr << "NATIVE VIDEO OPTIONS backend=nvidia-zero-copy"
+                      << " bframes_requested=" << config_.bFrames
+                      << " open_gop_requested=" << (config_.openGop ? 1 : 0)
+                      << " applied_bframes=0 applied_open_gop=0"
+                      << " reason=live_zero_reorder"
+                      << std::endl;
+        }
         encodeConfig.frameIntervalP = 1;
         encodeConfig.rcParams.enableLookahead = 0;
         encodeConfig.rcParams.zeroReorderDelay = 1;
@@ -766,6 +772,16 @@ private:
                 encodeConfig.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
             else if (config_.profile == "high")
                 encodeConfig.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
+            encodeConfig.encodeCodecConfig.h264Config.level =
+                config_.level == "3.1" ? NV_ENC_LEVEL_H264_31 :
+                config_.level == "4.0" ? NV_ENC_LEVEL_H264_4 :
+                config_.level == "4.1" ? NV_ENC_LEVEL_H264_41 :
+                config_.level == "5.0" ? NV_ENC_LEVEL_H264_5 :
+                config_.level == "5.1" ? NV_ENC_LEVEL_H264_51 :
+                NV_ENC_LEVEL_AUTOSELECT;
+            if (config_.refFrames > 0)
+                encodeConfig.encodeCodecConfig.h264Config.maxNumRefFrames =
+                    std::min<std::uint32_t>(config_.refFrames, 4U);
             encodeConfig.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
             encodeConfig.encodeCodecConfig.h264Config.outputAUD = 1;
             encodeConfig.encodeCodecConfig.h264Config.idrPeriod = encodeConfig.gopLength;
@@ -817,6 +833,8 @@ private:
                   << " codec=" << codecName(config_.outputCodec)
                   << " preset=" << presetName
                   << " profile=" << config_.profile
+                  << " level=" << config_.level
+                  << " refs=" << config_.refFrames
                   << " aq_strength=" << std::clamp<std::uint32_t>(config_.aqStrength, 1U, 15U)
                   << " tuning="
                   << (modernLowLatency ? "low-latency" : "legacy-low-latency")
