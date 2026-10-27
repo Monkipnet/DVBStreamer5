@@ -346,6 +346,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <button class="system-menu-item" onclick="openMptsModal();closeSystemMenu()">MPTS</button>
 <button class="system-menu-item" onclick="openLoginModal();closeSystemMenu()" data-i18n="user">User</button>
 <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()">Конфигурация</button>
+<button class="system-menu-item" onclick="openXmltvModal();closeSystemMenu()" ${uiBiAttrs('Источники XMLTV', 'XMLTV sources')}>${uiBiText('Источники XMLTV', 'XMLTV sources')}</button>
 <button class="system-menu-item" onclick="openTelegramModal();closeSystemMenu()" data-i18n="telegram">Telegram API</button>
 <button class="system-menu-item" onclick="openNewcamdModal();closeSystemMenu()">Newcamd</button>
 <button class="system-menu-item" onclick="window.location.href='/oscam-mini';closeSystemMenu()">OSCam-mini</button>
@@ -2612,6 +2613,27 @@ for (const [english, croatian] of [["203.67: sets latency 1500 ms, rcvlatency/pe
 
 uiEnToHr.set('Complete IPTV playlist', 'Cijeli IPTV popis');
 
+for (const [en,hr] of [
+  ['XMLTV sources','XMLTV izvori'],
+  ['XMLTV source','XMLTV izvor'],
+  ['Add XMLTV source','Dodaj XMLTV izvor'],
+  ['XMLTV channel ID','XMLTV ID kanala'],
+  ['EPG priority','EPG prioritet'],
+  ['Automatic (DVB first)','Automatski (DVB prvi)'],
+  ['DVB EIT only','Samo DVB EIT'],
+  ['External XMLTV only','Samo vanjski XMLTV'],
+  ['Source ID','ID izvora'],
+  ['Daily update time','Vrijeme dnevnog ažuriranja'],
+  ['Server local time','Lokalno vrijeme poslužitelja'],
+  ['Refresh now','Osvježi sada'],
+  ['Select or enter XMLTV channel ID','Odaberite ili unesite XMLTV ID kanala'],
+  ['Use when satellite EPG is unavailable','Koristi se kada satelitski EPG nije dostupan'],
+  ['XMLTV source URL','URL XMLTV izvora'],
+  ['Last successful update','Posljednje uspješno ažuriranje'],
+  ['No sources configured','Nema konfiguriranih izvora'],
+  ['Delete source','Izbriši izvor']
+]) uiEnToHr.set(en, hr);
+
 const uiOriginalText = new WeakMap();
 const uiOriginalAttrs = new WeakMap();
 const uiLocalizedAttributes = ['title', 'placeholder', 'aria-label'];
@@ -2874,6 +2896,8 @@ let camClientsLoaded = false;
 let caManagerState = {clients:[]};
 let streamActionBusy = new Set();
 let mptsState = {outputs:[]};
+let xmltvModalSources = [];
+let xmltvCatalog = [];
 function uiError(message) {
   console.error(message);
   const text = translateUiText(String(message || 'UI error'));
@@ -5706,10 +5730,28 @@ function openStreamForm(stream) {
           <div class="edit-inline-note" ${uiBiAttrs('VDR управляет tuner/CAM; DVBStreamer5 получает streamdev TS.','VDR owns tuner/CAM; DVBStreamer5 receives streamdev TS.')}>${uiBiText('VDR владеет DVB frontend и CI/CI+ CAM; pairing/authentication остаются в поддерживаемом VDR/vendor CAM stack.','VDR owns the DVB frontend and CI/CI+ CAM; pairing/authentication remain in the supported VDR/vendor CAM stack.')}</div>
         </div>
         <div class="form-row full edit-section">
-          <div class="edit-section-head"><span>EPG / DVB EIT</span><small>PID 0x12</small></div>
+          <div class="edit-section-head"><span>EPG / DVB EIT / XMLTV</span><small>PID 0x12 / XMLTV</small></div>
           <div class="stream-video-grid">
             <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('EPG канала','Channel EPG')}>${uiBiText('EPG канала','Channel EPG')}</div><small class="field-help" ${uiBiAttrs('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}>${uiBiText('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}</small><label class="checkbox-inline"><input id="streamEpgEnabled" type="checkbox" ${stream.epg_enabled===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Дней EPG','EPG days')}>${uiBiText('Дней EPG','EPG days')}</div><small class="field-help" ${uiBiAttrs('Хранить расписание на 1–7 дней.','Keep 1–7 days of schedule.')}>${uiBiText('Хранить расписание на 1–7 дней.','Keep 1–7 days of schedule.')}</small><input id="streamEpgDays" type="number" min="1" max="7" value="${Math.max(1,Math.min(7,Number(stream.epg_days||3)))}" /></div>
+            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Приоритет EPG','EPG priority')}>${uiBiText('Приоритет EPG','EPG priority')}</div><small class="field-help" ${uiBiAttrs('Авто: сначала EIT, затем внешний XMLTV.','Use XMLTV when satellite EPG is unavailable.')}> ${uiBiText('Авто: сначала EIT, затем внешний XMLTV.','Use XMLTV when satellite EPG is unavailable.')}</small>
+              <select id="streamEpgMode">
+                <option value="auto" ${(stream.epg_mode||'auto')==='auto'?'selected':''} ${uiBiAttrs('Авто (сначала DVB)','Automatic (DVB first)')}>${uiBiText('Авто (сначала DVB)','Automatic (DVB first)')}</option>
+                <option value="dvb" ${stream.epg_mode==='dvb'?'selected':''} ${uiBiAttrs('Только DVB EIT','DVB EIT only')}>${uiBiText('Только DVB EIT','DVB EIT only')}</option>
+                <option value="xmltv" ${stream.epg_mode==='xmltv'?'selected':''} ${uiBiAttrs('Только внешний XMLTV','External XMLTV only')}>${uiBiText('Только внешний XMLTV','External XMLTV only')}</option>
+              </select>
+            </div>
+            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Источник XMLTV','XMLTV source')}>${uiBiText('Источник XMLTV','XMLTV source')}</div><small class="field-help" ${uiBiAttrs('Источник загружается по заданному расписанию.','Source follows its configured update schedule.')}>${uiBiText('Источник загружается по заданному расписанию.','Source follows its configured update schedule.')}</small>
+              <select id="streamXmltvSourceId" onchange="refreshXmltvChannelOptions()">
+                <option value="" ${!stream.xmltv_source_id?'selected':''}>${uiBiText('Любой источник','Any source')}</option>
+                ${(state.xmltv_sources||[]).map(src=>`<option value="${escapeHtmlValue(src.id)}" ${src.id===stream.xmltv_source_id?'selected':''}>${escapeHtmlValue(src.name||src.id)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('ID канала XMLTV','XMLTV channel ID')}>${uiBiText('ID канала XMLTV','XMLTV channel ID')}</div><small class="field-help" ${uiBiAttrs('Введите tvg-id канала или выберите из загруженного XMLTV.','Enter channel tvg-id or select from downloaded XMLTV.')}>${uiBiText('Введите tvg-id канала или выберите из загруженного XMLTV.','Enter channel tvg-id or select from downloaded XMLTV.')}</small>
+              <input id="streamXmltvChannelId" list="streamXmltvChannels" value="${escapeHtmlValue(stream.xmltv_channel_id||'')}" placeholder="channel-id" />
+              <datalist id="streamXmltvChannels"></datalist>
+            </div>
+            <div class="edit-field"><button class="button-secondary" type="button" onclick="loadXmltvCatalog()">${uiBiText('Загрузить список каналов XMLTV','Load XMLTV channel list')}</button></div>
           </div>
         </div>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
@@ -6117,6 +6159,9 @@ function saveStream(id) {
     service_provider: document.getElementById('streamProvider').value,
     epg_enabled: document.getElementById('streamEpgEnabled')?.checked === true,
     epg_days: Math.max(1, Math.min(7, Number(document.getElementById('streamEpgDays')?.value || 3))),
+    epg_mode: document.getElementById('streamEpgMode')?.value || 'auto',
+    xmltv_source_id: document.getElementById('streamXmltvSourceId')?.value || '',
+    xmltv_channel_id: document.getElementById('streamXmltvChannelId')?.value.trim() || '',
     conditional_access_client: selectedConditionalAccessClient
   };
   const existingIndex = state.streams.findIndex(s=>s.id===id);
