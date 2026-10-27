@@ -6,6 +6,8 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
+#include <cstddef>
 #include <map>
 #include <mutex>
 #include <string>
@@ -44,11 +46,14 @@ private:
         std::int64_t lastAttempt = 0;
         int lastSuccessDay = -1;
         std::string error;
+        std::size_t truncatedEvents = 0;
         bool queued = false;
         bool downloading = false;
     };
-    static bool download(const std::string& url, std::string& payload, std::string& error);
-    static bool parse(const std::string& payload, Source& result, std::string& error);
+    // Network bytes are spooled directly into an automatically unlinked temp file.
+    // Neither curl nor libxml2 materializes the whole XMLTV document in memory.
+    static bool download(const std::string& url, std::FILE* output, std::string& error);
+    static bool parse(std::FILE* input, Source& result, std::string& error);
     void run();
     mutable std::mutex mutex_;
     std::condition_variable wake_;
