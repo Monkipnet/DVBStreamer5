@@ -14,9 +14,12 @@ namespace {
 using Packet = dvbstreamer5::media::mpegts::Packet;
 constexpr std::uint16_t kEitPid = 0x0012U;
 constexpr std::size_t kMaxScheduleEvents = 768;
-constexpr std::size_t kMaxPacketBurst = 5;
+constexpr std::size_t kMaxPacketBurst = 8;
 constexpr auto kEmitInterval = std::chrono::milliseconds(200);
-constexpr auto kRefreshInterval = std::chrono::seconds(20);
+// A full 7-day schedule can span hundreds of two-packet sections. Refresh
+// less frequently than the bounded 8-packet emission cycle, or the last
+// sections would be discarded and never reach a DVB-C receiver.
+constexpr auto kRefreshInterval = std::chrono::seconds(60);
 constexpr auto kPfInterval = std::chrono::seconds(3);
 
 std::uint16_t be16(const std::uint8_t* p) {
