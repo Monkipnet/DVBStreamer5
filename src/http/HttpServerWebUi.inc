@@ -6117,6 +6117,7 @@ async function loadDvbSubtitleTracks(streamId, attempt=0) {
     const tracks = Array.isArray(data.tracks) ? data.tracks : [];
     const existing = select.value || 'auto';
     const saved = select.dataset.savedTrack || 'auto';
+    const userSelected = select.dataset.userSelected === '1';
     const savedLang = select.dataset.savedLanguage || 'auto';
     const option = (id,label) => {
       const element = document.createElement('option');
@@ -6130,9 +6131,9 @@ async function loadDvbSubtitleTracks(streamId, attempt=0) {
       if (!/^([0-9]{1,4}):([a-z]{3}):([0-9]{1,5})$/.test(String(track.id||''))) continue;
       select.appendChild(option(track.id, subtitleTrackOptionLabel(track)));
     }
-    let selected = existing;
+    let selected = userSelected ? existing : saved;
     if (!Array.from(select.options).some(item => item.value === selected))
-      selected = saved;
+      selected = userSelected ? 'auto' : saved;
     if (selected === 'auto' && saved === 'auto' && savedLang !== 'auto') {
       const match = tracks.find(item => item.language === savedLang);
       if (match) selected = match.id;
@@ -6301,7 +6302,7 @@ function openStreamForm(stream) {
         <div class="form-row full edit-section">
           <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('Язык DVB-субтитров','DVB subtitle language','Jezik DVB titlova')}>${subtitleUiTriText('Язык DVB-субтитров','DVB subtitle language','Jezik DVB titlova')}</div>
           <small class="field-help" ${subtitleUiTriAttrs('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.','Automatski čuva sve jezike; odabir filtrira PMT/PID po ISO 639-2.')}>${subtitleUiTriText('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.','Automatski čuva sve jezike; odabir filtrira PMT/PID po ISO 639-2.')}</small>
-          <div class="row-inline compact-row"><select id="streamDvbSubtitlesTrack" data-stream-id="${uiEscapeAttr(stream.id)}" data-saved-track="${uiEscapeAttr(stream.dvb_subtitles_track || 'auto')}" data-saved-language="${uiEscapeAttr(stream.dvb_subtitles_language || 'auto')}"><option value="auto">${subtitleUiTriText('Авто — все передаваемые','Auto — all transmitted','Automatski — svi dostupni')}</option></select>
+          <div class="row-inline compact-row"><select id="streamDvbSubtitlesTrack" data-stream-id="${uiEscapeAttr(stream.id)}" data-saved-track="${uiEscapeAttr(stream.dvb_subtitles_track || 'auto')}" data-saved-language="${uiEscapeAttr(stream.dvb_subtitles_language || 'auto')}" onchange="this.dataset.userSelected='1'"><option value="auto">${subtitleUiTriText('Авто — все передаваемые','Auto — all transmitted','Automatski — svi dostupni')}</option></select>
           <button type="button" class="button-secondary" onclick="refreshDvbSubtitleTracksFromForm()">${subtitleUiTriText('Обновить из DVB','Refresh from DVB','Osvježi iz DVB-a')}</button></div>
           <small id="streamDvbSubtitleTracksStatus" class="field-help" aria-live="polite"></small></div>
         </div>
@@ -6808,7 +6809,7 @@ function saveStream(id) {
     return;
   }
   const subtitleLang = selectedSubtitleTrack === 'auto'
-    ? (subtitleChoice?.dataset.savedLanguage || 'auto')
+    ? 'auto'
     : selectedSubtitleTrack.split(':')[1];
   const payload = {
     id: id,
