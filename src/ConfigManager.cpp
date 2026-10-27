@@ -653,6 +653,8 @@ Json::Value XmltvSourceConfig::toJson() const {
     result["url"] = url;
     result["enabled"] = enabled;
     result["refresh_time"] = refreshTime;
+    result["refresh_period"] = refreshPeriod;
+    result["refresh_weekday"] = refreshWeekday;
     return result;
 }
 
@@ -663,6 +665,9 @@ XmltvSourceConfig XmltvSourceConfig::fromJson(const Json::Value& root) {
     result.url = root.get("url", "").asString().substr(0, 2048);
     result.enabled = root.get("enabled", true).asBool();
     result.refreshTime = root.get("refresh_time", "03:00").asString();
+    result.refreshPeriod = root.get("refresh_period", "daily").asString();
+    if (result.refreshPeriod != "weekly") result.refreshPeriod = "daily";
+    result.refreshWeekday = std::clamp(root.get("refresh_weekday", 1).asInt(), 0, 6);
     if (result.refreshTime.size() != 5 || result.refreshTime[2] != ':' ||
         result.refreshTime.substr(0, 2).find_first_not_of("0123456789") != std::string::npos ||
         result.refreshTime.substr(3, 2).find_first_not_of("0123456789") != std::string::npos ||
