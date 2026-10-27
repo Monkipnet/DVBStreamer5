@@ -289,11 +289,14 @@ void DvbEitOutput::buildSchedule() {
         if (!current && event.start <= now && now < event.stop) current = &event;
         if (!upcoming && event.start > now) upcoming = &event;
     }
-    for (const auto sectionNumber : {0U, 1U}) {
+    if (current || upcoming) for (const auto sectionNumber : {0U, 1U}) {
         const Event* selected = sectionNumber == 0 ? current : upcoming;
-        if (!selected) continue;
-        const auto bytes = eventBytes(*selected, sectionNumber == 0U);
-        if (bytes.empty()) continue;
+        // An empty section 0 is still transmitted when only the next event is
+        // known. Otherwise receivers expecting p/f sections 0 and 1 may never
+        // accept section 1, even though its CRC and timestamps are valid.
+        const auto bytes = selected
+            ? eventBytes(*selected, sectionNumber == 0U)
+            : std::vector<std::uint8_t>{};
         const auto sec = makeEit(0x4eU, serviceId_, tsid_, onid_, version_,
             static_cast<std::uint8_t>(sectionNumber),
             1U, 1U, 0x4eU, bytes);
