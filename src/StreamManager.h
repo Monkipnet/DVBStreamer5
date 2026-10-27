@@ -324,6 +324,8 @@ struct StreamState {
     std::thread testPatternThread;
 };
 
+class ExternalXmltvManager;
+
 class StreamManager {
 public:
     explicit StreamManager(ConfigManager& cfg, TelegramNotifier& notifier);
@@ -372,6 +374,10 @@ public:
     bool stopMptsOutput(const std::string& id);
     Json::Value mptsSnapshot() const;
     Json::Value epgSnapshot(const std::string& id) const;
+    void configureExternalXmltvSources();
+    bool refreshExternalXmltv(const std::string& sourceId);
+    Json::Value externalXmltvStatus() const;
+    Json::Value externalXmltvChannels() const;
     Json::Value queueMemorySnapshot() const;
 
 private:
@@ -392,6 +398,7 @@ private:
     ConfigManager& configManager;
     TelegramNotifier& telegramNotifier;
     std::unique_ptr<MptsOutputManager> mptsOutputManager;
+    std::unique_ptr<ExternalXmltvManager> externalXmltvManager_;
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
     struct HttpClientSession {
