@@ -1302,24 +1302,28 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         };
     }
 
-    if (state->nativeTranscoder && streamConfig.dvbSubtitlesEnabled) {
-        // Preserve DVB bitmap-subtitle PES and its PMT 0x59 descriptor from
-        // the post-CA selected-service TS, then reattach them after the native
-        // transcoder rebuilds PAT/PMT and elementary video/audio streams.
+    if (DvbSatellite::isDvbUri(streamConfig.inputUri)) {
+        // Monitor the live, selected-service, post-CA PAT/PMT even when
+        // subtitles are switched off. UI enumeration must not require
+        // enabling an untested output or restarting a tuner.
         auto subtitles = std::make_shared<DvbSubtitlePassthrough>(
-            streamConfig.dvbSubtitlesLanguage);
+            streamConfig.dvbSubtitlesLanguage, streamConfig.dvbSubtitlesTrack);
+        state->dvbSubtitleMonitor = subtitles;
         relay.observeDvbSubtitles = [subtitles](const std::uint8_t* data,
                                                 std::size_t size) {
             subtitles->observe(data, size);
         };
-        relay.injectDvbSubtitles = [subtitles](
-            std::vector<dvbstreamer5::media::mpegts::Packet>& packets) {
-            subtitles->inject(packets);
-        };
-        std::cerr << "DVB SUBTITLES enabled stream=" << streamConfig.id
-                  << " mode=post-transcode MPEG-TS passthrough"
-                  << " language=" << streamConfig.dvbSubtitlesLanguage
-                  << std::endl;
+        if (state->nativeTranscoder && streamConfig.dvbSubtitlesEnabled) {
+            // Only an enabled transcoder path modifies output MPEG-TS.
+            relay.injectDvbSubtitles = [subtitles](
+                std::vector<dvbstreamer5::media::mpegts::Packet>& packets) {
+                subtitles->inject(packets);
+            };
+            std::cerr << "DVB SUBTITLES enabled stream=" << streamConfig.id
+                      << " language=" << streamConfig.dvbSubtitlesLanguage
+                      << " track=" << streamConfig.dvbSubtitlesTrack
+                      << std::endl;
+        }
     }
 
     auto httpHub = state->nativeHttpHub;
@@ -2369,6 +2373,36 @@ Json::Value StreamManager::externalXmltvStatus() const {
 Json::Value StreamManager::externalXmltvChannels() const {
     return externalXmltvManager_
         ? externalXmltvManager_->channels() : Json::Value(Json::arrayValue);
+}
+
+Json::Value StreamManager::dvbSubtitleTracks(const std::string& id) const {
+    Json::Value result(Json::objectValue);
+    result["stream_id"] = id;
+    result["active"] = false;
+    result["scanned"] = false;
+    result["tracks"] = Json::Value(Json::arrayValue);
+    std::shared_ptr<DvbSubtitlePassthrough> monitor;
+    {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        const auto it = streams.find(id);
+        if (it != streams.end() && it->second) {
+            result["active"] = it->second->active.load();
+            monitor = it->second->dvbSubtitleMonitor;
+        }
+    }
+    if (!monitor) return result;
+    result["scanned"] = monitor->hasParsedPmt();
+    for (const auto& track : monitor->availableTracks()) {
+        Json::Value item(Json::objectValue);
+        item["id"] = track.id;
+        item["language"] = track.language;
+        item["pid"] = track.pid;
+        item["subtitle_type"] = track.subtitleType;
+        item["composition_page_id"] = track.compositionPageId;
+        item["ancillary_page_id"] = track.ancillaryPageId;
+        result["tracks"].append(std::move(item));
+    }
+    return result;
 }
 
 Json::Value StreamManager::epgSnapshot(const std::string& id) const {
