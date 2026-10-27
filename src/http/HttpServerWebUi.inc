@@ -2608,6 +2608,8 @@ for (const [english, croatian] of [
   ]
 ]) uiEnToHr.set(english, croatian);
 
+for (const [english, croatian] of [["203.67: sets latency 1500 ms, rcvlatency/peerlatency 1500 ms, 16 MiB SRT RX/TX buffers, FC 32768 packets and poll-timeout 2000 ms for all SRT inputs and outputs. Use on VPS/VDS with virtual networking; leave disabled on a normal LAN/physical server.","203.67: postavlja SRT latenciju na 1500 ms, RX/TX međuspremnike na 16 MiB, FC na 32768 paketa i timeout na 2000 ms. Koristite na VPS/VDS-u; isključite na običnoj lokalnoj mreži."],["203.75: H.264 and H.265/HEVC support Auto/NVENC/Intel/CPU (x264/x265). When Multibitrate is enabled and an HLS output exists, master.m3u8 is generated with the primary profile plus up to three lower renditions. HEVC is not used for RTMP/YouTube.","203.75: H.264 i H.265/HEVC podržavaju Auto/NVENC/Intel/CPU. Uz višestruki bitrate i HLS izlaz stvara se master.m3u8 s glavnim profilom i do tri niže kvalitete. HEVC se ne koristi za RTMP/YouTube."],["202.79: H.264 supports NVIDIA NVENC, Intel Quick Sync/VA and CPU x264. Auto: NVENC → Intel → x264. Interlaced 576i/1080i is deinterlaced with YADIF over all fields while preserving 50 Hz motion; SPS/PPS are repeated on every IDR.","202.79: H.264 podržava NVIDIA NVENC, Intel Quick Sync/VA i CPU x264. Auto: NVENC → Intel → x264. YADIF uklanja ispreplitanje iz 576i/1080i uz očuvanje 50 Hz gibanja; SPS/PPS se ponavljaju na svakom IDR-u."],["Unavailable:","Nedostupno:"]]) uiEnToHr.set(english, croatian);
+
 const uiOriginalText = new WeakMap();
 const uiOriginalAttrs = new WeakMap();
 const uiLocalizedAttributes = ['title', 'placeholder', 'aria-label'];
