@@ -922,16 +922,71 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
         return false;
     }
     const std::string frontend = devicePath(config, "frontend");
-    const int frontendFd = ::open(frontend.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
-    if (frontendFd < 0) {
-        error = deviceError("cannot open DVB frontend", frontend);
-        return false;
+
+    // Cold-start retries are deliberately limited to Unicable.  Keep the
+    // existing successful first-tune path identical for all drivers, and do
+    // not repeat invalid configurations or permanent SEC/driver errors.
+    const int maxTuneAttempts = unicableEnabled(config) ? 3 : 1;
+    int frontendFd = -1;
+    for (int attempt = 1; attempt <= maxTuneAttempts; ++attempt) {
+        const int candidateFd = ::open(
+            frontend.c_str(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
+        bool recoverable = false;
+        if (candidateFd < 0) {
+            const int openErrno = errno;
+            error = deviceError("cannot open DVB frontend", frontend);
+            // The device can still be registering after a system boot, or
+            // a driver can be releasing its previous O_RDWR frontend owner.
+            recoverable = openErrno == EBUSY || openErrno == EAGAIN ||
+                openErrno == EINTR || openErrno == ENODEV ||
+                openErrno == ENOENT;
+        } else {
+            const bool tuned = tuneFrontend(config, candidateFd, error);
+            const int tuneErrno = errno;
+            if (tuned) {
+                frontendFd = candidateFd;
+                if (attempt > 1) {
+                    std::clog << "NATIVE DVB UNICABLE cold_start_recovered"
+                              << " adapter=" << config.adapter
+                              << " frontend=" << config.frontend
+                              << " attempt=" << attempt << '\n';
+                }
+                break;
+            }
+            // A first cold tune can legitimately time out while an SCR/LNB
+            // powers up.  Retry only a no-LOCK outcome or a transient ioctl
+            // failure; a missing STiD135 mode=2 or invalid UB must fail fast.
+            recoverable =
+                error.find("DVB frontend did not lock within") !=
+                    std::string::npos ||
+                ((tuneErrno == EBUSY || tuneErrno == EAGAIN ||
+                  tuneErrno == EINTR || tuneErrno == EIO) &&
+                 (error.find("FE_SET_") != std::string::npos ||
+                  error.find("FE_DISEQC_") != std::string::npos));
+            ::close(candidateFd);
+        }
+        if (!recoverable || attempt == maxTuneAttempts) {
+            if (maxTuneAttempts > 1 && attempt > 1) {
+                std::clog << "NATIVE DVB UNICABLE cold_start_failed"
+                          << " adapter=" << config.adapter
+                          << " frontend=" << config.frontend
+                          << " attempts=" << attempt
+                          << " error=" << error << '\n';
+            }
+            return false;
+        }
+        const int retryDelayMs = attempt == 1 ? 500 : 1000;
+        std::clog << "NATIVE DVB UNICABLE cold_start_retry"
+                  << " adapter=" << config.adapter
+                  << " frontend=" << config.frontend
+                  << " next_attempt=" << (attempt + 1)
+                  << " total_attempts=" << maxTuneAttempts
+                  << " delay_ms=" << retryDelayMs
+                  << " reason=" << error << '\n';
+        std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
     }
-    const bool tuned = tuneFrontend(config, frontendFd, error);
-    if (!tuned) {
-        ::close(frontendFd);
-        return false;
-    }
+    if (frontendFd < 0) return false;
+
     if (!registerActiveFrontend(config.adapter, config.frontend, frontendFd)) {
         error = "DVB frontend already has an active in-process owner: " + frontend;
         ::close(frontendFd);
