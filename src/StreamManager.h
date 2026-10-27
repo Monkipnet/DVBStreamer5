@@ -38,6 +38,7 @@ struct ActiveStreamSession {
     std::string clientIp;
     std::string protocol;
     size_t connections = 0;
+    std::uint64_t connectedSeconds = 0; // Longest-lived current connection in this group.
 };
 
 // Keep the real remote address for diagnostics/session management while carrying
@@ -434,6 +435,10 @@ private:
         StreamClientIp clientIp;
         std::string protocol;
         std::chrono::steady_clock::time_point lastActivity;
+        // This timestamp is set once when the logical client session is created.
+        // HLS playlist/segment requests refresh lastActivity, not connectedAt.
+        std::chrono::steady_clock::time_point connectedAt =
+            std::chrono::steady_clock::now();
         int upstreamFd = -1;
         std::string previewSession;
     };
