@@ -376,6 +376,7 @@ bool configureUnicable(int fd, const LinuxDvbTuneConfig& config,
         // The command is sent at 18 V.  On ioctl failure, restore the idle
         // voltage before returning so one failed cold-start attempt does not
         // leave a shared SCR coax powered at the command voltage.
+        const int commandErrno = errno;
         const std::string commandError = error;
         std::string restoreError;
         if (!setVoltage(fd, SEC_VOLTAGE_13,
@@ -385,6 +386,7 @@ bool configureUnicable(int fd, const LinuxDvbTuneConfig& config,
                       << restoreError << '\n';
         }
         error = commandError;
+        errno = commandErrno;
         return false;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
