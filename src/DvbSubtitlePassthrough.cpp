@@ -31,14 +31,25 @@ void appendCrc(std::vector<std::uint8_t>& s) {
 }
 } // namespace
 
-DvbSubtitlePassthrough::DvbSubtitlePassthrough(std::string language)
-    : language_(std::move(language)) {
+DvbSubtitlePassthrough::DvbSubtitlePassthrough(
+    std::string language, std::string selectedTrack)
+    : language_(std::move(language)), selectedTrack_(std::move(selectedTrack)) {
     if (language_ != "auto" &&
         (language_.size() != 3U ||
          !std::all_of(language_.begin(), language_.end(),
                       [](unsigned char c) { return c >= 'a' && c <= 'z'; }))) {
         language_ = "auto";
     }
+}
+
+std::vector<DvbSubtitlePassthrough::AvailableTrack>
+DvbSubtitlePassthrough::availableTracks() const {
+    std::lock_guard<std::mutex> lock(availableMutex_);
+    return availableTracks_;
+}
+bool DvbSubtitlePassthrough::hasParsedPmt() const {
+    std::lock_guard<std::mutex> lock(availableMutex_);
+    return availablePmtParsed_;
 }
 
 std::uint16_t DvbSubtitlePassthrough::packetPid(const Packet& packet) {
@@ -77,6 +88,11 @@ void DvbSubtitlePassthrough::readPat(const Packet& packet) {
             sourcePmt_ = {};
             sourceTracks_.clear();
             sourcePmtParsed_ = false;
+            {
+                std::lock_guard<std::mutex> lock(availableMutex_);
+                availableTracks_.clear();
+                availablePmtParsed_ = false;
+            }
             selectedPids_.fill(false);
             queued_.clear();
         }
@@ -91,6 +107,7 @@ void DvbSubtitlePassthrough::acceptPmtSection(
     std::size_t at = 12U + (((section[10] & 0x0fU) << 8U) | section[11]);
     if (at > end) return;
     std::vector<Track> tracks;
+    std::vector<AvailableTrack> available;
     for (; at + 5U <= end;) {
         const auto pid = esPid(section.data() + at + 1U);
         const auto type = section[at];
@@ -108,28 +125,33 @@ void DvbSubtitlePassthrough::acceptPmtSection(
                 // Preserve subtitle page IDs, language, composition/ancillary
                 // page IDs exactly. Other PMT descriptors are not required.
                 if (tag == 0x59U && n > 0U && n % 8U == 0U) {
-                    if (language_ == "auto") {
-                        // Legacy behaviour: advertise every DVB subtitle page.
-                        desc.insert(desc.end(), section.begin() + off,
-                                    section.begin() + off + n + 2U);
-                    } else {
-                        // ISO 639-2 triples occupy the first three bytes of
-                        // each 8-byte subtitling_descriptor entry. Keep the
-                        // selected entries and their original subtitle page IDs.
-                        std::vector<std::uint8_t> matching;
-                        for (std::size_t entry = off + 2U;
-                             entry + 8U <= off + 2U + n; entry += 8U) {
-                            if (std::memcmp(section.data() + entry,
-                                            language_.data(), 3U) == 0)
-                                matching.insert(matching.end(),
-                                                section.begin() + entry,
-                                                section.begin() + entry + 8U);
+                    // The actual PMT is the source of dropdown choices. A
+                    // subtitling_descriptor entry is language/type/page IDs.
+                    std::vector<std::uint8_t> chosen;
+                    for (std::size_t entry = off + 2U;
+                         entry + 8U <= off + 2U + n; entry += 8U) {
+                        const std::string code(
+                            reinterpret_cast<const char*>(section.data() + entry), 3U);
+                        const std::uint16_t page = u16(section.data() + entry + 4U);
+                        const std::string key = std::to_string(pid) + ":" +
+                            code + ":" + std::to_string(page);
+                        if (available.size() < 64U &&
+                            std::none_of(available.begin(), available.end(),
+                                [&](const AvailableTrack& item) { return item.id == key; })) {
+                            available.push_back({key, pid, code,
+                                section[entry + 3U], page,
+                                u16(section.data() + entry + 6U)});
                         }
-                        if (!matching.empty()) {
-                            desc.push_back(0x59U);
-                            desc.push_back(static_cast<std::uint8_t>(matching.size()));
-                            desc.insert(desc.end(), matching.begin(), matching.end());
-                        }
+                        const bool selected = selectedTrack_ != "auto"
+                            ? key == selectedTrack_
+                            : (language_ == "auto" || language_ == code);
+                        if (selected) chosen.insert(chosen.end(),
+                            section.begin() + entry, section.begin() + entry + 8U);
+                    }
+                    if (!chosen.empty()) {
+                        desc.push_back(0x59U);
+                        desc.push_back(static_cast<std::uint8_t>(chosen.size()));
+                        desc.insert(desc.end(), chosen.begin(), chosen.end());
                     }
                 }
                 off += n + 2U;
@@ -139,6 +161,11 @@ void DvbSubtitlePassthrough::acceptPmtSection(
         at += 5U + length;
     }
     if (at != end) return;
+    {
+        std::lock_guard<std::mutex> lock(availableMutex_);
+        availableTracks_ = std::move(available);
+        availablePmtParsed_ = true;
+    }
     bool same = tracks.size() == sourceTracks_.size();
     if (same) for (std::size_t i = 0; i < tracks.size(); ++i)
         if (tracks[i].pid != sourceTracks_[i].pid ||
@@ -155,6 +182,7 @@ void DvbSubtitlePassthrough::acceptPmtSection(
         for (const auto& track : sourceTracks_) awaitStart_[track.pid] = true;
         std::clog << "DVB SUBTITLES source tracks=" << sourceTracks_.size()
                   << " selected_language=" << language_
+                  << " selected_track=" << selectedTrack_
                   << (sourceTracks_.empty() && language_ != "auto"
                       ? " (no matching DVB subtitle track)" : "")
                   << '\n';
