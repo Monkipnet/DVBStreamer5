@@ -330,6 +330,7 @@ add_executable(DVBStreamer5
     src/utils.cpp
     src/ConfigManager.cpp
     src/ExternalXmltv.cpp
+    src/EpgDiskCache.cpp
     src/DvbEitOutput.cpp
     src/DvbSubtitlePassthrough.cpp
     src/DvbSatellite.cpp
