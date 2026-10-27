@@ -116,8 +116,7 @@ void DvbSubtitlePassthrough::acceptPmtSection(
         const std::size_t length =
             ((section[at + 3U] & 0x0fU) << 8U) | section[at + 4U];
         if (at + 5U + length > end) return;
-        if (type == 0x06U && pid >= 0x20U && pid < 0x1fffU &&
-            tracks.size() < kMaxSubtitleTracks) {
+        if (type == 0x06U && pid >= 0x20U && pid < 0x1fffU) {
             std::vector<std::uint8_t> desc;
             const std::size_t limit = at + 5U + length;
             for (std::size_t off = at + 5U; off + 2U <= limit;) {
@@ -158,7 +157,11 @@ void DvbSubtitlePassthrough::acceptPmtSection(
                 }
                 off += n + 2U;
             }
-            if (!desc.empty()) tracks.push_back({pid, std::move(desc)});
+            // A large PMT may advertise more than eight alternatives.
+            // Always enumerate them for the UI, while bounding the
+            // transcoder's queued PES/PMT injection to eight source PIDs.
+            if (!desc.empty() && tracks.size() < kMaxSubtitleTracks)
+                tracks.push_back({pid, std::move(desc)});
         }
         at += 5U + length;
     }
