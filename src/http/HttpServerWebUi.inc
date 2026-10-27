@@ -3154,7 +3154,7 @@ function downloadVlcPlaylist(streams = state.streams || []) {
       const channelId = attr(stream.id || '');
       const channelName = attr(stream.service_name || stream.name || stream.id);
       const sid = Number(stream.remap_enabled ? stream.service_id : stream.input_service_id);
-      const sidAttr = Number.isInteger(sid) && sid > 0 && sid <= 65535 ? ` tvg-chno="${sid}"` : '';
+      const sidAttr = Number.isInteger(sid) && sid > 0 && sid <= 65535 ? ` tvg-sid="${sid}"` : '';
       return `#EXTINF:-1 tvg-id="${channelId}" tvg-name="${channelName}" group-title="DVBStreamer5"${sidAttr},${name}\n${link.url}`;
     });
   });
