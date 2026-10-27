@@ -281,6 +281,7 @@ struct StreamState {
     std::atomic<uint64_t> outputTsClearPesStartsDelta{0};
 
     std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector> epgCollector;
+    std::string epgCacheKey;
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
     // Browser preview owns a lazy, preview-only transcoder. It is completely
@@ -374,6 +375,7 @@ public:
     bool stopMptsOutput(const std::string& id);
     Json::Value mptsSnapshot() const;
     Json::Value epgSnapshot(const std::string& id) const;
+    void persistAllDvbEpg();
     void configureExternalXmltvSources();
     bool refreshExternalXmltv(const std::string& sourceId);
     Json::Value externalXmltvStatus() const;
@@ -399,6 +401,10 @@ private:
     TelegramNotifier& telegramNotifier;
     std::unique_ptr<MptsOutputManager> mptsOutputManager;
     std::unique_ptr<ExternalXmltvManager> externalXmltvManager_;
+    std::atomic<bool> epgPersistStop_{false};
+    std::thread epgPersistThread_;
+    std::mutex epgPersistMutex_;
+    std::condition_variable epgPersistCv_;
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
     struct HttpClientSession {
