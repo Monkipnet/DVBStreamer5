@@ -118,6 +118,7 @@ void DvbSubtitlePassthrough::acceptPmtSection(
         selectedPids_.fill(false);
         queued_.clear();
         awaitStart_.fill(false);
+        for (const auto& track : sourceTracks_) awaitStart_[track.pid] = true;
         std::clog << "DVB SUBTITLES source tracks=" << sourceTracks_.size() << '\n';
     }
 }
@@ -171,6 +172,7 @@ void DvbSubtitlePassthrough::observe(const std::uint8_t* data, std::size_t size)
         if (pid == 0U) readPat(packet);
         else if (pid == sourcePmtPid_) readPmt(packet);
         if (pid >= selectedPids_.size() || !selectedPids_[pid]) continue;
+        if ((packet[3] & 0x10U) == 0U) continue; // no subtitle payload
         const bool pusi = (packet[1] & 0x40U) != 0U;
         if (awaitStart_[pid] && !pusi) continue;
         if (pusi) awaitStart_[pid] = false;
@@ -217,19 +219,41 @@ void DvbSubtitlePassthrough::rewriteOutputPmt(Packet& packet) {
     // advertise only complete DVB subtitle descriptors that fit in the
     // remaining PMT bytes, never truncate a descriptor or overflow 188 bytes.
     std::array<bool, 8192> selected{};
+    auto nextMapping = outputPids_;
+    std::array<bool, 8192> taken = occupied;
+    // Reserve all original source subtitle PIDs; don't inadvertently remap
+    // a colliding track onto another track's original transport PID.
+    for (const auto& track : sourceTracks_) taken[track.pid] = true;
     std::size_t accepted = 0;
     for (const auto& track : sourceTracks_) {
-        if (occupied[track.pid] || selected[track.pid]) continue;
+        if (selected[track.pid]) continue;
         if (track.descriptors.size() > 255U ||
             start + section.size() + 5U + track.descriptors.size() + 4U > kPacketSize)
             continue;
+        auto outputPid = track.pid;
+        if (occupied[outputPid]) {
+            // A native transcoder typically uses 0x100/0x101. A broadcaster
+            // may have placed its subtitles on either PID. Remap subtitles
+            // into a reserved high ES range rather than clashing with A/V.
+            outputPid = 0;
+            for (std::uint16_t candidate = 0x1a00U; candidate < 0x1b00U; ++candidate) {
+                if (!taken[candidate]) { outputPid = candidate; break; }
+            }
+            if (!outputPid) continue;
+        }
+        taken[outputPid] = true;
         section.push_back(0x06U);
-        section.push_back(static_cast<std::uint8_t>(0xe0U | (track.pid >> 8U)));
-        section.push_back(static_cast<std::uint8_t>(track.pid));
+        section.push_back(static_cast<std::uint8_t>(0xe0U | (outputPid >> 8U)));
+        section.push_back(static_cast<std::uint8_t>(outputPid));
         section.push_back(static_cast<std::uint8_t>(0xf0U | (track.descriptors.size() >> 8U)));
         section.push_back(static_cast<std::uint8_t>(track.descriptors.size()));
         section.insert(section.end(), track.descriptors.begin(), track.descriptors.end());
         selected[track.pid] = true;
+        if (!selectedPids_[track.pid] || outputPids_[track.pid] != outputPid) {
+            continuity_[outputPid] = 0;
+            awaitStart_[track.pid] = true;
+        }
+        nextMapping[track.pid] = outputPid;
         ++accepted;
     }
     if (!accepted) {
@@ -258,6 +282,7 @@ void DvbSubtitlePassthrough::rewriteOutputPmt(Packet& packet) {
     packet[4] = 0x00U;
     std::memcpy(packet.data() + 5U, section.data(), section.size());
     selectedPids_ = selected;
+    outputPids_ = nextMapping;
 }
 void DvbSubtitlePassthrough::inject(std::vector<Packet>& output) {
     if (sourceTracks_.empty()) return;
@@ -268,11 +293,16 @@ void DvbSubtitlePassthrough::inject(std::vector<Packet>& output) {
         Packet packet = queued_.front();
         queued_.pop_front();
         const auto pid = packetPid(packet);
-        if (!selectedPids_[pid]) continue;
-        if ((packet[3] & 0x10U) != 0U) {
-            packet[3] = static_cast<std::uint8_t>(
-                (packet[3] & 0xf0U) | (continuity_[pid]++ & 0x0fU));
+        if (!selectedPids_[pid] || awaitStart_[pid]) continue;
+        const auto dest = outputPids_[pid];
+        if (dest == 0U || dest >= 0x1fffU) continue;
+        if (dest != pid) {
+            packet[1] = static_cast<std::uint8_t>(
+                (packet[1] & 0xe0U) | ((dest >> 8U) & 0x1fU));
+            packet[2] = static_cast<std::uint8_t>(dest);
         }
+        packet[3] = static_cast<std::uint8_t>(
+            (packet[3] & 0xf0U) | (continuity_[dest]++ & 0x0fU));
         output.push_back(std::move(packet));
     }
 }
