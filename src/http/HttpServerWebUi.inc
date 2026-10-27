@@ -111,13 +111,26 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .edit-section-head small{font-size:.64rem;font-weight:500;color:#748096}
 .edit-field{display:flex;flex-direction:column;gap:3px;min-width:0}
 .edit-field-title{font-size:.72rem;font-weight:700;color:#cbd5e5;line-height:1.15}
-.field-help{display:block;min-height:1.05em;margin:0 0 2px;color:#778397;font-size:.61rem;line-height:1.2;font-weight:400}
+.field-help{display:block;min-height:1.05em;width:100%;margin:0 0 2px;color:#778397;font-size:.61rem;line-height:1.2;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .edit-field input,.edit-field select{width:100%!important;max-width:none!important}
 .edit-toggle{display:flex;flex-direction:column;justify-content:flex-end;gap:3px;min-width:0}
 .edit-toggle .checkbox-inline{margin:0!important;min-height:32px}
 .edit-inline-note{font-size:.62rem;color:#7f8ba0;line-height:1.3;margin-top:6px}
 .stream-video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .stream-video-grid.secondary{grid-template-columns:repeat(6,minmax(0,1fr));margin-top:8px}
+.tile .epg-row{cursor:pointer;border-radius:5px;padding:1px 3px;margin:0 -3px}
+.tile .epg-row:hover{background:rgba(57,189,248,.08)}
+.tile .epg-row strong{color:#8dd9ff}
+.tile .epg-row span{font-size:10px}
+.modal-content.epg-modal{width:min(760px,100%)}
+.epg-headline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 10px;color:#8290a5;font-size:.7rem}
+.epg-list{display:grid;gap:6px;max-height:68vh;overflow:auto}
+.epg-event{display:grid;grid-template-columns:105px minmax(0,1fr);gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.07);border-radius:9px;background:rgba(255,255,255,.025)}
+.epg-event.current{border-color:rgba(57,189,248,.35);background:rgba(57,189,248,.07)}
+.epg-time{font-size:.7rem;color:#8dd9ff;white-space:nowrap}
+.epg-title{font-size:.78rem;color:#eef4ff;font-weight:700}
+.epg-description{margin-top:3px;color:#8995a8;font-size:.68rem;line-height:1.3}
+.epg-empty{padding:20px;text-align:center;color:#8995a8;font-size:.75rem}
 @media(max-width:920px){.stream-modal .input-main-row{grid-template-columns:1fr 1fr}.stream-modal .input-main-row>.form-row:first-child{grid-column:1/-1}.stream-video-grid,.stream-video-grid.secondary{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:680px){.modal-content.stream-modal{width:100%;padding:12px}.stream-modal .form-grid>.form-row:not(.full){grid-column:1/-1}.stream-modal .input-main-row,.stream-video-grid,.stream-video-grid.secondary{grid-template-columns:1fr 1fr}.stream-modal .modal-actions{margin-left:-12px;margin-right:-12px}.field-help{font-size:.64rem}}
 @media(max-width:460px){.stream-modal .input-main-row,.stream-video-grid,.stream-video-grid.secondary{grid-template-columns:1fr}}
@@ -1324,6 +1337,7 @@ function streamTileStructureSignature(stream) {
     backup_file_loop: stream.backup_file_loop,
     input_service_id: stream.input_service_id,
     service_id: stream.service_id,
+    epg_enabled: stream.epg_enabled === true,
     conditional_access_client: stream.conditional_access_client,
     ci_plus_input: stream.ci_plus_input === true,
     ci_plus_backend: stream.ci_plus_backend || '',
@@ -3156,7 +3170,7 @@ function openStreamModal() {
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
     interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_preset:'balanced', transcode_profile:'auto', transcode_level:'auto', transcode_gop_frames:50, transcode_bframes:0, transcode_ref_frames:0, transcode_open_gop:false, transcode_aq_strength:8, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
-    audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', additional_outputs:[]
+    audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
 function outputTypeOptions(selected) {
@@ -3585,7 +3599,7 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title">Position</div><small class="field-help" ${uiBiAttrs('Позиция/спутник Unicable.','Unicable position/satellite selector.')}>${uiBiText('Позиция/спутник Unicable.','Unicable position/satellite selector.')}</small><input id="streamDvbUnicablePosition" type="number" min="0" max="63" value="${dvbTuner.unicable_position}" /></div>
             <div class="edit-field"><div class="edit-field-title">PIN</div><small class="field-help" ${uiBiAttrs('-1 отключает PIN.','-1 disables the PIN.')}>${uiBiText('-1 отключает PIN.','-1 disables the PIN.')}</small><input id="streamDvbUnicablePin" type="number" min="-1" max="255" value="${dvbTuner.unicable_pin}" /></div>
           </div>
-          <div class="edit-inline-note" ${uiBiAttrs('PID/SID и неизвестные параметры исходного dvb:// URL сохраняются при редактировании.','PID/SID and unknown parameters from the original dvb:// URL are preserved when editing.')}>${uiBiText('PID/SID и неизвестные параметры исходного dvb:// URL сохраняются при редактировании.','PID/SID and unknown parameters from the original dvb:// URL are preserved when editing.')}</div>
+          <div class="edit-inline-note" ${uiBiAttrs('PID/SID и параметры dvb:// URL сохраняются.','PID/SID and dvb:// URL parameters are preserved.')}>${uiBiText('PID/SID и неизвестные параметры исходного dvb:// URL сохраняются при редактировании.','PID/SID and unknown parameters from the original dvb:// URL are preserved when editing.')}</div>
         </div>
         <div class="form-row full" id="streamSrtInputRow" style="display:${(stream.input_mode==='caller'||stream.input_mode==='listener'||String(stream.input_uri||'').toLowerCase().startsWith('srt://'))?'':'none'}"><label>SRT вход</label><div class="row-inline compact-row"><input id="streamSrtInputLatency" type="number" min="20" max="60000" value="${Number(stream.srt_input_latency_ms||120)}" placeholder="latency ms" /><select id="streamSrtInputPbKeyLen"><option value="16" ${Number(stream.srt_input_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(stream.srt_input_pbkeylen)===24?'selected':''}>AES-192</option><option value="32" ${Number(stream.srt_input_pbkeylen)===32?'selected':''}>AES-256</option></select><input id="streamSrtInputStreamId" value="${escapeHtmlValue(stream.srt_input_streamid||'')}" placeholder="Stream ID (optional)" /><input id="streamSrtInputPassphrase" type="password" value="${escapeHtmlValue(stream.srt_input_passphrase||'')}" autocomplete="new-password" placeholder="Passphrase 10–79 chars (optional)" /></div><small>Native SRT Caller/Listener. Passphrase пустой = без шифрования. Для шифрования минимум 10 символов.</small></div>
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
@@ -3605,7 +3619,14 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title">VDR channel</div><small class="field-help" ${uiBiAttrs('Номер канала или VDR channel ID.','Channel number or VDR channel ID.')}>${uiBiText('Номер канала или VDR channel ID.','Channel number or VDR channel ID.')}</small><input id="streamVdrChannel" value="${escapeHtmlValue(vdrCiPlus.channel)}" ${uiBiPlaceholderAttrs('Номер / ID канала','Channel number / ID')} oninput="updateVdrCiPlusPreview()" /></div>
           </div>
           <small id="streamVdrCiPlusPreview" class="edit-inline-note"></small>
-          <div class="edit-inline-note" ${uiBiAttrs('VDR владеет DVB frontend и CI/CI+ CAM; pairing/authentication остаются в поддерживаемом VDR/vendor CAM stack.','VDR owns the DVB frontend and CI/CI+ CAM; pairing/authentication remain in the supported VDR/vendor CAM stack.')}>${uiBiText('VDR владеет DVB frontend и CI/CI+ CAM; pairing/authentication остаются в поддерживаемом VDR/vendor CAM stack.','VDR owns the DVB frontend and CI/CI+ CAM; pairing/authentication remain in the supported VDR/vendor CAM stack.')}</div>
+          <div class="edit-inline-note" ${uiBiAttrs('VDR управляет tuner/CAM; DVBStreamer5 получает streamdev TS.','VDR owns tuner/CAM; DVBStreamer5 receives streamdev TS.')}>${uiBiText('VDR владеет DVB frontend и CI/CI+ CAM; pairing/authentication остаются в поддерживаемом VDR/vendor CAM stack.','VDR owns the DVB frontend and CI/CI+ CAM; pairing/authentication remain in the supported VDR/vendor CAM stack.')}</div>
+        </div>
+        <div class="form-row full edit-section">
+          <div class="edit-section-head"><span>EPG / DVB EIT</span><small>PID 0x12</small></div>
+          <div class="stream-video-grid">
+            <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('EPG канала','Channel EPG')}>${uiBiText('EPG канала','Channel EPG')}</div><small class="field-help" ${uiBiAttrs('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}>${uiBiText('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}</small><label class="checkbox-inline"><input id="streamEpgEnabled" type="checkbox" ${stream.epg_enabled===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
+            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Дней EPG','EPG days')}>${uiBiText('Дней EPG','EPG days')}</div><small class="field-help" ${uiBiAttrs('Хранить расписание на 1–7 дней.','Keep 1–7 days of schedule.')}>${uiBiText('Хранить расписание на 1–7 дней.','Keep 1–7 days of schedule.')}</small><input id="streamEpgDays" type="number" min="1" max="7" value="${Math.max(1,Math.min(7,Number(stream.epg_days||3)))}" /></div>
+          </div>
         </div>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
         <div class="form-row full" id="streamBackupFileLoopRow"><label>Зациклить файл замены</label><div class="checkbox-inline"><input id="streamBackupFileLoop" type="checkbox" ${stream.backup_file_loop ? 'checked' : ''} /><span>Повторять до появления основного потока</span></div></div>
@@ -4008,6 +4029,8 @@ function saveStream(id) {
     service_id: Number(document.getElementById('streamServiceId').value),
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,
+    epg_enabled: document.getElementById('streamEpgEnabled')?.checked === true,
+    epg_days: Math.max(1, Math.min(7, Number(document.getElementById('streamEpgDays')?.value || 3))),
     conditional_access_client: selectedConditionalAccessClient
   };
   const existingIndex = state.streams.findIndex(s=>s.id===id);
