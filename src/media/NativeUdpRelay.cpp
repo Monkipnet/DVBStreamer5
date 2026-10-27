@@ -1187,6 +1187,9 @@ void NativeUdpRelay::run() {
             }
         }
 
+        if (!packets.empty() && config_.injectDvbEit)
+            config_.injectDvbEit(packets);
+
         if (!packets.empty()) {
             // Count the real MPEG-TS payload produced by the pipeline before
             // CBR null-packet stuffing and before duplicating it to outputs.
