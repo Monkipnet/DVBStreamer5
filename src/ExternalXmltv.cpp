@@ -195,7 +195,7 @@ std::string xmlValue(xmlTextReaderPtr reader) {
 
 bool ExternalXmltvManager::restoreCache(
     const XmltvSourceConfig& settings, Source& data) {
-    epgcache::Reader reader(epgcache::pathFor("xmltv", settings.id));
+    dvbstreamer5::epgcache::Reader reader(dvbstreamer5::epgcache::pathFor("xmltv", settings.id));
     if (!reader.valid()) return false;
     Json::Value header;
     if (!reader.next(header) || header.get("schema", 0).asInt() != 1 ||
@@ -249,7 +249,7 @@ bool ExternalXmltvManager::restoreCache(
 
 bool ExternalXmltvManager::persistCache(
     const XmltvSourceConfig& settings, const Source& data) {
-    epgcache::Writer writer(epgcache::pathFor("xmltv", settings.id));
+    dvbstreamer5::epgcache::Writer writer(dvbstreamer5::epgcache::pathFor("xmltv", settings.id));
     if (!writer.valid()) return false;
     Json::Value header;
     header["schema"] = 1;
