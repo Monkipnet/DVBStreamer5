@@ -350,6 +350,121 @@ void DvbSubtitlePassthrough::rewriteOutputPmt(Packet& packet) {
     selectedPids_ = selected;
     outputPids_ = nextMapping;
 }
+void DvbSubtitlePassthrough::filterPassthrough(std::vector<Packet>& output) {
+    // In an untranscoded TS the remapper already carries subtitle PES and
+    // the corresponding 0x59 descriptors. Never inject a duplicate PES.
+    // A specific selection instead filters the original PMT and unwanted PIDs.
+    if (selectedTrack_ == "auto" && language_ == "auto") return;
+    for (auto& packet : output) {
+        if (packet[0] != 0x47U || packetPid(packet) != sourcePmtPid_ ||
+            (packet[1] & 0x40U) == 0U) continue;
+        const auto off = payloadOffset(packet);
+        // Only edit a complete single-packet PMT. Multisection tables are
+        // preserved rather than producing invalid PSI or dropping PES.
+        if (off != 4U || packet[off] != 0U) continue;
+        const std::size_t start = off + 1U;
+        if (start + 16U > kPacketSize || packet[start] != 0x02U) continue;
+        const std::size_t originalSize = 3U +
+            (((packet[start + 1U] & 0x0fU) << 8U) | packet[start + 2U]);
+        if (originalSize < 16U || start + originalSize > kPacketSize ||
+            crc32(packet.data() + start, originalSize) != 0U) continue;
+        const std::size_t end = start + originalSize - 4U;
+        const std::size_t programInfo = 12U +
+            (((packet[start + 10U] & 0x0fU) << 8U) | packet[start + 11U]);
+        if (start + programInfo > end) continue;
+        std::vector<std::uint8_t> section(
+            packet.begin() + start, packet.begin() + start + programInfo);
+        std::array<bool, 8192> subtitlePids{};
+        std::array<bool, 8192> retainedPids{};
+        bool malformed = false;
+        bool subtitleFound = false;
+        for (std::size_t pos = start + programInfo; pos < end;) {
+            if (pos + 5U > end) { malformed = true; break; }
+            const auto pid = esPid(packet.data() + pos + 1U);
+            const auto length = static_cast<std::size_t>(
+                ((packet[pos + 3U] & 0x0fU) << 8U) | packet[pos + 4U]);
+            const std::size_t esEnd = pos + 5U + length;
+            if (esEnd > end) { malformed = true; break; }
+            std::vector<std::uint8_t> desc;
+            bool subtitleEs = false;
+            bool selected = false;
+            for (std::size_t d = pos + 5U; d < esEnd;) {
+                if (d + 2U > esEnd) { malformed = true; break; }
+                const std::uint8_t tag = packet[d];
+                const std::size_t size = packet[d + 1U];
+                if (d + 2U + size > esEnd) { malformed = true; break; }
+                if (packet[pos] == 0x06U && tag == 0x59U &&
+                    size != 0U && size % 8U == 0U) {
+                    subtitleEs = true;
+                    std::vector<std::uint8_t> matches;
+                    for (std::size_t at = d + 2U; at + 8U <= d + 2U + size;
+                         at += 8U) {
+                        const std::string code(
+                            reinterpret_cast<const char*>(packet.data() + at), 3U);
+                        const auto page = u16(packet.data() + at + 4U);
+                        const auto key = std::to_string(pid) + ":" + code +
+                            ":" + std::to_string(page);
+                        const bool use = selectedTrack_ != "auto"
+                            ? selectedTrack_ == key
+                            : language_ == code;
+                        if (use) {
+                            matches.insert(matches.end(),
+                                packet.begin() + at, packet.begin() + at + 8U);
+                            selected = true;
+                        }
+                    }
+                    if (!matches.empty()) {
+                        desc.push_back(0x59U);
+                        desc.push_back(static_cast<std::uint8_t>(matches.size()));
+                        desc.insert(desc.end(), matches.begin(), matches.end());
+                    }
+                } else {
+                    desc.insert(desc.end(), packet.begin() + d,
+                                packet.begin() + d + 2U + size);
+                }
+                d += 2U + size;
+            }
+            if (malformed) break;
+            if (subtitleEs) {
+                subtitleFound = true;
+                subtitlePids[pid] = true;
+                if (selected) retainedPids[pid] = true;
+            }
+            if (!subtitleEs || selected) {
+                section.insert(section.end(), packet.begin() + pos,
+                               packet.begin() + pos + 5U);
+                const std::size_t header = section.size() - 5U;
+                section[header + 3U] = static_cast<std::uint8_t>(
+                    0xf0U | ((desc.size() >> 8U) & 0x0fU));
+                section[header + 4U] = static_cast<std::uint8_t>(desc.size());
+                section.insert(section.end(), desc.begin(), desc.end());
+            }
+            pos = esEnd;
+        }
+        if (malformed || !subtitleFound ||
+            start + section.size() + 4U > kPacketSize) continue;
+        const auto newLength = section.size() - 3U + 4U;
+        section[1] = static_cast<std::uint8_t>((section[1] & 0xf0U) |
+                                                ((newLength >> 8U) & 0x0fU));
+        section[2] = static_cast<std::uint8_t>(newLength);
+        section[5] = static_cast<std::uint8_t>(
+            (section[5] & 0xc1U) |
+            (((((section[5] >> 1U) & 31U) + 1U) & 31U) << 1U));
+        appendCrc(section);
+        std::fill(packet.begin() + start, packet.end(), 0xffU);
+        std::memcpy(packet.data() + start, section.data(), section.size());
+        for (std::size_t pid = 0; pid < passthroughExcludedPids_.size(); ++pid)
+            passthroughExcludedPids_[pid] = subtitlePids[pid] && !retainedPids[pid];
+        passthroughFilterActive_ = true;
+    }
+    if (!passthroughFilterActive_) return;
+    output.erase(std::remove_if(output.begin(), output.end(),
+        [this](const Packet& packet) {
+            return packet[0] == 0x47U &&
+                   passthroughExcludedPids_[packetPid(packet)];
+        }), output.end());
+}
+
 void DvbSubtitlePassthrough::inject(std::vector<Packet>& output) {
     if (sourceTracks_.empty()) return;
     for (auto& packet : output) rewriteOutputPmt(packet);
