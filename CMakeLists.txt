@@ -376,7 +376,7 @@ target_link_libraries(DVBStreamer5
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
     target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
-    target_link_libraries(DVBStreamer5 PRIVATE ZLIB::ZLIB)
+    target_link_libraries(DVBStreamer5 ZLIB::ZLIB)
     message(STATUS "XMLTV gzip endpoint: enabled")
 else()
     message(STATUS "XMLTV gzip endpoint: disabled (zlib not available)")
