@@ -2615,6 +2615,10 @@ uiEnToHr.set('Complete IPTV playlist', 'Cijeli IPTV popis');
 
 for (const [en,hr] of [
   ['XMLTV sources','XMLTV izvori'],
+  ['Select EPG by channel name','Odaberi EPG prema nazivu kanala'],
+  ['Search by name or ID; selection assigns the XMLTV channel.','Pretraži po nazivu ili ID-u; odabir pridružuje XMLTV kanal.'],
+  ['Refresh XMLTV channel list','Osvježi popis XMLTV kanala'],
+  ['Channel name…','Naziv kanala…'],
   ['XMLTV source','XMLTV izvor'],
   ['Add XMLTV source','Dodaj XMLTV izvor'],
   ['XMLTV channel ID','XMLTV ID kanala'],
@@ -3164,20 +3168,61 @@ async function loadXmltvCatalog() {
     const data = await fetchJson('/api/xmltv/channels', {cache:'no-store'}, 20000);
     xmltvCatalog = Array.isArray(data) ? data : [];
     refreshXmltvChannelOptions();
+    populateXmltvSelectedName();
   } catch (error) {
     uiError(error?.message || error);
   }
 }
 function refreshXmltvChannelOptions() {
-  const list = document.getElementById('streamXmltvChannels');
-  if (!list) return;
+  const datalist = document.getElementById('streamXmltvChannels');
+  const select = document.getElementById('streamXmltvNameMatches');
   const sourceId = document.getElementById('streamXmltvSourceId')?.value || '';
-  const options = xmltvCatalog.filter(ch => !sourceId || ch.source_id === sourceId);
-  list.innerHTML = options.slice(0, 5000).map(ch => {
-    const label = String(ch.name || ch.id) + ' [' + String(ch.source_id || '') + ']';
-    return '<option value="' + escapeHtmlValue(ch.id || '') +
-      '" label="' + escapeHtmlValue(label) + '"></option>';
+  const search = (document.getElementById('streamXmltvNameSearch')?.value || '')
+    .trim().toLocaleLowerCase();
+  const channelId = document.getElementById('streamXmltvChannelId')?.value || '';
+  const candidates = xmltvCatalog.filter(ch => !sourceId || ch.source_id === sourceId);
+  if (datalist) {
+    datalist.innerHTML = candidates.slice(0, 5000).map(ch => {
+      const caption = String(ch.name || ch.id) + ' [' + String(ch.source_id || '') + ']';
+      return '<option value="' + escapeHtmlValue(ch.id || '') +
+        '" label="' + escapeHtmlValue(caption) + '"></option>';
+    }).join('');
+  }
+  if (!select) return;
+  const matches = candidates.filter(ch => !search ||
+    String(ch.name || '').toLocaleLowerCase().includes(search) ||
+    String(ch.id || '').toLocaleLowerCase().includes(search));
+  select.innerHTML = matches.slice(0, 150).map(ch => {
+    const id = String(ch.id || '');
+    const name = String(ch.name || id);
+    const caption = name + '  ·  ' + id +
+      (!sourceId ? '  [' + ch.source_id + ']' : '');
+    return '<option value="' + escapeHtmlValue(id) +
+      '" data-source="' + escapeHtmlValue(ch.source_id || '') + '"' +
+      (id === channelId ? ' selected' : '') + '>' +
+      escapeHtmlValue(caption) + '</option>';
   }).join('');
+}
+function selectXmltvChannelByName() {
+  const select = document.getElementById('streamXmltvNameMatches');
+  const chosen = select?.selectedOptions?.[0];
+  if (!chosen) return;
+  const source = document.getElementById('streamXmltvSourceId');
+  if (source && chosen.dataset.source) source.value = chosen.dataset.source;
+  const id = document.getElementById('streamXmltvChannelId');
+  if (id) id.value = chosen.value;
+  const search = document.getElementById('streamXmltvNameSearch');
+  if (search) search.value = xmltvCatalog.find(ch =>
+    ch.id === chosen.value && ch.source_id === chosen.dataset.source)?.name || chosen.value;
+}
+function populateXmltvSelectedName() {
+  const channelId = document.getElementById('streamXmltvChannelId')?.value;
+  const sourceId = document.getElementById('streamXmltvSourceId')?.value;
+  const search = document.getElementById('streamXmltvNameSearch');
+  if (!search || !channelId) return;
+  const found = xmltvCatalog.find(ch =>
+    ch.id === channelId && (!sourceId || ch.source_id === sourceId));
+  if (found) search.value = found.name || found.id;
 }
 function xmltvSourceRow(src, index) {
   const date = Number(src.last_success || 0) > 0
@@ -5929,7 +5974,13 @@ function openStreamForm(stream) {
               <input id="streamXmltvChannelId" list="streamXmltvChannels" value="${escapeHtmlValue(stream.xmltv_channel_id||'')}" placeholder="channel-id" />
               <datalist id="streamXmltvChannels"></datalist>
             </div>
-            <div class="edit-field"><button class="button-secondary" type="button" onclick="loadXmltvCatalog()">${uiBiText('Загрузить список каналов XMLTV','Load XMLTV channel list')}</button></div>
+            <div class="edit-field">
+              <div class="edit-field-title" ${uiBiAttrs('Выбрать EPG по названию','Select EPG by channel name')}>${uiBiText('Выбрать EPG по названию','Select EPG by channel name')}</div>
+              <small class="field-help" ${uiBiAttrs('Поиск по названию или ID; выбор назначит XMLTV каналу.','Search by name or ID; selection assigns the XMLTV channel.')}>${uiBiText('Поиск по названию или ID; выбор назначит XMLTV каналу.','Search by name or ID; selection assigns the XMLTV channel.')}</small>
+              <input id="streamXmltvNameSearch" type="search" oninput="refreshXmltvChannelOptions()" ${uiBiPlaceholderAttrs('Название канала…','Channel name…')} />
+              <select id="streamXmltvNameMatches" size="5" onchange="selectXmltvChannelByName()" style="width:100%;max-height:145px"></select>
+              <button class="button-secondary" type="button" onclick="loadXmltvCatalog()">${uiBiText('Обновить список XMLTV','Refresh XMLTV channel list')}</button>
+            </div>
           </div>
         </div>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
@@ -5999,6 +6050,11 @@ function openStreamForm(stream) {
     updateTranscodeControls();
     loadUploadedBackupFiles();
     updateOutputHints();
+    if (!xmltvCatalog.length) void loadXmltvCatalog();
+    else {
+      refreshXmltvChannelOptions();
+      populateXmltvSelectedName();
+    }
   };
 
   const formLoaders = [];
