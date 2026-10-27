@@ -156,6 +156,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeTranscoderPipeline.cpp
     src/media/NativeTestPatternSource.cpp
     src/media/Mp2Encoder.cpp
+    src/media/Mp3Encoder.cpp
     src/media/TransportStream.cpp
     src/media/RtpMpegTs.cpp
     src/media/UdpSocket.cpp
@@ -191,6 +192,18 @@ target_link_libraries(dvbstreamer5_media_core PRIVATE
     ${CMAKE_DL_LIBS}
     m
 )
+# Optional direct LAME MPEG-1 Layer III encoder (not a media framework).
+# Keep AAC/MP2-only builds possible if the development package is absent.
+find_path(DVBSTREAMER5_MP3LAME_INCLUDE_DIR NAMES lame/lame.h)
+find_library(DVBSTREAMER5_MP3LAME_LIBRARY NAMES mp3lame)
+if(DVBSTREAMER5_MP3LAME_INCLUDE_DIR AND DVBSTREAMER5_MP3LAME_LIBRARY)
+    target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_MP3LAME=1)
+    target_include_directories(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_MP3LAME_INCLUDE_DIR})
+    target_link_libraries(dvbstreamer5_media_core PRIVATE ${DVBSTREAMER5_MP3LAME_LIBRARY})
+    message(STATUS "Native MP3 encoder: LAME enabled")
+else()
+    message(STATUS "Native MP3 encoder: disabled (install libmp3lame-dev and reconfigure)")
+endif()
 if(WIN32)
     target_link_libraries(dvbstreamer5_media_core PUBLIC ws2_32)
 endif()
