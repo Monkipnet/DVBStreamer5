@@ -439,6 +439,9 @@ std::string HttpServer::currentState() {
     for (const auto& client : configManager.config.camClients) camClients.append(client.toJson());
     root["cam_clients"] = camClients;
     root["program_version"] = kProgramVersion;
+    root["process_uptime_seconds"] = Json::UInt64(
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - startedAt_).count()));
     Json::Value interfaces(Json::arrayValue);
     for (const auto& iface : enumerateNetworkInterfaces()) {
         Json::Value item;
@@ -528,6 +531,7 @@ std::string HttpServer::currentState() {
       item["stream_name"] = streamNames.count(session.streamId) ? streamNames[session.streamId] : session.streamId;
       item["protocol"] = session.protocol == "mpegts" ? "http" : session.protocol;
       item["connections"] = Json::UInt64(session.connections);
+      item["connected_seconds"] = Json::UInt64(session.connectedSeconds);
       return item;
     };
 
@@ -591,14 +595,17 @@ std::string HttpServer::currentState() {
       item["active_sessions"] = Json::UInt64(activeSessions);
       item["session_active"] = activeSessions > 0;
       Json::Value subscriberStreams(Json::arrayValue);
+      std::uint64_t longestConnectedSeconds = 0;
       const std::string primaryIp = normalizeIpAddress(subscriber.primaryIp);
       const std::string backupIp = normalizeIpAddress(subscriber.backupIp);
       for (const auto& session : activeStreamSessions) {
         const std::string sessionIp = normalizeIpAddress(session.clientIp);
         if (sessionIp == primaryIp || (!backupIp.empty() && sessionIp == backupIp)) {
           subscriberStreams.append(sessionToJson(session));
+          longestConnectedSeconds = std::max(longestConnectedSeconds, session.connectedSeconds);
         }
       }
+      item["connected_seconds"] = Json::UInt64(longestConnectedSeconds);
       item["active_streams"] = subscriberStreams;
       subscribers.append(item);
     }
