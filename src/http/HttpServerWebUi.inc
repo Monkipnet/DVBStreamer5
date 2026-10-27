@@ -2159,6 +2159,455 @@ const uiEnToHr = new Map([
   ]
 ]);
 
+
+// Additional Croatian phrases: diagnostics, protocols, charts, and detailed help.
+for (const [english, croatian] of [
+  [
+    "OSCam-mini Newcamd users appear here automatically. Manual CAM clients can be configured in System / Newcamd.",
+    "Korisnici OSCam-mini Newcamd pojavljuju se ovdje automatski. Ručni CAM klijenti postavljaju se u Sustav / Newcamd."
+  ],
+  [
+    "No input bitrate while the stream is active",
+    "Nema ulaznog bitratea dok je tok aktivan"
+  ],
+  [
+    "Output bitrate differs from the target by more than 20%",
+    "Izlazni bitrate odstupa od cilja za više od 20 %"
+  ],
+  [
+    "DECODE: OK",
+    "DEKODIRANJE: U REDU"
+  ],
+  [
+    "DECODE: NO",
+    "DEKODIRANJE: NE"
+  ],
+  [
+    "DECODE: OFF",
+    "DEKODIRANJE: ISKLJ."
+  ],
+  [
+    "WAITING FOR A/V PACKETS",
+    "ČEKANJE A/V PAKETA"
+  ],
+  [
+    "Monitoring via A/V PID, scrambling_control and valid PES",
+    "Nadzor putem A/V PID-a, scrambling_control i valjanog PES-a"
+  ],
+  [
+    "Monitoring via A/V PID, scrambling_control and valid PES on output.",
+    "Nadzor izlaza putem A/V PID-a, scrambling_control i valjanog PES-a."
+  ],
+  [
+    "A packet multiplexer combines the selected SPTS outputs into one MPEG-TS. Media packet PCR/PTS/DTS timestamps are not rewritten; the original PAT/PMT/SDT are replaced with common MPTS tables, and per-channel null packets are discarded.",
+    "Paketni multiplekser spaja odabrane SPTS izlaze u jedan MPEG-TS. PCR/PTS/DTS se ne mijenjaju; PAT/PMT/SDT zamjenjuju se zajedničkim MPTS tablicama, a prazni paketi odbacuju."
+  ],
+  [
+    "MPTS SID, 0 = automatic",
+    "MPTS SID, 0 = automatski"
+  ],
+  [
+    "Create channels first",
+    "Najprije stvorite kanale"
+  ],
+  [
+    "SID = 0 enables automatic numbering starting from the base SID. Service order follows the channel order in the configuration.",
+    "SID = 0 omogućuje automatsko numeriranje od osnovnog SID-a. Redoslijed usluga slijedi redoslijed kanala."
+  ],
+  [
+    "free",
+    "slobodno"
+  ],
+  [
+    "Tuner parameters changed. Run the scan again.",
+    "Postavke tunera su promijenjene. Ponovno pokrenite skeniranje."
+  ],
+  [
+    "Failed to read DVB frontend",
+    "Čitanje DVB frontenda nije uspjelo"
+  ],
+  [
+    "Native Linux DVB frontend is unavailable.",
+    "Native Linux DVB frontend nije dostupan."
+  ],
+  [
+    "Native Linux DVB is unavailable on this host.",
+    "Native Linux DVB nije dostupan na ovom računalu."
+  ],
+  [
+    "No DVB frontend was found in /dev/dvb.",
+    "U /dev/dvb nije pronađen DVB frontend."
+  ],
+  [
+    "Failed to get the DVB frontend list",
+    "Dohvat popisa DVB frontenda nije uspio"
+  ],
+  [
+    "No channels found. Check frequency, symbol rate, polarization and signal level.",
+    "Nisu pronađeni kanali. Provjerite frekvenciju, simboličku brzinu, polarizaciju i signal."
+  ],
+  [
+    "PMT/PID not received yet",
+    "PMT/PID još nije primljen"
+  ],
+  [
+    "ENC.",
+    "KOD."
+  ],
+  [
+    "WAIT",
+    "ČEKA"
+  ],
+  [
+    "DVB-S/S2 scan failed",
+    "DVB-S/S2 skeniranje nije uspjelo"
+  ],
+  [
+    "Select at least one channel.",
+    "Odaberite barem jedan kanal."
+  ],
+  [
+    "Failed to save satellite channels",
+    "Spremanje satelitskih kanala nije uspjelo"
+  ],
+  [
+    "Add channel — DVB-S/S2",
+    "Dodaj kanal — DVB-S/S2"
+  ],
+  [
+    "Searching for DVB frontend...",
+    "Traženje DVB frontenda..."
+  ],
+  [
+    "Checking native Linux DVB...",
+    "Provjera native Linux DVB-a..."
+  ],
+  [
+    "Click “Scan channels”.",
+    "Kliknite „Skeniraj kanale”."
+  ],
+  [
+    "/path/to/replacement.ts or upload a file below",
+    "/putanja/do/zamjene.ts ili učitajte datoteku"
+  ],
+  [
+    "Uploading...",
+    "Učitavanje..."
+  ],
+  [
+    "native transcoder components are not available",
+    "Native komponente transkodera nisu dostupne"
+  ],
+  [
+    "The key is configured per channel. Auto: *.m3u8 URLs are opened as HLS; other HTTP/HTTPS URLs are treated as single-request MPEG-TS. For HLS without .m3u8, select HLS mode manually. For HTTP MPEG-TS the key is applied to the single request; for HLS it is applied to the manifest, variant playlist, segments and EXT-X-KEY. If the key is already present in the URL, select “No key”. For Authorization, enter the complete value, for example Bearer xxxxx.",
+    "Ključ se postavlja za svaki kanal. Auto: *.m3u8 otvara se kao HLS, ostali HTTP/HTTPS kao MPEG-TS. Za HLS bez nastavka .m3u8 ručno odaberite HLS. Ključ se primjenjuje na HTTP zahtjev ili HLS manifest, popise, segmente i EXT-X-KEY. Ako URL već sadrži ključ, odaberite „Bez ključa”. Za Authorization unesite puni oblik, npr. Bearer xxxxx."
+  ],
+  [
+    "0 = auto-detect SID from PAT; values 1–65535 select a specific input service.",
+    "0 = automatski SID iz PAT-a; vrijednosti 1–65535 odabiru određenu ulaznu uslugu."
+  ],
+  [
+    "The archive stores HLS TS segments on disk. Compatible URLs: /CHANNEL/archive-UTC-DURATION.m3u8, /CHANNEL/rewind-SECONDS.m3u8, /CHANNEL/timeshift_rel-SECONDS.m3u8, /CHANNEL/timeshift_abs-UTC.m3u8.",
+    "Arhiva sprema HLS TS segmente na disk. URL-ovi: /CHANNEL/archive-UTC-DURATION.m3u8, /CHANNEL/rewind-SECONDS.m3u8, /CHANNEL/timeshift_rel-SECONDS.m3u8, /CHANNEL/timeshift_abs-UTC.m3u8."
+  ],
+  [
+    "Video: H.264 transcoding",
+    "Video: H.264 transkodiranje"
+  ],
+  [
+    "Video: H.265 / HEVC transcoding",
+    "Video: H.265 / HEVC transkodiranje"
+  ],
+  [
+    "Video: H.265 / HEVC transcoding (unavailable)",
+    "Video: H.265 / HEVC transkodiranje (nedostupno)"
+  ],
+  [
+    "Video: pass through original stream",
+    "Video: proslijedi izvorni tok"
+  ],
+  [
+    "Multibitrate HLS (ABR)",
+    "Višestruki bitrate HLS (ABR)"
+  ],
+  [
+    "Encoder: Auto (NVENC → QSV/VAAPI → CPU)",
+    "Koder: Auto (NVENC → QSV/VAAPI → CPU)"
+  ],
+  [
+    "Encoder: NVIDIA NVENC",
+    "Koder: NVIDIA NVENC"
+  ],
+  [
+    "Encoder: Intel Quick Sync / VA",
+    "Koder: Intel Quick Sync / VA"
+  ],
+  [
+    "Encoder: CPU x264/x265",
+    "Koder: CPU x264/x265"
+  ],
+  [
+    "kbps CBR",
+    "kb/s CBR"
+  ],
+  [
+    "Audio: pass through original track",
+    "Zvuk: proslijedi izvornu stazu"
+  ],
+  [
+    "Audio: AAC-LC",
+    "Zvuk: AAC-LC"
+  ],
+  [
+    "Audio: MP3",
+    "Zvuk: MP3"
+  ],
+  [
+    "audio",
+    "zvuk"
+  ],
+  [
+    "1024×576 (SD 16:9, square pixel)",
+    "1024×576 (SD 16:9, kvadratni piksel)"
+  ],
+  [
+    "720×576 (SD 16:9, anamorphic)",
+    "720×576 (SD 16:9, anamorfno)"
+  ],
+  [
+    "720×576 (PAL SD, legacy mode)",
+    "720×576 (PAL SD, stari način)"
+  ],
+  [
+    "For MPEG-TS: input SID 0 auto-detects the program from PAT; a non-zero SID selects a specific input service. Output SID is always configured separately and is used for remapping in PAT/PMT/SDT. V-PID and A-PID define the output PIDs.",
+    "Za MPEG-TS: ulazni SID 0 automatski odabire uslugu iz PAT-a, a drugi SID bira određenu uslugu. Izlazni SID postavlja se zasebno za PAT/PMT/SDT. V-PID i A-PID određuju izlazne PID-ove."
+  ],
+  [
+    "Interface IP or DNS",
+    "IP sučelja ili DNS"
+  ],
+  [
+    "RTP IP / multicast",
+    "RTP IP / multicast"
+  ],
+  [
+    "RTP port",
+    "RTP port"
+  ],
+  [
+    "SRT host for URL",
+    "SRT host za URL"
+  ],
+  [
+    "server.example.com or IP",
+    "server.example.com ili IP"
+  ],
+  [
+    "0.0.0.0 for listener",
+    "0.0.0.0 za listener"
+  ],
+  [
+    "rtsp://server/app/name or server IP",
+    "rtsp://server/app/name ili IP poslužitelja"
+  ],
+  [
+    "xxxx-xxxx-xxxx-xxxx or rtmp://a.rtmp.youtube.com/live2/...",
+    "xxxx-xxxx-xxxx-xxxx ili rtmp://a.rtmp.youtube.com/live2/..."
+  ],
+  [
+    "rtmp://server/app/key or server.example.com",
+    "rtmp://server/app/key ili server.example.com"
+  ],
+  [
+    "CBR MPEG-TS for HTTP/HLS/SRT: NULL stuffing + PAT/PMT/PCR; HTTP/SRT are additionally synchronized to PCR.",
+    "CBR MPEG-TS za HTTP/HLS/SRT: NULL paketi + PAT/PMT/PCR; HTTP/SRT dodatno se sinkronizira prema PCR-u."
+  ],
+  [
+    "UDP CBR uses StableUdpOutput; UDP VBR follows the input bitrate.",
+    "UDP CBR koristi StableUdpOutput; UDP VBR slijedi ulazni bitrate."
+  ],
+  [
+    "CBR does not apply to this output type.",
+    "CBR se ne primjenjuje na ovu vrstu izlaza."
+  ],
+  [
+    "Green — input bitrate on the left Mbit/s scale.",
+    "Zeleno — ulazni bitrate na lijevoj skali Mbit/s."
+  ],
+  [
+    "Blue — bitrate of the selected output stream on the left Mbit/s scale.",
+    "Plavo — bitrate odabranog izlaznog toka na lijevoj skali Mbit/s."
+  ],
+  [
+    "Orange bars — input CC errors per history interval on the right scale.",
+    "Narančasti stupci — ulazne CC pogreške na desnoj skali."
+  ],
+  [
+    "Pink bars — CC errors of the common output MPEG-TS before fan-out per history interval.",
+    "Ružičasti stupci — CC pogreške zajedničkog izlaznog MPEG-TS-a prije grananja."
+  ],
+  [
+    "CC errors are calculated from cumulative counters between adjacent history points; errors within a 30-second interval are no longer lost.",
+    "CC pogreške računaju se iz kumulativnih brojača između povijesnih točaka; pogreške u intervalu od 30 s ne gube se."
+  ],
+  [
+    "Click the chart to copy its image.",
+    "Kliknite grafikon za kopiranje slike."
+  ],
+  [
+    "History is empty. Data will appear after several state updates.",
+    "Povijest je prazna. Podaci će se pojaviti nakon nekoliko osvježavanja."
+  ],
+  [
+    "History is collected in memory while the application is running.",
+    "Povijest se prikuplja u memoriji tijekom rada aplikacije."
+  ],
+  [
+    "last",
+    "zadnje"
+  ],
+  [
+    "min",
+    "min"
+  ],
+  [
+    "avg",
+    "prosjek"
+  ],
+  [
+    "max",
+    "maks."
+  ],
+  [
+    "No input/output CC errors or other errors were detected during the selected period",
+    "U odabranom razdoblju nema ulaznih/izlaznih CC ni drugih pogrešaka"
+  ],
+  [
+    "The browser did not allow copying the chart image",
+    "Preglednik nije dopustio kopiranje grafikona"
+  ],
+  [
+    "The browser does not support copying the chart image",
+    "Preglednik ne podržava kopiranje slike grafikona"
+  ],
+  [
+    "Chart image copied to the clipboard",
+    "Slika grafikona kopirana je u međuspremnik"
+  ],
+  [
+    "Failed to copy the chart image",
+    "Kopiranje slike grafikona nije uspjelo"
+  ],
+  [
+    "The preview API response must contain a sources array",
+    "Odgovor API-ja za pregled mora sadržavati polje izvora"
+  ],
+  [
+    "Invalid HTTP preview address",
+    "Nevaljana HTTP adresa pregleda"
+  ],
+  [
+    "Preview address must use HTTP(S)",
+    "Adresa pregleda mora koristiti HTTP(S)"
+  ],
+  [
+    "Preview must be served by the TVStreammer web server (same-origin)",
+    "Pregled mora pružati TVStreammer web-poslužitelj (isti izvor)"
+  ],
+  [
+    "Preview must be served by the DVBStreamer web server (same-origin)",
+    "Pregled mora pružati DVBStreamer web-poslužitelj (isti izvor)"
+  ],
+  [
+    "The browser does not support a secure HTTP preview token",
+    "Preglednik ne podržava sigurni token HTTP pregleda"
+  ],
+  [
+    "install() can only run in a browser",
+    "install() se može pokrenuti samo u pregledniku"
+  ],
+  [
+    "HLS requires browser support or a local hls.js.",
+    "HLS zahtijeva podršku preglednika ili lokalni hls.js."
+  ],
+  [
+    "Press ▶ to start video.",
+    "Pritisnite ▶ za pokretanje videa."
+  ],
+  [
+    "Stream is stopped: temporary HTTP preview is unavailable.",
+    "Tok je zaustavljen: privremeni HTTP pregled nije dostupan."
+  ],
+  [
+    "Temporary HTTP preview is unavailable for this channel.",
+    "Privremeni HTTP pregled nije dostupan za ovaj kanal."
+  ],
+  [
+    "HTTP MPEG-TS requires a local mpegts.js and MediaSource support.",
+    "HTTP MPEG-TS zahtijeva lokalni mpegts.js i podršku za MediaSource."
+  ],
+  [
+    "Check the channel codecs and availability of new video frames.",
+    "Provjerite kodeke kanala i dostupnost novih video kadrova."
+  ],
+  [
+    "Satellite MPEG-2/AC3 may require an H.264/AAC preview for browser playback.",
+    "Satelitski MPEG-2/AC3 može zahtijevati H.264/AAC pregled za reprodukciju u pregledniku."
+  ],
+  [
+    "Subscriber name, IP address, Status",
+    "Naziv pretplatnika, IP adresa, Status"
+  ],
+  [
+    "HD STREAMS",
+    "HD TOKOVI"
+  ],
+  [
+    "HD + SD STREAMS",
+    "HD + SD TOKOVI"
+  ],
+  [
+    "SD STREAMS",
+    "SD TOKOVI"
+  ],
+  [
+    "WITHOUT HD/SD LABEL",
+    "BEZ HD/SD OZNAKE"
+  ],
+  [
+    "Native DVB-S/S2 frontend is available only on Linux.",
+    "Native DVB-S/S2 frontend dostupan je samo na Linuxu."
+  ],
+  [
+    "Applies to all selected channels. OnDemand starts the stream and CAM only when an HTTP/HLS client connects; UDP/RTP/SRT/RTSP/RTMP cannot detect a passive receiver.",
+    "Vrijedi za sve odabrane kanale. OnDemand pokreće tok i CAM samo kada se poveže HTTP/HLS klijent; UDP/RTP/SRT/RTSP/RTMP ne mogu otkriti pasivnog primatelja."
+  ],
+  [
+    "No input/output CC errors or other errors were detected during the selected period",
+    "U odabranom razdoblju nisu otkrivene CC ni druge pogreške"
+  ],
+  [
+    "Estimated quality: frontend does not report CNR/SNR",
+    "Procijenjena kvaliteta: frontend ne javlja CNR/SNR"
+  ],
+  [
+    "Selected",
+    "Odabrano"
+  ],
+  [
+    "Mode",
+    "Način"
+  ],
+  [
+    "Stream is not active",
+    "Tok nije aktivan"
+  ],
+  [
+    "Video bitrate",
+    "Video bitrate"
+  ]
+]) uiEnToHr.set(english, croatian);
+
 const uiOriginalText = new WeakMap();
 const uiOriginalAttrs = new WeakMap();
 const uiLocalizedAttributes = ['title', 'placeholder', 'aria-label'];
