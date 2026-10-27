@@ -272,6 +272,13 @@ bool ExternalXmltvManager::parse(
                 channelId = xmlProperty(reader, "id");
                 channelName.clear();
                 inChannel = !channelId.empty() && channelId.size() <= 256;
+                if (inChannel && xmlTextReaderIsEmptyElement(reader)) {
+                    if (data.channels.size() < kMaxChannels) {
+                        data.channels.emplace(channelId, channelId);
+                        ++totalChannels;
+                    }
+                    inChannel = false;
+                }
             } else if (tag == "programme") {
                 programmeId = xmlProperty(reader, "channel");
                 const std::string start = xmlProperty(reader, "start");
@@ -299,6 +306,11 @@ bool ExternalXmltvManager::parse(
                 inChannel = false;
             } else if (tag == "programme" && inProgramme) {
                 if (totalEvents < kMaxEvents && !event.title.empty()) {
+                    // Some providers omit <channel> definitions entirely.
+                    // Keep the programme ID selectable in the UI in that case.
+                    if (data.channels.size() < kMaxChannels &&
+                        !data.channels.count(programmeId))
+                        data.channels.emplace(programmeId, programmeId);
                     data.programmes[programmeId].push_back(std::move(event));
                     ++totalEvents;
                 }
