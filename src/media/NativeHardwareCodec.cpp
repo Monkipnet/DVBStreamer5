@@ -332,6 +332,10 @@ public:
     explicit VaapiH264Encoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
     ~VaapiH264Encoder() override { close(); }
 
+    void setOptions(const VideoEncoderOptions& options) override {
+        options_ = options;
+    }
+
     bool configure(int width, int height, double fps, std::uint64_t bitrate,
                    std::string& error) override {
         error.clear();
@@ -367,12 +371,22 @@ public:
         }
         vaInitialized_ = true;
 
-        if (hasVaEntrypoint(display_, VAProfileH264High, VAEntrypointEncSlice))
+        const bool haveHigh =
+            hasVaEntrypoint(display_, VAProfileH264High, VAEntrypointEncSlice);
+        const bool haveMain =
+            hasVaEntrypoint(display_, VAProfileH264Main, VAEntrypointEncSlice);
+        const bool haveBaseline =
+            hasVaEntrypoint(display_, VAProfileH264ConstrainedBaseline,
+                            VAEntrypointEncSlice);
+        if (options_.profile == "high" && haveHigh)
             profile_ = VAProfileH264High;
-        else if (hasVaEntrypoint(display_, VAProfileH264Main, VAEntrypointEncSlice))
+        else if (options_.profile == "main" && haveMain)
             profile_ = VAProfileH264Main;
-        else if (hasVaEntrypoint(display_, VAProfileH264ConstrainedBaseline,
-                                 VAEntrypointEncSlice))
+        else if (haveHigh)
+            profile_ = VAProfileH264High;
+        else if (haveMain)
+            profile_ = VAProfileH264Main;
+        else if (haveBaseline)
             profile_ = VAProfileH264ConstrainedBaseline;
         else {
             error = "VAAPI H.264 EncSlice entrypoint unavailable";
@@ -417,7 +431,25 @@ public:
         fps_ = fps > 0.0 ? fps : 25.0;
         bitrate_ = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(bitrate, 0xffffffffULL));
-        gop_ = std::max(1, static_cast<int>(std::lround(fps_ * 2.0)));
+        gop_ = std::max(1, static_cast<int>(
+            options_.gopFrames > 0 ? options_.gopFrames :
+            std::lround(fps_ * 2.0)));
+        levelIdc_ =
+            options_.level == "3.1" ? 31 :
+            options_.level == "4.0" ? 40 :
+            options_.level == "4.1" ? 41 :
+            options_.level == "5.0" ? 50 :
+            options_.level == "5.1" ? 51 : 40;
+        refFrames_ = options_.refFrames == 0 ? 1 :
+            std::min<std::uint32_t>(options_.refFrames, 1U);
+        if (options_.bFrames > 0 || options_.openGop) {
+            std::cerr << "NATIVE VIDEO OPTIONS backend=vaapi-direct"
+                      << " bframes_requested=" << options_.bFrames
+                      << " open_gop_requested=" << (options_.openGop ? 1 : 0)
+                      << " applied_bframes=0 applied_open_gop=0"
+                      << " reason=live_zero_reorder"
+                      << std::endl;
+        }
         spsAnnexB_ = makeVaapiH264Sps(
             profile_, width_, height_, alignedWidth_, alignedHeight_);
         ppsAnnexB_ = makeVaapiH264Pps();
@@ -455,6 +487,11 @@ public:
             << " size=" << width_ << "x" << height_
             << " fps=" << fps_
             << " bitrate_kbps=" << (bitrate_ / 1000U)
+            << " preset=" << options_.preset
+            << " profile=" << options_.profile
+            << " level=" << options_.level
+            << " gop_frames=" << gop_
+            << " refs=" << refFrames_
             << " rc=" << (cbr_ ? "cbr" : "cqp")
             << std::endl;
         return true;
@@ -520,12 +557,12 @@ public:
         if (idr) {
             VAEncSequenceParameterBufferH264 seq{};
             seq.seq_parameter_set_id = 0;
-            seq.level_idc = 40;
+            seq.level_idc = static_cast<unsigned char>(levelIdc_);
             seq.intra_period = gop_;
             seq.intra_idr_period = gop_;
             seq.ip_period = 1;
             seq.bits_per_second = bitrate_;
-            seq.max_num_ref_frames = 1;
+            seq.max_num_ref_frames = static_cast<unsigned char>(refFrames_);
             seq.picture_width_in_mbs =
                 static_cast<unsigned short>(alignedWidth_ / 16);
             seq.picture_height_in_mbs =
@@ -962,6 +999,9 @@ private:
     }
 
     mpegts::ElementaryCodec codec_ = mpegts::ElementaryCodec::Unknown;
+    VideoEncoderOptions options_{};
+    int levelIdc_ = 40;
+    std::uint32_t refFrames_ = 1;
     int drmFd_ = -1;
     VADisplay display_ = nullptr;
     VAProfile profile_ = VAProfileNone;
@@ -998,6 +1038,10 @@ class QsvVplEncoder final : public VideoEncoder {
 public:
     explicit QsvVplEncoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
     ~QsvVplEncoder() override { close(); }
+
+    void setOptions(const VideoEncoderOptions& options) override {
+        options_ = options;
+    }
 
     bool configure(int width, int height, double fps, std::uint64_t bitrate,
                    std::string& error) override {
@@ -1042,13 +1086,42 @@ public:
 
         std::memset(&params_, 0, sizeof(params_));
         params_.mfx.CodecId = codec_ == mpegts::ElementaryCodec::H264 ? MFX_CODEC_AVC : MFX_CODEC_HEVC;
-        params_.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
+        params_.mfx.TargetUsage = static_cast<mfxU16>(
+            options_.preset == "fastest" ? 7 :
+            options_.preset == "fast" ? 6 :
+            options_.preset == "quality" ? 2 :
+            options_.preset == "best" ? 1 : 4);
         params_.mfx.TargetKbps = static_cast<mfxU16>(std::min<std::uint64_t>(bitrate / 1000ULL, 65535ULL));
         params_.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
-        params_.mfx.GopPicSize = static_cast<mfxU16>(std::clamp<int>(static_cast<int>(std::lround((fps > 0 ? fps : 25.0) * 2.0)), 1, 65535));
+        params_.mfx.GopPicSize = static_cast<mfxU16>(std::clamp<std::uint32_t>(
+            options_.gopFrames > 0 ? options_.gopFrames :
+            static_cast<std::uint32_t>(std::lround((fps > 0 ? fps : 25.0) * 2.0)),
+            1U, 65535U));
+        // The current mux path is zero-reorder (DTS=PTS). Keep QSV IP-only
+        // even if B-frames are requested; exposing reordered pictures without
+        // proper DTS generation would reintroduce live stalls.
         params_.mfx.GopRefDist = 1;
         params_.mfx.IdrInterval = 1;
         params_.mfx.NumSlice = 1;
+        params_.mfx.NumRefFrame = static_cast<mfxU16>(
+            std::min<std::uint32_t>(options_.refFrames, 4U));
+        if (codec_ == mpegts::ElementaryCodec::H264) {
+            if (options_.profile == "main") params_.mfx.CodecProfile = 77;
+            else if (options_.profile == "high") params_.mfx.CodecProfile = 100;
+            if (options_.level == "3.1") params_.mfx.CodecLevel = 31;
+            else if (options_.level == "4.0") params_.mfx.CodecLevel = 40;
+            else if (options_.level == "4.1") params_.mfx.CodecLevel = 41;
+            else if (options_.level == "5.0") params_.mfx.CodecLevel = 50;
+            else if (options_.level == "5.1") params_.mfx.CodecLevel = 51;
+        }
+        if (options_.bFrames > 0 || options_.openGop) {
+            std::cerr << "NATIVE VIDEO OPTIONS backend=qsv-vaapi"
+                      << " bframes_requested=" << options_.bFrames
+                      << " open_gop_requested=" << (options_.openGop ? 1 : 0)
+                      << " applied_bframes=0 applied_open_gop=0"
+                      << " reason=live_zero_reorder"
+                      << std::endl;
+        }
         params_.mfx.FrameInfo.FourCC = MFX_FOURCC_NV12;
         params_.mfx.FrameInfo.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
         params_.mfx.FrameInfo.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
@@ -1079,7 +1152,15 @@ public:
                   << (codec_ == mpegts::ElementaryCodec::H264 ? "h264" : "hevc")
                   << " size=" << width_ << "x" << height_
                   << " fps=" << params_.mfx.FrameInfo.FrameRateExtN
-                  << " bitrate_kbps=" << (bitrate / 1000ULL) << std::endl;
+                  << " bitrate_kbps=" << (bitrate / 1000ULL)
+                  << " preset=" << options_.preset
+                  << " target_usage=" << params_.mfx.TargetUsage
+                  << " profile=" << options_.profile
+                  << " level=" << options_.level
+                  << " gop_frames=" << params_.mfx.GopPicSize
+                  << " refs=" << params_.mfx.NumRefFrame
+                  << " bframes=0"
+                  << std::endl;
         return true;
     }
 
@@ -1163,6 +1244,7 @@ private:
     }
 
     mpegts::ElementaryCodec codec_ = mpegts::ElementaryCodec::Unknown;
+    VideoEncoderOptions options_{};
     mfxLoader loader_ = nullptr;
     mfxSession session_ = nullptr;
     mfxVideoParam params_{};
@@ -1234,16 +1316,14 @@ public:
         GUID presetGuid = NV_ENC_PRESET_P5_GUID;
         const char* presetName = "p5";
         const auto selectPreset = [&](const std::string& name) {
-            if (name == "p1") { presetName = "p1"; return NV_ENC_PRESET_P1_GUID; }
-            if (name == "p2") { presetName = "p2"; return NV_ENC_PRESET_P2_GUID; }
-            if (name == "p3") { presetName = "p3"; return NV_ENC_PRESET_P3_GUID; }
-            if (name == "p4") { presetName = "p4"; return NV_ENC_PRESET_P4_GUID; }
-            if (name == "p6") { presetName = "p6"; return NV_ENC_PRESET_P6_GUID; }
-            if (name == "p7") { presetName = "p7"; return NV_ENC_PRESET_P7_GUID; }
+            if (name == "fastest" || name == "p1") { presetName = "p1"; return NV_ENC_PRESET_P1_GUID; }
+            if (name == "fast" || name == "p2" || name == "p3") { presetName = "p2"; return NV_ENC_PRESET_P2_GUID; }
+            if (name == "quality" || name == "p6") { presetName = "p6"; return NV_ENC_PRESET_P6_GUID; }
+            if (name == "best" || name == "p7") { presetName = "p7"; return NV_ENC_PRESET_P7_GUID; }
             presetName = "p5";
             return NV_ENC_PRESET_P5_GUID;
         };
-        presetGuid = selectPreset(options_.nvencPreset);
+        presetGuid = selectPreset(options_.preset);
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -1287,15 +1367,22 @@ public:
         cfg.gopLength = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(gopFrames_, 0xffffffffULL));
 
-        // Live contribution profile: no B frames, no lookahead and no
-        // reorder delay. A two-frame VBV keeps latency bounded without
-        // starving forced IDR frames at normal broadcast bitrates.
+        // Live transport remains zero-reorder. The setting is accepted for a
+        // common UI but clamped until DTS/reorder handling is implemented.
+        if (options_.bFrames > 0 || options_.openGop) {
+            std::cerr << "NATIVE VIDEO OPTIONS backend=nvenc"
+                      << " bframes_requested=" << options_.bFrames
+                      << " open_gop_requested=" << (options_.openGop ? 1 : 0)
+                      << " applied_bframes=0 applied_open_gop=0"
+                      << " reason=live_zero_reorder"
+                      << std::endl;
+        }
         cfg.frameIntervalP = 1;
         cfg.rcParams.enableLookahead = 0;
         cfg.rcParams.zeroReorderDelay = 1;
         cfg.rcParams.enableAQ = 1;
         cfg.rcParams.aqStrength = static_cast<std::uint32_t>(
-            std::clamp<std::uint32_t>(options_.nvencAqStrength, 1U, 15U));
+            std::clamp<std::uint32_t>(options_.aqStrength, 1U, 15U));
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         cfg.rcParams.multiPass = NV_ENC_MULTI_PASS_DISABLED;
 #endif
@@ -1311,10 +1398,20 @@ public:
 
         if (codec_ == mpegts::ElementaryCodec::H264) {
             cfg.profileGUID = NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID;
-            if (options_.nvencProfile == "main")
+            if (options_.profile == "main")
                 cfg.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
-            else if (options_.nvencProfile == "high")
+            else if (options_.profile == "high")
                 cfg.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
+            cfg.encodeCodecConfig.h264Config.level =
+                options_.level == "3.1" ? NV_ENC_LEVEL_H264_31 :
+                options_.level == "4.0" ? NV_ENC_LEVEL_H264_4 :
+                options_.level == "4.1" ? NV_ENC_LEVEL_H264_41 :
+                options_.level == "5.0" ? NV_ENC_LEVEL_H264_5 :
+                options_.level == "5.1" ? NV_ENC_LEVEL_H264_51 :
+                NV_ENC_LEVEL_AUTOSELECT;
+            if (options_.refFrames > 0)
+                cfg.encodeCodecConfig.h264Config.maxNumRefFrames =
+                    std::min<std::uint32_t>(options_.refFrames, 4U);
             cfg.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
             cfg.encodeCodecConfig.h264Config.outputAUD = 1;
             cfg.encodeCodecConfig.h264Config.idrPeriod = cfg.gopLength;
@@ -1369,8 +1466,10 @@ public:
                   << " bitrate_kbps=" << (bitrate / 1000ULL)
                   << " gpu=" << gpuOrdinal_
                   << " preset=" << presetName
-                  << " profile=" << options_.nvencProfile
-                  << " aq_strength=" << std::clamp<std::uint32_t>(options_.nvencAqStrength, 1U, 15U)
+                  << " profile=" << options_.profile
+                  << " level=" << options_.level
+                  << " refs=" << options_.refFrames
+                  << " aq_strength=" << std::clamp<std::uint32_t>(options_.aqStrength, 1U, 15U)
                   << " tuning=" << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr"
                   << " bframes=0 lookahead=0 reorder_delay=0"
