@@ -6,17 +6,22 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <utility>
+#include <unistd.h>
 
 namespace {
-constexpr std::size_t kMaxDownload = 32U * 1024U * 1024U;
-constexpr std::size_t kMaxXml = 64U * 1024U * 1024U;
-constexpr std::size_t kMaxEvents = 180000U;
+constexpr std::size_t kMaxDownload = 512U * 1024U * 1024U; // Temporary file, NOT RAM
+constexpr std::uint64_t kMaxXml = 2ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr std::size_t kMaxEvents = 300000U; // Maximum retained events in RAM
+constexpr std::size_t kMaxEventsPerChannel = 512U;
+constexpr std::size_t kMaxScannedEvents = 5000000U;
 constexpr std::size_t kMaxChannels = 15000U;
 
 std::int64_t nowSeconds() {
@@ -90,14 +95,72 @@ bool xmltvTime(const std::string& value, std::int64_t& unixTime) {
     return true;
 }
 
-size_t acceptCurl(void* bytes, size_t elementSize, size_t count, void* user) {
-    auto* body = static_cast<std::string*>(user);
-    if (!elementSize || count > std::numeric_limits<size_t>::max() / elementSize)
+struct DownloadSink {
+    std::FILE* file = nullptr;
+    std::size_t total = 0;
+    bool sizeLimit = false;
+    int writeErrno = 0;
+};
+
+// libcurl returning zero deliberately aborts the transfer. Record our
+// particular reason so CURLE_WRITE_ERROR is never shown as a generic disk
+// error (the previous 32-MiB in-memory cap caused that confusing message).
+std::size_t acceptCurl(void* bytes, std::size_t elementSize,
+                       std::size_t count, void* user) {
+    auto& sink = *static_cast<DownloadSink*>(user);
+    if (!elementSize || count > std::numeric_limits<std::size_t>::max() / elementSize) {
+        sink.sizeLimit = true;
         return 0;
-    const size_t n = elementSize * count;
-    if (n > kMaxDownload || body->size() > kMaxDownload - n) return 0;
-    body->append(static_cast<const char*>(bytes), n);
-    return n;
+    }
+    const std::size_t n = elementSize * count;
+    if (n > kMaxDownload || sink.total > kMaxDownload - n) {
+        sink.sizeLimit = true;
+        return 0;
+    }
+    const std::size_t saved = std::fwrite(bytes, 1, n, sink.file);
+    sink.total += saved;
+    if (saved != n) sink.writeErrno = errno ? errno : EIO;
+    return saved;
+}
+
+// zlib's gzread transparently accepts both XML and gzip-compressed XML.
+// The temporary file is only a byte spool; the XML reader processes it
+// sequentially without creating a second decompressed copy.
+struct XmlInput {
+    gzFile file = nullptr;
+    std::uint64_t uncompressed = 0;
+    bool sizeLimit = false;
+    bool readError = false;
+};
+int xmlReadCallback(void* user, char* buffer, int count) {
+    auto& input = *static_cast<XmlInput*>(user);
+    if (!input.file || count <= 0) return 0;
+    const auto available = input.uncompressed < kMaxXml
+        ? kMaxXml - input.uncompressed : std::uint64_t{0};
+    if (!available) {
+        char extra;
+        const int got = gzread(input.file, &extra, 1);
+        if (got > 0) input.sizeLimit = true;
+        else if (got < 0) input.readError = true;
+        return got == 0 ? 0 : -1;
+    }
+    const unsigned ask = static_cast<unsigned>(
+        std::min<std::uint64_t>(static_cast<std::uint64_t>(count), available));
+    const int got = gzread(input.file, buffer, ask);
+    if (got < 0) {
+        input.readError = true;
+        return -1;
+    }
+    input.uncompressed += static_cast<unsigned>(got);
+    return got;
+}
+int xmlCloseCallback(void* user) {
+    auto& input = *static_cast<XmlInput*>(user);
+    if (!input.file) return 0;
+    const int result = gzclose(input.file);
+    input.file = nullptr;
+    if (result != Z_OK) input.readError = true;
+    return result == Z_OK ? 0 : -1;
 }
 
 std::string xmlProperty(xmlTextReaderPtr reader, const char* name) {
@@ -115,9 +178,10 @@ std::string xmlValue(xmlTextReaderPtr reader) {
     std::string result(reinterpret_cast<const char*>(text));
     xmlFree(text);
     // Ignore descriptions too large to be useful to a guide reader.
-    if (result.size() > 4096) {
-        // Never split a multibyte UTF-8 character in long descriptions.
-        std::size_t length = 4096;
+    if (result.size() > 1536) {
+        // Avoid per-event multikilobyte strings in large XMLTV feeds. Titles
+        // are much shorter; even DVB short_event descriptors have tiny limits.
+        std::size_t length = 1536;
         while (length > 0 &&
                (static_cast<unsigned char>(result[length]) & 0xc0U) == 0x80U)
             --length;
@@ -126,40 +190,6 @@ std::string xmlValue(xmlTextReaderPtr reader) {
     return result;
 }
 
-bool unpackGzip(std::string& input, std::string& error) {
-    if (input.size() < 2 ||
-        static_cast<unsigned char>(input[0]) != 0x1f ||
-        static_cast<unsigned char>(input[1]) != 0x8b) return true;
-    z_stream zs {};
-    if (inflateInit2(&zs, 15 + 16) != Z_OK) {
-        error = "gzip inflate initialization failed"; return false;
-    }
-    std::string decoded;
-    decoded.reserve(std::min(kMaxXml, input.size() * 4U));
-    zs.next_in = reinterpret_cast<Bytef*>(input.data());
-    zs.avail_in = static_cast<uInt>(input.size());
-    int status = Z_OK;
-    char chunk[32768];
-    while (status == Z_OK) {
-        zs.next_out = reinterpret_cast<Bytef*>(chunk);
-        zs.avail_out = sizeof(chunk);
-        status = inflate(&zs, Z_NO_FLUSH);
-        const size_t n = sizeof(chunk) - zs.avail_out;
-        if (decoded.size() > kMaxXml - n) {
-            error = "XMLTV uncompressed size exceeds 64 MiB";
-            inflateEnd(&zs);
-            return false;
-        }
-        decoded.append(chunk, n);
-    }
-    inflateEnd(&zs);
-    if (status != Z_STREAM_END) {
-        error = "invalid or truncated XMLTV gzip";
-        return false;
-    }
-    input.swap(decoded);
-    return true;
-}
 } // namespace
 
 ExternalXmltvManager::ExternalXmltvManager(
@@ -217,25 +247,35 @@ bool ExternalXmltvManager::refresh(const std::string& id) {
 }
 
 bool ExternalXmltvManager::download(const std::string& url,
-                                     std::string& body, std::string& error) {
+                                    std::FILE* output, std::string& error) {
     if ((url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) ||
         url.size() > 2048) {
         error = "XMLTV URL must be HTTP(S)";
         return false;
     }
+    if (!output) {
+        error = "XMLTV temporary download file unavailable";
+        return false;
+    }
     using CurlPtr = std::unique_ptr<CURL, decltype(&curl_easy_cleanup)>;
     CurlPtr curl(curl_easy_init(), curl_easy_cleanup);
     if (!curl) { error = "curl init failed"; return false; }
+    DownloadSink sink;
+    sink.file = output;
     curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, acceptCurl);
-    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &sink);
+    // Defer gzip decompression to the bounded XML reader; also accept
+    // Content-Encoding: gzip, and let libcurl perform that HTTP-layer decode.
     curl_easy_setopt(curl.get(), CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 55L);
+    curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 180L);
+    curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_TIME, 45L);
+    curl_easy_setopt(curl.get(), CURLOPT_LOW_SPEED_LIMIT, 1024L);
     curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl.get(), CURLOPT_MAXREDIRS, 4L);
     curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "DVBStreamer5-XMLTV/1.0");
+    curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "DVBStreamer5-XMLTV/1.1");
 #ifdef CURLOPT_PROTOCOLS_STR
     curl_easy_setopt(curl.get(), CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
@@ -244,30 +284,67 @@ bool ExternalXmltvManager::download(const std::string& url,
     curl_easy_setopt(curl.get(), CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 #endif
     const CURLcode code = curl_easy_perform(curl.get());
-    long httpStatus = 0;
-    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &httpStatus);
+    long status = 0;
+    curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+    if (sink.sizeLimit) {
+        error = "XMLTV download exceeds 512 MiB disk spool limit";
+        return false;
+    }
+    if (sink.writeErrno) {
+        error = std::string("XMLTV temporary file write failed: ") +
+                std::strerror(sink.writeErrno);
+        return false;
+    }
     if (code != CURLE_OK) {
         error = std::string("XMLTV HTTP download failed: ") +
-                curl_easy_strerror(code);
+                curl_easy_strerror(code) +
+                " (received " + std::to_string(sink.total) + " bytes)";
         return false;
     }
-    if (httpStatus != 200 || body.empty()) {
-        error = "XMLTV HTTP status " + std::to_string(httpStatus) +
-                (body.empty() ? " (empty)" : "");
+    if (status != 200 || sink.total == 0) {
+        error = "XMLTV HTTP status " + std::to_string(status) +
+                (sink.total ? "" : " (empty response)");
         return false;
     }
-    if (body.size() > kMaxXml) { error = "XMLTV too large"; return false; }
-    return unpackGzip(body, error);
+    if (std::fflush(output) != 0) {
+        error = std::string("XMLTV temporary file flush failed: ") +
+                std::strerror(errno);
+        return false;
+    }
+    if (std::fseek(output, 0, SEEK_SET) != 0) {
+        error = "XMLTV temporary file rewind failed";
+        return false;
+    }
+    return true;
 }
 
 bool ExternalXmltvManager::parse(
-    const std::string& body, Source& data, std::string& error) {
-    xmlTextReaderPtr reader = xmlReaderForMemory(
-        body.data(), static_cast<int>(body.size()), nullptr, nullptr,
-        XML_PARSE_NONET | XML_PARSE_NOERROR | XML_PARSE_NOWARNING |
-        XML_PARSE_COMPACT);
-    if (!reader) { error = "XMLTV XML parser initialization failed"; return false; }
-
+    std::FILE* input, Source& data, std::string& error) {
+    if (!input) { error = "XMLTV temporary file is missing"; return false; }
+    // Dup is essential: gzclose() belongs to libxml2 while the original
+    // descriptor is owned by the scoped tmpfile and closed after parsing.
+    const int fd = ::dup(::fileno(input));
+    if (fd < 0) {
+        error = std::string("XMLTV stream dup failed: ") + std::strerror(errno);
+        return false;
+    }
+    XmlInput xmlInput;
+    xmlInput.file = gzdopen(fd, "rb");
+    if (!xmlInput.file) {
+        ::close(fd);
+        error = "XMLTV gzip/stream reader initialization failed";
+        return false;
+    }
+    gzbuffer(xmlInput.file, 64U * 1024U);
+    xmlTextReaderPtr reader = xmlReaderForIO(
+        xmlReadCallback, xmlCloseCallback, &xmlInput, nullptr, nullptr,
+        XML_PARSE_NONET | XML_PARSE_NOERROR |
+        XML_PARSE_NOWARNING | XML_PARSE_COMPACT);
+    if (!reader) {
+        if (xmlInput.file) xmlCloseCallback(&xmlInput);
+        error = "XMLTV streaming XML parser initialization failed";
+        return false;
+    }
     std::size_t totalEvents = 0;
     std::size_t totalChannels = 0;
     std::string channelId, channelName;
@@ -335,7 +412,16 @@ bool ExternalXmltvManager::parse(
             break;
         }
     }
-    xmlFreeTextReader(reader);
+    xmlFreeTextReader(reader); // invokes xmlCloseCallback
+    if (xmlInput.file) xmlCloseCallback(&xmlInput);
+    if (xmlInput.sizeLimit) {
+        error = "XMLTV uncompressed content exceeds 2 GiB safety limit";
+        return false;
+    }
+    if (xmlInput.readError) {
+        error = "XMLTV stream/gzip read error (truncated or corrupt data)";
+        return false;
+    }
     if (status < 0 || !error.empty()) {
         if (error.empty()) error = "Malformed XMLTV XML document";
         return false;
@@ -393,12 +479,19 @@ void ExternalXmltvManager::run() {
                 continue;
             }
         }
-        std::string payload;
         std::string error;
         Source loaded;
         loaded.settings = selected;
-        bool success = download(selected.url, payload, error);
-        if (success) success = parse(payload, loaded, error);
+        std::unique_ptr<std::FILE, decltype(&std::fclose)> temp(
+            std::tmpfile(), &std::fclose);
+        if (!temp) {
+            error = std::string("XMLTV cannot create temporary spool file: ") +
+                    std::strerror(errno);
+        }
+        bool success = static_cast<bool>(temp);
+        if (success) success = download(selected.url, temp.get(), error);
+        if (success) success = parse(temp.get(), loaded, error);
+        temp.reset(); // delete temporary file immediately after XML parsing
         const std::int64_t finished = nowSeconds();
         const int day = dayStamp(localDay(static_cast<std::time_t>(finished)));
         {
