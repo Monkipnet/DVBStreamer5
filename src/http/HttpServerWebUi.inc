@@ -2624,6 +2624,33 @@ for (const [en,hr] of [
   ['External XMLTV only','Samo vanjski XMLTV'],
   ['Source ID','ID izvora'],
   ['Daily update time','Vrijeme dnevnog ažuriranja'],
+  ['Update frequency','Učestalost ažuriranja'],
+  ['Daily','Dnevno'],
+  ['Weekly','Tjedno'],
+  ['Monday','Ponedjeljak'],
+  ['Tuesday','Utorak'],
+  ['Wednesday','Srijeda'],
+  ['Thursday','Četvrtak'],
+  ['Friday','Petak'],
+  ['Saturday','Subota'],
+  ['Sunday','Nedjelja'],
+  ['Any source','Bilo koji izvor'],
+  ['Load XMLTV channel list','Učitaj popis XMLTV kanala'],
+  ['Source follows its configured update schedule.','Izvor slijedi zadani raspored ažuriranja.'],
+  ['Enter channel tvg-id or select from downloaded XMLTV.','Unesite tvg-id ili odaberite kanal iz učitanog XMLTV-a.'],
+  ['Use XMLTV when satellite EPG is unavailable.','Koristi XMLTV kada satelitski EPG nije dostupan.'],
+  ['External XMLTV sources','Vanjski XMLTV izvori'],
+  ['Add multiple URLs and daily refresh times. The last good guide is kept on network errors.','Dodajte više URL-ova i vremena osvježavanja. Posljednji uspješni vodič zadržava se pri mrežnim pogreškama.'],
+  ['Downloading…','Preuzimanje…'],
+  ['No sources configured','Nema konfiguriranih izvora'],
+  ['Enabled','Omogućeno'],
+  ['Name','Naziv'],
+  ['Channels','Kanali'],
+  ['programmes','emisija'],
+  ['channels','kanala'],
+  ['Supports HTTP(S), XML and XML.GZ.','Podržava HTTP(S), XML i XML.GZ.'],
+  ['Server local time, HH:MM.','Lokalno vrijeme poslužitelja, HH:MM.'],
+  ['Enter an HTTP(S) URL for every source.','Unesite HTTP(S) URL za svaki izvor.'],
   ['Server local time','Lokalno vrijeme poslužitelja'],
   ['Refresh now','Osvježi sada'],
   ['Select or enter XMLTV channel ID','Odaberite ili unesite XMLTV ID kanala'],
@@ -3176,10 +3203,22 @@ function xmltvSourceRow(src, index) {
     '<small class="field-help">' + uiBiText('Поддерживаются HTTP(S), XML и XML.GZ.','Supports HTTP(S), XML and XML.GZ.') + '</small>' +
     '<input data-xmltv-field="url" type="url" value="' + escapeHtmlValue(src.url || '') +
        '" placeholder="https://example.org/epg.xml.gz" />' +
-    '<div class="edit-field-title">' + uiBiText('Ежедневное обновление','Daily update time') + '</div>' +
+    '<div class="edit-field-title">' + uiBiText('Периодичность и время','Update frequency') + '</div>' +
     '<small class="field-help">' + uiBiText('Время сервера в формате ЧЧ:ММ.','Server local time, HH:MM.') + '</small>' +
+    '<div class="row-inline compact-row">' +
+    '<select data-xmltv-field="refresh_period">' +
+      '<option value="daily" ' + ((src.refresh_period||'daily')==='daily'?'selected':'') + '>' +
+        uiBiText('Ежедневно','Daily') + '</option>' +
+      '<option value="weekly" ' + (src.refresh_period==='weekly'?'selected':'') + '>' +
+        uiBiText('Еженедельно','Weekly') + '</option></select>' +
+    '<select data-xmltv-field="refresh_weekday">' +
+      ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+        .map((en,i)=>'<option value="' + i + '" ' +
+          (Number(src.refresh_weekday ?? 1) === i ? 'selected' : '') + '>' +
+          uiBiText(['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'][i], en) +
+          '</option>').join('') + '</select>' +
     '<input data-xmltv-field="refresh_time" type="time" value="' +
-      escapeHtmlValue(src.refresh_time || '03:00') + '" />' +
+      escapeHtmlValue(src.refresh_time || '03:00') + '" /></div>' +
     '<small class="field-help">' + uiBiText('Последнее успешное обновление','Last successful update') +
       ': ' + date + '. ' + escapeHtmlValue(status) + '</small>' +
     '<div class="modal-actions"><button class="button-secondary" type="button" onclick="refreshXmltvSource(' +
@@ -3191,10 +3230,11 @@ function syncXmltvModalFields() {
     const index = Number(row.dataset.xmltvRow);
     const source = xmltvModalSources[index];
     if (!source) return;
-    for (const key of ['name','url','refresh_time']) {
+    for (const key of ['name','url','refresh_time','refresh_period','refresh_weekday']) {
       const field = row.querySelector('[data-xmltv-field="' + key + '"]');
       if (field) source[key] = field.value.trim();
     }
+    source.refresh_weekday = Number(source.refresh_weekday ?? 1);
     const enabled = row.querySelector('[data-xmltv-field="enabled"]');
     if (enabled) source.enabled = enabled.checked;
   });
@@ -3228,7 +3268,7 @@ function addXmltvSource() {
   syncXmltvModalFields();
   const id = 'xmltv-' + Date.now().toString(36) + '-' +
     Math.floor(Math.random() * 10000).toString(36);
-  xmltvModalSources.push({id, name:'', url:'', enabled:true, refresh_time:'03:00'});
+  xmltvModalSources.push({id, name:'', url:'', enabled:true, refresh_time:'03:00', refresh_period:'daily', refresh_weekday:1});
   renderXmltvModal();
 }
 function removeXmltvSource(index) {
@@ -3248,7 +3288,8 @@ async function saveXmltvSources() {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({sources:xmltvModalSources.map(src=>({
         id:src.id,name:src.name,url:src.url,enabled:src.enabled,
-        refresh_time:src.refresh_time
+        refresh_time:src.refresh_time, refresh_period:src.refresh_period,
+        refresh_weekday:Number(src.refresh_weekday ?? 1)
       }))})
     });
     if (result.result !== 'ok') throw new Error(result.error || 'XMLTV save error');
