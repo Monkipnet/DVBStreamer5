@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <string>
 #include <vector>
 
 // Optional DVB bitmap subtitles passthrough for native video/audio transcoding.
@@ -19,6 +20,7 @@
 class DvbSubtitlePassthrough {
 public:
     using Packet = dvbstreamer5::media::mpegts::Packet;
+    explicit DvbSubtitlePassthrough(std::string language = "auto");
     void observe(const std::uint8_t* data, std::size_t size);
     void inject(std::vector<Packet>& output);
 private:
@@ -48,4 +50,6 @@ private:
     std::array<bool, 8192> awaitStart_{};
     std::deque<Packet> queued_;
     bool warnedPmtCapacity_ = false;
+    bool sourcePmtParsed_ = false;
+    std::string language_;
 };
