@@ -90,6 +90,11 @@ struct NativeUdpRelayConfig {
     // Optional final MPEG-TS DVB EIT injector. Runs after remap/CA/transcode,
     // before CBR/null-stuffing and before all transport-specific subscribers.
     std::function<void(std::vector<mpegts::Packet>&)> injectDvbEit;
+    // Optional DVB subtitles retention, only when native transcoding is in use.
+    // The first tap observes post-CA TS and the second injects caption PES
+    // after the native encoder mux has emitted a new MPEG-TS output.
+    std::function<void(const std::uint8_t*, std::size_t)> observeDvbSubtitles;
+    std::function<void(std::vector<mpegts::Packet>&)> injectDvbSubtitles;
     std::function<bool(std::uint8_t*, std::size_t)> processTransport;
     // Optional one-to-many transport transform. Used by the native transcoder:
     // input is a contiguous MPEG-TS block after remap/CA, output is a new
