@@ -326,12 +326,12 @@ void DvbEitOutput::buildSchedule() {
 void DvbEitOutput::process(std::vector<Packet>& packets) {
     // Opt-in EIT owns PID 0x12. Avoid merging broadcaster and generated
     // continuity counters; all other PIDs, PCR and payload stay unchanged.
-    packets.erase(std::remove_if(packets.begin(), packets.end(), [this](Packet& p) {
+    for (auto& packet : packets)
+        inspectAndUpdateTables(packet);
+    packets.erase(std::remove_if(packets.begin(), packets.end(), [](const Packet& p) {
         if (p[0] != 0x47U) return false;
         const auto pid = static_cast<std::uint16_t>(((p[1] & 31U) << 8U) | p[2]);
-        if (pid == kEitPid) return true;
-        inspectAndUpdateTables(p);
-        return false;
+        return pid == kEitPid;
     }), packets.end());
     if (serviceId_ == 0U || tsid_ == 0U || onid_ == 0U) return;
     const auto now = std::chrono::steady_clock::now();
