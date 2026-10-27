@@ -95,10 +95,16 @@ struct StreamConfig {
     uint64_t transcodeVideoBitrate = 6000000;
     double transcodeFps = 25.0;
     bool transcodeDeinterlace = true;
-    std::string transcodeNvencPreset = "p5"; // p1..p7
-    std::string transcodeNvencProfile = "auto"; // auto | main | high
+    // Common video encoder controls. Backends apply the supported subset and
+    // log any safety clamp/unsupported option instead of silently failing.
+    std::string transcodePreset = "balanced"; // fastest | fast | balanced | quality | best
+    std::string transcodeProfile = "auto"; // auto | main | high
+    std::string transcodeLevel = "auto"; // auto | 3.1 | 4.0 | 4.1 | 5.0 | 5.1
     uint32_t transcodeGopFrames = 50;
-    uint32_t transcodeNvencAqStrength = 8;
+    uint32_t transcodeBFrames = 0; // live default: zero-reorder
+    uint32_t transcodeRefFrames = 0; // 0 = encoder default
+    bool transcodeOpenGop = false;
+    uint32_t transcodeAqStrength = 8;
     // 203.75: adaptive HLS is opt-in. The configured rendition remains the
     // primary/highest profile; lower renditions are generated automatically.
     bool transcodeMultibitrateEnabled = false;
