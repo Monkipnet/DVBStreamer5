@@ -761,10 +761,11 @@ private:
         encodeConfig.rcParams.vbvBufferSize = static_cast<std::uint32_t>(vbv);
         encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
         if (config_.outputCodec == mpegts::ElementaryCodec::H264) {
+            encodeConfig.profileGUID = NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID;
             if (config_.nvencProfile == "main")
-                encodeConfig.encodeCodecConfig.h264Config.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
+                encodeConfig.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
             else if (config_.nvencProfile == "high")
-                encodeConfig.encodeCodecConfig.h264Config.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
+                encodeConfig.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
             encodeConfig.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
             encodeConfig.encodeCodecConfig.h264Config.outputAUD = 1;
             encodeConfig.encodeCodecConfig.h264Config.idrPeriod = encodeConfig.gopLength;

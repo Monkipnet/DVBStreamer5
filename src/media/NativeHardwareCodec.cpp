@@ -1310,10 +1310,11 @@ public:
         cfg.rcParams.vbvInitialDelay = cfg.rcParams.vbvBufferSize;
 
         if (codec_ == mpegts::ElementaryCodec::H264) {
+            cfg.profileGUID = NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID;
             if (options_.nvencProfile == "main")
-                cfg.encodeCodecConfig.h264Config.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
+                cfg.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
             else if (options_.nvencProfile == "high")
-                cfg.encodeCodecConfig.h264Config.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
+                cfg.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
             cfg.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
             cfg.encodeCodecConfig.h264Config.outputAUD = 1;
             cfg.encodeCodecConfig.h264Config.idrPeriod = cfg.gopLength;
