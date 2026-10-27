@@ -18,6 +18,7 @@
 
 #include "ConfigManager.h"
 #include "media/DvbEpgCollector.h"
+#include "DvbSubtitlePassthrough.h"
 #include "media/NativePreviewHub.h"
 #include "media/NativeUdpRelay.h"
 #include "media/SharedDvbInputPool.h"
@@ -282,6 +283,7 @@ struct StreamState {
     std::atomic<uint64_t> outputTsClearPesStartsDelta{0};
 
     std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector> epgCollector;
+    std::shared_ptr<DvbSubtitlePassthrough> dvbSubtitleMonitor;
     std::string epgCacheKey;
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
@@ -376,6 +378,7 @@ public:
     bool stopMptsOutput(const std::string& id);
     Json::Value mptsSnapshot() const;
     Json::Value epgSnapshot(const std::string& id) const;
+    Json::Value dvbSubtitleTracks(const std::string& id) const;
     void persistAllDvbEpg();
     void configureExternalXmltvSources();
     bool refreshExternalXmltv(const std::string& sourceId);
