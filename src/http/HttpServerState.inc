@@ -431,6 +431,10 @@ std::string HttpServer::currentState() {
     root["telegram_token"] = configManager.config.telegramToken;
     root["telegram_chat_id"] = configManager.config.telegramChatId;
     root["srt_vps_vds_optimization"] = configManager.config.srtVpsVdsOptimization;
+    Json::Value xmltvConfig(Json::arrayValue);
+    for (const auto& source : configManager.config.xmltvSources)
+        xmltvConfig.append(source.toJson());
+    root["xmltv_sources"] = xmltvConfig;
     Json::Value camClients(Json::arrayValue);
     for (const auto& client : configManager.config.camClients) camClients.append(client.toJson());
     root["cam_clients"] = camClients;
@@ -777,6 +781,19 @@ std::string HttpServer::currentState() {
             appendSummary(item["epg_next"], nextEpg);
         }
 
+        if (cfg.epgEnabled && (cfg.epgMode == "xmltv" ||
+            (cfg.epgMode == "auto" && !item["epg_available"].asBool())) &&
+            !cfg.xmltvChannelId.empty()) {
+            const auto selected = streamManager.epgSnapshot(cfg.id);
+            if (selected.get("source", "").asString() == "xmltv") {
+                item["epg_available"] = selected.get("available", false).asBool();
+                item["epg_event_count"] = selected.isMember("events")
+                    ? selected["events"].size() : 0;
+                item["epg_now"] = selected["now"];
+                item["epg_next"] = selected["next"];
+                item["epg_source"] = "xmltv";
+            }
+        }
         const bool configuredDvb = DvbSatellite::isDvbUri(cfg.inputUri);
         item["dvb_input"] = configuredDvb;
         if (configuredDvb) {
