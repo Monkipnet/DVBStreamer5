@@ -1,4 +1,5 @@
 #include "ExternalXmltv.h"
+#include "EpgDiskCache.h"
 
 #include <curl/curl.h>
 #include <libxml/xmlreader.h>
@@ -192,6 +193,93 @@ std::string xmlValue(xmlTextReaderPtr reader) {
 
 } // namespace
 
+bool ExternalXmltvManager::restoreCache(
+    const XmltvSourceConfig& settings, Source& data) {
+    epgcache::Reader reader(epgcache::pathFor("xmltv", settings.id));
+    if (!reader.valid()) return false;
+    Json::Value header;
+    if (!reader.next(header) || header.get("schema", 0).asInt() != 1 ||
+        header.get("kind", "").asString() != "xmltv" ||
+        header.get("source_id", "").asString() != settings.id ||
+        header.get("url", "").asString() != settings.url) return false;
+    Source next;
+    next.settings = settings;
+    next.lastSuccess = header.get("last_success", 0).asInt64();
+    const std::int64_t now = nowSeconds();
+    const std::int64_t earliest = now - 6 * 3600;
+    const std::int64_t latest = now + 7 * 86400;
+    Json::Value item;
+    std::size_t count = 0;
+    while (reader.next(item)) {
+        const auto type = item.get("kind", "").asString();
+        if (type == "channel" && next.channels.size() < kMaxChannels) {
+            const std::string id = item.get("id", "").asString();
+            const std::string name = item.get("name", "").asString();
+            if (id.size() <= 256 && !id.empty())
+                next.channels.emplace(id, name.substr(0, 1536));
+        } else if (type == "event" && count < kMaxEvents) {
+            const std::string channel = item.get("channel", "").asString();
+            if (channel.empty() || channel.size() > 256) continue;
+            Event event;
+            event.start = item.get("start", 0).asInt64();
+            event.stop = item.get("stop", 0).asInt64();
+            event.title = item.get("title", "").asString().substr(0, 1536);
+            event.description = item.get("description", "").asString().substr(0, 1536);
+            if (event.start > latest || event.stop < earliest ||
+                event.stop <= event.start || event.title.empty()) continue;
+            auto& list = next.programmes[channel];
+            if (list.size() >= kMaxEventsPerChannel) continue;
+            list.push_back(std::move(event));
+            ++count;
+        }
+    }
+    if (!reader.good()) {
+        std::clog << "XMLTV CACHE invalid or truncated source=" << settings.id << '\n';
+        return false;
+    }
+    if (next.channels.empty() && next.programmes.empty()) return false;
+    data.channels.swap(next.channels);
+    data.programmes.swap(next.programmes);
+    data.lastSuccess = next.lastSuccess;
+    std::clog << "XMLTV CACHE restored source=" << settings.id
+              << " channels=" << data.channels.size()
+              << " programmes=" << count << '\n';
+    return true;
+}
+
+bool ExternalXmltvManager::persistCache(
+    const XmltvSourceConfig& settings, const Source& data) {
+    epgcache::Writer writer(epgcache::pathFor("xmltv", settings.id));
+    if (!writer.valid()) return false;
+    Json::Value header;
+    header["schema"] = 1;
+    header["kind"] = "xmltv";
+    header["source_id"] = settings.id;
+    header["url"] = settings.url;
+    header["last_success"] = Json::Int64(data.lastSuccess);
+    if (!writer.append(header)) return false;
+    for (const auto& [id, name] : data.channels) {
+        Json::Value item;
+        item["kind"] = "channel";
+        item["id"] = id;
+        item["name"] = name;
+        if (!writer.append(item)) return false;
+    }
+    for (const auto& [id, events] : data.programmes) {
+        for (const auto& event : events) {
+            Json::Value item;
+            item["kind"] = "event";
+            item["channel"] = id;
+            item["start"] = Json::Int64(event.start);
+            item["stop"] = Json::Int64(event.stop);
+            item["title"] = event.title;
+            item["description"] = event.description;
+            if (!writer.append(item)) return false;
+        }
+    }
+    return writer.finish();
+}
+
 ExternalXmltvManager::ExternalXmltvManager(
     const std::vector<XmltvSourceConfig>& sources) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -224,6 +312,9 @@ void ExternalXmltvManager::configure(
                 data.settings.refreshWeekday != cfg.refreshWeekday)
                 data.lastSuccessDay = -1;
         } else {
+            // Before any network traffic, rehydrate the last successfully
+            // downloaded XMLTV guide. URL changes invalidate old records.
+            (void)restoreCache(cfg, data);
             data.queued = cfg.enabled;
         }
         data.settings = cfg;
@@ -508,6 +599,13 @@ void ExternalXmltvManager::run() {
         if (success) success = parse(temp.get(), loaded, error);
         temp.reset(); // delete temporary file immediately after XML parsing
         const std::int64_t finished = nowSeconds();
+        if (success) {
+            loaded.lastSuccess = finished;
+            // Only replace a good cache after a completely parsed feed.
+            // Disk errors do not throw away freshly downloaded EPG.
+            if (!persistCache(selected, loaded))
+                std::clog << "XMLTV CACHE write failed source=" << selected.id << '\n';
+        }
         const int day = dayStamp(localDay(static_cast<std::time_t>(finished)));
         {
             std::lock_guard<std::mutex> lock(mutex_);
