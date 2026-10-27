@@ -57,6 +57,8 @@ private:
     // Neither curl nor libxml2 materializes the whole XMLTV document in memory.
     static bool download(const std::string& url, std::FILE* output, std::string& error);
     static bool parse(std::FILE* input, Source& result, std::string& error);
+    static bool restoreCache(const XmltvSourceConfig& settings, Source& result);
+    static bool persistCache(const XmltvSourceConfig& settings, const Source& data);
     void run();
     mutable std::mutex mutex_;
     std::condition_variable wake_;
