@@ -49,6 +49,9 @@ private:
         std::size_t truncatedEvents = 0;
         bool queued = false;
         bool downloading = false;
+        // Per-source manual refresh progress tracking for the web UI.
+        std::uint64_t refreshRequested = 0;
+        std::uint64_t refreshCompleted = 0;
     };
     // Network bytes are spooled directly into an automatically unlinked temp file.
     // Neither curl nor libxml2 materializes the whole XMLTV document in memory.
