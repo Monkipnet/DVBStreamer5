@@ -2610,6 +2610,8 @@ for (const [english, croatian] of [
 
 for (const [english, croatian] of [["203.67: sets latency 1500 ms, rcvlatency/peerlatency 1500 ms, 16 MiB SRT RX/TX buffers, FC 32768 packets and poll-timeout 2000 ms for all SRT inputs and outputs. Use on VPS/VDS with virtual networking; leave disabled on a normal LAN/physical server.","203.67: postavlja SRT latenciju na 1500 ms, RX/TX međuspremnike na 16 MiB, FC na 32768 paketa i timeout na 2000 ms. Koristite na VPS/VDS-u; isključite na običnoj lokalnoj mreži."],["203.75: H.264 and H.265/HEVC support Auto/NVENC/Intel/CPU (x264/x265). When Multibitrate is enabled and an HLS output exists, master.m3u8 is generated with the primary profile plus up to three lower renditions. HEVC is not used for RTMP/YouTube.","203.75: H.264 i H.265/HEVC podržavaju Auto/NVENC/Intel/CPU. Uz višestruki bitrate i HLS izlaz stvara se master.m3u8 s glavnim profilom i do tri niže kvalitete. HEVC se ne koristi za RTMP/YouTube."],["202.79: H.264 supports NVIDIA NVENC, Intel Quick Sync/VA and CPU x264. Auto: NVENC → Intel → x264. Interlaced 576i/1080i is deinterlaced with YADIF over all fields while preserving 50 Hz motion; SPS/PPS are repeated on every IDR.","202.79: H.264 podržava NVIDIA NVENC, Intel Quick Sync/VA i CPU x264. Auto: NVENC → Intel → x264. YADIF uklanja ispreplitanje iz 576i/1080i uz očuvanje 50 Hz gibanja; SPS/PPS se ponavljaju na svakom IDR-u."],["Unavailable:","Nedostupno:"]]) uiEnToHr.set(english, croatian);
 
+uiEnToHr.set('Complete IPTV playlist', 'Cijeli IPTV popis');
+
 const uiOriginalText = new WeakMap();
 const uiOriginalAttrs = new WeakMap();
 const uiLocalizedAttributes = ['title', 'placeholder', 'aria-label'];
@@ -3135,6 +3137,8 @@ function openPlaylistModal() {
     <div style="color:#9aa3b1;font-size:.76rem;margin-bottom:8px">${t('playlistChannels')}</div>
     <div style="display:grid;gap:7px;max-height:52vh;overflow:auto;padding-right:4px">${rows}</div>
     <div class="modal-actions" style="margin-top:14px">
+      <a class="button-secondary" href="/epg.xml" target="_blank" rel="noopener">${uiBiText('EPG XMLTV','EPG XMLTV')}</a>
+      <a class="button-secondary" href="/playlist.m3u" download="dvbstreamer5-all-outputs.m3u">${uiBiText('Полный IPTV-плейлист','Complete IPTV playlist')}</a>
       <button class="button-secondary" onclick="closeModal()">${t('cancel')}</button>
       <button class="button-primary" onclick="downloadSelectedVlcPlaylist()">${t('playlistDownload')}</button>
     </div>`);
@@ -3146,14 +3150,20 @@ function downloadVlcPlaylist(streams = state.streams || []) {
     return links.map(link => {
       const suffix = links.length > 1 && link.output_type ? ` ${String(link.output_type).toUpperCase()}` : '';
       const name = String((stream.name || stream.id) + suffix).replace(/[\r\n]/g, ' ').trim();
-      return `#EXTINF:-1,${name}\n${link.url}`;
+      const attr = value => String(value ?? '').replace(/[\x00-\x1f"]/g, ' ');
+      const channelId = attr(stream.id || '');
+      const channelName = attr(stream.service_name || stream.name || stream.id);
+      const sid = Number(stream.remap_enabled ? stream.service_id : stream.input_service_id);
+      const sidAttr = Number.isInteger(sid) && sid > 0 && sid <= 65535 ? ` tvg-chno="${sid}"` : '';
+      return `#EXTINF:-1 tvg-id="${channelId}" tvg-name="${channelName}" group-title="DVBStreamer5"${sidAttr},${name}\n${link.url}`;
     });
   });
   if (!entries.length) {
     uiError(t('playlistNoPlayableLinks'));
     return false;
   }
-  const content = `#EXTM3U\n${entries.join('\n')}\n`;
+  const xmltv = window.location.origin + '/epg.xml';
+  const content = `#EXTM3U url-tvg="${xmltv}" x-tvg-url="${xmltv}"\n${entries.join('\n')}\n`;
   const blob = new Blob([content], {type:'audio/x-mpegurl;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
