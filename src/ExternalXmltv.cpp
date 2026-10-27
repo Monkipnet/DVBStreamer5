@@ -115,7 +115,14 @@ std::string xmlValue(xmlTextReaderPtr reader) {
     std::string result(reinterpret_cast<const char*>(text));
     xmlFree(text);
     // Ignore descriptions too large to be useful to a guide reader.
-    if (result.size() > 4096) result.resize(4096);
+    if (result.size() > 4096) {
+        // Never split a multibyte UTF-8 character in long descriptions.
+        std::size_t length = 4096;
+        while (length > 0 &&
+               (static_cast<unsigned char>(result[length]) & 0xc0U) == 0x80U)
+            --length;
+        result.resize(length);
+    }
     return result;
 }
 
@@ -357,7 +364,9 @@ void ExternalXmltvManager::run() {
             const int day = dayStamp(local);
             const std::int64_t now = nowSeconds();
             for (auto& [id, source] : sources_) {
-                if (!source.settings.enabled) continue;
+                // Manual refresh is allowed for a disabled source, but the
+                // source remains unavailable for EPG until enabled.
+                if (!source.settings.enabled && !source.queued) continue;
                 const bool scheduleDay = source.settings.refreshPeriod != "weekly" ||
                     local.tm_wday == source.settings.refreshWeekday;
                 const bool scheduled = scheduleDay &&
@@ -429,6 +438,7 @@ Json::Value ExternalXmltvManager::status() const {
         entry["last_success"] = Json::Int64(source.lastSuccess);
         entry["last_attempt"] = Json::Int64(source.lastAttempt);
         entry["downloading"] = source.downloading;
+        entry["queued"] = source.queued;
         entry["last_error"] = source.error;
         entry["channel_count"] = Json::UInt64(source.channels.size());
         std::size_t events = 0;
