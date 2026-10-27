@@ -385,6 +385,96 @@ const translations = {
     about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить'
   }
 };
+translations.hr = {
+  "subtitle": "Nadzor emitiranja i upravljanje tokovima",
+  "total": "Ukupno:",
+  "active": "Aktivno:",
+  "network": "Mreža",
+  "system": "Sustav",
+  "user": "Korisnik",
+  "addStream": "+ Dodaj tok",
+  "addChannel": "+ Dodaj kanal",
+  "interfacesNotFound": "Nisu pronađena sučelja",
+  "output": "Izlaz",
+  "activeInput": "Aktivni ulaz",
+  "primary": "Primarni",
+  "backup": "Rezerva",
+  "sid": "SID",
+  "bitrateIn": "Ulazni bitrate",
+  "payloadOut": "Izlazni promet",
+  "bitrateOut": "CBR izlaz",
+  "vbrOut": "Izlazni bitrate",
+  "status": "Status",
+  "online": "Na mreži",
+  "backupOnline": "Rezerva",
+  "offline": "Izvan mreže",
+  "start": "Pokreni",
+  "stop": "Zaustavi",
+  "edit": "Uredi",
+  "chart": "Grafikon",
+  "delete": "Izbriši tok",
+  "removeConfirm": "Izbriši tok",
+  "restartProgram": "Potpuno ponovno pokretanje programa",
+  "restartConfirm": "Želite li ponovno pokrenuti uslugu DVBStreamer5?",
+  "restarting": "Ponovno pokretanje usluge...",
+  "networkLoad": "Opterećenje mrežnog sučelja",
+  "interface": "Sučelje",
+  "incoming": "Ulazno",
+  "outgoing": "Izlazno",
+  "udpInputFilter": "Filtriraj dolazni UDP",
+  "close": "Zatvori",
+  "about": "O programu",
+  "product": "Proizvod",
+  "version": "Verzija",
+  "name": "Naziv",
+  "country": "Država",
+  "contactEmail": "Kontakt e-pošta",
+  "donate": "Donacija",
+  "donateQr": "QR kod za donaciju",
+  "donateWallet": "Telegram novčanik",
+  "cancel": "Odustani",
+  "save": "Spremi",
+  "userTitle": "Korisnik",
+  "telegram": "Telegram API",
+  "quality": "Kvaliteta toka",
+  "playlist": "VLC popis za reprodukciju",
+  "subscribers": "Pretplatnici",
+  "streams": "Tokovi",
+  "filtering": "Omogući IP filtriranje",
+  "addSubscriber": "Dodaj pretplatnika",
+  "primaryIp": "Primarna IP adresa",
+  "backupIp": "Rezervna IP adresa",
+  "addedAt": "Datum dodavanja",
+  "subscriberName": "Naziv pretplatnika",
+  "noSubscribers": "Nema dodanih pretplatnika",
+  "noStreams": "Nema konfiguriranih tokova",
+  "enabled": "Omogućeno",
+  "disabled": "Onemogućeno",
+  "exportSubscribers": "Izvezi TXT",
+  "session": "Sesija",
+  "activeSession": "Na mreži",
+  "offlineSession": "Izvan mreže",
+  "resetSession": "Ponovno postavi sesiju",
+  "connectionMonitoring": "Neregistrirane veze",
+  "monitoringHint": "Vidljive su HTTP, HLS i SRT sesije; UDP primatelji se ne mogu otkriti.",
+  "clientIp": "IP adresa klijenta",
+  "protocol": "Protokol",
+  "connections": "Veze",
+  "actions": "Radnje",
+  "addFromConnection": "Dodaj",
+  "blockClient": "Blokiraj",
+  "blockedIps": "Blokirane IP adrese",
+  "unblockClient": "Deblokiraj",
+  "noUnknownConnections": "Nema neregistriranih veza",
+  "streamNumber": "Tok",
+  "playlistSelectAll": "Odaberi sve",
+  "playlistDeselectAll": "Poništi odabir",
+  "playlistDownload": "Preuzmi VLC popis",
+  "playlistNoSelection": "Odaberite barem jedan kanal",
+  "playlistNoPlayableLinks": "Odabrani kanali nemaju poveznice za reprodukciju",
+  "playlistChannels": "Kanali za popis",
+  "playlistSelected": "Odabrano"
+};
 Object.assign(translations.en, {
   connectionMonitoring:'Unregistered connections',
   monitoringHint:'HTTP, HLS and SRT sessions are visible. UDP receivers cannot be detected.',
@@ -428,7 +518,7 @@ Object.assign(translations.ru, {
   playlistSelected:'\u0412\u044b\u0431\u0440\u0430\u043d\u043e'
 });
 function normalizeLanguage(value) {
-  return value === 'ru' ? 'ru' : 'en';
+  return ['ru', 'en', 'hr'].includes(value) ? value : 'en';
 }
 let language = normalizeLanguage(localStorage.getItem('dvbstreamer5-language') || 'en');
 // DVBStreamer5: runtime localization for UI fragments that are generated dynamically.
@@ -724,13 +814,1358 @@ const uiRuToEn = new Map([
   ['Предпросмотр должен выдаваться веб-сервером DVBStreamer (same-origin)', 'Preview must be served by the DVBStreamer web server (same-origin)']
 ]);
 
+
+// Croatian locale strings used by the interface, modal fields, and runtime messages.
+const uiEnToHr = new Map([
+  [
+    "Configuration",
+    "Konfiguracija"
+  ],
+  [
+    "Test",
+    "Test"
+  ],
+  [
+    "Replacement file",
+    "Zamjenska datoteka"
+  ],
+  [
+    "Backup",
+    "Rezerva"
+  ],
+  [
+    "Primary",
+    "Primarni"
+  ],
+  [
+    "Temporary HTTP MPEG-TS",
+    "Privremeni HTTP MPEG-TS"
+  ],
+  [
+    "Not required",
+    "Nije potrebno"
+  ],
+  [
+    "Passthrough (no decoding)",
+    "Prosljeđivanje (bez dekodiranja)"
+  ],
+  [
+    "Quality is normal",
+    "Kvaliteta je u redu"
+  ],
+  [
+    "Stream stopped",
+    "Tok je zaustavljen"
+  ],
+  [
+    "Channel stopped",
+    "Kanal je zaustavljen"
+  ],
+  [
+    "Decoding",
+    "Dekodiranje"
+  ],
+  [
+    "Double-click — preview",
+    "Dvostruki klik — pregled"
+  ],
+  [
+    "Double-click for preview",
+    "Dvostruki klik za pregled"
+  ],
+  [
+    "Running",
+    "Pokrenuto"
+  ],
+  [
+    "Stopped",
+    "Zaustavljeno"
+  ],
+  [
+    "Stop",
+    "Zaustavi"
+  ],
+  [
+    "Start",
+    "Pokreni"
+  ],
+  [
+    "Edit",
+    "Uredi"
+  ],
+  [
+    "Delete",
+    "Izbriši"
+  ],
+  [
+    "Delete stream",
+    "Izbriši tok"
+  ],
+  [
+    "Ready",
+    "Spremno"
+  ],
+  [
+    "ready",
+    "spremno"
+  ],
+  [
+    "waiting for PSI",
+    "čeka se PSI"
+  ],
+  [
+    "MPTS outputs",
+    "MPTS izlazi"
+  ],
+  [
+    "+ Add MPTS",
+    "+ Dodaj MPTS"
+  ],
+  [
+    "Edit MPTS",
+    "Uredi MPTS"
+  ],
+  [
+    "New MPTS",
+    "Novi MPTS"
+  ],
+  [
+    "Name",
+    "Naziv"
+  ],
+  [
+    "Destination IP",
+    "Odredišna IP adresa"
+  ],
+  [
+    "Port",
+    "Port"
+  ],
+  [
+    "Output interface",
+    "Izlazno sučelje"
+  ],
+  [
+    "MPTS auto-start",
+    "Automatsko pokretanje MPTS-a"
+  ],
+  [
+    "MPTS channels",
+    "MPTS kanali"
+  ],
+  [
+    "Advanced PSI settings",
+    "Napredne PSI postavke"
+  ],
+  [
+    "Base SID",
+    "Osnovni SID"
+  ],
+  [
+    "Base PMT PID",
+    "Osnovni PMT PID"
+  ],
+  [
+    "Back",
+    "Natrag"
+  ],
+  [
+    "Cancel",
+    "Odustani"
+  ],
+  [
+    "Save",
+    "Spremi"
+  ],
+  [
+    "Close",
+    "Zatvori"
+  ],
+  [
+    "New password",
+    "Nova lozinka"
+  ],
+  [
+    "Leave blank to keep the current password",
+    "Ostavite prazno za zadržavanje postojeće lozinke"
+  ],
+  [
+    "Server name",
+    "Naziv poslužitelja"
+  ],
+  [
+    "Web interface port",
+    "Port web-sučelja"
+  ],
+  [
+    "SRT for VPS/VDS",
+    "SRT za VPS/VDS"
+  ],
+  [
+    "SRT optimization for VPS/VDS/containers",
+    "Optimizacija SRT-a za VPS/VDS/spremnike"
+  ],
+  [
+    "Channel",
+    "Kanal"
+  ],
+  [
+    "Channels",
+    "Kanali"
+  ],
+  [
+    "Provider",
+    "Pružatelj"
+  ],
+  [
+    "Access",
+    "Pristup"
+  ],
+  [
+    "Encrypted channel (CA)",
+    "Kodirani kanal (CA)"
+  ],
+  [
+    "Free-to-air channel (FTA)",
+    "Slobodni kanal (FTA)"
+  ],
+  [
+    "Signal",
+    "Signal"
+  ],
+  [
+    "Quality",
+    "Kvaliteta"
+  ],
+  [
+    "Frequency, MHz",
+    "Frekvencija, MHz"
+  ],
+  [
+    "Polarization",
+    "Polarizacija"
+  ],
+  [
+    "Standard",
+    "Standard"
+  ],
+  [
+    "Modulation",
+    "Modulacija"
+  ],
+  [
+    "Scanning",
+    "Skeniranje"
+  ],
+  [
+    "Scan channels",
+    "Skeniraj kanale"
+  ],
+  [
+    "Keep LOCK",
+    "Zadrži LOCK"
+  ],
+  [
+    "Disabled",
+    "Onemogućeno"
+  ],
+  [
+    "Enabled",
+    "Omogućeno"
+  ],
+  [
+    "Enable",
+    "Omogući"
+  ],
+  [
+    "Auto",
+    "Automatski"
+  ],
+  [
+    "Off",
+    "Isključeno"
+  ],
+  [
+    "direct / DiSEqC",
+    "izravno / DiSEqC"
+  ],
+  [
+    "multiswitch",
+    "multiswitch"
+  ],
+  [
+    "Output",
+    "Izlaz"
+  ],
+  [
+    "First UDP port",
+    "Prvi UDP port"
+  ],
+  [
+    "First RTP port",
+    "Prvi RTP port"
+  ],
+  [
+    "First SRT port",
+    "Prvi SRT port"
+  ],
+  [
+    "First RTSP port",
+    "Prvi RTSP port"
+  ],
+  [
+    "CBR bitrate, kbps",
+    "CBR bitrate, kb/s"
+  ],
+  [
+    "Auto (system route)",
+    "Automatski (sistemska ruta)"
+  ],
+  [
+    "Auto / all interfaces",
+    "Automatski / sva sučelja"
+  ],
+  [
+    "Auto-start",
+    "Automatsko pokretanje"
+  ],
+  [
+    "Start created channels after restart",
+    "Pokreni stvorene kanale nakon ponovnog pokretanja"
+  ],
+  [
+    "Save selected",
+    "Spremi odabrano"
+  ],
+  [
+    "Same as primary",
+    "Isto kao primarni"
+  ],
+  [
+    "Primary format",
+    "Primarni format"
+  ],
+  [
+    "Additional format",
+    "Dodatni format"
+  ],
+  [
+    "SRT mode",
+    "SRT način"
+  ],
+  [
+    "Output address",
+    "Izlazna adresa"
+  ],
+  [
+    "Interface",
+    "Sučelje"
+  ],
+  [
+    "Primary interface",
+    "Primarno sučelje"
+  ],
+  [
+    "Player URL",
+    "URL za reprodukciju"
+  ],
+  [
+    "The URL will appear after saving",
+    "URL će se prikazati nakon spremanja"
+  ],
+  [
+    "Loading list...",
+    "Učitavanje popisa..."
+  ],
+  [
+    "Loading...",
+    "Učitavanje..."
+  ],
+  [
+    "No uploaded files",
+    "Nema učitanih datoteka"
+  ],
+  [
+    "Select a previously uploaded file",
+    "Odaberi prethodno učitanu datoteku"
+  ],
+  [
+    "Failed to load file list",
+    "Učitavanje popisa datoteka nije uspjelo"
+  ],
+  [
+    "Failed to delete file",
+    "Brisanje datoteke nije uspjelo"
+  ],
+  [
+    "Selected file deleted",
+    "Odabrana datoteka je izbrisana"
+  ],
+  [
+    "File deletion error",
+    "Pogreška pri brisanju datoteke"
+  ],
+  [
+    "Failed to upload file",
+    "Učitavanje datoteke nije uspjelo"
+  ],
+  [
+    "File upload error",
+    "Pogreška pri učitavanju datoteke"
+  ],
+  [
+    "Edit stream",
+    "Uredi tok"
+  ],
+  [
+    "Stream settings",
+    "Postavke toka"
+  ],
+  [
+    "Edit channel",
+    "Uredi kanal"
+  ],
+  [
+    "New channel",
+    "Novi kanal"
+  ],
+  [
+    "Tile name",
+    "Naziv pločice"
+  ],
+  [
+    "Input URL (Primary)",
+    "Ulazni URL (primarni)"
+  ],
+  [
+    "Input interface",
+    "Ulazno sučelje"
+  ],
+  [
+    "Input mode",
+    "Način ulaza"
+  ],
+  [
+    "HTTP / HLS access",
+    "HTTP / HLS pristup"
+  ],
+  [
+    "No key",
+    "Bez ključa"
+  ],
+  [
+    "Authorization or token",
+    "Authorization ili token"
+  ],
+  [
+    "Bearer TOKEN / key value",
+    "Bearer TOKEN / vrijednost ključa"
+  ],
+  [
+    "Backup / replacement file",
+    "Rezerva / zamjenska datoteka"
+  ],
+  [
+    "Backup URL",
+    "Rezervni URL"
+  ],
+  [
+    "Loop replacement file",
+    "Ponovi zamjensku datoteku"
+  ],
+  [
+    "Repeat until the primary stream returns",
+    "Ponavljaj dok se primarni tok ne vrati"
+  ],
+  [
+    "Test pattern",
+    "Testni uzorak"
+  ],
+  [
+    "Use instead of input streams",
+    "Koristi umjesto ulaznih tokova"
+  ],
+  [
+    "Output formats",
+    "Izlazni formati"
+  ],
+  [
+    "+ Add format",
+    "+ Dodaj format"
+  ],
+  [
+    "Input SID",
+    "Ulazni SID"
+  ],
+  [
+    "Output SID",
+    "Izlazni SID"
+  ],
+  [
+    "Channel Name and Provider",
+    "Naziv kanala i pružatelj"
+  ],
+  [
+    "Target bitrate (kbps, for CBR)",
+    "Ciljni bitrate (kb/s, za CBR)"
+  ],
+  [
+    "Transcoding",
+    "Transkodiranje"
+  ],
+  [
+    "Transcoding settings",
+    "Postavke transkodiranja"
+  ],
+  [
+    "Video and audio transcoding",
+    "Transkodiranje videa i zvuka"
+  ],
+  [
+    "Process video/audio: transcode or independently pass through the original streams",
+    "Obradi video/zvuk: transkodiraj ili zasebno proslijedi izvorne tokove"
+  ],
+  [
+    "HLS archive (DVR)",
+    "HLS arhiva (DVR)"
+  ],
+  [
+    "Record archive",
+    "Snimaj arhivu"
+  ],
+  [
+    "hours",
+    "sati"
+  ],
+  [
+    "hour",
+    "sat"
+  ],
+  [
+    "HLS container / encryption",
+    "HLS spremnik / šifriranje"
+  ],
+  [
+    "No encryption",
+    "Bez šifriranja"
+  ],
+  [
+    "Video codec",
+    "Video kodek"
+  ],
+  [
+    "Audio codec",
+    "Audio kodek"
+  ],
+  [
+    "Audio bitrate",
+    "Bitrate zvuka"
+  ],
+  [
+    "Video bitrate, kbps",
+    "Video bitrate, kb/s"
+  ],
+  [
+    "Encoder",
+    "Koder"
+  ],
+  [
+    "Resolution",
+    "Razlučivost"
+  ],
+  [
+    "Preset",
+    "Predložak"
+  ],
+  [
+    "Profile",
+    "Profil"
+  ],
+  [
+    "Level",
+    "Razina"
+  ],
+  [
+    "Keyframe interval measured in frames.",
+    "Razmak ključnih kadrova izražen brojem kadrova."
+  ],
+  [
+    "Deinterlace",
+    "Uklanjanje ispreplitanja"
+  ],
+  [
+    "Reference frames",
+    "Referentni kadrovi"
+  ],
+  [
+    "Pixel format",
+    "Format piksela"
+  ],
+  [
+    "Resize",
+    "Promjena veličine"
+  ],
+  [
+    "Output stream",
+    "Izlazni tok"
+  ],
+  [
+    "Stream",
+    "Tok"
+  ],
+  [
+    "Input",
+    "Ulaz"
+  ],
+  [
+    "Stream quality",
+    "Kvaliteta toka"
+  ],
+  [
+    "Auto refresh",
+    "Automatsko osvježavanje"
+  ],
+  [
+    "Legend",
+    "Legenda"
+  ],
+  [
+    "Month",
+    "Mjesec"
+  ],
+  [
+    "Week",
+    "Tjedan"
+  ],
+  [
+    "Day",
+    "Dan"
+  ],
+  [
+    "Half day",
+    "Pola dana"
+  ],
+  [
+    "5 hours",
+    "5 sati"
+  ],
+  [
+    "1 hour",
+    "1 sat"
+  ],
+  [
+    "30 minutes",
+    "30 minuta"
+  ],
+  [
+    "10 minutes",
+    "10 minuta"
+  ],
+  [
+    "1 minute",
+    "1 minuta"
+  ],
+  [
+    "2 sec",
+    "2 s"
+  ],
+  [
+    "5 sec",
+    "5 s"
+  ],
+  [
+    "10 sec",
+    "10 s"
+  ],
+  [
+    "30 sec",
+    "30 s"
+  ],
+  [
+    "Primary output",
+    "Primarni izlaz"
+  ],
+  [
+    "Additional output",
+    "Dodatni izlaz"
+  ],
+  [
+    "No data",
+    "Nema podataka"
+  ],
+  [
+    "Online",
+    "Na mreži"
+  ],
+  [
+    "Offline",
+    "Izvan mreže"
+  ],
+  [
+    "OnDemand",
+    "Na zahtjev"
+  ],
+  [
+    "Online / OnDemand",
+    "Online / na zahtjev"
+  ],
+  [
+    "Start after program restart",
+    "Pokreni nakon ponovnog pokretanja programa"
+  ],
+  [
+    "Enable CBR",
+    "Omogući CBR"
+  ],
+  [
+    "Enable Remap",
+    "Omogući Remap"
+  ],
+  [
+    "SID",
+    "SID"
+  ],
+  [
+    "Link address",
+    "Adresa poveznice"
+  ],
+  [
+    "HLS port",
+    "HLS port"
+  ],
+  [
+    "HTTP port",
+    "HTTP port"
+  ],
+  [
+    "SRT port",
+    "SRT port"
+  ],
+  [
+    "RTSP port",
+    "RTSP port"
+  ],
+  [
+    "RTMP port",
+    "RTMP port"
+  ],
+  [
+    "UDP port",
+    "UDP port"
+  ],
+  [
+    "SRT server",
+    "SRT poslužitelj"
+  ],
+  [
+    "RTSP server",
+    "RTSP poslužitelj"
+  ],
+  [
+    "Multicast / UDP IP",
+    "Multicast / UDP IP"
+  ],
+  [
+    "Output protocol",
+    "Izlazni protokol"
+  ],
+  [
+    "Transponder channel mode",
+    "Način rada kanala transpondera"
+  ],
+  [
+    "Generate CBR MPEG-TS",
+    "Generiraj CBR MPEG-TS"
+  ],
+  [
+    "User",
+    "Korisnik"
+  ],
+  [
+    "Users",
+    "Korisnici"
+  ],
+  [
+    "System",
+    "Sustav"
+  ],
+  [
+    "Network",
+    "Mreža"
+  ],
+  [
+    "Network interface load",
+    "Opterećenje mrežnog sučelja"
+  ],
+  [
+    "Unregistered connections",
+    "Neregistrirane veze"
+  ],
+  [
+    "Client IP",
+    "IP adresa klijenta"
+  ],
+  [
+    "Protocol",
+    "Protokol"
+  ],
+  [
+    "Connections",
+    "Veze"
+  ],
+  [
+    "Actions",
+    "Radnje"
+  ],
+  [
+    "Add",
+    "Dodaj"
+  ],
+  [
+    "Block",
+    "Blokiraj"
+  ],
+  [
+    "Unblock",
+    "Deblokiraj"
+  ],
+  [
+    "Blocked IPs",
+    "Blokirane IP adrese"
+  ],
+  [
+    "No unregistered connections",
+    "Nema neregistriranih veza"
+  ],
+  [
+    "VLC playlist",
+    "VLC popis za reprodukciju"
+  ],
+  [
+    "Subscribers",
+    "Pretplatnici"
+  ],
+  [
+    "Streams",
+    "Tokovi"
+  ],
+  [
+    "Add channel",
+    "Dodaj kanal"
+  ],
+  [
+    "+ Add channel",
+    "+ Dodaj kanal"
+  ],
+  [
+    "+ Add stream",
+    "+ Dodaj tok"
+  ],
+  [
+    "Primary IP",
+    "Primarna IP adresa"
+  ],
+  [
+    "Backup IP",
+    "Rezervna IP adresa"
+  ],
+  [
+    "Added at",
+    "Datum dodavanja"
+  ],
+  [
+    "Subscriber name",
+    "Naziv pretplatnika"
+  ],
+  [
+    "No subscribers added",
+    "Nema dodanih pretplatnika"
+  ],
+  [
+    "No streams configured",
+    "Nema konfiguriranih tokova"
+  ],
+  [
+    "Enable IP filtering",
+    "Omogući IP filtriranje"
+  ],
+  [
+    "Export TXT",
+    "Izvezi TXT"
+  ],
+  [
+    "Reset session",
+    "Ponovno postavi sesiju"
+  ],
+  [
+    "Session",
+    "Sesija"
+  ],
+  [
+    "Active",
+    "Aktivno"
+  ],
+  [
+    "Active:",
+    "Aktivno:"
+  ],
+  [
+    "Total:",
+    "Ukupno:"
+  ],
+  [
+    "Status",
+    "Status"
+  ],
+  [
+    "Bitrate In",
+    "Ulazni bitrate"
+  ],
+  [
+    "Bitrate Out",
+    "Izlazni bitrate"
+  ],
+  [
+    "CBR Out",
+    "CBR izlaz"
+  ],
+  [
+    "Restart",
+    "Ponovno pokreni"
+  ],
+  [
+    "Restarting service...",
+    "Ponovno pokretanje usluge..."
+  ],
+  [
+    "Full program restart",
+    "Potpuno ponovno pokretanje programa"
+  ],
+  [
+    "About",
+    "O programu"
+  ],
+  [
+    "Product",
+    "Proizvod"
+  ],
+  [
+    "Version",
+    "Verzija"
+  ],
+  [
+    "Country",
+    "Država"
+  ],
+  [
+    "Contact email",
+    "Kontakt e-pošta"
+  ],
+  [
+    "Donate",
+    "Donacija"
+  ],
+  [
+    "Donation QR code",
+    "QR kod za donaciju"
+  ],
+  [
+    "Telegram Wallet",
+    "Telegram novčanik"
+  ],
+  [
+    "Close preview",
+    "Zatvori pregled"
+  ],
+  [
+    "HTTP preview",
+    "HTTP pregled"
+  ],
+  [
+    "HTTP stream preview",
+    "Pregled HTTP toka"
+  ],
+  [
+    "Connecting to HTTP stream…",
+    "Povezivanje s HTTP tokom…"
+  ],
+  [
+    "No MPTS outputs have been created yet",
+    "Još nema stvorenih MPTS izlaza"
+  ],
+  [
+    "Select at least one channel for MPTS",
+    "Odaberite barem jedan kanal za MPTS"
+  ],
+  [
+    "Enter a valid MPTS IP address and port",
+    "Unesite valjanu MPTS IP adresu i port"
+  ],
+  [
+    "Failed to save MPTS",
+    "Spremanje MPTS-a nije uspjelo"
+  ],
+  [
+    "Failed to delete MPTS",
+    "Brisanje MPTS-a nije uspjelo"
+  ],
+  [
+    "Search",
+    "Pretraži"
+  ],
+  [
+    "Selected",
+    "Odabrano"
+  ],
+  [
+    "Found:",
+    "Pronađeno:"
+  ],
+  [
+    "Failed",
+    "Neuspješno"
+  ],
+  [
+    "Unavailable",
+    "Nedostupno"
+  ],
+  [
+    "Available",
+    "Dostupno"
+  ],
+  [
+    "yes",
+    "da"
+  ],
+  [
+    "no",
+    "ne"
+  ],
+  [
+    "none",
+    "nema"
+  ],
+  [
+    "waiting",
+    "čekanje"
+  ],
+  [
+    "Waiting for EIT…",
+    "Čekanje EIT-a…"
+  ],
+  [
+    "Now",
+    "Sada"
+  ],
+  [
+    "Next",
+    "Sljedeće"
+  ],
+  [
+    "Loading EPG…",
+    "Učitavanje EPG-a…"
+  ],
+  [
+    "EPG is disabled for this channel.",
+    "EPG je isključen za ovaj kanal."
+  ],
+  [
+    "EIT has not been received yet.",
+    "EIT još nije primljen."
+  ],
+  [
+    "Untitled",
+    "Bez naslova"
+  ],
+  [
+    "events",
+    "događaja"
+  ],
+  [
+    "Channel EPG",
+    "EPG kanala"
+  ],
+  [
+    "EPG days",
+    "Dani EPG-a"
+  ],
+  [
+    "Collect Now/Next and schedule from DVB EIT.",
+    "Prikupljanje trenutne/sljedeće emisije i rasporeda iz DVB EIT-a."
+  ],
+  [
+    "Keep 1–7 days of schedule.",
+    "Čuvaj raspored za 1–7 dana."
+  ],
+  [
+    "Click to configure",
+    "Kliknite za postavke"
+  ],
+  [
+    "Satellite / DVB-S/S2",
+    "Satelit / DVB-S/S2"
+  ],
+  [
+    "DVB-S/S2 tuner",
+    "DVB-S/S2 tuner"
+  ],
+  [
+    "Conditional Access / CAM",
+    "Uvjetni pristup / CAM"
+  ],
+  [
+    "Access mode",
+    "Način pristupa"
+  ],
+  [
+    "Select the client used for encrypted native DVB-S/S2.",
+    "Odaberite klijenta za kodirani DVB-S/S2."
+  ],
+  [
+    "DVB adapter number in /dev/dvb.",
+    "Broj DVB adaptera u /dev/dvb."
+  ],
+  [
+    "Frontend number inside the selected adapter.",
+    "Broj frontenda unutar odabranog adaptera."
+  ],
+  [
+    "Satellite transponder frequency.",
+    "Frekvencija satelitskog transpondera."
+  ],
+  [
+    "Symbol rate in ksym/s.",
+    "Simbolička brzina u ksim/s."
+  ],
+  [
+    "Horizontal or vertical.",
+    "Horizontalna ili vertikalna."
+  ],
+  [
+    "DVB-S or DVB-S2 delivery system.",
+    "DVB-S ili DVB-S2 standard."
+  ],
+  [
+    "Modulation type; use Auto when unknown.",
+    "Vrsta modulacije; odaberite Auto ako je nepoznata."
+  ],
+  [
+    "For example Auto, 3/4, 5/6.",
+    "Na primjer Auto, 3/4, 5/6."
+  ],
+  [
+    "-1 disables it; 0..7 selects the source.",
+    "-1 isključuje; 0..7 odabire izvor."
+  ],
+  [
+    "-1 for a normal transponder.",
+    "-1 za obični transponder."
+  ],
+  [
+    "Low-band LNB oscillator frequency.",
+    "Frekvencija LNB oscilatora donjeg pojasa."
+  ],
+  [
+    "High-band LNB oscillator frequency.",
+    "Frekvencija LNB oscilatora gornjeg pojasa."
+  ],
+  [
+    "Low/high band switching threshold.",
+    "Prag prebacivanja između donjeg i gornjeg pojasa."
+  ],
+  [
+    "Off, EN50494 or EN50607/JESS.",
+    "Isključeno, EN50494 ili EN50607/JESS."
+  ],
+  [
+    "SCR/UB number for the selected port.",
+    "SCR/UB broj odabranog porta."
+  ],
+  [
+    "User Band center frequency.",
+    "Središnja frekvencija korisničkog pojasa."
+  ],
+  [
+    "Unicable position/satellite selector.",
+    "Unicable položaj / satelit."
+  ],
+  [
+    "-1 disables the PIN.",
+    "-1 isključuje PIN."
+  ],
+  [
+    "FTA / no CAM",
+    "FTA / bez CAM-a"
+  ],
+  [
+    "FTA uses no CAM; iCAM uses native Newcamd; CI+ receives a descrambled TS from VDR.",
+    "FTA ne koristi CAM; iCAM koristi Newcamd; CI+ prima dekodirani TS iz VDR-a."
+  ],
+  [
+    "Channel number or VDR channel ID.",
+    "Broj kanala ili VDR identifikator kanala."
+  ],
+  [
+    "Address of the VDR/streamdev server.",
+    "Adresa VDR/streamdev poslužitelja."
+  ],
+  [
+    "streamdev HTTP port; normally 3000.",
+    "HTTP port streamdev-a; obično 3000."
+  ],
+  [
+    "Output codec or direct passthrough of the original video.",
+    "Izlazni kodek ili izravno prosljeđivanje izvornog videa."
+  ],
+  [
+    "Auto selects NVENC → QSV/VAAPI → CPU.",
+    "Auto odabire NVENC → QSV/VAAPI → CPU."
+  ],
+  [
+    "Output video size after scaling.",
+    "Izlazna razlučivost nakon skaliranja."
+  ],
+  [
+    "Target CBR for the video encoder.",
+    "Ciljni CBR video kodera."
+  ],
+  [
+    "Encoding speed versus image quality.",
+    "Brzina kodiranja u odnosu na kvalitetu slike."
+  ],
+  [
+    "H.264 profile; Auto is recommended by default.",
+    "H.264 profil; preporučen je Auto."
+  ],
+  [
+    "H.264 level limit for device compatibility.",
+    "Ograničenje H.264 razine radi kompatibilnosti."
+  ],
+  [
+    "Output stream frame rate.",
+    "Broj kadrova u sekundi izlaznog toka."
+  ],
+  [
+    "Deinterlace 576i/1080i before encoding.",
+    "Uklanja ispreplitanje 576i/1080i prije kodiranja."
+  ],
+  [
+    "Stored in config; live backends currently apply 0.",
+    "Sprema se u konfiguraciju; trenutačno se koristi 0."
+  ],
+  [
+    "0 = encoder default; maximum 4.",
+    "0 = zadana postavka kodera; najviše 4."
+  ],
+  [
+    "Stored in config; live zero-reorder currently keeps this Off.",
+    "Sprema se u konfiguraciju; trenutačno je isključeno."
+  ],
+  [
+    "Adaptive quantization strength from 1 to 15.",
+    "Jačina adaptivne kvantizacije od 1 do 15."
+  ],
+  [
+    "The current native pipeline uses YUV 4:2:0.",
+    "Trenutačni native pipeline koristi YUV 4:2:0."
+  ],
+  [
+    "Scale to the selected output resolution.",
+    "Skaliranje na odabranu izlaznu razlučivost."
+  ],
+  [
+    "Copy preserves the original audio without re-encoding.",
+    "Copy prosljeđuje izvorni zvuk bez ponovnog kodiranja."
+  ],
+  [
+    "Used only when audio is being re-encoded.",
+    "Koristi se samo pri ponovnom kodiranju zvuka."
+  ],
+  [
+    "Creates master.m3u8 and additional quality renditions.",
+    "Stvara master.m3u8 i dodatne profile kvalitete."
+  ],
+  [
+    "Multibitrate",
+    "Višestruki bitrate"
+  ],
+  [
+    "Available:",
+    "Dostupno:"
+  ],
+  [
+    "Unavailable:",
+    "Nedostupno:"
+  ],
+  [
+    "OnDemand: starts for the first HTTP/HLS client and stops when idle; use Online for UDP/RTP/SRT/RTSP/RTMP.",
+    "OnDemand: pokreće se s prvim HTTP/HLS klijentom i zaustavlja bez klijenata; koristite Online za UDP/RTP/SRT/RTSP/RTMP."
+  ],
+  [
+    "CMAF: init.mp4/.m4s with EXT-X-MAP; SAMPLE-AES supports TS/CMAF; AES-128 only MPEG-TS.",
+    "CMAF: init.mp4/.m4s uz EXT-X-MAP; SAMPLE-AES podržava TS/CMAF; AES-128 samo MPEG-TS."
+  ],
+  [
+    "CBR is supported for UDP, HTTP, HLS and SRT.",
+    "CBR je podržan za UDP, HTTP, HLS i SRT."
+  ],
+  [
+    "Control Panel",
+    "Upravljačka ploča"
+  ],
+  [
+    "Broadcast monitoring and stream control",
+    "Nadzor emitiranja i upravljanje tokovima"
+  ],
+  [
+    "Select all",
+    "Odaberi sve"
+  ],
+  [
+    "Deselect all",
+    "Poništi odabir"
+  ],
+  [
+    "Download VLC playlist",
+    "Preuzmi VLC popis za reprodukciju"
+  ],
+  [
+    "Select at least one channel for the playlist",
+    "Odaberite barem jedan kanal za popis"
+  ],
+  [
+    "The selected channels do not have VLC playback links",
+    "Odabrani kanali nemaju VLC poveznice"
+  ],
+  [
+    "Channels for playlist",
+    "Kanali za popis za reprodukciju"
+  ],
+  [
+    "No interfaces found",
+    "Nisu pronađena sučelja"
+  ],
+  [
+    "Incoming",
+    "Ulazno"
+  ],
+  [
+    "Outgoing",
+    "Izlazno"
+  ],
+  [
+    "Filter inbound UDP",
+    "Filtriraj dolazni UDP"
+  ]
+]);
+
 const uiOriginalText = new WeakMap();
 const uiOriginalAttrs = new WeakMap();
 const uiLocalizedAttributes = ['title', 'placeholder', 'aria-label'];
 
-function translateUiText(value) {
+function translateRuToEn(value) {
   const source = String(value ?? '');
-  if (language !== 'en' || !/[А-Яа-яЁё]/.test(source)) return source;
+  if (!/[А-Яа-яЁё]/.test(source)) return source;
   const match = source.match(/^(\s*)([\s\S]*?)(\s*)$/);
   const lead = match ? match[1] : '';
   const core = match ? match[2] : source;
@@ -780,6 +2215,30 @@ function translateUiText(value) {
   return lead + text + tail;
 }
 
+
+function translateEnglishToCroatian(value) {
+  const source = String(value ?? '');
+  const match = source.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  const lead = match ? match[1] : '';
+  const core = match ? match[2] : source;
+  const tail = match ? match[3] : '';
+  if (uiEnToHr.has(core)) return lead + uiEnToHr.get(core) + tail;
+  let result = core;
+  if (/^(Available|Unavailable):/.test(result)) {
+    result = result.replace(/^Available:/, 'Dostupno:')
+      .replace(/^Unavailable:/, 'Nedostupno:')
+      .replace(/\byes\b/g, 'da').replace(/\bno\b/g, 'ne')
+      .replace(/\bnone\b/g, 'nema');
+  }
+  return lead + result + tail;
+}
+function translateUiText(value) {
+  const source = String(value ?? '');
+  if (language === 'ru') return source;
+  const english = translateRuToEn(source);
+  return language === 'hr' ? translateEnglishToCroatian(english) : english;
+}
+
 function tileRuntimeStatus(value) {
   return String(value ?? '')
     .replace(/\bnative\s+/gi, '')
@@ -793,17 +2252,13 @@ function tileRuntimeStatusIsRunning(value) {
 }
 
 function localizeUiTextNode(node) {
-  if (!node || node.nodeType !== Node.TEXT_NODE || ['SCRIPT','STYLE'].includes(node.parentElement?.tagName)) return;
+  if (!node || node.nodeType !== Node.TEXT_NODE || ['SCRIPT','STYLE'].includes(node.parentElement?.tagName) ||
+      node.parentElement?.hasAttribute('data-ui-ru')) return;
   const current = node.nodeValue || '';
-  if (language === 'en') {
-    if (/[А-Яа-яЁё]/.test(current)) uiOriginalText.set(node, current);
-    const source = uiOriginalText.get(node) ?? current;
-    const translated = translateUiText(source);
-    if (translated !== current) node.nodeValue = translated;
-  } else if (uiOriginalText.has(node)) {
-    const original = uiOriginalText.get(node);
-    if (current !== original) node.nodeValue = original;
-  }
+  if (!uiOriginalText.has(node)) uiOriginalText.set(node, current);
+  const source = uiOriginalText.get(node);
+  const translated = translateUiText(source);
+  if (translated !== current) node.nodeValue = translated;
 }
 
 function localizeUiAttributes(element) {
@@ -813,15 +2268,10 @@ function localizeUiAttributes(element) {
   for (const name of uiLocalizedAttributes) {
     if (!element.hasAttribute(name)) continue;
     const current = element.getAttribute(name) || '';
-    if (language === 'en') {
-      if (/[А-Яа-яЁё]/.test(current)) originals.set(name, current);
-      const source = originals.get(name) ?? current;
-      const translated = translateUiText(source);
-      if (translated !== current) element.setAttribute(name, translated);
-    } else if (originals.has(name)) {
-      const original = originals.get(name);
-      if (current !== original) element.setAttribute(name, original);
-    }
+    if (!originals.has(name)) originals.set(name, current);
+    const source = originals.get(name);
+    const translated = translateUiText(source);
+    if (translated !== current) element.setAttribute(name, translated);
   }
 }
 
@@ -856,12 +2306,14 @@ window.confirm = message => nativeUiConfirm(translateUiText(message));
 const donateAddress = 'UQD1uQn5WxhzKLXjL0KOVuJDcRU65pYzgt6pm_gzJM-vT-cN';
 const donateQrPath = 'M4 4h7v1H4zM12 4h1v1H12zM14 4h3v1H14zM25 4h3v1H25zM30 4h7v1H30zM4 5h1v1H4zM10 5h1v1H10zM13 5h1v1H13zM15 5h1v1H15zM17 5h2v1H17zM20 5h3v1H20zM26 5h1v1H26zM28 5h1v1H28zM30 5h1v1H30zM36 5h1v1H36zM4 6h1v1H4zM6 6h3v1H6zM10 6h1v1H10zM12 6h3v1H12zM16 6h1v1H16zM18 6h2v1H18zM22 6h1v1H22zM25 6h2v1H25zM28 6h1v1H28zM30 6h1v1H30zM32 6h3v1H32zM36 6h1v1H36zM4 7h1v1H4zM6 7h3v1H6zM10 7h1v1H10zM14 7h1v1H14zM16 7h1v1H16zM18 7h1v1H18zM20 7h1v1H20zM22 7h1v1H22zM24 7h2v1H24zM27 7h2v1H27zM30 7h1v1H30zM32 7h3v1H32zM36 7h1v1H36zM4 8h1v1H4zM6 8h3v1H6zM10 8h1v1H10zM14 8h11v1H14zM26 8h2v1H26zM30 8h1v1H30zM32 8h3v1H32zM36 8h1v1H36zM4 9h1v1H4zM10 9h1v1H10zM12 9h1v1H12zM15 9h1v1H15zM20 9h1v1H20zM22 9h1v1H22zM24 9h1v1H24zM26 9h1v1H26zM30 9h1v1H30zM36 9h1v1H36zM4 10h7v1H4zM12 10h1v1H12zM14 10h1v1H14zM16 10h1v1H16zM18 10h1v1H18zM20 10h1v1H20zM22 10h1v1H22zM24 10h1v1H24zM26 10h1v1H26zM28 10h1v1H28zM30 10h7v1H30zM13 11h1v1H13zM16 11h1v1H16zM22 11h1v1H22zM27 11h2v1H27zM4 12h1v1H4zM6 12h1v1H6zM10 12h2v1H10zM14 12h2v1H14zM17 12h1v1H17zM19 12h1v1H19zM21 12h1v1H21zM23 12h1v1H23zM25 12h1v1H25zM27 12h2v1H27zM31 12h1v1H31zM34 12h1v1H34zM36 12h1v1H36zM4 13h2v1H4zM9 13h1v1H9zM11 13h3v1H11zM16 13h1v1H16zM18 13h2v1H18zM24 13h3v1H24zM28 13h3v1H28zM35 13h2v1H35zM5 14h2v1H5zM10 14h1v1H10zM15 14h1v1H15zM17 14h7v1H17zM25 14h1v1H25zM27 14h2v1H27zM30 14h2v1H30zM34 14h1v1H34zM36 14h1v1H36zM6 15h3v1H6zM11 15h1v1H11zM16 15h1v1H16zM18 15h3v1H18zM22 15h3v1H22zM26 15h2v1H26zM29 15h5v1H29zM35 15h2v1H35zM6 16h1v1H6zM8 16h1v1H8zM10 16h1v1H10zM17 16h6v1H17zM24 16h1v1H24zM30 16h2v1H30zM33 16h2v1H33zM36 16h1v1H36zM4 17h3v1H4zM8 17h2v1H8zM13 17h1v1H13zM15 17h1v1H15zM18 17h1v1H18zM20 17h3v1H20zM24 17h2v1H24zM27 17h5v1H27zM33 17h1v1H33zM35 17h1v1H35zM4 18h2v1H4zM8 18h3v1H8zM12 18h2v1H12zM15 18h2v1H15zM18 18h1v1H18zM20 18h1v1H20zM22 18h1v1H22zM24 18h4v1H24zM30 18h1v1H30zM33 18h2v1H33zM36 18h1v1H36zM5 19h1v1H5zM8 19h2v1H8zM11 19h1v1H11zM13 19h1v1H13zM18 19h3v1H18zM23 19h2v1H23zM28 19h2v1H28zM31 19h2v1H31zM35 19h1v1H35zM6 20h1v1H6zM9 20h2v1H9zM13 20h1v1H13zM15 20h3v1H15zM21 20h1v1H21zM24 20h1v1H24zM30 20h2v1H30zM36 20h1v1H36zM4 21h1v1H4zM7 21h3v1H7zM14 21h1v1H14zM16 21h2v1H16zM19 21h1v1H19zM21 21h1v1H21zM24 21h1v1H24zM27 21h3v1H27zM31 21h1v1H31zM33 21h1v1H33zM36 21h1v1H36zM8 22h1v1H8zM10 22h1v1H10zM13 22h1v1H13zM15 22h1v1H15zM17 22h1v1H17zM19 22h1v1H19zM23 22h1v1H23zM26 22h4v1H26zM32 22h3v1H32zM36 22h1v1H36zM6 23h1v1H6zM8 23h2v1H8zM14 23h2v1H14zM18 23h1v1H18zM20 23h2v1H20zM23 23h1v1H23zM26 23h1v1H26zM30 23h1v1H30zM36 23h1v1H36zM5 24h2v1H5zM8 24h1v1H8zM10 24h2v1H10zM13 24h2v1H13zM16 24h2v1H16zM19 24h1v1H19zM21 24h1v1H21zM25 24h1v1H25zM28 24h1v1H28zM30 24h1v1H30zM32 24h1v1H32zM35 24h1v1H35zM5 25h2v1H5zM8 25h1v1H8zM17 25h2v1H17zM25 25h1v1H25zM27 25h1v1H27zM31 25h1v1H31zM33 25h1v1H33zM35 25h1v1H35zM4 26h2v1H4zM9 26h2v1H9zM12 26h1v1H12zM14 26h1v1H14zM16 26h1v1H16zM18 26h2v1H18zM21 26h1v1H21zM23 26h1v1H23zM26 26h2v1H26zM30 26h1v1H30zM32 26h2v1H32zM36 26h1v1H36zM7 27h1v1H7zM11 27h1v1H11zM13 27h1v1H13zM15 27h2v1H15zM18 27h1v1H18zM28 27h6v1H28zM4 28h4v1H4zM10 28h2v1H10zM13 28h1v1H13zM17 28h3v1H17zM23 28h3v1H23zM28 28h5v1H28zM35 28h2v1H35zM12 29h3v1H12zM18 29h1v1H18zM20 29h1v1H20zM24 29h2v1H24zM28 29h1v1H28zM32 29h1v1H32zM35 29h2v1H35zM4 30h7v1H4zM12 30h1v1H12zM14 30h1v1H14zM16 30h2v1H16zM19 30h6v1H19zM28 30h1v1H28zM30 30h1v1H30zM32 30h1v1H32zM34 30h1v1H34zM36 30h1v1H36zM4 31h1v1H4zM10 31h1v1H10zM16 31h4v1H16zM22 31h1v1H22zM27 31h2v1H27zM32 31h2v1H32zM35 31h1v1H35zM4 32h1v1H4zM6 32h3v1H6zM10 32h1v1H10zM13 32h2v1H13zM16 32h1v1H16zM19 32h14v1H19zM35 32h1v1H35zM4 33h1v1H4zM6 33h3v1H6zM10 33h1v1H10zM15 33h1v1H15zM18 33h1v1H18zM20 33h1v1H20zM22 33h1v1H22zM24 33h2v1H24zM29 33h1v1H29zM31 33h1v1H31zM35 33h2v1H35zM4 34h1v1H4zM6 34h3v1H6zM10 34h1v1H10zM12 34h1v1H12zM15 34h3v1H15zM20 34h1v1H20zM22 34h1v1H22zM24 34h2v1H24zM27 34h1v1H27zM32 34h5v1H32zM4 35h1v1H4zM10 35h1v1H10zM13 35h1v1H13zM16 35h1v1H16zM19 35h2v1H19zM22 35h3v1H22zM30 35h2v1H30zM33 35h1v1H33zM4 36h7v1H4zM12 36h2v1H12zM15 36h1v1H15zM17 36h2v1H17zM21 36h1v1H21zM26 36h1v1H26zM28 36h2v1H28zM32 36h2v1H32zM36 36h1v1H36z';
 function t(key, values={}) {
-  let value = translations[language]?.[key] || translations.en[key] || key;
+  let value = translations[language]?.[key] ||
+    (language === 'hr' ? translateEnglishToCroatian(translations.en[key] || key) : translations.en[key]) || key;
   Object.entries(values).forEach(([name, replacement]) => { value = value.replace(`{${name}}`, replacement); });
   return value;
 }
 function uiBiText(ru, en) {
-  return language === 'en' ? en : ru;
+  return language === 'ru' ? ru :
+    (language === 'hr' ? translateEnglishToCroatian(en) : en);
 }
 function uiEscapeAttr(value) {
   return String(value ?? '')
@@ -871,10 +2323,10 @@ function uiEscapeAttr(value) {
     .replace(/>/g, '&gt;');
 }
 function uiBiAttrs(ru, en) {
-  return `data-ui-ru="${uiEscapeAttr(ru)}" data-ui-en="${uiEscapeAttr(en)}"`;
+  return `data-ui-ru="${uiEscapeAttr(ru)}" data-ui-en="${uiEscapeAttr(en)}" data-ui-hr="${uiEscapeAttr(translateEnglishToCroatian(en))}"`;
 }
 function uiBiPlaceholderAttrs(ru, en) {
-  return `data-placeholder-ru="${uiEscapeAttr(ru)}" data-placeholder-en="${uiEscapeAttr(en)}" placeholder="${uiEscapeAttr(uiBiText(ru,en))}"`;
+  return `data-placeholder-ru="${uiEscapeAttr(ru)}" data-placeholder-en="${uiEscapeAttr(en)}" data-placeholder-hr="${uiEscapeAttr(translateEnglishToCroatian(en))}" placeholder="${uiEscapeAttr(uiBiText(ru,en))}"`;
 }
 function applyExplicitBilingual(root=document) {
   if (!root) return;
@@ -882,25 +2334,32 @@ function applyExplicitBilingual(root=document) {
   if (root.nodeType === Node.ELEMENT_NODE && root.matches?.('[data-ui-ru][data-ui-en]')) nodes.push(root);
   root.querySelectorAll?.('[data-ui-ru][data-ui-en]').forEach(el => nodes.push(el));
   for (const element of nodes) {
-    element.textContent = language === 'en' ? element.dataset.uiEn : element.dataset.uiRu;
+    element.textContent = language === 'ru' ? element.dataset.uiRu :
+      (language === 'hr' ? element.dataset.uiHr || translateEnglishToCroatian(element.dataset.uiEn) : element.dataset.uiEn);
   }
   const inputs = [];
   if (root.nodeType === Node.ELEMENT_NODE && root.matches?.('[data-placeholder-ru][data-placeholder-en]')) inputs.push(root);
   root.querySelectorAll?.('[data-placeholder-ru][data-placeholder-en]').forEach(el => inputs.push(el));
   for (const element of inputs) {
-    element.placeholder = language === 'en' ? element.dataset.placeholderEn : element.dataset.placeholderRu;
+    element.placeholder = language === 'ru' ? element.dataset.placeholderRu :
+      (language === 'hr' ? element.dataset.placeholderHr || translateEnglishToCroatian(element.dataset.placeholderEn) : element.dataset.placeholderEn);
   }
 }
 function applyLanguage() {
   document.documentElement.lang = language;
   document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = t(element.dataset.i18n); });
   const button = document.getElementById('languageButton');
-  if (button) button.textContent = language === 'en' ? 'RU' : 'EN';
+  if (button) {
+    button.textContent = language === 'en' ? 'RU' : language === 'ru' ? 'HR' : 'EN';
+    button.title = language === 'hr' ? 'Promijeni jezik: engleski' :
+      (language === 'ru' ? 'Сменить язык: хорватский' : 'Change language: Russian');
+    button.setAttribute('aria-label', button.title);
+  }
   applyExplicitBilingual(document.body);
   applyRuntimeLocalization(document.body);
 }
 function toggleLanguage() {
-  language = language === 'en' ? 'ru' : 'en';
+  language = language === 'en' ? 'ru' : language === 'ru' ? 'hr' : 'en';
   localStorage.setItem('dvbstreamer5-language', language);
   applyLanguage();
   render(true);
@@ -1276,7 +2735,7 @@ function openModal(html) {
   subscribersModalOpen = false;
   document.getElementById('modalContent').innerHTML = modalCloseButton() + html;
   document.getElementById('modalContent').className = 'modal-content';
-  // Explicit RU/EN pairs are mandatory for every newly added or changed
+  // Explicit RU/EN pairs feed all three RU/EN/HR locales for each changed
   // interactive option. This keeps dynamic modal content in sync with the
   // global language switch without relying on heuristic text replacement.
   applyExplicitBilingual(document.getElementById('modalContent'));
