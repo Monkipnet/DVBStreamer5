@@ -2616,6 +2616,9 @@ uiEnToHr.set('Complete IPTV playlist', 'Cijeli IPTV popis');
 for (const [en,hr] of [
   ['XMLTV sources','XMLTV izvori'],
   ['Select EPG by channel name','Odaberi EPG prema nazivu kanala'],
+  ['Output DVB EIT (WISI)','Izlazni DVB EIT (WISI)'],
+  ['Add DVB EIT PID 0x12 to MPEG-TS outputs.','Dodaj DVB EIT PID 0x12 u MPEG-TS izlaze.'],
+  ['Enable EPG from DVB EIT or external XMLTV.','Omogući EPG iz DVB EIT-a ili vanjskog XMLTV-a.'],
   ['Search by name or ID; selection assigns the XMLTV channel.','Pretraži po nazivu ili ID-u; odabir pridružuje XMLTV kanal.'],
   ['Refresh XMLTV channel list','Osvježi popis XMLTV kanala'],
   ['Channel name…','Naziv kanala…'],
@@ -5956,6 +5959,7 @@ function openStreamForm(stream) {
           <div class="edit-section-head"><span>EPG / DVB EIT / XMLTV</span><small>PID 0x12 / XMLTV</small></div>
           <div class="stream-video-grid">
             <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('EPG канала','Channel EPG')}>${uiBiText('EPG канала','Channel EPG')}</div><small class="field-help" ${uiBiAttrs('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}>${uiBiText('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}</small><label class="checkbox-inline"><input id="streamEpgEnabled" type="checkbox" ${stream.epg_enabled===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
+            <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('Выход DVB EIT (WISI)','Output DVB EIT (WISI)')}>${uiBiText('Выход DVB EIT (WISI)','Output DVB EIT (WISI)')}</div><small class="field-help" ${uiBiAttrs('Добавлять PID 0x12 на MPEG-TS выходы.','Add DVB EIT PID 0x12 to MPEG-TS outputs.')}>${uiBiText('Добавлять PID 0x12 на MPEG-TS выходы.','Add DVB EIT PID 0x12 to MPEG-TS outputs.')}</small><label class="checkbox-inline"><input id="streamEpgEitOutput" type="checkbox" ${stream.epg_eit_output===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Дней EPG','EPG days')}>${uiBiText('Дней EPG','EPG days')}</div><small class="field-help" ${uiBiAttrs('Хранить расписание на 1–7 дней.','Keep 1–7 days of schedule.')}>${uiBiText('Хранить расписание на 1–7 дней.','Keep 1–7 days of schedule.')}</small><input id="streamEpgDays" type="number" min="1" max="7" value="${Math.max(1,Math.min(7,Number(stream.epg_days||3)))}" /></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Приоритет EPG','EPG priority')}>${uiBiText('Приоритет EPG','EPG priority')}</div><small class="field-help" ${uiBiAttrs('Авто: сначала EIT, затем внешний XMLTV.','Use XMLTV when satellite EPG is unavailable.')}> ${uiBiText('Авто: сначала EIT, затем внешний XMLTV.','Use XMLTV when satellite EPG is unavailable.')}</small>
               <select id="streamEpgMode">
@@ -6392,6 +6396,7 @@ function saveStream(id) {
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,
     epg_enabled: document.getElementById('streamEpgEnabled')?.checked === true,
+    epg_eit_output: document.getElementById('streamEpgEitOutput')?.checked === true,
     epg_days: Math.max(1, Math.min(7, Number(document.getElementById('streamEpgDays')?.value || 3))),
     epg_mode: document.getElementById('streamEpgMode')?.value || 'auto',
     xmltv_source_id: document.getElementById('streamXmltvSourceId')?.value || '',
