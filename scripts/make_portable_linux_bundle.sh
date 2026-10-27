@@ -287,7 +287,7 @@ systemctl stop "$OSCAM_UNIT" 2>/dev/null || true
 install -d -m0755 "$INSTALL_DIR"
 install -d -m0700 "$CONFIG_DIR"
 install -d -m0700 "$CONFIG_DIR/oscam-mini"
-install -d -m0755 /var/lib/dvbstreamer5 /var/lib/dvbstreamer5/archive
+install -d -m0755 /var/lib/dvbstreamer5 /var/lib/dvbstreamer5/archive /var/lib/dvbstreamer5/epg
 
 # Migrate old in-tree configuration once. The encrypted UI password key must
 # move together with dvbstreamer5-config.json.
@@ -446,7 +446,7 @@ Installed layout:
   /opt/DVBStreamer5/               application, bundled loader and libraries
   /etc/dvbstreamer5/               DVBStreamer5 configuration
   /etc/dvbstreamer5/oscam-mini/    OSCam-mini configuration
-  /var/lib/dvbstreamer5/            persistent runtime/archive data
+  /var/lib/dvbstreamer5/            persistent runtime/archive/EPG cache data
   /etc/systemd/system/dvbstreamer5.service
   /etc/systemd/system/oscam-mini.service
 
