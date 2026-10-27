@@ -158,7 +158,7 @@ std::string buildEpgIptvPlaylist(
                      << "\" tvg-name=\"" << epgM3uAttribute(name)
                      << "\" group-title=\"DVBStreamer5\"";
             if (sid > 0 && sid <= 65535U)
-                playlist << " tvg-chno=\"" << sid << "\"";
+                playlist << " tvg-sid=\"" << sid << "\"";
             playlist << "," << epgM3uLine(name)
                      << (outputs.size() > 1U ? " [" + type + "]" : "")
                      << "\n" << epgM3uLine(url) << "\n";
