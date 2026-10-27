@@ -372,8 +372,8 @@ target_link_libraries(DVBStreamer5
     dl
 )
 # Newcamd is mandatory runtime content; building DVBStreamer5 also builds the plugin.
-# Optional gzip response for /epg.xml.gz. The uncompressed /epg.xml
-# endpoint and existing media builds remain available without zlib.
+# XMLTV HTTP fetch/XML parser and gzip support. The media core itself has
+# no dependency on these libraries; they link only to the control executable.
 find_package(ZLIB REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCURL REQUIRED IMPORTED_TARGET libcurl)
