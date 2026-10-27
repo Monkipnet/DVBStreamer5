@@ -87,6 +87,9 @@ struct NativeUdpRelayConfig {
     // service remap/CA/transcoding. DVB EIT/EPG collection uses this so PID
     // 0x12 is not lost when a service filter removes non-A/V SI packets.
     std::function<void(const std::uint8_t*, std::size_t)> observeSourceTransport;
+    // Optional final MPEG-TS DVB EIT injector. Runs after remap/CA/transcode,
+    // before CBR/null-stuffing and before all transport-specific subscribers.
+    std::function<void(std::vector<mpegts::Packet>&)> injectDvbEit;
     std::function<bool(std::uint8_t*, std::size_t)> processTransport;
     // Optional one-to-many transport transform. Used by the native transcoder:
     // input is a contiguous MPEG-TS block after remap/CA, output is a new
