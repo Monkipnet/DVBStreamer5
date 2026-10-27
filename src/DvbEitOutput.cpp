@@ -221,7 +221,7 @@ void DvbEitOutput::enqueueSection(
         packet[1] = static_cast<std::uint8_t>(
             (offset == 0U ? 0x40U : 0x00U) | ((kEitPid >> 8U) & 0x1fU));
         packet[2] = static_cast<std::uint8_t>(kEitPid);
-        packet[3] = static_cast<std::uint8_t>(0x10U | (continuity_++ & 0x0fU));
+        packet[3] = 0x10U; // Assigned at SEND time, across both EIT section streams.
         std::size_t pos = 4U;
         if (offset == 0U) packet[pos++] = 0U; // PSI pointer_field
         const std::size_t payload = std::min(packet.size() - pos, section.size() - offset);
@@ -339,12 +339,16 @@ void DvbEitOutput::process(std::vector<Packet>& packets) {
     if (!presentFollowing_.empty() &&
         (nextPresentFollowing_ == std::chrono::steady_clock::time_point{} ||
          now >= nextPresentFollowing_)) {
-        packets.insert(packets.end(),
-                       presentFollowing_.begin(), presentFollowing_.end());
+        for (Packet packet : presentFollowing_) {
+            packet[3] = static_cast<std::uint8_t>(0x10U | (continuity_++ & 0x0fU));
+            packets.push_back(std::move(packet));
+        }
         nextPresentFollowing_ = now + kPfInterval;
     }
     for (std::size_t n = 0; n < kMaxPacketBurst && !schedule_.empty(); ++n) {
-        packets.push_back(schedule_.front());
+        Packet packet = schedule_.front();
         schedule_.pop_front();
+        packet[3] = static_cast<std::uint8_t>(0x10U | (continuity_++ & 0x0fU));
+        packets.push_back(std::move(packet));
     }
 }
