@@ -3566,8 +3566,16 @@ function updateTranscodeVideoControls() {
   const resolution = document.getElementById('streamTranscodeResolution');
   const bitrate = document.getElementById('streamTranscodeBitrate');
   const multibitrate = document.getElementById('streamTranscodeMultibitrate');
+  const nvencAdvanced = document.getElementById('streamNvencAdvanced');
   const copy = codec && codec.value === 'copy';
   const hevc = codec && codec.value === 'hevc';
+  const encoderValue = encoder?.value || 'auto';
+  if (nvencAdvanced) {
+    nvencAdvanced.style.display =
+      !copy && (encoderValue === 'auto' || encoderValue === 'nvenc') ? 'flex' : 'none';
+  }
+  const profile = document.getElementById('streamNvencProfile');
+  if (profile) profile.disabled = hevc;
   if (encoder) {
     encoder.disabled = copy;
     const nvenc = encoder.querySelector('option[value="nvenc"]');
