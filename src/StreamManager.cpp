@@ -11,6 +11,7 @@
 #include "media/NativeSampleAes.h"
 #include "media/MpegTsRemapper.h"
 #include "ExternalXmltv.h"
+#include "DvbEitOutput.h"
 #include "media/NativeTsDemux.h"
 
 #include <algorithm>
@@ -985,6 +986,25 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
     relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
+
+    if (streamConfig.epgEnabled && streamConfig.epgEitOutput) {
+        // A worker-local generator probes the final PAT/SDT for actual output
+        // SID/TSID/ONID and uses the same DVB-first/XMLTV fallback as /api/epg.
+        // The callback is dormant until the per-stream toggle is enabled and
+        // never touches encoder, descrambler or frontend ownership.
+        auto generator = std::make_shared<DvbEitOutput>(
+            [this, streamId = streamConfig.id] {
+                return epgSnapshot(streamId);
+            });
+        relay.injectDvbEit = [generator](
+            std::vector<dvbstreamer5::media::mpegts::Packet>& packets) {
+            generator->process(packets);
+        };
+        std::cerr << "DVB EIT OUTPUT enabled stream=" << streamConfig.id
+                  << " pid=0x12 source=selected-epg"
+                  << " packetization=bounded after_transform=1"
+                  << std::endl;
+    }
 
     if (streamConfig.epgEnabled) {
         const auto epgServiceId = streamConfig.inputServiceId <= 0xffffU
