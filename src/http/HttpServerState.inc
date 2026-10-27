@@ -781,17 +781,20 @@ std::string HttpServer::currentState() {
             appendSummary(item["epg_next"], nextEpg);
         }
 
+        // Display disk-restored EPG even for offline/OnDemand tiles.
+        // Keep DVB priority when a live input already has a schedule.
         if (cfg.epgEnabled && (cfg.epgMode == "xmltv" ||
-            (cfg.epgMode == "auto" && !item["epg_available"].asBool())) &&
-            !cfg.xmltvChannelId.empty()) {
+            !item["epg_available"].asBool())) {
             const auto selected = streamManager.epgSnapshot(cfg.id);
-            if (selected.get("source", "").asString() == "xmltv") {
-                item["epg_available"] = selected.get("available", false).asBool();
+            if (selected.get("available", false).asBool()) {
+                item["epg_available"] = true;
                 item["epg_event_count"] = selected.isMember("events")
                     ? selected["events"].size() : 0;
                 item["epg_now"] = selected["now"];
                 item["epg_next"] = selected["next"];
-                item["epg_source"] = "xmltv";
+                item["epg_source"] = selected.get("source", "none");
+                item["epg_cached"] = !snap.count(cfg.id) ||
+                    !snap.at(cfg.id) || !snap.at(cfg.id)->epgCollector;
             }
         }
         const bool configuredDvb = DvbSatellite::isDvbUri(cfg.inputUri);
