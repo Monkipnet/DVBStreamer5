@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/Mp2Encoder.h"
+#include "media/Mp3Encoder.h"
 #include "media/NativeCodecRuntime.h"
 #include "media/NativeIntelZeroCopy.h"
 #include "media/NativeNvidiaZeroCopy.h"
@@ -28,7 +29,7 @@ namespace dvbstreamer5::media::transcode {
 struct NativeTranscoderConfig {
     std::string videoCodec = "h264"; // h264 | hevc | copy
     std::string videoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
-    std::string audioCodec = "aac";  // aac | mp2 | copy
+    std::string audioCodec = "aac";  // aac | mp2 | mp3 | copy
     int width = 0;
     int height = 0;
     double fps = 25.0;
@@ -496,6 +497,7 @@ private:
     PtsCorrectingAudioDecoderHandle audioDecoder_;
     PtsCorrectingAudioEncoderHandle aacEncoder_;
     std::unique_ptr<Mp2Encoder> mp2Encoder_;
+    std::unique_ptr<Mp3Encoder> mp3Encoder_;
     mpegts::ElementaryCodec inputVideoCodec_ = mpegts::ElementaryCodec::Unknown;
     mpegts::ElementaryCodec inputAudioCodec_ = mpegts::ElementaryCodec::Unknown;
     std::uint16_t inputVideoPid_ = 0xffff;
