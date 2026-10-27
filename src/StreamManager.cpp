@@ -449,10 +449,26 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
       mptsOutputManager(std::make_unique<MptsOutputManager>()),
       externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources)) {
     configureMptsOutputs();
+    // Periodic cache writes stay off the native MPEG-TS processing thread.
+    epgPersistThread_ = std::thread([this] {
+        while (!epgPersistStop_.load(std::memory_order_acquire)) {
+            {
+                std::unique_lock<std::mutex> lock(epgPersistMutex_);
+                epgPersistCv_.wait_for(lock, std::chrono::seconds(60),
+                    [this] { return epgPersistStop_.load(std::memory_order_acquire); });
+            }
+            if (!epgPersistStop_.load(std::memory_order_acquire))
+                persistAllDvbEpg();
+        }
+    });
     onDemandMonitorThread = std::thread(&StreamManager::monitorOnDemandStreams, this);
 }
 
 StreamManager::~StreamManager() {
+    epgPersistStop_.store(true, std::memory_order_release);
+    epgPersistCv_.notify_all();
+    if (epgPersistThread_.joinable()) epgPersistThread_.join();
+    persistAllDvbEpg(); // flush before stopping running DVB feeds
     onDemandMonitorStop.store(true, std::memory_order_release);
     if (onDemandMonitorThread.joinable()) onDemandMonitorThread.join();
     stopAll();
@@ -1014,7 +1030,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         state->epgCollector =
             std::make_shared<dvbstreamer5::media::epg::DvbEpgCollector>(
                 epgServiceId, streamConfig.epgDays);
-        std::cerr << "DVB EPG enabled stream=" << streamConfig.id
+        // Never reuse EIT events from a different source or service.
+        state->epgCacheKey = streamConfig.id + "|" + streamConfig.inputUri +
+            "|" + std::to_string(streamConfig.inputServiceId);
+        (void)state->epgCollector->restoreFromDisk(state->epgCacheKey);
+        std::cerr << "DVB EPG enabled stream= << streamConfig.id
                   << " sid=" << epgServiceId
                   << " days=" << streamConfig.epgDays
                   << " source=eit-pid-0x12"
@@ -2296,6 +2316,22 @@ bool StreamManager::stopMptsOutput(const std::string& id) {
 
 Json::Value StreamManager::mptsSnapshot() const {
     return mptsOutputManager ? mptsOutputManager->snapshot() : Json::Value(Json::arrayValue);
+}
+
+void StreamManager::persistAllDvbEpg() {
+    std::vector<std::pair<std::string,
+        std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector>>> items;
+    {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        for (const auto& [id, state] : streams) {
+            (void)id;
+            if (state && state->epgCollector && !state->epgCacheKey.empty())
+                items.emplace_back(state->epgCacheKey, state->epgCollector);
+        }
+    }
+    // Copies were taken under the mutex; disk access is outside it.
+    for (const auto& [key, collector] : items)
+        if (collector) (void)collector->persistToDisk(key);
 }
 
 void StreamManager::configureExternalXmltvSources() {
