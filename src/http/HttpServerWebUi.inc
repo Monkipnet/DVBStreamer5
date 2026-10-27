@@ -96,7 +96,31 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .modal-content{position:relative;background:rgba(11,15,22,.985);padding:18px 18px;border-radius:22px;width:min(520px,100%);max-height:calc(100vh - var(--header-height,58px) - 24px);overflow:auto;box-shadow:0 28px 70px rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.08);box-sizing:border-box;margin:0 auto}
 .modal-close{display:inline-flex;align-items:center;justify-content:center;position:absolute;top:8px;right:8px;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:#d9363e;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;line-height:1;cursor:pointer;z-index:20;box-shadow:0 2px 7px rgba(0,0,0,.28)}
 .modal-close:hover{background:#f0444d;transform:scale(1.08)}
-.modal-content.stream-modal{width:min(820px,100%);max-height:calc(100% - 12px);margin:0 auto}
+.modal-content.stream-modal{width:min(1120px,100%);max-height:calc(100% - 12px);margin:0 auto;padding:16px 16px 14px}
+.stream-modal h2{margin-bottom:10px}
+.stream-modal .form-grid{grid-template-columns:repeat(12,minmax(0,1fr));gap:8px 10px}
+.stream-modal .form-grid>.form-row:not(.full){grid-column:span 6}
+.stream-modal .form-row{gap:5px;min-width:0}
+.stream-modal .form-row input,.stream-modal .form-row select{max-width:none;box-sizing:border-box}
+.stream-modal .row-inline.compact-row{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;width:100%;align-items:end}
+.stream-modal .input-main-row{grid-template-columns:minmax(320px,1.7fr) minmax(150px,.7fr) minmax(150px,.7fr);align-items:end}
+.stream-modal .modal-actions{position:sticky;bottom:-14px;z-index:8;margin:12px -16px -14px;padding:10px 16px;background:linear-gradient(180deg,rgba(11,15,22,.2),rgba(11,15,22,.99) 28%);border-top:1px solid rgba(255,255,255,.07)}
+.edit-section{width:100%;box-sizing:border-box;padding:10px;border:1px solid rgba(255,255,255,.075);border-radius:11px;background:rgba(255,255,255,.025)}
+.edit-section+.edit-section{margin-top:2px}
+.edit-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px;color:#eef4ff;font-size:.82rem;font-weight:800}
+.edit-section-head small{font-size:.64rem;font-weight:500;color:#748096}
+.edit-field{display:flex;flex-direction:column;gap:3px;min-width:0}
+.edit-field-title{font-size:.72rem;font-weight:700;color:#cbd5e5;line-height:1.15}
+.field-help{display:block;min-height:1.05em;margin:0 0 2px;color:#778397;font-size:.61rem;line-height:1.2;font-weight:400}
+.edit-field input,.edit-field select{width:100%!important;max-width:none!important}
+.edit-toggle{display:flex;flex-direction:column;justify-content:flex-end;gap:3px;min-width:0}
+.edit-toggle .checkbox-inline{margin:0!important;min-height:32px}
+.edit-inline-note{font-size:.62rem;color:#7f8ba0;line-height:1.3;margin-top:6px}
+.stream-video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.stream-video-grid.secondary{grid-template-columns:repeat(6,minmax(0,1fr));margin-top:8px}
+@media(max-width:920px){.stream-modal .input-main-row{grid-template-columns:1fr 1fr}.stream-modal .input-main-row>.form-row:first-child{grid-column:1/-1}.stream-video-grid,.stream-video-grid.secondary{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:680px){.modal-content.stream-modal{width:100%;padding:12px}.stream-modal .form-grid>.form-row:not(.full){grid-column:1/-1}.stream-modal .input-main-row,.stream-video-grid,.stream-video-grid.secondary{grid-template-columns:1fr 1fr}.stream-modal .modal-actions{margin-left:-12px;margin-right:-12px}.field-help{font-size:.64rem}}
+@media(max-width:460px){.stream-modal .input-main-row,.stream-video-grid,.stream-video-grid.secondary{grid-template-columns:1fr}}
 .modal-content.quality-modal{width:min(1240px,100%);background:rgba(9,13,20,.99);max-height:calc(100% - 12px);margin:0 auto}
 .modal-content.network-modal{width:min(620px,100%)}
 .modal-content.subscriber-modal{width:min(1280px,100%);max-height:98%}
@@ -808,11 +832,43 @@ function t(key, values={}) {
   Object.entries(values).forEach(([name, replacement]) => { value = value.replace(`{${name}}`, replacement); });
   return value;
 }
+function uiBiText(ru, en) {
+  return language === 'en' ? en : ru;
+}
+function uiEscapeAttr(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+function uiBiAttrs(ru, en) {
+  return `data-ui-ru="${uiEscapeAttr(ru)}" data-ui-en="${uiEscapeAttr(en)}"`;
+}
+function uiBiPlaceholderAttrs(ru, en) {
+  return `data-placeholder-ru="${uiEscapeAttr(ru)}" data-placeholder-en="${uiEscapeAttr(en)}" placeholder="${uiEscapeAttr(uiBiText(ru,en))}"`;
+}
+function applyExplicitBilingual(root=document) {
+  if (!root) return;
+  const nodes = [];
+  if (root.nodeType === Node.ELEMENT_NODE && root.matches?.('[data-ui-ru][data-ui-en]')) nodes.push(root);
+  root.querySelectorAll?.('[data-ui-ru][data-ui-en]').forEach(el => nodes.push(el));
+  for (const element of nodes) {
+    element.textContent = language === 'en' ? element.dataset.uiEn : element.dataset.uiRu;
+  }
+  const inputs = [];
+  if (root.nodeType === Node.ELEMENT_NODE && root.matches?.('[data-placeholder-ru][data-placeholder-en]')) inputs.push(root);
+  root.querySelectorAll?.('[data-placeholder-ru][data-placeholder-en]').forEach(el => inputs.push(el));
+  for (const element of inputs) {
+    element.placeholder = language === 'en' ? element.dataset.placeholderEn : element.dataset.placeholderRu;
+  }
+}
 function applyLanguage() {
   document.documentElement.lang = language;
   document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = t(element.dataset.i18n); });
   const button = document.getElementById('languageButton');
   if (button) button.textContent = language === 'en' ? 'RU' : 'EN';
+  applyExplicitBilingual(document.body);
   applyRuntimeLocalization(document.body);
 }
 function toggleLanguage() {
@@ -1192,6 +1248,10 @@ function openModal(html) {
   subscribersModalOpen = false;
   document.getElementById('modalContent').innerHTML = modalCloseButton() + html;
   document.getElementById('modalContent').className = 'modal-content';
+  // Explicit RU/EN pairs are mandatory for every newly added or changed
+  // interactive option. This keeps dynamic modal content in sync with the
+  // global language switch without relying on heuristic text replacement.
+  applyExplicitBilingual(document.getElementById('modalContent'));
   document.getElementById('modal').classList.remove('quality-open', 'stream-open', 'satellite-open');
   document.getElementById('modal').classList.add('active');
 }
