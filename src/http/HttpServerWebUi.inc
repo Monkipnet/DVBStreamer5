@@ -16,6 +16,10 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .header-title-block{flex:0 0 auto;min-width:0}
 .header-left .title{font-size:1.05rem;font-weight:700;letter-spacing:.02em;color:#fff;white-space:nowrap}
 .header-title-block .server-name{display:block;margin-top:3px;color:#7dd1ff;font-size:.78rem;font-weight:600;line-height:1.15;white-space:nowrap}
+.header-uptime{margin-top:2px;font-size:.68rem;color:#9aa3b1;white-space:nowrap}
+.header-uptime #programUptime{color:#b6f7c2;font-variant-numeric:tabular-nums;font-weight:600}
+.elapsed-clock{font-variant-numeric:tabular-nums;color:#7dd1ff;font-weight:600}
+.subscriber-elapsed{color:#b6f7c2}
 .header-monitor{display:flex;align-items:center;gap:8px;min-width:0}
 .header-monitor-group{display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:3px;min-width:94px}
 .header-monitor .metric,.header-monitor .status{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px;color:#d1d9ed;font-size:.74rem;line-height:1.05;white-space:nowrap}
@@ -274,7 +278,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .connection-monitor-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
 .connection-monitor-head h3{margin:0;font-size:.9rem;color:#f3f6fb}
 .connection-monitor-hint{color:#8f99aa;font-size:.7rem}
-.unknown-connection-head,.unknown-connection-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(230px,1.7fr) 80px 72px minmax(170px,auto);gap:8px;align-items:center;padding:8px 6px}
+.unknown-connection-head,.unknown-connection-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(195px,1.5fr) 75px 70px 115px minmax(170px,auto);gap:8px;align-items:center;padding:8px 6px}
 .unknown-connection-head{color:#8f99aa;font-size:.68rem}
 .unknown-connection-row{border-top:1px solid rgba(255,255,255,.07);font-size:.76rem}
 .unknown-connection-stream{color:#fff;font-weight:600}
@@ -325,6 +329,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <div class="header-title-block">
 <div class="title">Control Panel</div>
 <div class="server-name" id="headerServerName">DVBStreamer5</div>
+<div class="header-uptime"><span data-i18n="uptime">Uptime</span>: <span id="programUptime">—</span></div>
 </div>
 <div class="header-monitor">
 <div class="header-monitor-group">
@@ -375,7 +380,7 @@ const translations = {
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
     networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', udpInputFilter:'Filter inbound UDP', close:'Close',
-    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset'
+    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for'
   },
   ru: {
     subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
@@ -383,7 +388,7 @@ const translations = {
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
     networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', udpInputFilter:'Фильтровать входящий UDP', close:'Закрыть',
-    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить'
+    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён'
   }
 };
 translations.hr = {
@@ -456,6 +461,8 @@ translations.hr = {
   "activeSession": "Na mreži",
   "offlineSession": "Izvan mreže",
   "resetSession": "Ponovno postavi sesiju",
+  "uptime": "Vrijeme rada",
+  "connectedFor": "Povezan",
   "connectionMonitoring": "Neregistrirane veze",
   "monitoringHint": "Vidljive su HTTP, HLS i SRT sesije; UDP primatelji se ne mogu otkriti.",
   "clientIp": "IP adresa klijenta",
@@ -2934,6 +2941,8 @@ document.addEventListener('click', event => {
 let state = {};
 let statePollTimer = null;
 let metricsPollTimer = null;
+let elapsedDisplayTimer = null;
+let uptimeSampleAtMs = 0;
 let stateFetchPromise = null;
 let metricsFetchPromise = null;
 let lastTileStructureSignature = '';
@@ -3041,6 +3050,30 @@ function saveLanguagePreference() {
     body:JSON.stringify({language})
   }).catch(()=>{});
 }
+function formatElapsedSeconds(value) {
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const pad = number => String(number).padStart(2, '0');
+  const clock = pad(hours) + ':' + pad(minutes) + ':' + pad(seconds % 60);
+  return days ? days + (language === 'ru' ? 'д ' : 'd ') + clock : clock;
+}
+function updateElapsedDisplays() {
+  const now = Date.now();
+  const uptime = document.getElementById('programUptime');
+  if (uptime && uptimeSampleAtMs && Number.isFinite(Number(state.process_uptime_seconds))) {
+    uptime.textContent = formatElapsedSeconds(
+      Number(state.process_uptime_seconds) + Math.max(0, (now - uptimeSampleAtMs) / 1000));
+  }
+  document.querySelectorAll('.elapsed-clock[data-elapsed-base]').forEach(node => {
+    const base = Number(node.dataset.elapsedBase);
+    const sample = Number(node.dataset.elapsedSyncedAt);
+    if (Number.isFinite(base) && Number.isFinite(sample)) {
+      node.textContent = formatElapsedSeconds(base + Math.max(0, (now - sample) / 1000));
+    }
+  });
+}
 function fetchState() {
   if (stateFetchPromise) return stateFetchPromise;
   stateFetchPromise = fetch('/api/state', {cache:'no-store'})
@@ -3073,10 +3106,12 @@ function fetchState() {
         data.input_interfaces = cachedInputInterfaces.length ? cachedInputInterfaces : data.interfaces;
       }
       state = data;
+      uptimeSampleAtMs = Date.now();
       applyLanguage();
       try {
         render(false);
         refreshSubscriberSessions();
+        updateElapsedDisplays();
       } catch (error) {
         console.error('DVBStreamer5 render failed:', error);
       }
@@ -4413,6 +4448,17 @@ function refreshSubscriberSessions() {
       ? t('activeSession') + ' (' + observedSessions + ')' + (streamText ? ': ' + streamText : '')
       : t('offlineSession');
     text.title = streamText;
+    if (active) {
+      const elapsedLabel = document.createElement('span');
+      elapsedLabel.className = 'subscriber-elapsed';
+      elapsedLabel.textContent = ' · ' + t('connectedFor') + ': ';
+      const elapsedClock = document.createElement('strong');
+      elapsedClock.className = 'elapsed-clock';
+      elapsedClock.dataset.elapsedBase = String(Number(subscriber.connected_seconds || 0));
+      elapsedClock.dataset.elapsedSyncedAt = String(Date.now());
+      elapsedLabel.appendChild(elapsedClock);
+      text.appendChild(elapsedLabel);
+    }
   });
   refreshConnectionMonitoring();
 }
@@ -4434,7 +4480,7 @@ function refreshConnectionMonitoring() {
 
   const columns = document.createElement('div');
   columns.className = 'unknown-connection-head';
-  [t('clientIp'), t('streamNumber'), t('protocol'), t('connections'), t('actions')].forEach(label => {
+  [t('clientIp'), t('streamNumber'), t('protocol'), t('connections'), t('connectedFor'), t('actions')].forEach(label => {
     const cell = document.createElement('span');
     cell.textContent = label;
     columns.appendChild(cell);
@@ -4456,12 +4502,19 @@ function refreshConnectionMonitoring() {
       item.client_ip || '',
       (number > 0 ? '#' + number + ' ' : '') + (item.stream_name || item.stream_id || ''),
       String(item.protocol || '').toUpperCase(),
-      String(Number(item.connections || 0))
+      String(Number(item.connections || 0)),
+      ''
     ];
     values.forEach((value, index) => {
       const cell = document.createElement('span');
       if (index === 1) cell.className = 'unknown-connection-stream';
-      cell.textContent = value;
+      if (index === 4) {
+        cell.className = 'elapsed-clock';
+        cell.dataset.elapsedBase = String(Number(item.connected_seconds || 0));
+        cell.dataset.elapsedSyncedAt = String(Date.now());
+      } else {
+        cell.textContent = value;
+      }
       row.appendChild(cell);
     });
     const actions = document.createElement('span');
@@ -7248,6 +7301,11 @@ window.onload = () => {
   loadInterfaces();
   statePollLoop();
   metricsPollLoop();
+  // Refresh elapsed labels locally without increasing /api/state polling.
+  clearInterval(elapsedDisplayTimer);
+  elapsedDisplayTimer = setInterval(() => {
+    if (!document.hidden) updateElapsedDisplays();
+  }, 1000);
 };
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
@@ -7265,6 +7323,7 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('beforeunload', () => {
   clearTimeout(statePollTimer);
   clearTimeout(metricsPollTimer);
+  clearInterval(elapsedDisplayTimer);
 });
 
 /* Browser preview is installed on existing tile markup, no new buttons or stream restarts. */
