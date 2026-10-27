@@ -6244,7 +6244,7 @@ function openStreamForm(stream) {
         </div>
         <div class="form-row full edit-section">
           <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Язык DVB-субтитров','DVB subtitle language')}>${uiBiText('Язык DVB-субтитров','DVB subtitle language')}</div>
-          <small class="field-help" ${uiBiAttrs('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.')}>${uiBiText('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.')}</small>
+          <small class="field-help" ${uiBiAttrs('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.')}>${uiBiText('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.')}</small>
           <div class="row-inline compact-row"><select id="streamDvbSubtitlesLanguage" onchange="updateDvbSubtitleLanguageControls()">${renderDvbSubtitleLanguageOptions(stream.dvb_subtitles_language || 'auto')}</select>
           <input id="streamDvbSubtitlesCustomLanguage" type="text" maxlength="3" pattern="[a-zA-Z]{3}" autocomplete="off" placeholder="ISO 639-2" value="${!['auto','rus','eng','bel','ukr','pol','deu','ger','fra','fre','spa','hrv','ita','por','tur','ara','ces','cze','slk','slo','nld','dut'].includes(stream.dvb_subtitles_language || 'auto') ? escapeHtmlValue(stream.dvb_subtitles_language || '') : ''}" style="max-width:130px" /></div></div>
         </div>
