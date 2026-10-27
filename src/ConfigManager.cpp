@@ -506,6 +506,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.serviceProvider = root.get("service_provider", "").asString();
     config.epgEnabled = root.get("epg_enabled", false).asBool();
     config.epgDays = std::clamp(root.get("epg_days", 3).asUInt(), 1u, 7u);
+    config.epgEitOutput = root.get("epg_eit_output", false).asBool();
     config.epgMode = root.get("epg_mode", "auto").asString();
     if (config.epgMode != "dvb" && config.epgMode != "xmltv")
         config.epgMode = "auto";
@@ -613,6 +614,7 @@ Json::Value StreamConfig::toJson() const {
     root["service_provider"] = serviceProvider;
     root["epg_enabled"] = epgEnabled;
     root["epg_days"] = std::clamp(epgDays, 1u, 7u);
+    root["epg_eit_output"] = epgEitOutput;
     root["epg_mode"] = epgMode;
     root["xmltv_source_id"] = xmltvSourceId;
     root["xmltv_channel_id"] = xmltvChannelId;
