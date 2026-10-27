@@ -133,6 +133,7 @@ struct StreamConfig {
     bool epgEitOutput = false; // Opt-in DVB EIT PID 0x12 on finished MPEG-TS
     bool dvbSubtitlesEnabled = false; // Opt-in DVB bitmap subtitles on transcoded MPEG-TS
     std::string dvbSubtitlesLanguage = "auto"; // auto = all languages; otherwise ISO 639-2 code
+    std::string dvbSubtitlesTrack = "auto"; // Real PMT track ID PID:language:composition_page_id
     std::string epgMode = "auto"; // auto (DVB, then XMLTV) | dvb | xmltv
     std::string xmltvSourceId;   // empty = search all sources by channel ID
     std::string xmltvChannelId;
