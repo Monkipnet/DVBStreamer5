@@ -2616,6 +2616,15 @@ uiEnToHr.set('Complete IPTV playlist', 'Cijeli IPTV popis');
 for (const [en,hr] of [
   ['XMLTV sources','XMLTV izvori'],
   ['DVB subtitles','DVB titlovi'],
+  ['Copy transcoding settings','Kopiraj postavke transkodiranja'],
+  ['Paste transcoding settings','Zalijepi postavke transkodiranja'],
+  ['Copy video/audio settings to another stream; addresses and PIDs are excluded.','Kopiraj video/audio postavke u drugi tok; adrese i PID-ovi nisu uključeni.'],
+  ['Transcoding settings copied to clipboard','Postavke transkodiranja kopirane u međuspremnik'],
+  ['Transcoding settings copied for use in another tile','Postavke transkodiranja kopirane za drugu pločicu'],
+  ['Transcoding settings pasted. Save to apply.','Postavke transkodiranja zalijepljene. Spremite za primjenu.'],
+  ['Clipboard does not contain DVBStreamer5 transcoding settings','Međuspremnik ne sadrži DVBStreamer5 postavke transkodiranja'],
+  ['Transcoding is unavailable on this server','Transkodiranje nije dostupno na ovom poslužitelju'],
+  ['Some settings are unavailable on this server and were not pasted','Neke postavke nisu dostupne na ovom poslužitelju i nisu zalijepljene'],
   ['Keep original DVB subtitles (PID/PMT) on MPEG-TS outputs; CMAF unsupported.','Sačuvaj izvorne DVB titlove (PID/PMT) na MPEG-TS izlazima; CMAF nije podržan.'],
   ['Select EPG by channel name','Odaberi EPG prema nazivu kanala'],
   ['Output DVB EIT (WISI)','Izlazni DVB EIT (WISI)'],
@@ -6139,6 +6148,12 @@ function openStreamForm(stream) {
         <details class="form-row full edit-section edit-collapsible" id="streamTranscodeControls" style="display:${(stream.transcode_enabled && transcoderAvailable)?'block':'none'}">
           <summary class="edit-section-head"><span ${uiBiAttrs('Настройки транскодирования','Transcoding settings')}>${uiBiText('Настройки транскодирования','Transcoding settings')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
           <div class="edit-collapse-body">
+          <div class="row-inline compact-row" style="margin-bottom:8px">
+            <button type="button" class="button-secondary" onclick="copyTranscodeSettings()" ${uiBiAttrs('Копировать настройки транскодирования','Copy transcoding settings')}>${uiBiText('Копировать настройки транскодирования','Copy transcoding settings')}</button>
+            <button type="button" class="button-secondary" onclick="pasteTranscodeSettings()" ${uiBiAttrs('Вставить настройки транскодирования','Paste transcoding settings')}>${uiBiText('Вставить настройки транскодирования','Paste transcoding settings')}</button>
+          </div>
+          <small class="field-help" ${uiBiAttrs('Копируются видео/аудио настройки; адреса, SID и PID не затрагиваются.','Copy video/audio settings to another stream; addresses and PIDs are excluded.')}>${uiBiText('Копируются видео/аудио настройки; адреса, SID и PID не затрагиваются.','Copy video/audio settings to another stream; addresses and PIDs are excluded.')}</small>
+          <small id="streamTranscodeTransferStatus" class="field-help" aria-live="polite"></small>
           <div class="stream-video-grid">
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Видео кодек','Video codec')}>${uiBiText('Видео кодек','Video codec')}</div><small class="field-help" ${uiBiAttrs('Выходной кодек или прямой проброс оригинального видео.','Output codec or direct passthrough of the original video.')}>${uiBiText('Выходной кодек или прямой проброс оригинального видео.','Output codec or direct passthrough of the original video.')}</small><select id="streamTranscodeVideoCodec" onchange="updateTranscodeVideoControls()"><option value="h264" ${(stream.transcode_video_codec||'h264')==='h264'?'selected':''}>H.264</option><option value="hevc" ${stream.transcode_video_codec==='hevc'?'selected':''} ${transcoderInfo.hevc_video_encoder?'':'disabled'} ${uiBiAttrs('H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — недоступно'),'H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — unavailable'))}>${uiBiText('H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — недоступно'),'H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — unavailable'))}</option><option value="copy" ${stream.transcode_video_codec==='copy'?'selected':''} ${uiBiAttrs('Copy / без перекодирования','Copy / no re-encode')}>${uiBiText('Copy / без перекодирования','Copy / no re-encode')}</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Кодировщик','Encoder')}>${uiBiText('Кодировщик','Encoder')}</div><small class="field-help" ${uiBiAttrs('Auto выбирает NVENC → QSV/VAAPI → CPU.','Auto selects NVENC → QSV/VAAPI → CPU.')}>${uiBiText('Auto выбирает NVENC → QSV/VAAPI → CPU.','Auto selects NVENC → QSV/VAAPI → CPU.')}</small><select id="streamTranscodeVideoEncoder" onchange="updateTranscodeVideoControls()"><option value="auto" ${(!stream.transcode_video_encoder||stream.transcode_video_encoder==='auto')?'selected':''}>Auto</option><option value="nvenc" ${stream.transcode_video_encoder==='nvenc'?'selected':''} ${transcoderInfo.nvenc_available?'':'disabled'} ${uiBiAttrs('NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — недоступен'),'NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — unavailable'))}>${uiBiText('NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — недоступен'),'NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — unavailable'))}</option><option value="qsv" ${stream.transcode_video_encoder==='qsv'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Intel QSV / oneVPL</option><option value="vaapi" ${stream.transcode_video_encoder==='vaapi'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Intel VAAPI direct</option><option value="cpu" ${stream.transcode_video_encoder==='cpu'?'selected':''} ${transcoderInfo.x264_available?'':'disabled'}>CPU / OpenH264 / Kvazaar</option></select></div>
@@ -6209,6 +6224,152 @@ function openStreamForm(stream) {
   if (formLoaders.length) Promise.all(formLoaders).then(renderStreamForm);
   else renderStreamForm();
 }
+
+const transcodeFieldClipboardSchema = 'DVBStreamer5/transcode-settings';
+const transcodeClipboardFields = Object.freeze([
+  ['streamTranscodeVideoCodec','transcode_video_codec','select'],
+  ['streamTranscodeVideoEncoder','transcode_video_encoder','select'],
+  ['streamTranscodeResolution','transcode_resolution','select'],
+  ['streamTranscodeBitrate','transcode_video_bitrate_kbps','number'],
+  ['streamTranscodeFps','transcode_fps','select'],
+  ['streamTranscodeDeinterlace','transcode_deinterlace','checkbox'],
+  ['streamTranscodePreset','transcode_preset','select'],
+  ['streamTranscodeProfile','transcode_profile','select'],
+  ['streamTranscodeLevel','transcode_level','select'],
+  ['streamTranscodeGop','transcode_gop_frames','number'],
+  ['streamTranscodeBFrames','transcode_bframes','number'],
+  ['streamTranscodeRefFrames','transcode_ref_frames','number'],
+  ['streamTranscodeOpenGop','transcode_open_gop','checkbox'],
+  ['streamTranscodeAq','transcode_aq_strength','number'],
+  ['streamTranscodeMultibitrate','transcode_multibitrate_enabled','checkbox'],
+  ['streamTranscodeAudioCodec','transcode_audio_codec','select'],
+  ['streamTranscodeAudioBitrate','transcode_audio_bitrate','select']
+]);
+let transcodeClipboardFallback = null;
+function transcodeSettingsSnapshot() {
+  const fields = {};
+  for (const [id,key,type] of transcodeClipboardFields) {
+    const element = document.getElementById(id);
+    if (!element) throw new Error('Transcoding editor field missing: ' + id);
+    fields[key] = type === 'checkbox' ? element.checked :
+      type === 'number' ? Number(element.value) : element.value;
+  }
+  return {schema:transcodeFieldClipboardSchema, version:1, settings:fields};
+}
+async function copyTranscodeSettings() {
+  try {
+    const text = JSON.stringify(transcodeSettingsSnapshot(), null, 2);
+    // Always retain an in-page fallback for HTTP panel URLs where browsers
+    // forbid asynchronous clipboard access outside a secure context.
+    transcodeClipboardFallback = text;
+    let written = false;
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(text); written = true; }
+      catch (_) {}
+    }
+    if (!written) {
+      const hidden = document.createElement('textarea');
+      hidden.value = text;
+      hidden.setAttribute('readonly','');
+      hidden.style.cssText = 'position:fixed;left:-10000px;top:0';
+      document.body.appendChild(hidden);
+      hidden.select();
+      try { written = document.execCommand('copy'); } catch (_) {}
+      hidden.remove();
+    }
+    uiTranscodeTransferNotice(written
+      ? uiBiText('Настройки транскодирования скопированы в буфер обмена',
+                 'Transcoding settings copied to clipboard')
+      : uiBiText('Настройки транскодирования скопированы для другой плитки',
+                 'Transcoding settings copied for use in another tile'));
+  } catch (error) { uiError(error?.message || error); }
+}
+function uiTranscodeTransferNotice(message) {
+  const output = document.getElementById('streamTranscodeTransferStatus');
+  if (output) {
+    output.textContent = message;
+    output.style.color = '#7ee2a8';
+  }
+}
+async function pasteTranscodeSettings() {
+  if (state.transcoder?.available !== true) {
+    uiError(uiBiText('На этом сервере транскодирование недоступно',
+                     'Transcoding is unavailable on this server'));
+    return;
+  }
+  let raw = '';
+  if (navigator.clipboard?.readText) {
+    try { raw = await navigator.clipboard.readText(); } catch (_) {}
+  }
+  let incoming = null;
+  for (const source of [raw, transcodeClipboardFallback]) {
+    if (!source) continue;
+    try {
+      const data = JSON.parse(source);
+      if (data && data.schema === transcodeFieldClipboardSchema &&
+          data.version === 1 && data.settings &&
+          typeof data.settings === 'object' && !Array.isArray(data.settings)) {
+        incoming = data.settings;
+        break;
+      }
+    } catch (_) {}
+  }
+  if (!incoming) {
+    uiError(uiBiText('Буфер обмена не содержит настроек транскодирования DVBStreamer5',
+                     'Clipboard does not contain DVBStreamer5 transcoding settings'));
+    return;
+  }
+  // Validate every field before touching the form, so malformed or
+  // foreign clipboard data cannot partially overwrite the destination.
+  const pending = [];
+  let skipped = 0;
+  for (const [id,key,type] of transcodeClipboardFields) {
+    if (!Object.prototype.hasOwnProperty.call(incoming,key)) continue;
+    const element = document.getElementById(id);
+    if (!element) continue;
+    const value = incoming[key];
+    if (type === 'checkbox') {
+      if (typeof value !== 'boolean') { ++skipped; continue; }
+      pending.push([element,type,value]);
+    } else if (type === 'number') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 ||
+          (element.min && n < Number(element.min)) ||
+          (element.max && n > Number(element.max))) {
+        ++skipped; continue;
+      }
+      pending.push([element,type,String(n)]);
+    } else {
+      if (typeof value !== 'string') { ++skipped; continue; }
+      const option = Array.from(element.options).find(o => o.value === value);
+      if (!option || option.disabled) { ++skipped; continue; }
+      pending.push([element,type,value]);
+    }
+  }
+  if (!pending.length) {
+    uiError(uiBiText('Нет совместимых параметров для вставки',
+                     'No compatible transcoding settings to paste'));
+    return;
+  }
+  // Temporarily open the transcoder panel; no persistence occurs until Save.
+  const enabled = document.getElementById('streamTranscodeEnabled');
+  if (enabled && !enabled.disabled) enabled.checked = true;
+  updateTranscodeControls();
+  const panel = document.getElementById('streamTranscodeControls');
+  if (panel) panel.open = true;
+  for (const [element,type,value] of pending)
+    if (type === 'checkbox') element.checked = value;
+    else element.value = value;
+  updateTranscodeVideoControls();
+  updateTranscodeAudioControls();
+  const message = uiBiText('Настройки вставлены. Нажмите «Сохранить».',
+                           'Transcoding settings pasted. Save to apply.');
+  uiTranscodeTransferNotice(message + (skipped ? ' (' + skipped + ' skipped)' : ''));
+  if (skipped) uiError(uiBiText(
+    'Некоторые настройки недоступны на этом сервере и пропущены',
+    'Some settings are unavailable on this server and were not pasted'));
+}
+
 function updateTranscodeControls() {
   const enabled = document.getElementById('streamTranscodeEnabled');
   const controls = document.getElementById('streamTranscodeControls');
