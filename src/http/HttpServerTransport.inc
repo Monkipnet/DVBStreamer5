@@ -92,6 +92,22 @@ void HttpServer::handleSession(tcp::socket socket) {
         }
 
         if (req.method() == http::verb::head) {
+            // IPTV clients probe EPG/playlists with HEAD; do not synthesize
+            // the potentially large XMLTV document for a header-only request.
+            if (target == "/epg.xml" || target == "/epg.xml.gz" ||
+                target == "/playlist.m3u") {
+                res.set(http::field::content_type,
+                    target == "/playlist.m3u" ? "audio/x-mpegurl; charset=UTF-8" :
+                    (target == "/epg.xml.gz" ? "application/gzip" :
+                     "application/xml; charset=UTF-8"));
+#ifndef DVBSTREAMER5_HAVE_EPG_ZLIB
+                if (target == "/epg.xml.gz")
+                    res.result(http::status::not_implemented);
+#endif
+                res.set("Access-Control-Allow-Origin", "*");
+                http::write(socket, res);
+                return;
+            }
             // Strict URL receivers (including NetUP Stream Processor) may probe
             // HTTP Progressive/HLS URLs with HEAD before opening the media GET.
             // Answer those probes without creating a playback session.
@@ -202,6 +218,54 @@ void HttpServer::handleSession(tcp::socket socket) {
                     res.body() = "Stream access denied";
                 } else if (serveHlsFile(socket, target, res)) {
                     // serveHlsFile filled the response.
+                }
+            } else if (target == "/epg.xml" || target == "/epg.xml.gz" ||
+                       target == "/playlist.m3u") {
+                // IPTV/OTT clients usually cannot send control-panel Basic Auth.
+                // Only channels allowed for this client's IP are advertised.
+                boost::system::error_code peerEc;
+                const auto peer = socket.remote_endpoint(peerEc);
+                if (peerEc) {
+                    res.result(http::status::forbidden);
+                    res.set(http::field::content_type, "text/plain");
+                    res.body() = "Client address unavailable";
+                } else {
+                    const std::string clientIp = peer.address().to_string();
+                    const EpgAllowed allowed = [this, &clientIp](
+                        const std::string& id) {
+                        return isClientAllowedForStream(id, clientIp);
+                    };
+                    res.set("Access-Control-Allow-Origin", "*");
+                    res.set(http::field::cache_control, "public, max-age=15");
+                    if (target == "/playlist.m3u") {
+                        const auto hostIt = req.find(http::field::host);
+                        const std::string authority = hostIt == req.end()
+                            ? std::string{} : std::string(hostIt->value());
+                        res.set(http::field::content_type,
+                                "audio/x-mpegurl; charset=UTF-8");
+                        res.body() = buildEpgIptvPlaylist(
+                            configManager.config.streams, allowed,
+                            epgHttpBase(authority, configManager.config.httpPort),
+                            configManager.config.httpPort);
+                    } else {
+                        const std::string xml = buildEpgXmltv(
+                            configManager.config.streams, streamManager, allowed);
+                        if (target == "/epg.xml") {
+                            res.set(http::field::content_type,
+                                    "application/xml; charset=UTF-8");
+                            res.body() = xml;
+                        } else {
+                            res.set(http::field::content_type, "application/gzip");
+                            if (!gzipEpgXmltv(xml, res.body())) {
+                                res.result(http::status::not_implemented);
+                                res.set(http::field::content_type, "text/plain");
+                                res.body() = "XMLTV gzip unavailable; use /epg.xml";
+                            } else {
+                                res.set(http::field::content_disposition,
+                                        "attachment; filename=\"epg.xml.gz\"");
+                            }
+                        }
+                    }
                 }
             } else if (target == "/" || target == "/index.html") {
                 res.body() = renderIndexPage();
@@ -543,6 +607,11 @@ void HttpServer::handleSession(tcp::socket socket) {
 }
 
 bool HttpServer::requiresAuthentication(const std::string& target) const {
+    // XMLTV and output playlists are IPTV-client sidecars, not control APIs.
+    // Individual channel visibility is checked against subscriber/IP filtering
+    // when the sidecar response is built.
+    if (target == "/epg.xml" || target == "/epg.xml.gz" ||
+        target == "/playlist.m3u") return false;
     // Control-panel preview endpoints must never become public via a channel
     // whose HLS public name collides with the first URL segment ('api').
     if (target.rfind("/api/streams/", 0) == 0) return true;
