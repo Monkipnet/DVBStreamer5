@@ -1916,6 +1916,10 @@ bool StreamManager::stopStream(const std::string& id) {
     }
     if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
     if (state->monitorThread.joinable()) state->monitorThread.join();
+    // Persist the last complete EPG before this stopped/restarted/OnDemand
+    // collector is destroyed. Never perform file I/O under managerMutex.
+    if (state->epgCollector && !state->epgCacheKey.empty())
+        (void)state->epgCollector->persistToDisk(state->epgCacheKey);
     state->running.store(false);
     state->active.store(false);
     CardManager::instance().releaseService(id);
