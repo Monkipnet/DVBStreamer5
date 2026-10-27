@@ -373,6 +373,18 @@ bool configureUnicable(int fd, const LinuxDvbTuneConfig& config,
             fd, command,
             en50494 ? "EN50494 tune command" : "EN50607 tune command",
             error)) {
+        // The command is sent at 18 V.  On ioctl failure, restore the idle
+        // voltage before returning so one failed cold-start attempt does not
+        // leave a shared SCR coax powered at the command voltage.
+        const std::string commandError = error;
+        std::string restoreError;
+        if (!setVoltage(fd, SEC_VOLTAGE_13,
+                        "Unicable failed-command idle recovery 13V",
+                        restoreError)) {
+            std::clog << "NATIVE DVB UNICABLE voltage_recovery_warning "
+                      << restoreError << '\n';
+        }
+        error = commandError;
         return false;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
