@@ -144,6 +144,7 @@ set(DVBSTREAMER5_CODEC_LIBRARIES
 add_library(dvbstreamer5_media_core
     src/media/CbrTsPacer.cpp
     src/media/MpegTsRemapper.cpp
+    src/media/DvbEpgCollector.cpp
     src/media/NativeMpegTsMux.cpp
     ${DVBSTREAMER5_CODEC_SOURCE}
     src/media/NativeIttiamAvc.cpp

@@ -128,6 +128,8 @@ struct StreamConfig {
     uint32_t serviceId = 1;
     std::string serviceName;
     std::string serviceProvider;
+    bool epgEnabled = false;
+    uint32_t epgDays = 3;
     std::string conditionalAccessClient;
     std::vector<StreamOutputConfig> additionalOutputs;
     // 203.67 runtime-inherited global mode; not serialized per stream.

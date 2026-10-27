@@ -335,6 +335,7 @@ void DvbEpgCollector::parseSection(
         return;
     }
     if (configuredServiceId_ == 0) {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (resolvedServiceId_ == 0) resolvedServiceId_ = serviceId;
         if (serviceId != resolvedServiceId_) return;
     }

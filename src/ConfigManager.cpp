@@ -504,6 +504,8 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         : config.serviceId;
     config.serviceName = root.get("service_name", "").asString();
     config.serviceProvider = root.get("service_provider", "").asString();
+    config.epgEnabled = root.get("epg_enabled", false).asBool();
+    config.epgDays = std::clamp(root.get("epg_days", 3).asUInt(), 1u, 7u);
     config.conditionalAccessClient = root.get("conditional_access_client", "").asString();
     if (root.isMember("outputs") && root["outputs"].isArray() && root["outputs"].size() > 0) {
         const auto primary = StreamOutputConfig::fromJson(root["outputs"][0]);
@@ -604,6 +606,8 @@ Json::Value StreamConfig::toJson() const {
     root["service_id"] = serviceId;
     root["service_name"] = serviceName;
     root["service_provider"] = serviceProvider;
+    root["epg_enabled"] = epgEnabled;
+    root["epg_days"] = std::clamp(epgDays, 1u, 7u);
     root["conditional_access_client"] = conditionalAccessClient;
     Json::Value extraOutputs(Json::arrayValue);
     for (const auto& output : additionalOutputs) {
