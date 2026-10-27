@@ -32,6 +32,10 @@ public:
 
     void push(const std::uint8_t* data, std::size_t size);
     DvbEpgSnapshot snapshot(std::size_t maximumEvents = 256) const;
+    // Called outside the MPEG-TS input hot path. Cache is keyed by stream ID
+    // and input identity; corrupt/outdated data is ignored.
+    bool restoreFromDisk(const std::string& cacheKey);
+    bool persistToDisk(const std::string& cacheKey) const;
 
 private:
     void pushPacket(const std::uint8_t* packet);
