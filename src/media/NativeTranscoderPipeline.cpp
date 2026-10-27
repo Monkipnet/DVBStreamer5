@@ -167,8 +167,9 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
         error = "native transcoder: unsupported video output codec";
         return false;
     }
-    if (config_.audioCodec != "copy" && config_.audioCodec != "aac" && config_.audioCodec != "mp2") {
-        error = "native transcoder: supported audio output codecs are copy, aac and mp2";
+    if (config_.audioCodec != "copy" && config_.audioCodec != "aac" &&
+        config_.audioCodec != "mp2" && config_.audioCodec != "mp3") {
+        error = "native transcoder: supported audio output codecs are copy, aac, mp2 and mp3";
         return false;
     }
     if (config_.videoCodec != "copy" && ((config_.width & 1) || (config_.height & 1) || config_.width <= 0 || config_.height <= 0)) {
@@ -347,6 +348,7 @@ void NativeTranscoderPipeline::reset() {
         audioDecoder_.reset();
         aacEncoder_.reset();
         mp2Encoder_.reset();
+        mp3Encoder_.reset();
     }
     inputVideoCodec_ = mpegts::ElementaryCodec::Unknown;
     inputAudioCodec_ = mpegts::ElementaryCodec::Unknown;
@@ -1027,6 +1029,10 @@ bool NativeTranscoderPipeline::ensureAudioEncoder(const codec::PcmAudioFrame&, s
         cfg.channels = 2;
         cfg.bitrate = static_cast<std::uint32_t>(config_.audioBitrate);
         if (!mp2Encoder_->initialize(cfg, error)) return false;
+    } else if (config_.audioCodec == "mp3") {
+        mp3Encoder_ = std::make_unique<Mp3Encoder>();
+        if (!mp3Encoder_->initialize(48000, 2,
+              static_cast<std::uint32_t>(config_.audioBitrate), error)) return false;
     } else {
         error = "native audio encoder is not configured";
         return false;
@@ -1422,7 +1428,11 @@ bool NativeTranscoderPipeline::handleAudio(mpegts::DemuxSample&& sample, std::st
         } else {
             const std::size_t frames = normalized.samples.size() / 2U;
             std::vector<std::uint8_t> bytes;
-            if (!mp2Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
+            if (config_.audioCodec == "mp3") {
+                if (!mp3Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
+            } else {
+                if (!mp2Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
+            }
             if (!bytes.empty()) {
                 codec::EncodedAudioFrame frame;
                 frame.data = std::move(bytes);
@@ -1604,6 +1614,14 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
         if (mp2Encoder_) {
             std::vector<std::uint8_t> bytes;
             if (!mp2Encoder_->finish(bytes, error)) return false;
+            if (!bytes.empty()) {
+                codec::EncodedAudioFrame frame; frame.data = std::move(bytes);
+                if (!emitAudio(frame, 2160, error)) return false;
+            }
+        }
+        if (mp3Encoder_) {
+            std::vector<std::uint8_t> bytes;
+            if (!mp3Encoder_->finish(bytes, error)) return false;
             if (!bytes.empty()) {
                 codec::EncodedAudioFrame frame; frame.data = std::move(bytes);
                 if (!emitAudio(frame, 2160, error)) return false;
