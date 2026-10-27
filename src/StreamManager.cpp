@@ -12,6 +12,7 @@
 #include "media/MpegTsRemapper.h"
 #include "ExternalXmltv.h"
 #include "DvbEitOutput.h"
+#include "DvbSubtitlePassthrough.h"
 #include "media/NativeTsDemux.h"
 
 #include <algorithm>
@@ -1279,6 +1280,24 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                                                 std::vector<std::uint8_t>& output, std::string& transformError) {
             return transcoder->process(data, size, output, transformError);
         };
+    }
+
+    if (state->nativeTranscoder && streamConfig.dvbSubtitlesEnabled) {
+        // Preserve DVB bitmap-subtitle PES and its PMT 0x59 descriptor from
+        // the post-CA selected-service TS, then reattach them after the native
+        // transcoder rebuilds PAT/PMT and elementary video/audio streams.
+        auto subtitles = std::make_shared<DvbSubtitlePassthrough>();
+        relay.observeDvbSubtitles = [subtitles](const std::uint8_t* data,
+                                                std::size_t size) {
+            subtitles->observe(data, size);
+        };
+        relay.injectDvbSubtitles = [subtitles](
+            std::vector<dvbstreamer5::media::mpegts::Packet>& packets) {
+            subtitles->inject(packets);
+        };
+        std::cerr << "DVB SUBTITLES enabled stream=" << streamConfig.id
+                  << " mode=post-transcode MPEG-TS passthrough"
+                  << std::endl;
     }
 
     auto httpHub = state->nativeHttpHub;
