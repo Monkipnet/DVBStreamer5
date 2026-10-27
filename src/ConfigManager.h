@@ -161,6 +161,8 @@ struct XmltvSourceConfig {
     bool enabled = true;
     // Daily refresh in server local time, 24h HH:MM.
     std::string refreshTime = "03:00";
+    std::string refreshPeriod = "daily"; // daily | weekly
+    int refreshWeekday = 1; // Sun=0, Mon=1, ... Sat=6
 
     Json::Value toJson() const;
     static XmltvSourceConfig fromJson(const Json::Value& root);
