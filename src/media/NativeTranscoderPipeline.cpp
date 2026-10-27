@@ -1187,6 +1187,14 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.fps = config_.fps;
                 zeroCopyConfig.bitrate = config_.videoBitrate;
                 zeroCopyConfig.deinterlace = config_.deinterlace;
+                zeroCopyConfig.preset = config_.preset;
+                zeroCopyConfig.profile = config_.profile;
+                zeroCopyConfig.level = config_.level;
+                zeroCopyConfig.gopFrames = config_.gopFrames;
+                zeroCopyConfig.bFrames = config_.bFrames;
+                zeroCopyConfig.refFrames = config_.refFrames;
+                zeroCopyConfig.openGop = config_.openGop;
+                zeroCopyConfig.aqStrength = config_.aqStrength;
                 zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 intelZeroCopy_ = codec::createIntelZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);

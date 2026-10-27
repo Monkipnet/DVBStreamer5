@@ -234,19 +234,55 @@ public:
     int outputHeight() const noexcept override { return outputHeight_; }
 
 private:
+    void applyEncoderOptions(mfxVideoParam& params, double fps) {
+        params.mfx.TargetUsage = static_cast<mfxU16>(
+            config_.preset == "fastest" ? 7 :
+            config_.preset == "fast" ? 6 :
+            config_.preset == "quality" ? 2 :
+            config_.preset == "best" ? 1 : 4);
+
+        gopFrames_ = std::max<std::uint64_t>(
+            1ULL, static_cast<std::uint64_t>(
+                config_.gopFrames > 0 ? config_.gopFrames :
+                std::llround((fps > 0.0 ? fps : 25.0) * 2.0)));
+        params.mfx.GopPicSize = static_cast<mfxU16>(
+            std::min<std::uint64_t>(gopFrames_, 65535ULL));
+
+        // Current live mux is intentionally zero-reorder (DTS=PTS).
+        params.mfx.GopRefDist = 1;
+        params.mfx.NumRefFrame = static_cast<mfxU16>(
+            std::min<std::uint32_t>(config_.refFrames, 4U));
+
+        if (config_.outputCodec == mpegts::ElementaryCodec::H264) {
+            if (config_.profile == "main") params.mfx.CodecProfile = 77;
+            else if (config_.profile == "high") params.mfx.CodecProfile = 100;
+            if (config_.level == "3.1") params.mfx.CodecLevel = 31;
+            else if (config_.level == "4.0") params.mfx.CodecLevel = 40;
+            else if (config_.level == "4.1") params.mfx.CodecLevel = 41;
+            else if (config_.level == "5.0") params.mfx.CodecLevel = 50;
+            else if (config_.level == "5.1") params.mfx.CodecLevel = 51;
+        }
+
+        if (!optionsClampLogged_ &&
+            (config_.bFrames > 0 || config_.openGop)) {
+            optionsClampLogged_ = true;
+            std::cerr << "NATIVE VIDEO OPTIONS backend=intel-zero-copy"
+                      << " bframes_requested=" << config_.bFrames
+                      << " open_gop_requested=" << (config_.openGop ? 1 : 0)
+                      << " applied_bframes=0 applied_open_gop=0"
+                      << " reason=live_zero_reorder"
+                      << std::endl;
+        }
+    }
+
     bool initializeEncoder(std::string& error) {
         std::memset(&encodeParams_, 0, sizeof(encodeParams_));
         encodeParams_.mfx.CodecId = codecId(config_.outputCodec);
-        encodeParams_.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
         encodeParams_.mfx.TargetKbps = static_cast<mfxU16>(
             std::min<std::uint64_t>(config_.bitrate / 1000ULL, 65535ULL));
         encodeParams_.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
         const double fps = config_.fps > 0.0 ? config_.fps : 25.0;
-        gopFrames_ = std::max<std::uint64_t>(
-            1ULL, static_cast<std::uint64_t>(std::llround(fps * 2.0)));
-        encodeParams_.mfx.GopPicSize = static_cast<mfxU16>(
-            std::min<std::uint64_t>(gopFrames_, 65535ULL));
-        encodeParams_.mfx.GopRefDist = 1;
+        applyEncoderOptions(encodeParams_, fps);
         // AVC: 0 means every I is IDR. HEVC: 1 means every I is IDR.
         encodeParams_.mfx.IdrInterval =
             config_.outputCodec == mpegts::ElementaryCodec::H264 ? 0 : 1;
@@ -373,6 +409,13 @@ private:
                   << " source=" << sourceWidth_ << "x" << sourceHeight_
                   << " encode=" << outputWidth_ << "x" << outputHeight_
                   << " deinterlace=" << (config_.deinterlace ? "vpp-auto" : "off")
+                  << " preset=" << config_.preset
+                  << " target_usage=" << encodeParams_.mfx.TargetUsage
+                  << " profile=" << config_.profile
+                  << " level=" << config_.level
+                  << " gop_frames=" << encodeParams_.mfx.GopPicSize
+                  << " refs=" << encodeParams_.mfx.NumRefFrame
+                  << " bframes=0"
                   << " decode_copies=0 gpu_surface_copies=0"
                   << std::endl;
         return true;
@@ -380,14 +423,11 @@ private:
 
     bool initializeEncoderForResolvedGeometry(std::string& error) {
         encodeParams_.mfx.CodecId = codecId(config_.outputCodec);
-        encodeParams_.mfx.TargetUsage = MFX_TARGETUSAGE_BEST_SPEED;
         encodeParams_.mfx.TargetKbps = static_cast<mfxU16>(
             std::min<std::uint64_t>(config_.bitrate / 1000ULL, 65535ULL));
         encodeParams_.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
         const double fps = config_.fps > 0.0 ? config_.fps : 25.0;
-        encodeParams_.mfx.GopPicSize = static_cast<mfxU16>(
-            std::min<std::uint64_t>(gopFrames_, 65535ULL));
-        encodeParams_.mfx.GopRefDist = 1;
+        applyEncoderOptions(encodeParams_, fps);
         encodeParams_.mfx.IdrInterval =
             config_.outputCodec == mpegts::ElementaryCodec::H264 ? 0 : 1;
         encodeParams_.mfx.NumSlice = 1;
@@ -608,6 +648,7 @@ private:
     bool decoderInitialized_ = false;
     bool vppInitialized_ = false;
     bool encoderInitialized_ = false;
+    bool optionsClampLogged_ = false;
     std::vector<std::uint8_t> headerBuffer_;
     std::vector<std::uint8_t> bitstream_;
     std::uint64_t headerPts90k_ = 0;
