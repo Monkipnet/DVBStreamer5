@@ -349,6 +349,8 @@ void NativeTranscoderPipeline::reset() {
         aacEncoder_.reset();
         mp2Encoder_.reset();
         mp3Encoder_.reset();
+        mp3NextPts90k_ = 0;
+        mp3PtsValid_ = false;
     }
     inputVideoCodec_ = mpegts::ElementaryCodec::Unknown;
     inputAudioCodec_ = mpegts::ElementaryCodec::Unknown;
@@ -1425,14 +1427,32 @@ bool NativeTranscoderPipeline::handleAudio(mpegts::DemuxSample&& sample, std::st
             std::vector<codec::EncodedAudioFrame> encoded;
             if (!aacEncoder_->encode(normalized, encoded, error)) return false;
             for (const auto& frame : encoded) if (!emitAudio(frame, 1920, error)) return false;
+        } else if (config_.audioCodec == "mp3") {
+            if (!mp3PtsValid_ && normalized.hasPts) {
+                mp3NextPts90k_ = normalized.pts90k;
+                mp3PtsValid_ = true;
+            }
+            const std::size_t frames = normalized.samples.size() / 2U;
+            std::vector<std::uint8_t> bytes;
+            if (!mp3Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
+            if (!bytes.empty()) {
+                const std::size_t frameBytes = mp3Encoder_->frameSizeBytes();
+                if (frameBytes == 0 || bytes.size() % frameBytes != 0) {
+                    error = "native MP3 encoder returned incomplete MPEG audio frames";
+                    return false;
+                }
+                const std::uint64_t duration = (bytes.size() / frameBytes) * 2160ULL;
+                codec::EncodedAudioFrame frame;
+                frame.data = std::move(bytes);
+                frame.hasPts = mp3PtsValid_;
+                frame.pts90k = mp3NextPts90k_;
+                if (!emitAudio(frame, duration, error)) return false;
+                mp3NextPts90k_ += duration;
+            }
         } else {
             const std::size_t frames = normalized.samples.size() / 2U;
             std::vector<std::uint8_t> bytes;
-            if (config_.audioCodec == "mp3") {
-                if (!mp3Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
-            } else {
-                if (!mp2Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
-            }
+            if (!mp2Encoder_->encodeInterleaved(normalized.samples.data(), frames, bytes, error)) return false;
             if (!bytes.empty()) {
                 codec::EncodedAudioFrame frame;
                 frame.data = std::move(bytes);
@@ -1623,8 +1643,17 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
             std::vector<std::uint8_t> bytes;
             if (!mp3Encoder_->finish(bytes, error)) return false;
             if (!bytes.empty()) {
+                const std::size_t frameBytes = mp3Encoder_->frameSizeBytes();
+                if (frameBytes == 0 || bytes.size() % frameBytes != 0) {
+                    error = "native MP3 flush returned incomplete audio frames";
+                    return false;
+                }
+                const std::uint64_t duration = (bytes.size() / frameBytes) * 2160ULL;
                 codec::EncodedAudioFrame frame; frame.data = std::move(bytes);
-                if (!emitAudio(frame, 2160, error)) return false;
+                frame.pts90k = mp3NextPts90k_;
+                frame.hasPts = mp3PtsValid_;
+                if (!emitAudio(frame, duration, error)) return false;
+                mp3NextPts90k_ += duration;
             }
         }
     }
