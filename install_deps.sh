@@ -17,7 +17,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${APT_GET[@]}" update
 DEPS=(build-essential cmake nodejs pkg-config
       libpcsclite-dev pcscd pcsc-tools libccid
-      libssl-dev libcrypt-dev libmp3lame-dev ca-certificates curl binutils nasm autoconf automake libtool)
+      libssl-dev libcrypt-dev libmp3lame-dev libcurl4-openssl-dev libxml2-dev zlib1g-dev ca-certificates curl binutils nasm autoconf automake libtool)
 "${APT_GET[@]}" install -y --no-install-recommends "${DEPS[@]}"
 "${APT_GET[@]}" clean
 
