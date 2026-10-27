@@ -331,6 +331,7 @@ add_executable(DVBStreamer5
     src/ConfigManager.cpp
     src/ExternalXmltv.cpp
     src/DvbEitOutput.cpp
+    src/DvbSubtitlePassthrough.cpp
     src/DvbSatellite.cpp
     src/CardManager.cpp
     src/CaBackend.cpp
