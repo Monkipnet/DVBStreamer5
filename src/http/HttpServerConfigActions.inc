@@ -249,6 +249,9 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     if (!root.isMember("mpts_outputs")) {
         nextConfig.mptsOutputs = configManager.config.mptsOutputs;
     }
+    if (!root.isMember("xmltv_sources")) {
+        nextConfig.xmltvSources = configManager.config.xmltvSources;
+    }
     const bool hasStreamArray = root.isMember("streams") && root["streams"].isArray();
     const bool explicitlyAllowEmptyStreams = root.get("allow_empty_streams", false).asBool();
     if ((!hasStreamArray || nextConfig.streams.empty()) &&
@@ -321,6 +324,9 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
 
     configManager.config = nextConfig;
     configManager.save();
+    // A changed XMLTV URL or daily schedule is metadata-only. It must not
+    // retune a DVB card, reconfigure CA or interrupt transcoding.
+    streamManager.configureExternalXmltvSources();
     // V10.8.100: CardManager::configure() synchronizes OSCam-mini and may
     // restart its systemd service when listener configuration changes. A
     // stream-only/partial config save must not restart OSCam or reload the CA
