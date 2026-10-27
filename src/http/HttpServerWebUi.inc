@@ -6065,6 +6065,13 @@ function rebuildDvbInputUriFromFields() {
   set('stream_id', Number(document.getElementById('streamDvbStreamId')?.value ?? -1));
   input.value = base + '?' + params.toString();
 }
+function subtitleUiTriText(ru, en, hr) {
+  return language === 'ru' ? ru : language === 'hr' ? hr : en;
+}
+function subtitleUiTriAttrs(ru, en, hr) {
+  return 'data-ui-ru="' + uiEscapeAttr(ru) + '" data-ui-en="' +
+    uiEscapeAttr(en) + '" data-ui-hr="' + uiEscapeAttr(hr) + '"';
+}
 function renderDvbSubtitleLanguageOptions(current) {
   const languages = [
     ['auto', 'Авто — все языки', 'Auto — all languages', 'Automatski — svi jezici'],
@@ -6243,8 +6250,8 @@ function openStreamForm(stream) {
           <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('DVB-субтитры','DVB subtitles')}>${uiBiText('DVB-субтитры','DVB subtitles')}</div><small class="field-help" ${uiBiAttrs('При транскодировании сохранять DVB-субтитры и PMT; CMAF не поддерживается.','Preserve DVB subtitle PID/PMT during transcoding; CMAF unsupported.')}>${uiBiText('При транскодировании сохранять DVB-субтитры и PMT; CMAF не поддерживается.','Preserve DVB subtitle PID/PMT during transcoding; CMAF unsupported.')}</small><label class="checkbox-inline"><input id="streamDvbSubtitlesEnabled" type="checkbox" ${stream.dvb_subtitles_enabled===true?'checked':''} onchange="updateDvbSubtitleLanguageControls()"/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
         </div>
         <div class="form-row full edit-section">
-          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Язык DVB-субтитров','DVB subtitle language')}>${uiBiText('Язык DVB-субтитров','DVB subtitle language')}</div>
-          <small class="field-help" ${uiBiAttrs('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.')}>${uiBiText('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.')}</small>
+          <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('Язык DVB-субтитров','DVB subtitle language','Jezik DVB titlova')}>${subtitleUiTriText('Язык DVB-субтитров','DVB subtitle language','Jezik DVB titlova')}</div>
+          <small class="field-help" ${subtitleUiTriAttrs('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.','Automatski čuva sve jezike; odabir filtrira PMT/PID po ISO 639-2.')}>${subtitleUiTriText('Авто передаёт все языки; выбор фильтрует PMT/PID по ISO 639-2.','Auto keeps all languages; selection filters PMT/PIDs by ISO 639-2.','Automatski čuva sve jezike; odabir filtrira PMT/PID po ISO 639-2.')}</small>
           <div class="row-inline compact-row"><select id="streamDvbSubtitlesLanguage" onchange="updateDvbSubtitleLanguageControls()">${renderDvbSubtitleLanguageOptions(stream.dvb_subtitles_language || 'auto')}</select>
           <input id="streamDvbSubtitlesCustomLanguage" type="text" maxlength="3" pattern="[a-zA-Z]{3}" autocomplete="off" placeholder="ISO 639-2" value="${!['auto','rus','eng','bel','ukr','pol','deu','ger','fra','fre','spa','hrv','ita','por','tur','ara','ces','cze','slk','slo','nld','dut'].includes(stream.dvb_subtitles_language || 'auto') ? escapeHtmlValue(stream.dvb_subtitles_language || '') : ''}" style="max-width:130px" /></div></div>
         </div>
