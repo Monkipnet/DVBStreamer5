@@ -943,10 +943,14 @@ bool NativeTranscoderPipeline::ensureVideoEncoder(std::string& error) {
             outputCodec, backend, backendError);
         if (!candidate) return false;
         codec::VideoEncoderOptions options;
-        options.nvencPreset = config_.nvencPreset;
-        options.nvencProfile = config_.nvencProfile;
+        options.preset = config_.preset;
+        options.profile = config_.profile;
+        options.level = config_.level;
         options.gopFrames = config_.gopFrames;
-        options.nvencAqStrength = config_.nvencAqStrength;
+        options.bFrames = config_.bFrames;
+        options.refFrames = config_.refFrames;
+        options.openGop = config_.openGop;
+        options.aqStrength = config_.aqStrength;
         candidate->setOptions(options);
         if (!candidate->configure(
                 config_.width, config_.height, config_.fps,
@@ -1089,10 +1093,14 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.fps = config_.fps;
                 zeroCopyConfig.bitrate = config_.videoBitrate;
                 zeroCopyConfig.deinterlace = config_.deinterlace;
-                zeroCopyConfig.nvencPreset = config_.nvencPreset;
-                zeroCopyConfig.nvencProfile = config_.nvencProfile;
+                zeroCopyConfig.preset = config_.preset;
+                zeroCopyConfig.profile = config_.profile;
+                zeroCopyConfig.level = config_.level;
                 zeroCopyConfig.gopFrames = config_.gopFrames;
-                zeroCopyConfig.nvencAqStrength = config_.nvencAqStrength;
+                zeroCopyConfig.bFrames = config_.bFrames;
+                zeroCopyConfig.refFrames = config_.refFrames;
+                zeroCopyConfig.openGop = config_.openGop;
+                zeroCopyConfig.aqStrength = config_.aqStrength;
                 zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 nvidiaZeroCopy_ = codec::createNvidiaZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);

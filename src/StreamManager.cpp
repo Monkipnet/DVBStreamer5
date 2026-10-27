@@ -663,10 +663,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.videoBitrate = streamConfig.transcodeVideoBitrate;
         tc.fps = streamConfig.transcodeFps;
         tc.deinterlace = streamConfig.transcodeDeinterlace;
-        tc.nvencPreset = streamConfig.transcodeNvencPreset;
-        tc.nvencProfile = streamConfig.transcodeNvencProfile;
+        tc.preset = streamConfig.transcodePreset;
+        tc.profile = streamConfig.transcodeProfile;
+        tc.level = streamConfig.transcodeLevel;
         tc.gopFrames = streamConfig.transcodeGopFrames;
-        tc.nvencAqStrength = streamConfig.transcodeNvencAqStrength;
+        tc.bFrames = streamConfig.transcodeBFrames;
+        tc.refFrames = streamConfig.transcodeRefFrames;
+        tc.openGop = streamConfig.transcodeOpenGop;
+        tc.aqStrength = streamConfig.transcodeAqStrength;
         // A CBR transport cannot sustainably carry an elementary-video target
         // equal to the complete TS target: audio, PES/TS headers, PSI/SI and
         // encoder overshoot also consume bitrate.  When transcoding to CBR,

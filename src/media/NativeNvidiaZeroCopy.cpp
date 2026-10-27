@@ -699,7 +699,7 @@ private:
             presetName = "p5";
             return NV_ENC_PRESET_P5_GUID;
         };
-        presetGuid = selectPreset(config_.nvencPreset);
+        presetGuid = selectPreset(config_.preset);
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -747,7 +747,7 @@ private:
         encodeConfig.rcParams.zeroReorderDelay = 1;
         encodeConfig.rcParams.enableAQ = 1;
         encodeConfig.rcParams.aqStrength = static_cast<std::uint32_t>(
-            std::clamp<std::uint32_t>(config_.nvencAqStrength, 1U, 15U));
+            std::clamp<std::uint32_t>(config_.aqStrength, 1U, 15U));
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         encodeConfig.rcParams.multiPass = NV_ENC_MULTI_PASS_DISABLED;
 #endif
@@ -762,9 +762,9 @@ private:
         encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
         if (config_.outputCodec == mpegts::ElementaryCodec::H264) {
             encodeConfig.profileGUID = NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID;
-            if (config_.nvencProfile == "main")
+            if (config_.profile == "main")
                 encodeConfig.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
-            else if (config_.nvencProfile == "high")
+            else if (config_.profile == "high")
                 encodeConfig.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
             encodeConfig.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
             encodeConfig.encodeCodecConfig.h264Config.outputAUD = 1;
@@ -816,8 +816,8 @@ private:
         std::cerr << "NATIVE NVIDIA ZERO-COPY NVENC gpu=" << gpuOrdinal_
                   << " codec=" << codecName(config_.outputCodec)
                   << " preset=" << presetName
-                  << " profile=" << config_.nvencProfile
-                  << " aq_strength=" << std::clamp<std::uint32_t>(config_.nvencAqStrength, 1U, 15U)
+                  << " profile=" << config_.profile
+                  << " aq_strength=" << std::clamp<std::uint32_t>(config_.aqStrength, 1U, 15U)
                   << " tuning="
                   << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr bframes=0 lookahead=0 reorder_delay=0"
