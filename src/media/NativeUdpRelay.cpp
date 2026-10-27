@@ -1169,6 +1169,9 @@ void NativeUdpRelay::run() {
             if (config_.observeInputTransport) {
                 config_.observeInputTransport(observedTransport.data(), observedTransport.size());
             }
+            if (config_.observeDvbSubtitles) {
+                config_.observeDvbSubtitles(observedTransport.data(), observedTransport.size());
+            }
         }
 
         if (!packets.empty() && config_.transformTransport) {
@@ -1186,6 +1189,9 @@ void NativeUdpRelay::run() {
                 transformedFramer.push(transformed.data(), transformed.size(), packets);
             }
         }
+
+        if (!packets.empty() && config_.injectDvbSubtitles)
+            config_.injectDvbSubtitles(packets);
 
         if (!packets.empty() && config_.injectDvbEit)
             config_.injectDvbEit(packets);
