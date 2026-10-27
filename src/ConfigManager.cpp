@@ -436,6 +436,19 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.transcodeVideoEncoder = "auto";
     }
     config.transcodeVideoBitrate = root.get("transcode_video_bitrate", Json::UInt64(6000000)).asUInt64();
+    config.transcodeFps = root.get("transcode_fps", 25.0).asDouble();
+    if (config.transcodeFps < 1.0 || config.transcodeFps > 60.0) config.transcodeFps = 25.0;
+    config.transcodeDeinterlace = root.get("transcode_deinterlace", true).asBool();
+    config.transcodeNvencPreset = toLower(root.get("transcode_nvenc_preset", "p5").asString());
+    if (config.transcodeNvencPreset.size() != 2 || config.transcodeNvencPreset[0] != 'p' ||
+        config.transcodeNvencPreset[1] < '1' || config.transcodeNvencPreset[1] > '7') {
+        config.transcodeNvencPreset = "p5";
+    }
+    config.transcodeNvencProfile = toLower(root.get("transcode_nvenc_profile", "auto").asString());
+    if (config.transcodeNvencProfile != "auto" && config.transcodeNvencProfile != "main" &&
+        config.transcodeNvencProfile != "high") config.transcodeNvencProfile = "auto";
+    config.transcodeGopFrames = std::clamp(root.get("transcode_gop_frames", 50).asUInt(), 1u, 1000u);
+    config.transcodeNvencAqStrength = std::clamp(root.get("transcode_nvenc_aq_strength", 8).asUInt(), 1u, 15u);
     config.transcodeMultibitrateEnabled = root.get("transcode_multibitrate_enabled", false).asBool();
     config.hlsArchiveEnabled = root.get("hls_archive_enabled", false).asBool();
     config.hlsArchiveHours = std::clamp(root.get("hls_archive_hours", 24).asUInt(), 1u, 168u);
@@ -539,6 +552,12 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_video_codec"] = transcodeVideoCodec;
     root["transcode_video_encoder"] = transcodeVideoEncoder;
     root["transcode_video_bitrate"] = Json::UInt64(transcodeVideoBitrate);
+    root["transcode_fps"] = transcodeFps;
+    root["transcode_deinterlace"] = transcodeDeinterlace;
+    root["transcode_nvenc_preset"] = transcodeNvencPreset;
+    root["transcode_nvenc_profile"] = transcodeNvencProfile;
+    root["transcode_gop_frames"] = transcodeGopFrames;
+    root["transcode_nvenc_aq_strength"] = transcodeNvencAqStrength;
     root["transcode_multibitrate_enabled"] = transcodeMultibitrateEnabled;
     root["hls_archive_enabled"] = hlsArchiveEnabled;
     root["hls_archive_hours"] = hlsArchiveHours;

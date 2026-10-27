@@ -93,6 +93,12 @@ struct StreamConfig {
     std::string transcodeVideoCodec = "h264"; // h264 | hevc | copy
     std::string transcodeVideoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
     uint64_t transcodeVideoBitrate = 6000000;
+    double transcodeFps = 25.0;
+    bool transcodeDeinterlace = true;
+    std::string transcodeNvencPreset = "p5"; // p1..p7
+    std::string transcodeNvencProfile = "auto"; // auto | main | high
+    uint32_t transcodeGopFrames = 50;
+    uint32_t transcodeNvencAqStrength = 8;
     // 203.75: adaptive HLS is opt-in. The configured rendition remains the
     // primary/highest profile; lower renditions are generated automatically.
     bool transcodeMultibitrateEnabled = false;

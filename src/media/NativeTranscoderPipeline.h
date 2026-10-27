@@ -35,6 +35,10 @@ struct NativeTranscoderConfig {
     std::uint64_t videoBitrate = 6000000;
     std::uint64_t audioBitrate = 192000;
     bool deinterlace = true;
+    std::string nvencPreset = "p5";
+    std::string nvencProfile = "auto";
+    std::uint32_t gopFrames = 50;
+    std::uint32_t nvencAqStrength = 8;
     // Preserve the explicitly configured output raster. Production transcode,
     // browser preview and ABR all provide an explicit target geometry; the
     // pipeline must not silently replace 1920x1080/1280x720 with a smaller

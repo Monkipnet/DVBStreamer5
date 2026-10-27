@@ -82,9 +82,17 @@ public:
     virtual void reset() = 0;
 };
 
+struct VideoEncoderOptions {
+    std::string nvencPreset = "p5";
+    std::string nvencProfile = "auto";
+    std::uint32_t gopFrames = 50;
+    std::uint32_t nvencAqStrength = 8;
+};
+
 class VideoEncoder {
 public:
     virtual ~VideoEncoder() = default;
+    virtual void setOptions(const VideoEncoderOptions&) {}
     virtual bool configure(int width, int height, double fps,
                            std::uint64_t bitrate, std::string& error) = 0;
     virtual bool encode(const RawVideoFrame& input,
