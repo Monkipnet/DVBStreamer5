@@ -35,6 +35,8 @@ public:
     bool hasParsedPmt() const;
     void observe(const std::uint8_t* data, std::size_t size);
     void inject(std::vector<Packet>& output);
+    // For untouched (non-transcoded) TS: keep existing PES once and filter PMT/PIDs.
+    void filterPassthrough(std::vector<Packet>& output);
 private:
     struct Track {
         std::uint16_t pid = 0;
@@ -68,4 +70,6 @@ private:
     mutable std::mutex availableMutex_;
     std::vector<AvailableTrack> availableTracks_;
     bool availablePmtParsed_ = false;
+    std::array<bool, 8192> passthroughExcludedPids_{};
+    bool passthroughFilterActive_ = false;
 };
