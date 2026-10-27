@@ -12,6 +12,7 @@
 #include <array>
 #include <vector>
 #include <set>
+#include <regex>
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
@@ -508,6 +509,12 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.epgDays = std::clamp(root.get("epg_days", 3).asUInt(), 1u, 7u);
     config.epgEitOutput = root.get("epg_eit_output", false).asBool();
     config.dvbSubtitlesEnabled = root.get("dvb_subtitles_enabled", false).asBool();
+    config.dvbSubtitlesTrack = root.get("dvb_subtitles_track", "auto").asString();
+    if (config.dvbSubtitlesTrack != "auto" &&
+        (config.dvbSubtitlesTrack.size() > 24U ||
+         !std::regex_match(config.dvbSubtitlesTrack,
+              std::regex(R"([0-9]{1,4}:[a-z]{3}:[0-9]{1,5})"))))
+        config.dvbSubtitlesTrack = "auto";
     config.dvbSubtitlesLanguage = toLower(
         root.get("dvb_subtitles_language", "auto").asString());
     // Accept only a three-letter ISO 639-2 language code or the legacy
@@ -629,6 +636,7 @@ Json::Value StreamConfig::toJson() const {
     root["epg_eit_output"] = epgEitOutput;
     root["dvb_subtitles_enabled"] = dvbSubtitlesEnabled;
     root["dvb_subtitles_language"] = dvbSubtitlesLanguage;
+    root["dvb_subtitles_track"] = dvbSubtitlesTrack;
     root["epg_mode"] = epgMode;
     root["xmltv_source_id"] = xmltvSourceId;
     root["xmltv_channel_id"] = xmltvChannelId;
