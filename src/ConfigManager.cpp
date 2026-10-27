@@ -674,7 +674,7 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.serverName = root.get("server_name", "DVBStreamer5").asString();
     config.httpPort = root.get("http_port", 9000).asInt();
     config.language = root.get("language", "en").asString();
-    if (config.language != "ru" && config.language != "en") {
+    if (config.language != "ru" && config.language != "en" && config.language != "hr") {
         config.language = "en";
     }
     config.telegramToken = root.get("telegram_token", "").asString();
