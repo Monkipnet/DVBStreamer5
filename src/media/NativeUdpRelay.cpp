@@ -1160,7 +1160,7 @@ void NativeUdpRelay::run() {
                 std::memory_order_relaxed);
         }
 
-        if (!packets.empty() && (config_.transformTransport || config_.observeInputTransport)) {
+        if (!packets.empty() && (config_.transformTransport || config_.observeInputTransport || config_.observeDvbSubtitles)) {
             observedTransport.resize(packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
             for (std::size_t index = 0; index < packets.size(); ++index) {
                 std::memcpy(observedTransport.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
