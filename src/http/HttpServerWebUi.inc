@@ -118,10 +118,14 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .edit-inline-note{display:block;width:100%;font-size:.62rem;color:#7f8ba0;line-height:1.2;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stream-video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .stream-video-grid.secondary{grid-template-columns:repeat(6,minmax(0,1fr));margin-top:8px}
-.tile .epg-row{cursor:pointer;border-radius:5px;padding:1px 3px;margin:0 -3px}
-.tile .epg-row:hover{background:rgba(57,189,248,.08)}
-.tile .epg-row strong{color:#8dd9ff}
-.tile .epg-row span{font-size:10px}
+.epg-hover-tooltip{position:fixed;z-index:100050;visibility:hidden;opacity:0;pointer-events:none;box-sizing:border-box;width:min(360px,calc(100vw - 24px));max-height:min(60vh,340px);overflow:hidden;padding:12px 14px;background:rgba(13,20,33,.98);border:1px solid rgba(90,186,248,.34);border-radius:12px;box-shadow:0 18px 42px rgba(0,0,0,.55);color:#e7f1ff;font-size:.75rem;line-height:1.4;transition:opacity .12s ease}
+.epg-hover-tooltip.visible{visibility:visible;opacity:1}
+.epg-hover-tooltip .epg-hover-heading{font-size:.85rem;font-weight:700;color:#fff;margin-bottom:7px;overflow-wrap:anywhere}
+.epg-hover-tooltip .epg-hover-event{padding:6px 0;border-top:1px solid rgba(255,255,255,.08)}
+.epg-hover-tooltip .epg-hover-label{color:#79cfff;font-size:.68rem;font-weight:700;margin-bottom:2px}
+.epg-hover-tooltip .epg-hover-value{color:#eef5ff;overflow-wrap:anywhere}
+.epg-hover-tooltip .epg-hover-desc{color:#a1afc3;font-size:.67rem;margin-top:3px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media(hover:none){.epg-hover-tooltip{display:none!important}}
 .modal-content.epg-modal{width:min(760px,100%)}
 .epg-headline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 10px;color:#8290a5;font-size:.7rem}
 .epg-list{display:grid;gap:6px;max-height:68vh;overflow:auto}
@@ -916,8 +920,6 @@ document.addEventListener('click', event => {
       deleteStream(id);
     } else if (action === 'quality') {
       openQualityModal(id);
-    } else if (action === 'epg') {
-      openEpgModal(id);
     } else if (action === 'copy') {
       copyStreamLinks(id, button);
     }
@@ -1433,6 +1435,51 @@ function epgTileText(event, enabled=true, active=true) {
   }
   return `${formatEpgClock(event.start_utc)} · ${event.title}`;
 }
+// V203: The EPG is a passive, mouse-only overlay outside the tile DOM.
+let epgHoverTile = null;
+let epgHoverTooltip = null;
+function epgHoverEventHtml(event, label, active) {
+  const value = epgTileText(event, true, active);
+  const description = event?.description ? `<div class="epg-hover-desc">${escapeHtmlValue(event.description)}</div>` : '';
+  return `<div class="epg-hover-event"><div class="epg-hover-label">${label}</div><div class="epg-hover-value">${escapeHtmlValue(value)}</div>${description}</div>`;
+}
+function hideEpgHover() {
+  epgHoverTile = null;
+  if (epgHoverTooltip) {
+    epgHoverTooltip.classList.remove('visible');
+    epgHoverTooltip.setAttribute('aria-hidden', 'true');
+  }
+}
+function showEpgHover(tile, stream=streamById(tile?.dataset.streamId)) {
+  if (!tile || !stream || stream.epg_enabled !== true || !window.matchMedia('(hover:hover)').matches) {
+    hideEpgHover();
+    return;
+  }
+  if (!epgHoverTooltip) {
+    epgHoverTooltip = document.createElement('div');
+    epgHoverTooltip.className = 'epg-hover-tooltip';
+    epgHoverTooltip.setAttribute('aria-hidden','true');
+    document.body.appendChild(epgHoverTooltip);
+  }
+  epgHoverTile = tile;
+  epgHoverTooltip.innerHTML =
+    `<div class="epg-hover-heading">EPG · ${escapeHtmlValue(stream.name || stream.id)}</div>` +
+    epgHoverEventHtml(stream.epg_now, uiBiText('Сейчас','Now'), !!stream.active) +
+    epgHoverEventHtml(stream.epg_next, uiBiText('Далее','Next'), !!stream.active);
+  epgHoverTooltip.classList.add('visible');
+  epgHoverTooltip.setAttribute('aria-hidden', 'false');
+  // Position relative to tile, clamped to viewport; the tooltip cannot intercept clicks.
+  const rect = tile.getBoundingClientRect();
+  const w = epgHoverTooltip.offsetWidth;
+  const h = epgHoverTooltip.offsetHeight;
+  const x = Math.max(12, Math.min(window.innerWidth - w - 12, rect.left + (rect.width - w) / 2));
+  const above = rect.top - h - 9;
+  const below = rect.bottom + 9;
+  const y = above >= 12 ? above : (below + h <= window.innerHeight - 12
+    ? below : Math.max(12, window.innerHeight - h - 12));
+  epgHoverTooltip.style.left = Math.round(x) + 'px';
+  epgHoverTooltip.style.top = Math.round(y) + 'px';
+}
 async function openEpgModal(id) {
   const stream = streamById(id);
   if (!stream) return;
@@ -1534,18 +1581,8 @@ function updateStreamTile(tile, stream) {
     activeInput.title = activeInput.textContent;
   }
 
-  const epgNow = tile.querySelector('[data-role="epg-now"]');
-  if (epgNow) {
-    epgNow.textContent = epgTileText(
-      stream.epg_now, stream.epg_enabled === true, !!stream.active);
-    epgNow.title = stream.epg_now?.title || epgNow.textContent;
-  }
-  const epgNext = tile.querySelector('[data-role="epg-next"]');
-  if (epgNext) {
-    epgNext.textContent = epgTileText(
-      stream.epg_next, stream.epg_enabled === true, !!stream.active);
-    epgNext.title = stream.epg_next?.title || epgNext.textContent;
-  }
+  // Refresh an already visible hover without rebuilding the tile or moving focus.
+  if (epgHoverTile === tile) showEpgHover(tile, stream);
 
   const bitrateIn = tile.querySelector('[data-role="bitrate-in"]');
   if (bitrateIn) bitrateIn.textContent = stream.bitrate_in_kbps ? `${stream.bitrate_in_kbps} kbps` : '—';
@@ -1597,6 +1634,7 @@ function render(force=false) {
     return;
   }
 
+  hideEpgHover();
   tiles.innerHTML = '';
   streams.forEach(stream => {
     const outputs = outputConfigsForStream(stream);
@@ -1608,7 +1646,12 @@ function render(force=false) {
     tile.className = 'tile' + (stream.active ? ' active' : '');
     tile.dataset.streamId = String(stream.id);
     tile.dataset.streamName = String(stream.name || stream.id);
-    tile.title = 'Двойной клик — предпросмотр';
+    // Avoid the native browser title covering our read-only EPG popup.
+    tile.title = stream.epg_enabled === true ? '' : uiBiText('Двойной клик — предпросмотр','Double-click for preview');
+    if (stream.epg_enabled === true) {
+      tile.addEventListener('mouseenter', () => showEpgHover(tile));
+      tile.addEventListener('mouseleave', hideEpgHover);
+    }
     tile.innerHTML = `
       <div class="top">
         <div>
@@ -1633,8 +1676,6 @@ function render(force=false) {
         <div class="info-row"><strong>${t('primary')}</strong><span title="${escapeHtmlValue(stream.input_uri || '—')}">${escapeHtmlValue(stream.input_uri || '—')}</span></div>
         <div class="info-row"><strong>${t('backup')}</strong><span title="${escapeHtmlValue((stream.backup_input_uri || '—') + (stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''))}">${escapeHtmlValue(stream.backup_input_uri || '—')}${stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''}</span></div>
         <div class="info-row"><strong>${t('sid')}</strong><span>${stream.service_id || '—'}</span></div>
-        ${stream.epg_enabled === true ? `<div class="info-row epg-row" data-stream-action="epg" data-stream-id="${escapeHtmlValue(stream.id)}" ondblclick="event.stopPropagation()"><strong>${language === 'en' ? 'Now' : 'Сейчас'}</strong><span data-role="epg-now">${escapeHtmlValue(epgTileText(stream.epg_now, true, !!stream.active))}</span></div>
-        <div class="info-row epg-row" data-stream-action="epg" data-stream-id="${escapeHtmlValue(stream.id)}" ondblclick="event.stopPropagation()"><strong>${language === 'en' ? 'Next' : 'Далее'}</strong><span data-role="epg-next">${escapeHtmlValue(epgTileText(stream.epg_next, true, !!stream.active))}</span></div>` : ''}
         ${stream.dvb_input ? `<div class="info-row"><strong>Frontend</strong><span data-role="dvb-frontend-details">${escapeHtmlValue(dvbFrontendDetails(stream))}</span></div>
         <div class="info-row"><strong>ISI / DiSEqC</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
         ${(stream.conditional_access_client || stream.ci_plus_input) ? `<div class="info-row"><strong>CA</strong><span data-role="ca-status">${caStreamStatusText(stream)}</span></div>
