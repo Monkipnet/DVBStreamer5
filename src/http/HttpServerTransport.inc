@@ -382,6 +382,20 @@ void HttpServer::handleSession(tcp::socket socket) {
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer,
                     streamManager.externalXmltvChannels());
+            } else if (target.rfind("/api/dvb-subtitles?stream_id=", 0) == 0) {
+                res.set(http::field::content_type, "application/json");
+                std::string streamId = target.substr(
+                    std::string("/api/dvb-subtitles?stream_id=").size());
+                const auto amp = streamId.find('&');
+                if (amp != std::string::npos) streamId.resize(amp);
+                if (streamId.empty() || streamId.size() > 256U) {
+                    res.result(http::status::bad_request);
+                    res.body() = R"({"error":"Invalid stream id"})";
+                } else {
+                    Json::StreamWriterBuilder writer;
+                    res.body() = Json::writeString(
+                        writer, streamManager.dvbSubtitleTracks(streamId));
+                }
             } else if (target.rfind("/api/epg?stream_id=", 0) == 0) {
                 res.set(http::field::content_type, "application/json");
                 std::string streamId = target.substr(
