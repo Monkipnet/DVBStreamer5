@@ -478,7 +478,10 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     const int mode = driverMode(module);
     const bool stid135 = module == "stid135";
     const bool cx23885Compat = module == "cx23885";
-    const int effectiveLockTimeoutMs = cx23885Compat
+    const bool saa716xTbsCompat = module == "saa716x_tbs_dvb";
+    const bool unicableEarlyTuneCompat =
+        cx23885Compat || saa716xTbsCompat;
+    const int effectiveLockTimeoutMs = unicableEarlyTuneCompat
         ? std::max(config.lockTimeoutMs, 8000)
         : config.lockTimeoutMs;
 
@@ -524,17 +527,19 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         highBand ? SEC_TONE_ON : SEC_TONE_OFF;
 
     if (useUnicable) {
-        if (cx23885Compat) {
-            // Some cx23885 satellite frontends need one S2API setup/tune
-            // before the first DiSEqC/SCR transaction after a cold start.
-            // This mirrors the "early tune" workaround used by mature Linux
-            // DVB stacks and removes the need to prime the tuner with Astra.
+        if (unicableEarlyTuneCompat) {
+            // V10.8.200: cx23885 and TBS saa716x_tbs_dvb frontends may require
+            // one S2API setup/tune before the first SCR transaction after a
+            // cold start or after changing User Band/frequency. This replaces
+            // the external "start Astra first" priming step.
+            const char* compatName =
+                saa716xTbsCompat ? "saa716x_tbs_dvb" : "cx23885";
             if (!setTone(fd, SEC_TONE_OFF,
-                         "cx23885 Unicable cold-start tone off", error)) {
+                         "Unicable cold-start tone off", error)) {
                 return false;
             }
             if (!setVoltage(fd, SEC_VOLTAGE_13,
-                            "cx23885 Unicable cold-start 13V baseline", error)) {
+                            "Unicable cold-start 13V baseline", error)) {
                 return false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -588,7 +593,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
             drainFrontendEvents(fd);
             std::clog
                 << "NATIVE DVB UNICABLE early_tune"
-                << " compat=cx23885"
+                << " compat=" << compatName
                 << " frontend_khz=" << config.unicableFrequencyKHz
                 << " baseline_13v_ms=250"
                 << " settle_ms=150\n";
@@ -598,6 +603,32 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
                 fd, config, intermediateFrequency,
                 horizontal, highBand, frontendFrequency, error)) {
             return false;
+        }
+
+        // TBS saa716x hardware reported by StradminGpu can retain the previous
+        // SCR routing until another application primes the requested UB. Repeat
+        // the complete EN50494/EN50607 transaction once after a short idle
+        // interval so a newly selected UB/frequency is established by
+        // DVBStreamer5 itself. The command is identical and serialized by the
+        // shared Unicable mutex, so it remains safe on a shared coax.
+        if (saa716xTbsCompat) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            std::uint32_t repeatedFrontendFrequency = frontendFrequency;
+            if (!configureUnicable(
+                    fd, config, intermediateFrequency,
+                    horizontal, highBand,
+                    repeatedFrontendFrequency, error)) {
+                return false;
+            }
+            frontendFrequency = repeatedFrontendFrequency;
+            std::clog
+                << "NATIVE DVB UNICABLE command_repeat"
+                << " compat=saa716x_tbs_dvb"
+                << " standard=" << config.unicableMode
+                << " ub=" << config.unicableUserBand
+                << " ub_khz=" << config.unicableFrequencyKHz
+                << " frontend_khz=" << frontendFrequency
+                << " repeat_delay_ms=120\n";
         }
     } else if (stid135 && mode == 0) {
         if (!setVoltage(fd, voltage,
