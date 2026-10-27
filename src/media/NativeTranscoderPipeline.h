@@ -498,6 +498,8 @@ private:
     PtsCorrectingAudioEncoderHandle aacEncoder_;
     std::unique_ptr<Mp2Encoder> mp2Encoder_;
     std::unique_ptr<Mp3Encoder> mp3Encoder_;
+    std::uint64_t mp3NextPts90k_ = 0;
+    bool mp3PtsValid_ = false;
     mpegts::ElementaryCodec inputVideoCodec_ = mpegts::ElementaryCodec::Unknown;
     mpegts::ElementaryCodec inputAudioCodec_ = mpegts::ElementaryCodec::Unknown;
     std::uint16_t inputVideoPid_ = 0xffff;
