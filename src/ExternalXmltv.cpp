@@ -239,6 +239,7 @@ bool ExternalXmltvManager::refresh(const std::string& id) {
     for (auto& [key, source] : sources_) {
         if (id.empty() || key == id) {
             source.queued = true;
+            ++source.refreshRequested;
             found = true;
         }
     }
@@ -454,6 +455,7 @@ void ExternalXmltvManager::run() {
     for (;;) {
         XmltvSourceConfig selected;
         bool selectedScheduled = false;
+        std::uint64_t selectedRefreshId = 0;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             if (stop_) break;
@@ -484,6 +486,7 @@ void ExternalXmltvManager::run() {
                 source.downloading = true;
                 selected = source.settings;
                 selectedScheduled = scheduled;
+                selectedRefreshId = source.refreshRequested;
                 break;
             }
             if (selected.id.empty()) {
@@ -513,6 +516,8 @@ void ExternalXmltvManager::run() {
                 continue;
             auto& source = it->second;
             source.downloading = false;
+            source.refreshCompleted = std::max(
+                source.refreshCompleted, selectedRefreshId);
             if (success) {
                 source.channels.swap(loaded.channels);
                 source.programmes.swap(loaded.programmes);
@@ -546,6 +551,8 @@ Json::Value ExternalXmltvManager::status() const {
         entry["last_attempt"] = Json::Int64(source.lastAttempt);
         entry["downloading"] = source.downloading;
         entry["queued"] = source.queued;
+        entry["refresh_requested"] = Json::UInt64(source.refreshRequested);
+        entry["refresh_completed"] = Json::UInt64(source.refreshCompleted);
         entry["last_error"] = source.error;
         entry["channel_count"] = Json::UInt64(source.channels.size());
         std::size_t events = 0;
