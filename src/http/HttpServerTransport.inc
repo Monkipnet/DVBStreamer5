@@ -236,7 +236,7 @@ void HttpServer::handleSession(tcp::socket socket) {
                         return isClientAllowedForStream(id, clientIp);
                     };
                     res.set("Access-Control-Allow-Origin", "*");
-                    res.set(http::field::cache_control, "public, max-age=15");
+                    res.set(http::field::cache_control, "private, max-age=15");
                     if (target == "/playlist.m3u") {
                         const auto hostIt = req.find(http::field::host);
                         const std::string authority = hostIt == req.end()
