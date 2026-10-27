@@ -25,6 +25,7 @@ public:
     bool encodeInterleaved(const std::int16_t* pcm, std::size_t samplesPerChannel,
                            std::vector<std::uint8_t>& output, std::string& error);
     bool finish(std::vector<std::uint8_t>& output, std::string& error);
+    std::size_t frameSizeBytes() const noexcept;
 
 private:
     struct Impl;
