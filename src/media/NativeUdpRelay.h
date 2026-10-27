@@ -83,6 +83,10 @@ struct NativeUdpRelayConfig {
     LinuxDvbTuneConfig dvbTuneConfig;
     bool remapEnabled = false;
     mpegts::RemapConfig remapConfig;
+    // Optional raw MPEG-TS tap immediately after input framing and before
+    // service remap/CA/transcoding. DVB EIT/EPG collection uses this so PID
+    // 0x12 is not lost when a service filter removes non-A/V SI packets.
+    std::function<void(const std::uint8_t*, std::size_t)> observeSourceTransport;
     std::function<bool(std::uint8_t*, std::size_t)> processTransport;
     // Optional one-to-many transport transform. Used by the native transcoder:
     // input is a contiguous MPEG-TS block after remap/CA, output is a new

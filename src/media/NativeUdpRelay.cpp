@@ -706,6 +706,7 @@ void NativeUdpRelay::run() {
     dvbstreamer5::media::mpegts::ContinuityTracker continuity;
     std::vector<dvbstreamer5::media::mpegts::Packet> packets;
     std::vector<dvbstreamer5::media::mpegts::Packet> remappedPackets;
+    std::vector<std::uint8_t> sourceObservedTransport;
     std::vector<std::uint8_t> observedTransport;
     std::vector<OutputWorker> outputs;
     outputs.reserve(config_.outputs.size());
@@ -1072,6 +1073,20 @@ void NativeUdpRelay::run() {
                     inputFramer.push(datagram.data(), received, packets);
                 }
             }
+        }
+
+        if (!packets.empty() && config_.observeSourceTransport) {
+            sourceObservedTransport.resize(
+                packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
+            for (std::size_t index = 0; index < packets.size(); ++index) {
+                std::memcpy(
+                    sourceObservedTransport.data() +
+                        index * dvbstreamer5::media::mpegts::kPacketSize,
+                    packets[index].data(),
+                    dvbstreamer5::media::mpegts::kPacketSize);
+            }
+            config_.observeSourceTransport(
+                sourceObservedTransport.data(), sourceObservedTransport.size());
         }
 
         if (!packets.empty() && config_.remapEnabled) {

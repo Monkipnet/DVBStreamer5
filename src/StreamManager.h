@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "ConfigManager.h"
+#include "media/DvbEpgCollector.h"
 #include "media/NativePreviewHub.h"
 #include "media/NativeUdpRelay.h"
 #include "media/SharedDvbInputPool.h"
@@ -279,6 +280,7 @@ struct StreamState {
     std::atomic<uint64_t> outputTsScrambledPacketsDelta{0};
     std::atomic<uint64_t> outputTsClearPesStartsDelta{0};
 
+    std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector> epgCollector;
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
     // Browser preview owns a lazy, preview-only transcoder. It is completely
@@ -369,6 +371,7 @@ public:
     bool startMptsOutput(const std::string& id, std::string* error = nullptr);
     bool stopMptsOutput(const std::string& id);
     Json::Value mptsSnapshot() const;
+    Json::Value epgSnapshot(const std::string& id) const;
     Json::Value queueMemorySnapshot() const;
 
 private:

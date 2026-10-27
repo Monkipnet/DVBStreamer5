@@ -984,6 +984,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.targetBitrate = streamConfig.targetBitrate;
     relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
 
+    if (streamConfig.epgEnabled) {
+        const auto epgServiceId = streamConfig.inputServiceId <= 0xffffU
+            ? static_cast<std::uint16_t>(streamConfig.inputServiceId)
+            : std::uint16_t{0};
+        state->epgCollector =
+            std::make_shared<dvbstreamer5::media::epg::DvbEpgCollector>(
+                epgServiceId, streamConfig.epgDays);
+    }
+
     DvbSatelliteParams dvbParams;
     std::string dvbError;
     bool sharedDvbInputSource = false;
@@ -1079,6 +1088,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                   << " sid=" << streamConfig.inputServiceId
                   << " drop_source_null=" << (dropSourceNullPackets ? 1 : 0)
                   << std::endl;
+    }
+
+    if (state->epgCollector && !sharedDvbInputSource) {
+        auto epgCollector = state->epgCollector;
+        relay.observeSourceTransport =
+            [epgCollector](const std::uint8_t* data, std::size_t size) {
+                epgCollector->push(data, size);
+            };
     }
 
     if (!vdrCiPlusInput && !streamConfig.conditionalAccessClient.empty()) {
@@ -1437,8 +1454,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             if (!sharedDvbInputs.subscribe(
                     streamConfig.id,
                     relay.dvbTuneConfig,
-                    [relayPtr, sharedDvbPrefilter](
+                    [relayPtr, sharedDvbPrefilter,
+                     epgCollector = state->epgCollector](
                         const std::uint8_t* data, std::size_t size) {
+                        if (epgCollector) epgCollector->push(data, size);
                         if (sharedDvbPrefilter) {
                             return sharedDvbPrefilter->push(relayPtr, data, size);
                         }
