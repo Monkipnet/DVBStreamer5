@@ -130,6 +130,9 @@ struct StreamConfig {
     std::string serviceProvider;
     bool epgEnabled = false;
     uint32_t epgDays = 3;
+    std::string epgMode = "auto"; // auto (DVB, then XMLTV) | dvb | xmltv
+    std::string xmltvSourceId;   // empty = search all sources by channel ID
+    std::string xmltvChannelId;
     std::string conditionalAccessClient;
     std::vector<StreamOutputConfig> additionalOutputs;
     // 203.67 runtime-inherited global mode; not serialized per stream.
@@ -151,6 +154,18 @@ struct CamClientConfig {
     static CamClientConfig fromJson(const Json::Value& root);
 };
 
+struct XmltvSourceConfig {
+    std::string id;
+    std::string name;
+    std::string url;
+    bool enabled = true;
+    // Daily refresh in server local time, 24h HH:MM.
+    std::string refreshTime = "03:00";
+
+    Json::Value toJson() const;
+    static XmltvSourceConfig fromJson(const Json::Value& root);
+};
+
 struct AppConfig {
     std::string login = "admin";
     std::string password = "admin";
@@ -166,6 +181,7 @@ struct AppConfig {
     std::vector<std::string> udpInputFilterInterfaces;
     std::vector<StreamConfig> streams;
     std::vector<MptsOutputConfig> mptsOutputs;
+    std::vector<XmltvSourceConfig> xmltvSources;
     std::vector<CamClientConfig> camClients;
 
     Json::Value toJson() const;
