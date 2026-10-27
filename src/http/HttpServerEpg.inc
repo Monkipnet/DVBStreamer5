@@ -123,14 +123,14 @@ std::string buildEpgXmltv(
 
 // Use only a validated Host supplied by the client. No file paths, arbitrary
 // URLs or upstream credentials are ever copied into an advertised EPG URL.
-std::string epgHttpBase(const std::string& host, int defaultPort) {
+std::string epgHttpBase(const std::string& host, int defaultPort, bool https) {
     const bool valid = !host.empty() && host.size() <= 255U &&
         std::all_of(host.begin(), host.end(), [](unsigned char c) {
             return std::isalnum(c) || c == '.' || c == '-' || c == '_' ||
                    c == ':' || c == '[' || c == ']';
         });
-    return "http://" + (valid ? host :
-        ("127.0.0.1:" + std::to_string(defaultPort)));
+    return std::string(https ? "https://" : "http://") +
+        (valid ? host : ("127.0.0.1:" + std::to_string(defaultPort)));
 }
 
 std::string buildEpgIptvPlaylist(
@@ -149,8 +149,18 @@ std::string buildEpgIptvPlaylist(
             // RTMP/YouTube is a push endpoint, possibly with a private stream
             // key, not a generally playable IPTV client URL.
             if (type == "youtube" || type == "rtmp") continue;
-            const std::string url = streamLink(output, httpPort);
+            std::string url = streamLink(output, httpPort);
             if (url.empty()) continue;
+            // When the output lives on the control HTTP port, advertise
+            // the host/scheme used by this IPTV client (including an HTTPS
+            // reverse proxy) instead of a server-local interface address.
+            if ((type == "http" || type == "hls") &&
+                streamHttpPort(output, httpPort) == httpPort &&
+                url.rfind("http://", 0) == 0) {
+                const std::size_t pathOffset = url.find('/', 7U);
+                if (pathOffset != std::string::npos)
+                    url = httpBase + url.substr(pathOffset);
+            }
             const std::string name = epgChannelName(cfg);
             const std::uint32_t sid = cfg.remapEnabled ? cfg.serviceId : cfg.inputServiceId;
             playlist << "#EXTINF:-1 tvg-id=\""
