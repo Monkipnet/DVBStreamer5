@@ -348,10 +348,19 @@ void DvbEitOutput::process(std::vector<Packet>& packets) {
         }
         nextPresentFollowing_ = now + kPfInterval;
     }
-    for (std::size_t n = 0; n < kMaxPacketBurst && !schedule_.empty(); ++n) {
+    // Never leave an EIT section half-sent across relay calls. Otherwise
+    // the next 3-second present/following section could interrupt the previous
+    // schedule section before its CRC arrives, causing DVB-C receivers to
+    // discard it. The queue is section-packetized, so run to the next PUSI
+    // boundary even if it exceeds the nominal 8-packet budget by one packet.
+    std::size_t sent = 0;
+    while (!schedule_.empty()) {
+        const bool newSection = (schedule_.front()[1] & 0x40U) != 0U;
+        if (sent >= kMaxPacketBurst && newSection) break;
         Packet packet = schedule_.front();
         schedule_.pop_front();
         packet[3] = static_cast<std::uint8_t>(0x10U | (continuity_++ & 0x0fU));
         packets.push_back(std::move(packet));
+        ++sent;
     }
 }
