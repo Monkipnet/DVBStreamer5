@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,18 @@
 class DvbSubtitlePassthrough {
 public:
     using Packet = dvbstreamer5::media::mpegts::Packet;
-    explicit DvbSubtitlePassthrough(std::string language = "auto");
+    struct AvailableTrack {
+        std::string id; // Stable PMT selection: PID:language:composition_page_id
+        std::uint16_t pid = 0;
+        std::string language;
+        std::uint8_t subtitleType = 0;
+        std::uint16_t compositionPageId = 0;
+        std::uint16_t ancillaryPageId = 0;
+    };
+    explicit DvbSubtitlePassthrough(std::string language = "auto",
+                                    std::string selectedTrack = "auto");
+    std::vector<AvailableTrack> availableTracks() const;
+    bool hasParsedPmt() const;
     void observe(const std::uint8_t* data, std::size_t size);
     void inject(std::vector<Packet>& output);
 private:
@@ -52,4 +64,8 @@ private:
     bool warnedPmtCapacity_ = false;
     bool sourcePmtParsed_ = false;
     std::string language_;
+    std::string selectedTrack_;
+    mutable std::mutex availableMutex_;
+    std::vector<AvailableTrack> availableTracks_;
+    bool availablePmtParsed_ = false;
 };
