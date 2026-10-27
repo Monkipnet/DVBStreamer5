@@ -243,9 +243,15 @@ void HttpServer::handleSession(tcp::socket socket) {
                             ? std::string{} : std::string(hostIt->value());
                         res.set(http::field::content_type,
                                 "audio/x-mpegurl; charset=UTF-8");
+                        // A trusted HTTPS reverse proxy can pass this header
+                        // so XMLTV/HLS links retain the browser-visible scheme.
+                        const auto protoIt = req.find("X-Forwarded-Proto");
+                        const bool advertisedHttps = protoIt != req.end() &&
+                            toLower(std::string(protoIt->value())) == "https";
                         res.body() = buildEpgIptvPlaylist(
                             configManager.config.streams, allowed,
-                            epgHttpBase(authority, configManager.config.httpPort),
+                            epgHttpBase(authority, configManager.config.httpPort,
+                                        advertisedHttps),
                             configManager.config.httpPort);
                     } else {
                         const std::string xml = buildEpgXmltv(
