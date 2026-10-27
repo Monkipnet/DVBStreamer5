@@ -43,6 +43,7 @@ private:
     PsiState sourcePmt_;
     std::vector<Track> sourceTracks_;
     std::array<bool, 8192> selectedPids_{};
+    std::array<std::uint16_t, 8192> outputPids_{};
     std::array<std::uint8_t, 8192> continuity_{};
     std::array<bool, 8192> awaitStart_{};
     std::deque<Packet> queued_;
