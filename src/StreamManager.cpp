@@ -1034,7 +1034,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         state->epgCacheKey = streamConfig.id + "|" + streamConfig.inputUri +
             "|" + std::to_string(streamConfig.inputServiceId);
         (void)state->epgCollector->restoreFromDisk(state->epgCacheKey);
-        std::cerr << "DVB EPG enabled stream= << streamConfig.id
+        std::cerr << "DVB EPG enabled stream=" << streamConfig.id
                   << " sid=" << epgServiceId
                   << " days=" << streamConfig.epgDays
                   << " source=eit-pid-0x12"
