@@ -1,5 +1,6 @@
 #include "TranscoderModule.h"
 #include "media/NativeCodecRuntime.h"
+#include "media/Mp3Encoder.h"
 
 #include <algorithm>
 #include <cctype>
@@ -24,6 +25,8 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     if (native.qsvHevcEncoder) result.hevcVideoEncoder += result.hevcVideoEncoder.empty() ? "QSV/VAAPI" : " + QSV/VAAPI";
     result.aacEncoder = native.aacEncoder ? "native AAC encoder" : std::string{};
     result.audioEncoder = result.aacEncoder;
+    result.mp3Encoder = dvbstreamer5::media::Mp3Encoder::available()
+        ? "native LAME MP3 encoder" : std::string{};
     result.mp2EncoderAvailable = true;
     result.deinterlaceAvailable = true;
 
