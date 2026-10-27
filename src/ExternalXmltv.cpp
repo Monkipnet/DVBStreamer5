@@ -342,6 +342,7 @@ bool ExternalXmltvManager::parse(
 void ExternalXmltvManager::run() {
     for (;;) {
         XmltvSourceConfig selected;
+        bool selectedScheduled = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             if (stop_) break;
@@ -351,7 +352,10 @@ void ExternalXmltvManager::run() {
             const std::int64_t now = nowSeconds();
             for (auto& [id, source] : sources_) {
                 if (!source.settings.enabled) continue;
-                const bool scheduled = source.lastSuccessDay != day &&
+                const bool scheduleDay = source.settings.refreshPeriod != "weekly" ||
+                    local.tm_wday == source.settings.refreshWeekday;
+                const bool scheduled = scheduleDay &&
+                    source.lastSuccessDay != day &&
                     dueForDailyRun(source.settings.refreshTime, local);
                 const bool first = source.lastAttempt == 0;
                 const bool retryAfterError = !source.error.empty() &&
@@ -360,11 +364,13 @@ void ExternalXmltvManager::run() {
                     continue;
                 // After a network error, back off even if scheduled/queued.
                 if (source.lastAttempt && !source.queued &&
+                    !source.error.empty() &&
                     now - source.lastAttempt < 15 * 60) continue;
                 source.queued = false;
                 source.lastAttempt = now;
                 source.downloading = true;
                 selected = source.settings;
+                selectedScheduled = scheduled;
                 break;
             }
             if (selected.id.empty()) {
@@ -391,7 +397,10 @@ void ExternalXmltvManager::run() {
                 source.channels.swap(loaded.channels);
                 source.programmes.swap(loaded.programmes);
                 source.lastSuccess = finished;
-                source.lastSuccessDay = day;
+                // Startup prefetch before HH:MM is not the day's scheduled
+                // refresh. Preserve the scheduled run even if prefetch finishes
+                // after the clock rolls past the requested time.
+                if (selectedScheduled) source.lastSuccessDay = day;
                 source.error.clear();
                 std::clog << "EXTERNAL XMLTV updated source=" << selected.id
                           << " channels=" << source.channels.size()
