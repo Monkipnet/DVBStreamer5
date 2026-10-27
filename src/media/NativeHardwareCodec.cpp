@@ -1179,6 +1179,10 @@ public:
     explicit NvencEncoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
     ~NvencEncoder() override { close(); }
 
+    void setOptions(const VideoEncoderOptions& options) override {
+        options_ = options;
+    }
+
     bool configure(int width, int height, double fps, std::uint64_t bitrate,
                    std::string& error) override {
         error.clear(); close();
@@ -1229,6 +1233,17 @@ public:
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         GUID presetGuid = NV_ENC_PRESET_P5_GUID;
         const char* presetName = "p5";
+        const auto selectPreset = [&](const std::string& name) {
+            if (name == "p1") { presetName = "p1"; return NV_ENC_PRESET_P1_GUID; }
+            if (name == "p2") { presetName = "p2"; return NV_ENC_PRESET_P2_GUID; }
+            if (name == "p3") { presetName = "p3"; return NV_ENC_PRESET_P3_GUID; }
+            if (name == "p4") { presetName = "p4"; return NV_ENC_PRESET_P4_GUID; }
+            if (name == "p6") { presetName = "p6"; return NV_ENC_PRESET_P6_GUID; }
+            if (name == "p7") { presetName = "p7"; return NV_ENC_PRESET_P7_GUID; }
+            presetName = "p5";
+            return NV_ENC_PRESET_P5_GUID;
+        };
+        presetGuid = selectPreset(options_.nvencPreset);
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -1237,13 +1252,10 @@ public:
         bool presetLoaded = false;
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         if (api_.nvEncGetEncodePresetConfigEx) {
-            const GUID p5 = NV_ENC_PRESET_P5_GUID;
             if (api_.nvEncGetEncodePresetConfigEx(
-                    encoder_, codecGuid, p5,
+                    encoder_, codecGuid, presetGuid,
                     NV_ENC_TUNING_INFO_LOW_LATENCY,
                     &preset) == NV_ENC_SUCCESS) {
-                presetGuid = p5;
-                presetName = "p5";
                 modernLowLatency = true;
                 presetLoaded = true;
             }
@@ -1269,7 +1281,9 @@ public:
         cfg.rcParams.maxBitRate = cfg.rcParams.averageBitRate;
         fps_ = fps > 0.0 ? fps : 25.0;
         gopFrames_ = std::max<std::uint64_t>(
-            1ULL, static_cast<std::uint64_t>(std::llround(fps_ * 2.0)));
+            1ULL, static_cast<std::uint64_t>(
+                options_.gopFrames > 0 ? options_.gopFrames :
+                std::llround(fps_ * 2.0)));
         cfg.gopLength = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(gopFrames_, 0xffffffffULL));
 
@@ -1280,7 +1294,8 @@ public:
         cfg.rcParams.enableLookahead = 0;
         cfg.rcParams.zeroReorderDelay = 1;
         cfg.rcParams.enableAQ = 1;
-        cfg.rcParams.aqStrength = 8;
+        cfg.rcParams.aqStrength = static_cast<std::uint32_t>(
+            std::clamp<std::uint32_t>(options_.nvencAqStrength, 1U, 15U));
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         cfg.rcParams.multiPass = NV_ENC_MULTI_PASS_DISABLED;
 #endif
@@ -1295,6 +1310,10 @@ public:
         cfg.rcParams.vbvInitialDelay = cfg.rcParams.vbvBufferSize;
 
         if (codec_ == mpegts::ElementaryCodec::H264) {
+            if (options_.nvencProfile == "main")
+                cfg.encodeCodecConfig.h264Config.profileGUID = NV_ENC_H264_PROFILE_MAIN_GUID;
+            else if (options_.nvencProfile == "high")
+                cfg.encodeCodecConfig.h264Config.profileGUID = NV_ENC_H264_PROFILE_HIGH_GUID;
             cfg.encodeCodecConfig.h264Config.repeatSPSPPS = 1;
             cfg.encodeCodecConfig.h264Config.outputAUD = 1;
             cfg.encodeCodecConfig.h264Config.idrPeriod = cfg.gopLength;
@@ -1349,6 +1368,8 @@ public:
                   << " bitrate_kbps=" << (bitrate / 1000ULL)
                   << " gpu=" << gpuOrdinal_
                   << " preset=" << presetName
+                  << " profile=" << options_.nvencProfile
+                  << " aq_strength=" << std::clamp<std::uint32_t>(options_.nvencAqStrength, 1U, 15U)
                   << " tuning=" << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr"
                   << " bframes=0 lookahead=0 reorder_delay=0"
@@ -1585,6 +1606,7 @@ private:
     }
 
     mpegts::ElementaryCodec codec_;
+    VideoEncoderOptions options_{};
     void* cudaLib_ = nullptr;
     void* nvencLib_ = nullptr;
     CuInit cuInit_ = nullptr; CuDeviceGet cuDeviceGet_ = nullptr; CuCtxCreate cuCtxCreate_ = nullptr; CuCtxDestroy cuCtxDestroy_ = nullptr;

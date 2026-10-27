@@ -942,6 +942,12 @@ bool NativeTranscoderPipeline::ensureVideoEncoder(std::string& error) {
         auto candidate = codec::createVideoEncoder(
             outputCodec, backend, backendError);
         if (!candidate) return false;
+        codec::VideoEncoderOptions options;
+        options.nvencPreset = config_.nvencPreset;
+        options.nvencProfile = config_.nvencProfile;
+        options.gopFrames = config_.gopFrames;
+        options.nvencAqStrength = config_.nvencAqStrength;
+        candidate->setOptions(options);
         if (!candidate->configure(
                 config_.width, config_.height, config_.fps,
                 config_.videoBitrate, backendError)) {
@@ -1083,6 +1089,10 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.fps = config_.fps;
                 zeroCopyConfig.bitrate = config_.videoBitrate;
                 zeroCopyConfig.deinterlace = config_.deinterlace;
+                zeroCopyConfig.nvencPreset = config_.nvencPreset;
+                zeroCopyConfig.nvencProfile = config_.nvencProfile;
+                zeroCopyConfig.gopFrames = config_.gopFrames;
+                zeroCopyConfig.nvencAqStrength = config_.nvencAqStrength;
                 zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 nvidiaZeroCopy_ = codec::createNvidiaZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);
