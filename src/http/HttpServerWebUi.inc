@@ -6749,13 +6749,16 @@ function saveStream(id) {
     return;
   }
   const subtitleLangChoice = document.getElementById('streamDvbSubtitlesLanguage')?.value || 'auto';
-  const subtitleLang = subtitleLangChoice === 'custom'
+  let subtitleLang = subtitleLangChoice === 'custom'
     ? (document.getElementById('streamDvbSubtitlesCustomLanguage')?.value || '').trim().toLowerCase()
     : subtitleLangChoice;
   if (subtitleLang !== 'auto' && !/^[a-z]{3}$/.test(subtitleLang)) {
-    uiError(uiBiText('Укажите трёхбуквенный код языка субтитров ISO 639-2.',
-                     'Enter a three-letter ISO 639-2 subtitle language code.'));
-    return;
+    if (document.getElementById('streamDvbSubtitlesEnabled')?.checked === true) {
+      uiError(uiBiText('Укажите трёхбуквенный код языка субтитров ISO 639-2.',
+                       'Enter a three-letter ISO 639-2 subtitle language code.'));
+      return;
+    }
+    subtitleLang = 'auto'; // Never block saving unrelated settings when captions are off.
   }
   const payload = {
     id: id,
