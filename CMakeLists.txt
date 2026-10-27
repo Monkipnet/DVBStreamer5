@@ -371,6 +371,17 @@ target_link_libraries(DVBStreamer5
     dl
 )
 # Newcamd is mandatory runtime content; building DVBStreamer5 also builds the plugin.
+# Optional gzip response for /epg.xml.gz. The uncompressed /epg.xml
+# endpoint and existing media builds remain available without zlib.
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+    target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
+    target_link_libraries(DVBStreamer5 PRIVATE ZLIB::ZLIB)
+    message(STATUS "XMLTV gzip endpoint: enabled")
+else()
+    message(STATUS "XMLTV gzip endpoint: disabled (zlib not available)")
+endif()
+
 add_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)
 
 option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
