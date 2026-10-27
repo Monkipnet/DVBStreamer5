@@ -346,7 +346,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <button class="system-menu-item" onclick="openMptsModal();closeSystemMenu()">MPTS</button>
 <button class="system-menu-item" onclick="openLoginModal();closeSystemMenu()" data-i18n="user">User</button>
 <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()">Конфигурация</button>
-<button class="system-menu-item" onclick="openXmltvModal();closeSystemMenu()" ${uiBiAttrs('Источники XMLTV', 'XMLTV sources')}>${uiBiText('Источники XMLTV', 'XMLTV sources')}</button>
+<button class="system-menu-item" onclick="openXmltvModal();closeSystemMenu()" data-ui-ru="Источники XMLTV" data-ui-en="XMLTV sources" data-ui-hr="XMLTV izvori">Источники XMLTV</button>
 <button class="system-menu-item" onclick="openTelegramModal();closeSystemMenu()" data-i18n="telegram">Telegram API</button>
 <button class="system-menu-item" onclick="openNewcamdModal();closeSystemMenu()">Newcamd</button>
 <button class="system-menu-item" onclick="window.location.href='/oscam-mini';closeSystemMenu()">OSCam-mini</button>
@@ -3131,6 +3131,143 @@ function playlistSelectedStreams() {
     .filter(box => box.checked)
     .map(box => streams[Number(box.dataset.streamIndex)])
     .filter(Boolean);
+}
+async function loadXmltvCatalog() {
+  try {
+    const data = await fetchJson('/api/xmltv/channels', {cache:'no-store'}, 20000);
+    xmltvCatalog = Array.isArray(data) ? data : [];
+    refreshXmltvChannelOptions();
+  } catch (error) {
+    uiError(error?.message || error);
+  }
+}
+function refreshXmltvChannelOptions() {
+  const list = document.getElementById('streamXmltvChannels');
+  if (!list) return;
+  const sourceId = document.getElementById('streamXmltvSourceId')?.value || '';
+  const options = xmltvCatalog.filter(ch => !sourceId || ch.source_id === sourceId);
+  list.innerHTML = options.slice(0, 5000).map(ch => {
+    const label = String(ch.name || ch.id) + ' [' + String(ch.source_id || '') + ']';
+    return '<option value="' + escapeHtmlValue(ch.id || '') +
+      '" label="' + escapeHtmlValue(label) + '"></option>';
+  }).join('');
+}
+function xmltvSourceRow(src, index) {
+  const date = Number(src.last_success || 0) > 0
+    ? new Date(Number(src.last_success) * 1000).toLocaleString(language === 'ru'
+        ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : 'en-GB'))
+    : '—';
+  const status = src.last_error
+    ? String(src.last_error)
+    : (src.downloading ? uiBiText('Загрузка…','Downloading…') :
+       ((src.channel_count || 0) + ' ' + uiBiText('каналов','channels') +
+        ' / ' + (src.event_count || 0) + ' ' + uiBiText('передач','programmes')));
+  return '<div class="form-row full" data-xmltv-row="' + index +
+    '" style="border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:10px;margin:5px 0">' +
+    '<div class="row-inline compact-row">' +
+      '<label class="checkbox-inline"><input type="checkbox" data-xmltv-field="enabled" ' +
+        (src.enabled !== false ? 'checked' : '') + ' />' + uiBiText('Включён','Enabled') + '</label>' +
+      '<input data-xmltv-field="name" placeholder="' + uiBiText('Название','Name') +
+        '" value="' + escapeHtmlValue(src.name || '') + '" />' +
+      '<button class="button-danger" type="button" onclick="removeXmltvSource(' + index +
+        ')">' + uiBiText('Удалить источник','Delete source') + '</button>' +
+    '</div>' +
+    '<div class="edit-field-title">' + uiBiText('URL источника XMLTV','XMLTV source URL') + '</div>' +
+    '<small class="field-help">' + uiBiText('Поддерживаются HTTP(S), XML и XML.GZ.','Supports HTTP(S), XML and XML.GZ.') + '</small>' +
+    '<input data-xmltv-field="url" type="url" value="' + escapeHtmlValue(src.url || '') +
+       '" placeholder="https://example.org/epg.xml.gz" />' +
+    '<div class="edit-field-title">' + uiBiText('Ежедневное обновление','Daily update time') + '</div>' +
+    '<small class="field-help">' + uiBiText('Время сервера в формате ЧЧ:ММ.','Server local time, HH:MM.') + '</small>' +
+    '<input data-xmltv-field="refresh_time" type="time" value="' +
+      escapeHtmlValue(src.refresh_time || '03:00') + '" />' +
+    '<small class="field-help">' + uiBiText('Последнее успешное обновление','Last successful update') +
+      ': ' + date + '. ' + escapeHtmlValue(status) + '</small>' +
+    '<div class="modal-actions"><button class="button-secondary" type="button" onclick="refreshXmltvSource(' +
+      index + ')">' + uiBiText('Обновить сейчас','Refresh now') + '</button></div>' +
+    '</div>';
+}
+function syncXmltvModalFields() {
+  document.querySelectorAll('[data-xmltv-row]').forEach(row => {
+    const index = Number(row.dataset.xmltvRow);
+    const source = xmltvModalSources[index];
+    if (!source) return;
+    for (const key of ['name','url','refresh_time']) {
+      const field = row.querySelector('[data-xmltv-field="' + key + '"]');
+      if (field) source[key] = field.value.trim();
+    }
+    const enabled = row.querySelector('[data-xmltv-field="enabled"]');
+    if (enabled) source.enabled = enabled.checked;
+  });
+}
+function renderXmltvModal() {
+  openModal('<h2>' + uiBiText('Внешние источники XMLTV','External XMLTV sources') + '</h2>' +
+    '<small class="field-help">' +
+    uiBiText('Добавьте несколько URL и время автоматического обновления. Расписание сохраняется при ошибке сети.',
+      'Add multiple URLs and daily refresh times. The last good guide is kept on network errors.') +
+    '</small>' +
+    '<div style="max-height:60vh;overflow:auto">' +
+    (xmltvModalSources.length
+      ? xmltvModalSources.map(xmltvSourceRow).join('')
+      : '<div class="mpts-empty">' + uiBiText('Источники ещё не добавлены','No sources configured') + '</div>') +
+    '</div><div class="modal-actions">' +
+    '<button class="button-secondary" type="button" onclick="addXmltvSource()">' +
+    uiBiText('+ Добавить XMLTV','Add XMLTV source') + '</button>' +
+    '<button class="button-secondary" type="button" onclick="closeModal()">' +
+    t('cancel') + '</button>' +
+    '<button class="button-primary" type="button" onclick="saveXmltvSources()">' +
+    t('save') + '</button></div>');
+}
+async function openXmltvModal() {
+  try {
+    const result = await fetchJson('/api/xmltv/status', {cache:'no-store'});
+    xmltvModalSources = Array.isArray(result.sources) ? result.sources : [];
+    renderXmltvModal();
+  } catch (error) { uiError(error?.message || error); }
+}
+function addXmltvSource() {
+  syncXmltvModalFields();
+  const id = 'xmltv-' + Date.now().toString(36) + '-' +
+    Math.floor(Math.random() * 10000).toString(36);
+  xmltvModalSources.push({id, name:'', url:'', enabled:true, refresh_time:'03:00'});
+  renderXmltvModal();
+}
+function removeXmltvSource(index) {
+  syncXmltvModalFields();
+  xmltvModalSources.splice(index, 1);
+  renderXmltvModal();
+}
+async function saveXmltvSources() {
+  syncXmltvModalFields();
+  if (xmltvModalSources.some(src => !/^https?:\/\//i.test(src.url || ''))) {
+    uiError(uiBiText('Укажите HTTP(S) URL для каждого источника.',
+                     'Enter an HTTP(S) URL for every source.'));
+    return;
+  }
+  try {
+    const result = await fetchJson('/api/xmltv/save', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sources:xmltvModalSources.map(src=>({
+        id:src.id,name:src.name,url:src.url,enabled:src.enabled,
+        refresh_time:src.refresh_time
+      }))})
+    });
+    if (result.result !== 'ok') throw new Error(result.error || 'XMLTV save error');
+    state.xmltv_sources = xmltvModalSources.map(src=>({...src}));
+    await openXmltvModal();
+  } catch (error) { uiError(error?.message || error); }
+}
+async function refreshXmltvSource(index) {
+  syncXmltvModalFields();
+  const source = xmltvModalSources[index];
+  if (!source || !source.id) return;
+  try {
+    const res = await fetchJson('/api/xmltv/refresh', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:source.id})
+    });
+    if (res.result !== 'ok') throw new Error(res.error || 'XMLTV refresh error');
+    await openXmltvModal();
+  } catch (error) { uiError(error?.message || error); }
 }
 function openPlaylistModal() {
   const streams = state.streams || [];
