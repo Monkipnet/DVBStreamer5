@@ -2226,7 +2226,8 @@ size_t StreamManager::activeSubscriberSessions(const SubscriberConfig& subscribe
 std::vector<ActiveStreamSession> StreamManager::activeStreamSessions() {
     std::map<std::string, ActiveStreamSession> grouped;
     std::lock_guard<std::mutex> lock(managerMutex);
-    pruneExpiredAdHocSessionsLocked(std::chrono::steady_clock::now());
+    const auto now = std::chrono::steady_clock::now();
+    pruneExpiredAdHocSessionsLocked(now);
     auto add = [&](const HttpClientSession& session) {
         const std::string key = session.clientIp + "\n" + session.streamId + "\n" + session.protocol;
         auto& out = grouped[key];
@@ -2234,6 +2235,12 @@ std::vector<ActiveStreamSession> StreamManager::activeStreamSessions() {
         out.clientIp = session.clientIp;
         out.protocol = session.protocol;
         ++out.connections;
+        // Grouped HTTP sockets retain the oldest currently connected socket.
+        // For HLS, the initial logical session survives segment requests.
+        const auto age = std::chrono::duration_cast<std::chrono::seconds>(
+            now - session.connectedAt).count();
+        if (age > 0) out.connectedSeconds = std::max(
+            out.connectedSeconds, static_cast<std::uint64_t>(age));
     };
     for (const auto& [fd, session] : httpClients) { (void)fd; add(session); }
     for (const auto& [key, session] : adHocSessions) { (void)key; add(session); }
