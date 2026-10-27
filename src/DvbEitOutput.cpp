@@ -79,7 +79,7 @@ struct Event {
     std::uint16_t id = 0;
     std::vector<std::uint8_t> descriptor;
 };
-std::vector<std::uint8_t> eventBytes(const Event& event) {
+std::vector<std::uint8_t> eventBytes(const Event& event, bool currentlyRunning = false) {
     const auto duration = event.stop - event.start;
     if (duration <= 0 || duration > 359999LL) return {};
     std::vector<std::uint8_t> bytes;
@@ -91,8 +91,10 @@ std::vector<std::uint8_t> eventBytes(const Event& event) {
     bytes.push_back(bcd((sec / 60U) % 60U));
     bytes.push_back(bcd(sec % 60U));
     const std::size_t dl = event.descriptor.size();
-    // running_status = 4 (running), free_CA_mode = 0, length high nibble.
-    bytes.push_back(static_cast<std::uint8_t>(0x80U | ((dl >> 8U) & 0x0fU)));
+    // 4 = running, 1 = not running; free_CA_mode=0, length high nibble.
+    const auto running = currentlyRunning ? 4U : 1U;
+    bytes.push_back(static_cast<std::uint8_t>((running << 5U) |
+                    ((dl >> 8U) & 0x0fU)));
     bytes.push_back(static_cast<std::uint8_t>(dl));
     bytes.insert(bytes.end(), event.descriptor.begin(), event.descriptor.end());
     return bytes;
@@ -275,28 +277,26 @@ void DvbEitOutput::buildSchedule() {
     presentFollowing_.clear();
     if (events.empty()) return;
 
-    // Present/following: one section, current and next events only.
-    std::vector<std::uint8_t> pf;
+    // EIT present/following actual (EN 300 468): section 0 carries the
+    // present event, section 1 carries the following event. Do not combine
+    // them in section 0: DVB receivers such as WISI require section numbering.
     const Event* current = nullptr;
     const Event* upcoming = nullptr;
     for (const auto& event : events) {
         if (!current && event.start <= now && now < event.stop) current = &event;
         if (!upcoming && event.start > now) upcoming = &event;
     }
-    if (current) {
-        const auto bytes = eventBytes(*current);
-        pf.insert(pf.end(), bytes.begin(), bytes.end());
-    }
-    if (upcoming) {
-        const auto bytes = eventBytes(*upcoming);
-        pf.insert(pf.end(), bytes.begin(), bytes.end());
-    }
-    if (!pf.empty()) {
+    for (const auto sectionNumber : {0U, 1U}) {
+        const Event* selected = sectionNumber == 0 ? current : upcoming;
+        if (!selected) continue;
+        const auto bytes = eventBytes(*selected, sectionNumber == 0U);
+        if (bytes.empty()) continue;
         const auto sec = makeEit(0x4eU, serviceId_, tsid_, onid_, version_,
-                                 0U, 0U, 0U, 0x4eU, pf);
+            static_cast<std::uint8_t>(sectionNumber),
+            1U, 1U, 0x4eU, bytes);
         std::deque<Packet> temp;
         enqueueSection(sec, temp);
-        presentFollowing_.assign(temp.begin(), temp.end());
+        presentFollowing_.insert(presentFollowing_.end(), temp.begin(), temp.end());
     }
 
     // Schedule actual: each section holds one event, with valid 8-section
