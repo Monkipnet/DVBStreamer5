@@ -252,7 +252,9 @@ void DvbEpgCollector::pushPacket(const std::uint8_t* packet) {
     const bool discontinuity =
         (adaptationControl & 0x02U) != 0 &&
         packet[4] > 0 && (packet[5] & 0x80U) != 0;
-    if (continuityValid_ && !discontinuity) {
+    if (discontinuity) {
+        resetSection();
+    } else if (continuityValid_) {
         const std::uint8_t expected =
             static_cast<std::uint8_t>((continuity_ + 1U) & 0x0fU);
         if (continuity == continuity_) return;

@@ -115,7 +115,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .edit-field input,.edit-field select{width:100%!important;max-width:none!important}
 .edit-toggle{display:flex;flex-direction:column;justify-content:flex-end;gap:3px;min-width:0}
 .edit-toggle .checkbox-inline{margin:0!important;min-height:32px}
-.edit-inline-note{font-size:.62rem;color:#7f8ba0;line-height:1.3;margin-top:6px}
+.edit-inline-note{display:block;width:100%;font-size:.62rem;color:#7f8ba0;line-height:1.2;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stream-video-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .stream-video-grid.secondary{grid-template-columns:repeat(6,minmax(0,1fr));margin-top:8px}
 .tile .epg-row{cursor:pointer;border-radius:5px;padding:1px 3px;margin:0 -3px}
