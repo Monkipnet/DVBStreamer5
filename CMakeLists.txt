@@ -329,6 +329,7 @@ add_executable(DVBStreamer5
     src/main.cpp
     src/utils.cpp
     src/ConfigManager.cpp
+    src/ExternalXmltv.cpp
     src/DvbSatellite.cpp
     src/CardManager.cpp
     src/CaBackend.cpp
@@ -373,14 +374,12 @@ target_link_libraries(DVBStreamer5
 # Newcamd is mandatory runtime content; building DVBStreamer5 also builds the plugin.
 # Optional gzip response for /epg.xml.gz. The uncompressed /epg.xml
 # endpoint and existing media builds remain available without zlib.
-find_package(ZLIB QUIET)
-if(ZLIB_FOUND)
-    target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
-    target_link_libraries(DVBStreamer5 ZLIB::ZLIB)
-    message(STATUS "XMLTV gzip endpoint: enabled")
-else()
-    message(STATUS "XMLTV gzip endpoint: disabled (zlib not available)")
-endif()
+find_package(ZLIB REQUIRED)
+find_package(CURL REQUIRED)
+find_package(LibXml2 REQUIRED)
+target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
+target_link_libraries(DVBStreamer5 ZLIB::ZLIB CURL::libcurl LibXml2::LibXml2)
+message(STATUS "XMLTV external download: libcurl, libxml2 and gzip enabled")
 
 add_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)
 
