@@ -1306,7 +1306,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // Preserve DVB bitmap-subtitle PES and its PMT 0x59 descriptor from
         // the post-CA selected-service TS, then reattach them after the native
         // transcoder rebuilds PAT/PMT and elementary video/audio streams.
-        auto subtitles = std::make_shared<DvbSubtitlePassthrough>();
+        auto subtitles = std::make_shared<DvbSubtitlePassthrough>(
+            streamConfig.dvbSubtitlesLanguage);
         relay.observeDvbSubtitles = [subtitles](const std::uint8_t* data,
                                                 std::size_t size) {
             subtitles->observe(data, size);
@@ -1317,6 +1318,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         };
         std::cerr << "DVB SUBTITLES enabled stream=" << streamConfig.id
                   << " mode=post-transcode MPEG-TS passthrough"
+                  << " language=" << streamConfig.dvbSubtitlesLanguage
                   << std::endl;
     }
 
