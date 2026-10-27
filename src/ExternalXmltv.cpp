@@ -347,6 +347,10 @@ bool ExternalXmltvManager::parse(
     }
     std::size_t totalEvents = 0;
     std::size_t totalChannels = 0;
+    std::size_t scannedEvents = 0;
+    const std::int64_t now = nowSeconds();
+    const std::int64_t startWindow = now - 6 * 3600;
+    const std::int64_t endWindow = now + 7 * 86400;
     std::string channelId, channelName;
     std::string programmeId;
     Event event;
@@ -394,22 +398,30 @@ bool ExternalXmltvManager::parse(
                     ++totalChannels;
                 }
                 inChannel = false;
-            } else if (tag == "programme" && inProgramme) {
-                if (totalEvents < kMaxEvents && !event.title.empty()) {
+            } else if (tag == "programme") {
+                ++scannedEvents;
+                if (scannedEvents > kMaxScannedEvents) {
+                    error = "XMLTV contains more than 5 million programmes";
+                    break;
+                }
+                if (inProgramme && !event.title.empty() &&
+                    event.stop >= startWindow && event.start <= endWindow) {
                     // Some providers omit <channel> definitions entirely.
-                    // Keep the programme ID selectable in the UI in that case.
+                    // Keep the programme ID selectable even if EPG is capped.
                     if (data.channels.size() < kMaxChannels &&
                         !data.channels.count(programmeId))
                         data.channels.emplace(programmeId, programmeId);
-                    data.programmes[programmeId].push_back(std::move(event));
-                    ++totalEvents;
+                    auto& programmes = data.programmes[programmeId];
+                    if (totalEvents < kMaxEvents &&
+                        programmes.size() < kMaxEventsPerChannel) {
+                        programmes.push_back(std::move(event));
+                        ++totalEvents;
+                    } else {
+                        ++data.truncatedEvents;
+                    }
                 }
                 inProgramme = false;
             }
-        }
-        if (totalEvents >= kMaxEvents) {
-            error = "XMLTV exceeded event count safety limit (180000)";
-            break;
         }
     }
     xmlFreeTextReader(reader); // invokes xmlCloseCallback
@@ -504,6 +516,7 @@ void ExternalXmltvManager::run() {
             if (success) {
                 source.channels.swap(loaded.channels);
                 source.programmes.swap(loaded.programmes);
+                source.truncatedEvents = loaded.truncatedEvents;
                 source.lastSuccess = finished;
                 // Startup prefetch before HH:MM is not the day's scheduled
                 // refresh. Preserve the scheduled run even if prefetch finishes
@@ -512,7 +525,8 @@ void ExternalXmltvManager::run() {
                 source.error.clear();
                 std::clog << "EXTERNAL XMLTV updated source=" << selected.id
                           << " channels=" << source.channels.size()
-                          << " programmes=" << source.programmes.size() << '\n';
+                          << " programmes=" << source.programmes.size()
+                          << " capped_events=" << source.truncatedEvents << '\n';
             } else {
                 source.error = error;
                 std::clog << "EXTERNAL XMLTV error source=" << selected.id
@@ -537,6 +551,10 @@ Json::Value ExternalXmltvManager::status() const {
         std::size_t events = 0;
         for (const auto& [channelId, list] : source.programmes) events += list.size();
         entry["event_count"] = Json::UInt64(events);
+        entry["truncated_events"] = Json::UInt64(source.truncatedEvents);
+        entry["last_warning"] = source.truncatedEvents
+            ? "XMLTV EPG events outside retention caps: " +
+                std::to_string(source.truncatedEvents) + " omitted" : "";
         sources.append(std::move(entry));
     }
     root["sources"] = std::move(sources);
