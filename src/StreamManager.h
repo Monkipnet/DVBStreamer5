@@ -405,6 +405,9 @@ private:
     std::thread epgPersistThread_;
     std::mutex epgPersistMutex_;
     std::condition_variable epgPersistCv_;
+    mutable std::mutex dormantEpgMutex_;
+    mutable std::map<std::string, std::pair<std::string,
+        std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector>>> dormantEpg_;
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
     struct HttpClientSession {
