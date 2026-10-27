@@ -1,4 +1,6 @@
 #include "media/DvbEpgCollector.h"
+#include "EpgDiskCache.h"
+#include <iostream>
 
 #include "media/DvbText.h"
 
@@ -450,6 +452,84 @@ DvbEpgSnapshot DvbEpgCollector::snapshot(
         events_.begin(),
         events_.begin() + static_cast<std::ptrdiff_t>(count));
     return result;
+}
+
+
+bool DvbEpgCollector::restoreFromDisk(const std::string& cacheKey) {
+    epgcache::Reader reader(epgcache::pathFor("dvb", cacheKey));
+    if (!reader.valid()) return false;
+    Json::Value header;
+    if (!reader.next(header) || header.get("schema", 0).asInt() != 1 ||
+        header.get("kind", "").asString() != "dvb" ||
+        header.get("key", "").asString() != cacheKey) return false;
+    const auto storedSid = static_cast<std::uint16_t>(
+        header.get("service_id", 0).asUInt());
+    if (configuredServiceId_ != 0 && storedSid != 0 &&
+        configuredServiceId_ != storedSid) return false;
+    const std::int64_t now = systemNowSeconds();
+    std::vector<DvbEpgEvent> recovered;
+    Json::Value record;
+    while (reader.next(record) && recovered.size() < kMaximumStoredEvents) {
+        if (record.get("kind", "").asString() != "event") continue;
+        DvbEpgEvent e;
+        e.serviceId = static_cast<std::uint16_t>(record.get("sid", 0).asUInt());
+        e.eventId = static_cast<std::uint16_t>(record.get("eid", 0).asUInt());
+        e.startUtc = record.get("start", 0).asInt64();
+        e.durationSeconds = record.get("duration", 0).asUInt();
+        e.runningStatus = static_cast<std::uint8_t>(record.get("running", 0).asUInt());
+        e.freeCa = record.get("free_ca", false).asBool();
+        e.title = record.get("title", "").asString().substr(0, 1024);
+        e.description = record.get("description", "").asString().substr(0, 4096);
+        if (e.startUtc + static_cast<std::int64_t>(e.durationSeconds) < now - 6*3600 ||
+            e.startUtc > now + static_cast<std::int64_t>(scheduleDays_) * 86400 ||
+            e.title.empty() || e.durationSeconds == 0) continue;
+        if (storedSid != 0 && e.serviceId != storedSid) continue;
+        recovered.push_back(std::move(e));
+    }
+    if (!reader.good()) {
+        std::clog << "DVB EPG CACHE invalid/truncated key=" << cacheKey << '\n';
+        return false;
+    }
+    if (recovered.empty()) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!events_.empty()) return false;
+    resolvedServiceId_ = storedSid;
+    events_ = std::move(recovered);
+    sectionsParsed_ = header.get("sections", 0).asUInt64();
+    std::clog << "DVB EPG CACHE restored events=" << events_.size()
+              << " key=" << cacheKey << '\n';
+    return true;
+}
+
+bool DvbEpgCollector::persistToDisk(const std::string& cacheKey) const {
+    DvbEpgSnapshot data = snapshot(kMaximumStoredEvents);
+    if (data.events.empty()) return false;
+    epgcache::Writer writer(epgcache::pathFor("dvb", cacheKey));
+    if (!writer.valid()) return false;
+    Json::Value header;
+    header["schema"] = 1;
+    header["kind"] = "dvb";
+    header["key"] = cacheKey;
+    header["service_id"] = data.serviceId;
+    header["sections"] = Json::UInt64(data.sectionsParsed);
+    if (!writer.append(header)) return false;
+    const auto now = systemNowSeconds();
+    for (const auto& e : data.events) {
+        if (e.startUtc + static_cast<std::int64_t>(e.durationSeconds) <
+            now - 6*3600) continue;
+        Json::Value record;
+        record["kind"] = "event";
+        record["sid"] = e.serviceId;
+        record["eid"] = e.eventId;
+        record["start"] = Json::Int64(e.startUtc);
+        record["duration"] = e.durationSeconds;
+        record["running"] = e.runningStatus;
+        record["free_ca"] = e.freeCa;
+        record["title"] = e.title;
+        record["description"] = e.description;
+        if (!writer.append(record)) return false;
+    }
+    return writer.finish();
 }
 
 } // namespace dvbstreamer5::media::epg
