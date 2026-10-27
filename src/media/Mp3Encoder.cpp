@@ -31,6 +31,8 @@ struct Mp3Encoder::Impl {
 #endif
     bool initialized = false;
     bool finished = false;
+    std::size_t frameBytes = 0;
+    std::vector<std::uint8_t> pending;
 };
 
 Mp3Encoder::Mp3Encoder() : impl_(std::make_unique<Impl>()) {}
@@ -71,6 +73,7 @@ bool Mp3Encoder::initialize(std::uint32_t sampleRate, std::uint32_t channels,
         error = "LAME rejected the requested MP3 profile";
         return false;
     }
+    impl_->frameBytes = static_cast<std::size_t>(144ULL * bitrate / sampleRate);
     impl_->initialized = true;
     return true;
 #else
@@ -113,7 +116,15 @@ bool Mp3Encoder::encodeInterleaved(const std::int16_t* pcm,
             error = "LAME MP3 PCM encoding failed (" + std::to_string(result) + ")";
             return false;
         }
-        output.insert(output.end(), encoded.begin(), encoded.begin() + result);
+        impl_->pending.insert(impl_->pending.end(), encoded.begin(), encoded.begin() + result);
+        // LAME can split an MPEG audio frame across encode calls. Never send
+        // a partial MP3 frame in a PES with a new audio PTS.
+        const std::size_t complete =
+            (impl_->pending.size() / impl_->frameBytes) * impl_->frameBytes;
+        output.insert(output.end(), impl_->pending.begin(),
+                      impl_->pending.begin() + static_cast<std::ptrdiff_t>(complete));
+        impl_->pending.erase(impl_->pending.begin(),
+                             impl_->pending.begin() + static_cast<std::ptrdiff_t>(complete));
         offset += n;
     }
     return true;
@@ -140,7 +151,13 @@ bool Mp3Encoder::finish(std::vector<std::uint8_t>& output, std::string& error) {
         error = "LAME MP3 flush failed (" + std::to_string(result) + ")";
         return false;
     }
-    output.insert(output.end(), encoded.begin(), encoded.begin() + result);
+    impl_->pending.insert(impl_->pending.end(), encoded.begin(), encoded.begin() + result);
+    if (impl_->pending.size() % impl_->frameBytes != 0) {
+        error = "LAME returned an incomplete final MPEG audio frame";
+        return false;
+    }
+    output.insert(output.end(), impl_->pending.begin(), impl_->pending.end());
+    impl_->pending.clear();
     impl_->finished = true;
     return true;
 #else
@@ -151,3 +168,7 @@ bool Mp3Encoder::finish(std::vector<std::uint8_t>& output, std::string& error) {
 }
 
 } // namespace dvbstreamer5::media
+
+std::size_t dvbstreamer5::media::Mp3Encoder::frameSizeBytes() const noexcept {
+    return impl_ ? impl_->frameBytes : 0;
+}
