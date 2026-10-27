@@ -2252,6 +2252,86 @@ Json::Value StreamManager::mptsSnapshot() const {
     return mptsOutputManager ? mptsOutputManager->snapshot() : Json::Value(Json::arrayValue);
 }
 
+Json::Value StreamManager::epgSnapshot(const std::string& id) const {
+    Json::Value root(Json::objectValue);
+    root["stream_id"] = id;
+
+    StreamConfig configured;
+    bool found = false;
+    for (const auto& candidate : configManager.config.streams) {
+        if (candidate.id == id) {
+            configured = candidate;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        root["error"] = "stream not found";
+        root["enabled"] = false;
+        return root;
+    }
+
+    root["enabled"] = configured.epgEnabled;
+    root["days"] = configured.epgDays;
+    if (!configured.epgEnabled) return root;
+
+    std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector> collector;
+    {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        const auto it = streams.find(id);
+        if (it != streams.end() && it->second) {
+            collector = it->second->epgCollector;
+        }
+    }
+
+    root["active"] = static_cast<bool>(collector);
+    if (!collector) {
+        root["available"] = false;
+        return root;
+    }
+
+    const auto snapshot = collector->snapshot(512);
+    root["service_id"] = snapshot.serviceId;
+    root["sections"] = Json::UInt64(snapshot.sectionsParsed);
+    root["available"] = !snapshot.events.empty();
+
+    const auto eventJson = [](const dvbstreamer5::media::epg::DvbEpgEvent& event) {
+        Json::Value value(Json::objectValue);
+        value["service_id"] = event.serviceId;
+        value["event_id"] = event.eventId;
+        value["start_utc"] = Json::Int64(event.startUtc);
+        value["end_utc"] = Json::Int64(
+            event.startUtc + static_cast<std::int64_t>(event.durationSeconds));
+        value["duration_seconds"] = event.durationSeconds;
+        value["running_status"] = event.runningStatus;
+        value["free_ca"] = event.freeCa;
+        value["title"] = event.title;
+        value["description"] = event.description;
+        return value;
+    };
+
+    const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const dvbstreamer5::media::epg::DvbEpgEvent* current = nullptr;
+    const dvbstreamer5::media::epg::DvbEpgEvent* next = nullptr;
+    Json::Value events(Json::arrayValue);
+    for (const auto& event : snapshot.events) {
+        events.append(eventJson(event));
+        const std::int64_t end =
+            event.startUtc + static_cast<std::int64_t>(event.durationSeconds);
+        if (!current && event.startUtc <= now && now < end) {
+            current = &event;
+        }
+        if (!next && event.startUtc > now) {
+            next = &event;
+        }
+    }
+    root["events"] = std::move(events);
+    if (current) root["now"] = eventJson(*current);
+    if (next) root["next"] = eventJson(*next);
+    return root;
+}
+
 Json::Value StreamManager::queueMemorySnapshot() const {
     Json::Value root;
     root["engine"] = "native";

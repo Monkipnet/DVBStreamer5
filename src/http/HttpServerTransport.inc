@@ -302,6 +302,20 @@ void HttpServer::handleSession(tcp::socket socket) {
             } else if (target == "/api/backup-files") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listBackupFiles();
+            } else if (target.rfind("/api/epg?stream_id=", 0) == 0) {
+                res.set(http::field::content_type, "application/json");
+                std::string streamId = target.substr(
+                    std::string("/api/epg?stream_id=").size());
+                const auto amp = streamId.find('&');
+                if (amp != std::string::npos) streamId.resize(amp);
+                if (streamId.empty() || streamId.size() > 256) {
+                    res.result(http::status::bad_request);
+                    res.body() = R"({"error":"Invalid stream id"})";
+                } else {
+                    Json::StreamWriterBuilder writer;
+                    res.body() = Json::writeString(
+                        writer, streamManager.epgSnapshot(streamId));
+                }
             } else if (target == "/api/state") {
                 res.set(http::field::content_type, "application/json");
                 // 202.68: server-side A/B probe for the /api/state allocation path.

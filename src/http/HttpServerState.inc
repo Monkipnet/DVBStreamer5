@@ -733,6 +733,50 @@ std::string HttpServer::currentState() {
             item["cc_errors"] = Json::UInt64(0);
             item["cc_errors_total"] = Json::UInt64(0);
         }
+        item["epg_enabled"] = cfg.epgEnabled;
+        item["epg_available"] = false;
+        item["epg_event_count"] = 0;
+        if (cfg.epgEnabled && snap.count(cfg.id) && snap.at(cfg.id) &&
+            snap.at(cfg.id)->epgCollector) {
+            const auto epgSnapshot = snap.at(cfg.id)->epgCollector->snapshot(96);
+            item["epg_service_id"] = epgSnapshot.serviceId;
+            item["epg_sections"] = Json::UInt64(epgSnapshot.sectionsParsed);
+            item["epg_event_count"] = static_cast<Json::UInt>(
+                epgSnapshot.events.size());
+            item["epg_available"] = !epgSnapshot.events.empty();
+
+            const std::int64_t epgNow =
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+            const dvbstreamer5::media::epg::DvbEpgEvent* currentEpg = nullptr;
+            const dvbstreamer5::media::epg::DvbEpgEvent* nextEpg = nullptr;
+            for (const auto& event : epgSnapshot.events) {
+                const std::int64_t eventEnd =
+                    event.startUtc +
+                    static_cast<std::int64_t>(event.durationSeconds);
+                if (!currentEpg &&
+                    event.startUtc <= epgNow && epgNow < eventEnd) {
+                    currentEpg = &event;
+                }
+                if (!nextEpg && event.startUtc > epgNow) {
+                    nextEpg = &event;
+                }
+            }
+            const auto appendSummary =
+                [](Json::Value& target,
+                   const dvbstreamer5::media::epg::DvbEpgEvent* event) {
+                    if (!event) return;
+                    target["event_id"] = event->eventId;
+                    target["start_utc"] = Json::Int64(event->startUtc);
+                    target["end_utc"] = Json::Int64(
+                        event->startUtc +
+                        static_cast<std::int64_t>(event->durationSeconds));
+                    target["title"] = event->title;
+                };
+            appendSummary(item["epg_now"], currentEpg);
+            appendSummary(item["epg_next"], nextEpg);
+        }
+
         const bool configuredDvb = DvbSatellite::isDvbUri(cfg.inputUri);
         item["dvb_input"] = configuredDvb;
         if (configuredDvb) {
