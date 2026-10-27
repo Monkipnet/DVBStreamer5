@@ -645,7 +645,15 @@ bool streamUsesSrt(const StreamConfig& cfg) {
 }
 
 bool sameStreamConfig(const StreamConfig& left, const StreamConfig& right) {
-    if (left.toJson() != right.toJson()) return false;
+    // EPG metadata belongs to the guide provider, not the live A/V path.
+    // Editing XMLTV assignment or priority must not restart DVB/HLS/CA.
+    auto leftJson = left.toJson();
+    auto rightJson = right.toJson();
+    for (const char* key : {"epg_mode", "xmltv_source_id", "xmltv_channel_id"}) {
+        leftJson.removeMember(key);
+        rightJson.removeMember(key);
+    }
+    if (leftJson != rightJson) return false;
     if (!streamUsesSrt(left) && !streamUsesSrt(right)) return true;
     return left.srtVpsVdsOptimization == right.srtVpsVdsOptimization;
 }
