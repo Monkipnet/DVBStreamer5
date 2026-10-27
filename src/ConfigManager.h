@@ -130,6 +130,7 @@ struct StreamConfig {
     std::string serviceProvider;
     bool epgEnabled = false;
     uint32_t epgDays = 3;
+    bool epgEitOutput = false; // Opt-in DVB EIT PID 0x12 on finished MPEG-TS
     std::string epgMode = "auto"; // auto (DVB, then XMLTV) | dvb | xmltv
     std::string xmltvSourceId;   // empty = search all sources by channel ID
     std::string xmltvChannelId;
