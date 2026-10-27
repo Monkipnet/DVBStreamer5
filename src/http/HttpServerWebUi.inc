@@ -5955,8 +5955,9 @@ function openStreamForm(stream) {
           <small id="streamVdrCiPlusPreview" class="edit-inline-note"></small>
           <div class="edit-inline-note" ${uiBiAttrs('VDR управляет tuner/CAM; DVBStreamer5 получает streamdev TS.','VDR owns tuner/CAM; DVBStreamer5 receives streamdev TS.')}>${uiBiText('VDR владеет DVB frontend и CI/CI+ CAM; pairing/authentication остаются в поддерживаемом VDR/vendor CAM stack.','VDR owns the DVB frontend and CI/CI+ CAM; pairing/authentication remain in the supported VDR/vendor CAM stack.')}</div>
         </div>
-        <div class="form-row full edit-section">
-          <div class="edit-section-head"><span>EPG / DVB EIT / XMLTV</span><small>PID 0x12 / XMLTV</small></div>
+        <details class="form-row full edit-section edit-collapsible" id="streamEpgOptions">
+          <summary class="edit-section-head"><span>EPG / DVB EIT / XMLTV</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
+          <div class="edit-collapse-body">
           <div class="stream-video-grid">
             <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('EPG канала','Channel EPG')}>${uiBiText('EPG канала','Channel EPG')}</div><small class="field-help" ${uiBiAttrs('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}>${uiBiText('Собирать Now/Next и расписание из DVB EIT.','Collect Now/Next and schedule from DVB EIT.')}</small><label class="checkbox-inline"><input id="streamEpgEnabled" type="checkbox" ${stream.epg_enabled===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
             <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('Выход DVB EIT (WISI)','Output DVB EIT (WISI)')}>${uiBiText('Выход DVB EIT (WISI)','Output DVB EIT (WISI)')}</div><small class="field-help" ${uiBiAttrs('Добавлять PID 0x12 на MPEG-TS выходы.','Add DVB EIT PID 0x12 to MPEG-TS outputs.')}>${uiBiText('Добавлять PID 0x12 на MPEG-TS выходы.','Add DVB EIT PID 0x12 to MPEG-TS outputs.')}</small><label class="checkbox-inline"><input id="streamEpgEitOutput" type="checkbox" ${stream.epg_eit_output===true?'checked':''}/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
@@ -5986,7 +5987,8 @@ function openStreamForm(stream) {
               <button class="button-secondary" type="button" onclick="loadXmltvCatalog()">${uiBiText('Обновить список XMLTV','Refresh XMLTV channel list')}</button>
             </div>
           </div>
-        </div>
+          </div>
+        </details>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
         <div class="form-row full" id="streamBackupFileLoopRow"><label>Зациклить файл замены</label><div class="checkbox-inline"><input id="streamBackupFileLoop" type="checkbox" ${stream.backup_file_loop ? 'checked' : ''} /><span>Повторять до появления основного потока</span></div></div>
         <div class="form-row full"><label>Тестовая таблица</label><div class="checkbox-inline"><input id="streamTestPattern" type="checkbox" ${stream.test_pattern ? 'checked' : ''} /><span>Использовать вместо входных потоков</span></div></div>
