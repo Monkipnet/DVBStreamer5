@@ -546,11 +546,11 @@ void HttpServer::handleSession(tcp::socket socket) {
                 Json::Value payload;
                 std::string parseError;
                 std::istringstream input(req.body());
-                if (req.body().size() > 64U * 1024U ||
+                if (req.body().size() > 128U * 1024U ||
                     !Json::parseFromStream(parser, input, &payload, &parseError)) {
                     res.result(http::status::bad_request);
                     result["result"] = "error";
-                    result["error"] = "Invalid XMLTV request (64 KiB maximum)";
+                    result["error"] = "Invalid XMLTV request (128 KiB maximum)";
                 } else if (target == "/api/xmltv/refresh") {
                     const std::string id = payload.get("id", "").asString();
                     if (!streamManager.refreshExternalXmltv(id)) {
