@@ -3649,9 +3649,9 @@ function refreshSystemLoadPanel(metrics) {
   const appCpu=loadPercentOrNull(metrics.process_cpu_percent);
   const cpuCores=Array.isArray(metrics.cpu_cores)?metrics.cpu_cores:[];
   const coreChips=cpuCores.filter(c=>Number.isInteger(c.id)).slice(0,256)
-    .map(c=>({name:t('core')+' '+c.id, percent:c.percent}));
+    .map(c=>({id:c.id,name:t('core')+' '+c.id, percent:c.percent}));
   const coreOverlays=coreChips.slice(0,48).map((core,index)=>({
-    key:'cpu-core:'+cpuCores[index].id,
+    key:'cpu-core:'+core.id,
     name:core.name,color:loadSeriesColor(index)
   }));
   line('CPU', Number(metrics.cpu_percent || 0), '', 'cpu', null, 'app:cpu', {
