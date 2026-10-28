@@ -3828,8 +3828,9 @@ async function saveGlobalRestartSchedule() {
   const enabled=document.getElementById('restartScheduleEnabled')?.checked===true;
   const weekdays=[...document.querySelectorAll('.restart-schedule-weekday:checked')].map(e=>Number(e.value));
   const hours=[...document.querySelectorAll('.restart-schedule-hour:checked')].map(e=>Number(e.value));
-  const minuteValue=Number(document.getElementById('restartScheduleMinute')?.value);
-  if (!Number.isInteger(minuteValue) || minuteValue<0 || minuteValue>59 ||
+  const minuteRaw=String(document.getElementById('restartScheduleMinute')?.value ?? '').trim();
+  const minuteValue=Number(minuteRaw);
+  if (minuteRaw==='' || !Number.isInteger(minuteValue) || minuteValue<0 || minuteValue>59 ||
       (enabled && (!weekdays.length || !hours.length))) {
     uiError(subtitleUiTriText(
       'Укажите минуту от 0 до 59 и выберите дни и часы.',
