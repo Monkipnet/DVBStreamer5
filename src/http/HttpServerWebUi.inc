@@ -30,6 +30,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .system-load-item{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:12px;padding:12px;min-width:0}
 .system-load-item-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600;font-size:.85rem}
 .system-load-item-title span{overflow-wrap:anywhere}
+.system-load-item-title>.system-load-graph-option{margin-left:auto}
 .system-load-value{color:#7dd1ff;white-space:nowrap;font-variant-numeric:tabular-nums}
 .system-load-bar{height:7px;border-radius:10px;margin-top:9px;background:rgba(255,255,255,.1);overflow:hidden}
 .system-load-bar-fill{height:100%;background:#28a6ed;border-radius:inherit;transition:width .3s}
@@ -3318,7 +3319,11 @@ function refreshSystemLoadPanel(metrics) {
   const root = document.getElementById('systemLoadContent');
   if (!root) return;
   root.replaceChildren();
-  function line(label, percent, detail) {
+  const master = document.getElementById('systemLoadChartsEnabled');
+  if (master) master.checked = systemLoadChartPrefs.enabled !== false;
+  const chartWindow = document.getElementById('systemLoadChartsWindow');
+  if (chartWindow) chartWindow.style.display = systemLoadChartPrefs.enabled ? '' : 'none';
+  function line(label, percent, detail, chartKey=null, secondaryKey=null) {
     const item = document.createElement('div');
     item.className = 'system-load-item';
     const head = document.createElement('div');
@@ -3330,7 +3335,22 @@ function refreshSystemLoadPanel(metrics) {
     const available = typeof percent === 'number' && Number.isFinite(percent);
     value.textContent = available ? Math.max(0, Math.min(100, percent)).toFixed(1) + '%' :
       t('unavailable');
-    head.append(name, value);
+    head.appendChild(name);
+    if (chartKey) {
+      const control = document.createElement('label');
+      control.className = 'system-load-graph-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = systemLoadChartPrefs.items[chartKey] !== false;
+      checkbox.disabled = systemLoadChartPrefs.enabled === false;
+      checkbox.addEventListener('change', () =>
+        setSystemLoadChartVisibility(chartKey, checkbox.checked));
+      const caption = document.createElement('span');
+      caption.textContent = t('chart');
+      control.append(checkbox, caption);
+      head.appendChild(control);
+    }
+    head.appendChild(value);
     item.appendChild(head);
     if (available) {
       const track = document.createElement('div');
@@ -3347,21 +3367,31 @@ function refreshSystemLoadPanel(metrics) {
       info.textContent = detail;
       item.appendChild(info);
     }
+    if (chartKey && systemLoadChartVisible(chartKey)) {
+      item.appendChild(buildSystemLoadChart(chartKey, secondaryKey, label));
+      if (secondaryKey) {
+        const legend = document.createElement('div');
+        legend.className = 'system-load-chart-legend';
+        legend.textContent = '● ' + label + ' · ● ' + t('gpuMemory');
+        item.appendChild(legend);
+      }
+    }
     root.appendChild(item);
   }
   const ram = Number(metrics.ram_total_mb);
   const ramUsed = Number(metrics.ram_used_mb);
   const formatMb = value => value >= 1024 ? (value / 1024).toFixed(2) + ' GiB' :
     value.toFixed(0) + ' MiB';
-  line('CPU', Number(metrics.cpu_percent || 0), '');
+  line('CPU', Number(metrics.cpu_percent || 0), '', 'cpu');
   line('RAM', Number(metrics.ram_percent || 0),
     Number.isFinite(ram) && ram > 0 && Number.isFinite(ramUsed) ?
-    t('memoryUsed') + ': ' + formatMb(ramUsed) + ' / ' + formatMb(ram) : '');
+    t('memoryUsed') + ': ' + formatMb(ramUsed) + ' / ' + formatMb(ram) : '', 'ram');
   const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
   if (!gpus.length) {
     line('GPU', null, t('noGpu'));
   } else {
-    for (const gpu of gpus) {
+    for (const [index, gpu] of gpus.entries()) {
+      const chartKey = systemLoadGpuChartKey(gpu,index);
       const used = Number(gpu.memory_used_mb);
       const total = Number(gpu.memory_total_mb);
       const memory = Number.isFinite(total) && total > 0 && Number.isFinite(used)
@@ -3369,15 +3399,45 @@ function refreshSystemLoadPanel(metrics) {
         : t('memoryUsed') + ': ' + t('unavailable');
       line(String(gpu.name || gpu.vendor || 'GPU'),
         typeof gpu.utilization_percent === 'number' ? gpu.utilization_percent : null,
-        memory + ' · ' + String(gpu.source || 'DRM'));
+        memory + ' · ' + String(gpu.source || 'DRM'), chartKey,
+        Number.isFinite(total) && total > 0 ? 'vram:' + chartKey : null);
     }
   }
 }
 function openSystemLoadModal() {
-  openModal(`<h2>${t('systemLoad')}</h2><div id="systemLoadContent" class="system-load-list"></div>
-    <div class="modal-actions"><button class="button-secondary" onclick="closeModal()">${t('close')}</button></div>`);
+  openModal('<h2>' + t('systemLoad') + '</h2>' +
+    '<div class="system-load-charts-toolbar">' +
+      '<label class="system-load-graph-option">' +
+        '<input type="checkbox" id="systemLoadChartsEnabled"> ' + t('showCharts') +
+      '</label>' +
+      '<label class="system-load-graph-option" id="systemLoadChartsWindow">' +
+        '<select id="systemLoadChartsPeriod">' +
+          '<option value="360">6 min</option>' +
+          '<option value="3600">1 h</option>' +
+          '<option value="86400">24 h</option>' +
+        '</select>' +
+      '</label>' +
+    '</div>' +
+    '<div id="systemLoadContent" class="system-load-list"></div>' +
+    '<div class="modal-actions"><button class="button-secondary" ' +
+      'onclick="closeModal()">' + t('close') + '</button></div>');
+  const master = document.getElementById('systemLoadChartsEnabled');
+  if (master) {
+    master.checked = systemLoadChartPrefs.enabled !== false;
+    master.addEventListener('change', () =>
+      setSystemLoadChartVisibility('all', master.checked));
+  }
+  const period = document.getElementById('systemLoadChartsPeriod');
+  if (period) {
+    period.value = String(systemLoadChartPeriodSeconds);
+    period.addEventListener('change', () => {
+      systemLoadChartPeriodSeconds = Number(period.value) || 360;
+      void fetchSystemLoadChartHistory();
+    });
+  }
   refreshSystemLoadPanel(state.system_metrics || {});
   void fetchSystemMetrics();
+  if (systemLoadChartPrefs.enabled) void fetchSystemLoadChartHistory();
 }
 async function logoutPanel() {
   closeSystemMenu();
