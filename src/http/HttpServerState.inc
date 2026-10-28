@@ -172,10 +172,22 @@ void compactSystemLoadHistory(int64_t now) {
     if (!input.is_open() || !output.is_open()) return;
     std::string line;
     const int64_t cutoff = now - kSystemLoadHistoryRetentionSeconds;
+    const int64_t recentCutoff = now - 3600; // Keep the most recent hour at 30 s.
+    const int64_t olderStep = static_cast<int64_t>(
+        std::max<std::uintmax_t>(2U,
+          (std::filesystem::file_size(file) / kSystemLoadHistoryCompactBytes) + 1U)) * 60LL;
+    int64_t lastOlderSaved = 0;
     while (std::getline(input, line)) {
         Json::Value row;
-        if (parseSystemLoadRow(line, row) && row["t"].asInt64() >= cutoff)
-            output << line << '\n';
+        if (!parseSystemLoadRow(line, row)) continue;
+        const int64_t time = row["t"].asInt64();
+        if (time < cutoff) continue;
+        if (time < recentCutoff) {
+            if (lastOlderSaved > 0 && time - lastOlderSaved < olderStep)
+                continue;
+            lastOlderSaved = time;
+        }
+        output << line << '\n';
     }
     output.flush();
     if (!output.good()) {
