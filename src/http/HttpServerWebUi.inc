@@ -3237,6 +3237,75 @@ async function fetchSystemLoadChartHistory() {
       console.warn('System load disk history unavailable:',error);
   }
 }
+// Severity colors are semantics, not distinct GPUs or fixed CPU-core colors.
+function loadBusyColor(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '#78869a';
+  if (value >= 90) return '#f2646a';
+  if (value >= 70) return '#ffa24c';
+  if (value >= 40) return '#f6ce55';
+  return '#46ca88';
+}
+function loadPercentOrNull(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0,Math.min(100,value)) : null;
+}
+function appendLoadLegend(container) {
+  const legend = document.createElement('div');
+  legend.className = 'load-legend';
+  for (const [color,text] of [
+    ['#46ca88','0–39%'],['#f6ce55','40–69%'],
+    ['#ffa24c','70–89%'],['#f2646a','90–100%']]) {
+    const entry = document.createElement('span');
+    const marker = document.createElement('i');
+    marker.style.background = color;
+    entry.append(marker,document.createTextNode(text));
+    legend.appendChild(entry);
+  }
+  container.appendChild(legend);
+}
+function appendLoadChips(container, heading, entries) {
+  const label=document.createElement('div');
+  label.className='load-breakdown-heading';
+  label.textContent=heading;
+  container.appendChild(label);
+  const group=document.createElement('div');
+  group.className='load-breakdown';
+  for (const entry of entries.slice(0,256)) {
+    const chip=document.createElement('div');
+    chip.className='load-chip';
+    const title=document.createElement('div');
+    title.className='load-chip-name';
+    title.textContent=entry.name;
+    const number=document.createElement('div');
+    number.className='load-chip-value';
+    const percent=loadPercentOrNull(entry.percent);
+    number.textContent=percent===null?t('unavailable'):percent.toFixed(1)+'%';
+    number.style.color=loadBusyColor(percent);
+    const bar=document.createElement('div');
+    bar.className='load-chip-meter';
+    if(percent!==null){
+      const fill=document.createElement('span');
+      fill.style.width=percent+'%';
+      fill.style.background=loadBusyColor(percent);
+      bar.appendChild(fill);
+    }
+    chip.append(title,number,bar);
+    if(entry.details) chip.title=String(entry.details);
+    group.appendChild(chip);
+  }
+  container.appendChild(group);
+}
+function loadProcessGpuForCard(metrics, gpu) {
+  const all=Array.isArray(metrics.process_gpus)?metrics.process_gpus:[];
+  const id=String(gpu.pci_bus_id||'');
+  return id ? all.find(x=>x.pci_bus_id===id) || null : null;
+}
+function loadEngineValues(engines) {
+  if(!engines || typeof engines!=='object' || Array.isArray(engines)) return [];
+  return Object.entries(engines).filter(([key,value])=>
+    typeof value === 'number' && Number.isFinite(value)).slice(0,32)
+    .map(([name,percent])=>({name,percent}));
+}
 function systemLoadGpuChartKey(gpu, index) {
   const source = String(gpu.source || 'DRM');
   const id = gpu.card ? String(gpu.card) : String(index) + ':' + String(gpu.name || gpu.vendor || 'GPU');
