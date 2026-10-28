@@ -172,6 +172,16 @@ struct XmltvSourceConfig {
     static XmltvSourceConfig fromJson(const Json::Value& root);
 };
 
+struct StreamRestartSchedule {
+    bool enabled = false;
+    // ISO weekday numbers: Mon=1 ... Sun=7, server-local clock.
+    std::vector<int> weekdays = {1,2,3,4,5,6,7};
+    std::vector<int> hours = {5};
+    int minute = 0;
+    Json::Value toJson() const;
+    static StreamRestartSchedule fromJson(const Json::Value& root);
+};
+
 struct AppConfig {
     std::string login = "admin";
     std::string password = "admin";
@@ -185,6 +195,7 @@ struct AppConfig {
     // V10.8.110: IPv4 addresses of interfaces where UDP/RTP ingress filtering is enabled.
     // Empty by default: upgrades cannot unexpectedly alter host packet filtering.
     std::vector<std::string> udpInputFilterInterfaces;
+    StreamRestartSchedule restartSchedule; // all active stream tiles, never manually stopped ones
     std::vector<StreamConfig> streams;
     std::vector<MptsOutputConfig> mptsOutputs;
     std::vector<XmltvSourceConfig> xmltvSources;
