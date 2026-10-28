@@ -537,6 +537,7 @@ struct SharedDvbInputPool::Impl {
         bus->key = key;
         bus->frontend = frontend;
         bus->tune = tune;
+        bus->nit = std::make_unique<DvbNitMonitor>(tune.frequencyKHz, tune.polarity);
         bus->keepWarmOnIdle = true;
         if (!bus->input.open(tune, error)) {
             return false;
