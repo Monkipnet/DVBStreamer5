@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
+#include <dlfcn.h>
 #include <cctype>
 #include <cstring>
 #include <fstream>
