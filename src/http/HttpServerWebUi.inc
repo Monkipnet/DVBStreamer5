@@ -3224,10 +3224,34 @@ async function fetchSystemLoadChartHistory() {
       if (!Number.isFinite(time)) continue;
       add('cpu',time,row.cpu);
       add('ram',time,row.ram);
+      add('app:cpu',time,row.app_cpu);
+      add('app:ram',time,row.app_ram);
+      if (Array.isArray(row.cores)) {
+        for (const core of row.cores.slice(0,256)) {
+          if (Array.isArray(core) && core.length===2 &&
+              Number.isInteger(core[0]) && core[0]>=0 && core[0]<=4095)
+            add('cpu-core:'+core[0],time,core[1]);
+        }
+      }
       if (Array.isArray(row.gpus)) for (const gpu of row.gpus.slice(0,64)) {
         if (!gpu || typeof gpu.id !== 'string' || gpu.id.length > 160) continue;
         add(gpu.id,time,gpu.usage);
         add('vram:'+gpu.id,time,gpu.vram);
+        add('app-vram:'+gpu.id,time,gpu.app_vram);
+        if(gpu.engines && typeof gpu.engines==='object') {
+          for(const [engine,pct] of Object.entries(gpu.engines).slice(0,32))
+            add(gpu.id+':engine:'+engine,time,pct);
+        }
+        const appGpus=Array.isArray(row.app_gpus)?row.app_gpus:[];
+        const matching=appGpus.find(item=>item?.pci_bus_id === gpu.pci_bus_id);
+        if (matching?.engines && typeof matching.engines==='object') {
+          const appEngines=Object.entries(matching.engines).filter(
+            ([,p])=>typeof p==='number' && Number.isFinite(p));
+          if(appEngines.length)
+            add('app:'+gpu.id,time,Math.max(...appEngines.map(([,p])=>p)));
+          for(const [engine,pct] of appEngines.slice(0,32))
+            add('app:'+gpu.id+':engine:'+engine,time,pct);
+        }
       }
     }
     systemLoadDiskHistory = history;
@@ -3354,11 +3378,30 @@ function recordSystemLoadChartSamples(metrics) {
   }
   record('cpu', metrics.cpu_percent);
   record('ram', metrics.ram_percent);
+  record('app:cpu', metrics.process_cpu_percent);
+  record('app:ram', metrics.process_ram_percent);
+  if (Array.isArray(metrics.cpu_cores)) for(const core of metrics.cpu_cores.slice(0,256)) {
+    if(Number.isInteger(core.id) && core.id>=0 && core.id<=4095)
+      record('cpu-core:'+core.id,core.percent);
+  }
   const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
   gpus.forEach((gpu,index) => {
     const key = systemLoadGpuChartKey(gpu,index);
     record(key, gpu.utilization_percent);
+    for(const engine of loadEngineValues(gpu.engines))
+      record(key+':engine:'+engine.name,engine.percent);
+    const appGpu=loadProcessGpuForCard(metrics,gpu);
+    const appEngines=loadEngineValues(appGpu?.engines);
+    if(appEngines.length) {
+      record('app:'+key,Math.max(...appEngines.map(e=>e.percent)));
+      for(const engine of appEngines)
+        record('app:'+key+':engine:'+engine.name,engine.percent);
+    }
     const used = gpu.memory_used_mb, total = gpu.memory_total_mb;
+    const appMemory=typeof gpu.process_memory_used_mb === 'number'
+      ? gpu.process_memory_used_mb : appGpu?.memory_used_mb;
+    if(typeof appMemory==='number' && typeof total==='number' && total>0)
+      record('app-vram:'+key,100*appMemory/total);
     if (typeof used === 'number' && typeof total === 'number' &&
         Number.isFinite(used) && Number.isFinite(total) && total > 0 &&
         systemLoadChartVisible(key))
@@ -3373,7 +3416,7 @@ function recordSystemLoadChartSamples(metrics) {
   while (systemLoadChartHistory.size > 130)
     systemLoadChartHistory.delete(systemLoadChartHistory.keys().next().value);
 }
-function buildSystemLoadChart(key, secondaryKey, name) {
+function buildSystemLoadChart(key, secondaryKey, name, appKey=null) {
   const svgNs = 'http://www.w3.org/2000/svg';
   const node = (tag, attrs, content) => {
     const el = document.createElementNS(svgNs,tag);
@@ -3424,6 +3467,7 @@ function buildSystemLoadChart(key, secondaryKey, name) {
   };
   plot(key,'#7dd1ff');
   if (secondaryKey) plot(secondaryKey,'#9fe6aa');
+  if (appKey) plot(appKey,'#cb9aff');
   return svg;
 }
 function updateSystemLoad(metrics) {
