@@ -1051,6 +1051,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             return false;
         }
 
+        // NIT actual (PID 0x10) exposes the true satellite orbital position.
+        // Observe existing full TS; do not retune/open another frontend.
+        state->nitSatelliteMonitor = std::make_shared<DvbNitSatelliteMonitor>(dvbParams);
+
         // A physical DVB frontend/dvr tap belongs to the transponder, not to an
         // individual service.  Feed every service relay from one shared full-TS
         // reader so channels on the same transponder do not fight over dvr0.
@@ -1532,8 +1536,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     streamConfig.id,
                     relay.dvbTuneConfig,
                     [relayPtr, sharedDvbPrefilter,
-                     epgCollector = state->epgCollector](
+                     epgCollector = state->epgCollector,
+                     satelliteMonitor = state->nitSatelliteMonitor](
                         const std::uint8_t* data, std::size_t size) {
+                        if (satelliteMonitor) satelliteMonitor->push(data, size);
                         if (epgCollector) epgCollector->push(data, size);
                         if (sharedDvbPrefilter) {
                             return sharedDvbPrefilter->push(relayPtr, data, size);
