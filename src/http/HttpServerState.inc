@@ -529,6 +529,11 @@ void HttpServer::recordSystemLoadHistorySample() {
             (card.empty()?std::to_string(i)+":"+name:card);
         if (gpu.isMember("utilization_percent"))
             item["usage"] = gpu["utilization_percent"];
+        if (gpu.isMember("process_memory_used_mb") &&
+            gpu.get("memory_total_mb",0.0).asDouble()>0)
+            item["app_vram"] = std::clamp(100.0*
+                gpu["process_memory_used_mb"].asDouble()/
+                gpu["memory_total_mb"].asDouble(),0.0,100.0);
         if (gpu.isMember("engines"))
             item["engines"] = gpu["engines"];
         const double memTotal = gpu.get("memory_total_mb",0.0).asDouble();
