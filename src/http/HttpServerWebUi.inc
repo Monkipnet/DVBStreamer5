@@ -3459,7 +3459,7 @@ function recordSystemLoadChartSamples(metrics) {
   while (systemLoadChartHistory.size > 400)
     systemLoadChartHistory.delete(systemLoadChartHistory.keys().next().value);
 }
-function buildSystemLoadChart(key, secondaryKey, name, appKey=null) {
+function buildSystemLoadChart(key, secondaryKey, name, appKey=null, overlays=[]) {
   const svgNs = 'http://www.w3.org/2000/svg';
   const node = (tag, attrs, content) => {
     const el = document.createElementNS(svgNs,tag);
@@ -3485,7 +3485,7 @@ function buildSystemLoadChart(key, secondaryKey, name, appKey=null) {
     systemLoadChartPeriodSeconds === 3600 ? '-1 h' : '-6 min'));
   svg.appendChild(node('text',{x:x1,y:150,'text-anchor':'end',
     fill:'#9caac0','font-size':10},t('chartNow')));
-  const plot = (id, color) => {
+  const plot = (id, color, width=2, dashed=false) => {
     const persisted = systemLoadDiskHistory.get(id) || [];
     const recent = systemLoadChartHistory.get(id) || [];
     // Keep at most ~600 SVG coordinates per line, even for a whole-day range.
@@ -3503,14 +3503,21 @@ function buildSystemLoadChart(key, secondaryKey, name, appKey=null) {
       svg.appendChild(node('circle',{cx:points[0][0],cy:points[0][1],
         r:2.5,fill:color}));
     } else {
-      svg.appendChild(node('polyline',{points:points.map(p=>p.join(',')).join(' '),
-        fill:'none',stroke:color,'stroke-width':2,
-        'stroke-linejoin':'round','stroke-linecap':'round'}));
+      const attr={points:points.map(p=>p.join(',')).join(' '),
+        fill:'none',stroke:color,'stroke-width':width,
+        'stroke-linejoin':'round','stroke-linecap':'round'};
+      if(dashed) attr['stroke-dasharray']='4 3';
+      svg.appendChild(node('polyline',attr));
     }
   };
-  plot(key,'#7dd1ff');
-  if (secondaryKey) plot(secondaryKey,'#9fe6aa');
-  if (appKey) plot(appKey,'#cb9aff');
+  // Draw per-core and per-engine series first so total host/app remain visible.
+  for(const series of overlays.slice(0,48)) {
+    if(systemLoadChartPrefs.items[series.key]!==false)
+      plot(series.key,series.color,1.6);
+  }
+  plot(key,'#7dd1ff',2.6);
+  if (secondaryKey) plot(secondaryKey,'#9fe6aa',2);
+  if (appKey) plot(appKey,'#cb9aff',2.7,true);
   return svg;
 }
 function updateSystemLoad(metrics) {
@@ -3622,7 +3629,9 @@ function refreshSystemLoadPanel(metrics) {
         appendLoadChips(item, t('appUsage'), breakdown.appChips);
     }
     if (chartKey && systemLoadChartVisible(chartKey)) {
-      item.appendChild(buildSystemLoadChart(chartKey, secondaryKey, label, appChartKey));
+      const overlays=Array.isArray(breakdown?.overlays)?breakdown.overlays:[];
+      item.appendChild(buildSystemLoadChart(chartKey, secondaryKey, label, appChartKey, overlays));
+      appendLoadSeriesLegend(item,overlays);
       const legend = document.createElement('div');
       legend.className = 'system-load-chart-legend';
       legend.textContent = '🔵 ' + t('totalUsage') +
@@ -3641,11 +3650,15 @@ function refreshSystemLoadPanel(metrics) {
   const cpuCores=Array.isArray(metrics.cpu_cores)?metrics.cpu_cores:[];
   const coreChips=cpuCores.filter(c=>Number.isInteger(c.id)).slice(0,256)
     .map(c=>({name:t('core')+' '+c.id, percent:c.percent}));
+  const coreOverlays=coreChips.slice(0,48).map((core,index)=>({
+    key:'cpu-core:'+cpuCores[index].id,
+    name:core.name,color:loadSeriesColor(index)
+  }));
   line('CPU', Number(metrics.cpu_percent || 0), '', 'cpu', null, 'app:cpu', {
     heading:t('logicalCores'),
-    chips:coreChips,
+    chips:coreChips,overlays:coreOverlays,
     appDescription:t('appUsage')+': '+
-      (appCpu===null?t('unavailable'):appCpu.toFixed(2)+'% '+t('totalUsage'))
+      (appCpu===null?t('unavailable'):appCpu.toFixed(2)+'% '+t('cpuHostShare'))
   });
   const appRamMb=typeof metrics.process_rss_mb === 'number'
     ? metrics.process_rss_mb : null;
@@ -3681,13 +3694,17 @@ function refreshSystemLoadPanel(metrics) {
         (appEngines.length ? appEngines.map(e=>e.name+' '+e.percent.toFixed(1)+'%').join(' · ') :
         t('unavailable')) + ' · '+t('gpuMemory')+': '+
         (appMemory===null ? t('unavailable') : formatMb(appMemory));
+      const engineOverlays=engines.slice(0,24).map((engine,ei)=>({
+        key:chartKey+':engine:'+engine.name,
+        name:engine.name,color:loadSeriesColor(ei)
+      }));
       line(String(gpu.name || gpu.vendor || 'GPU'),
         typeof gpu.utilization_percent === 'number' ? gpu.utilization_percent : null,
         memory + ' · ' + String(gpu.source || 'DRM'), chartKey,
         Number.isFinite(total) && total > 0 ? 'vram:' + chartKey : null,
         appChartKey,{
           heading:t('gpuEngines'),chips:engines,appChips:appEngines,
-          appDescription
+          appDescription,overlays:engineOverlays
         });
     }
   }
