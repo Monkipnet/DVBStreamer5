@@ -4688,6 +4688,7 @@ function updateLiveTiles() {
   const tileElements = Array.from(tiles.querySelectorAll('.tile[data-stream-id]'));
   const byId = new Map(tileElements.map(tile => [tile.dataset.streamId, tile]));
   (state.streams || []).forEach(stream => updateStreamTile(byId.get(String(stream.id)), stream));
+  updateDvbCardGroupCounts(tiles);
 }
 function render(force=false) {
   const tiles = document.getElementById('tiles');
@@ -4695,14 +4696,71 @@ function render(force=false) {
 
   const signature = tilesStructureSignature();
   const streams = state.streams || [];
-  if (!force && signature === lastTileStructureSignature && tiles.children.length === streams.length) {
+  if (!force && signature === lastTileStructureSignature &&
+      tiles.querySelectorAll('.tile[data-stream-id]').length === streams.length) {
     updateLiveTiles();
     return;
   }
 
   hideEpgHover();
   tiles.innerHTML = '';
-  streams.forEach(stream => {
+  const grouped = makeDvbCardGroups(streams);
+  const hasDvbCards = grouped.cards.length > 0;
+  tiles.classList.toggle('grouped-tiles', hasDvbCards);
+  const parents = new Map();
+  let orderedStreams = streams;
+  if (hasDvbCards) {
+    orderedStreams = [];
+    for (const group of grouped.cards) {
+      const details = document.createElement('details');
+      details.className = 'dvb-card-group';
+      details.dataset.cardKey = group.key;
+      // Default closed; retain the user's choice on refresh and page reload.
+      details.open = dvbCardGroupOpen[group.key] === true;
+      const summary = document.createElement('summary');
+      const title = document.createElement('strong');
+      title.className = 'dvb-card-title';
+      title.textContent = dvbCardDisplayTitle(group);
+      const device = document.createElement('span');
+      device.className = 'dvb-card-device';
+      device.textContent = dvbCardDisplayDevice(group);
+      device.title = device.textContent;
+      const count = document.createElement('span');
+      count.className = 'dvb-card-count';
+      count.dataset.cardCount = '1';
+      count.textContent = group.streams.filter(stream => stream.active).length +
+        '/' + group.streams.length + ' ' + t('cardActive');
+      summary.append(title, device, count);
+      const grid = document.createElement('div');
+      grid.className = 'tile-grid dvb-card-tiles';
+      details.append(summary, grid);
+      details.addEventListener('toggle', () => {
+        dvbCardGroupOpen[group.key] = details.open;
+        saveDvbCardGroupOpen();
+      });
+      tiles.appendChild(details);
+      for (const stream of group.streams) {
+        parents.set(String(stream.id), grid);
+        orderedStreams.push(stream);
+      }
+    }
+    if (grouped.network.length) {
+      const section = document.createElement('section');
+      section.className = 'non-dvb-tile-group';
+      const heading = document.createElement('h2');
+      heading.className = 'non-dvb-tile-heading';
+      heading.textContent = t('networkStreams') + ' (' + grouped.network.length + ')';
+      const grid = document.createElement('div');
+      grid.className = 'tile-grid';
+      section.append(heading, grid);
+      tiles.appendChild(section);
+      for (const stream of grouped.network) {
+        parents.set(String(stream.id), grid);
+        orderedStreams.push(stream);
+      }
+    }
+  }
+  orderedStreams.forEach(stream => {
     const outputs = outputConfigsForStream(stream);
     const outputType = normalizedOutputType(outputs[0] || stream);
     const bitrateMode = streamBitrateMode(stream);
@@ -4756,7 +4814,7 @@ function render(force=false) {
         <button class="quality-button" data-stream-action="quality" data-stream-id="${escapeHtmlValue(stream.id)}">${t('chart')}</button>
         <button class="copy-button" data-stream-action="copy" data-stream-id="${escapeHtmlValue(stream.id)}">${links.length > 1 ? 'URLs' : 'URL'}</button>
       </div>`;
-    tiles.appendChild(tile);
+    (parents.get(String(stream.id)) || tiles).appendChild(tile);
     updateStreamTile(tile, stream);
   });
   lastTileStructureSignature = signature;
