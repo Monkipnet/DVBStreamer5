@@ -92,10 +92,29 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .dvb-card-title{font-weight:700;font-size:.86rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dvb-card-device{color:#9cb7d4;font-size:.72rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dvb-card-count{margin-left:auto;flex:none;color:#9fe7b3;font-size:.72rem;font-variant-numeric:tabular-nums}
+.dvb-card-group>summary{flex-wrap:nowrap}
+.dvb-card-title{flex:0 1 auto;max-width:160px}
+.dvb-card-device{flex:0 1 180px}
+.dvb-card-signal-strip{display:flex;align-items:center;gap:5px;min-width:0;flex:1 1 auto;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;padding:2px 1px}
+.dvb-card-frontend-signal{display:inline-flex;align-items:center;gap:5px;flex:none;padding:3px 6px;border-radius:7px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);white-space:nowrap;font-size:10px}
+.dvb-card-frontend-name{color:#c5d8ee;font-weight:700}
+.dvb-card-frontend-lock{width:6px;height:6px;border-radius:50%;background:#6f798a;flex:none}
+.dvb-card-frontend-lock.locked{background:#1fc56f}
+.dvb-card-frontend-lock.unlocked{background:#e75a61}
+.dvb-card-frontend-value{font-weight:700;font-variant-numeric:tabular-nums;color:#9dacbf}
+.dvb-card-frontend-value[data-present="true"]{box-shadow:inset 0 -2px var(--meter-color,#9dacbf)}
+@media(max-width:700px){
+ .dvb-card-group>summary{flex-wrap:wrap;gap:6px 8px}
+ .dvb-card-title{flex:1 1 auto;max-width:none}
+ .dvb-card-count{order:2}
+ .dvb-card-device{flex:1 1 100%;width:100%;max-width:none;order:3;margin-left:16px}
+ .dvb-card-signal-strip{flex:1 1 100%;width:100%;order:4;overflow-x:visible;flex-wrap:wrap;gap:5px;padding:3px 0 0 16px}
+ .dvb-card-frontend-signal{font-size:10px}
+}
 .dvb-card-tiles{padding:10px 12px 12px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
 .non-dvb-tile-heading{color:#c2d3e6;margin:0 0 9px;font-size:.84rem;font-weight:700}
-@media(max-width:520px){.dvb-card-group>summary{flex-wrap:wrap}.dvb-card-device{width:100%;order:3;margin-left:18px}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
+@media(max-width:520px){.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
 .tile{position:relative;background:rgba(22,27,37,.94);padding:8px 10px 8px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:4px;height:252px;min-height:252px;width:100%;max-width:none;box-sizing:border-box;box-shadow:0 18px 42px rgba(0,0,0,.14);transition:transform .2s ease,border-color .2s ease;font-size:11px;overflow:hidden}
 .tile:before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:999px;background:linear-gradient(180deg,#3fc8ff,#1d69ff)}
 .tile:hover{transform:translateY(-1px);border-color:rgba(31,136,255,.3)}
@@ -4407,20 +4426,102 @@ function saveDvbCardGroupOpen() {
     localStorage.setItem(dvbCardGroupStorageKey,JSON.stringify(dvbCardGroupOpen));
   } catch (_) { /* Keeping the current collapse state is still possible. */ }
 }
+function dvbCardFrontendSamples(streams) {
+  // Several services on the same frontend share one actual RF signal.
+  // Never count them as separate tuners or average duplicate services.
+  const byFrontend=new Map();
+  for(const stream of streams) {
+    if(streamDvbCardKey(stream)===null)continue;
+    const adapter=Number(stream.dvb_adapter),frontend=Number(stream.dvb_frontend);
+    if(!Number.isInteger(adapter)||adapter<0||!Number.isInteger(frontend)||frontend<0)
+      continue;
+    const key=adapter+':'+frontend;
+    const active=stream.active===true&&stream.using_backup!==true;
+    const available=active&&stream.dvb_signal_available===true;
+    const locked=available&&stream.dvb_locked===true;
+    const priority=locked?3:available?2:active?1:0;
+    const prev=byFrontend.get(key);
+    if(!prev||priority>prev.priority) {
+      byFrontend.set(key,{key,adapter,frontend,priority,active,available,locked,
+        signal:stream.dvb_signal,quality:stream.dvb_quality,
+        estimated:stream.dvb_quality_estimated===true});
+    }
+  }
+  return [...byFrontend.values()].sort((a,b)=>
+    a.adapter-b.adapter||a.frontend-b.frontend);
+}
+function dvbCardFrontendSignalElement(frontend) {
+  const chip=document.createElement('span');
+  chip.className='dvb-card-frontend-signal';
+  chip.dataset.frontendKey=frontend.key;
+  const status=document.createElement('span');
+  status.className='dvb-card-frontend-lock';
+  status.dataset.role='card-lock';
+  const name=document.createElement('span');
+  name.className='dvb-card-frontend-name';
+  name.textContent='A'+frontend.adapter+'/F'+frontend.frontend;
+  const signal=document.createElement('span');
+  signal.className='dvb-card-frontend-value';
+  signal.dataset.role='card-s';
+  const quality=document.createElement('span');
+  quality.className='dvb-card-frontend-value';
+  quality.dataset.role='card-q';
+  chip.append(status,name,signal,quality);
+  return chip;
+}
+function updateDvbCardFrontendSignal(chip, frontend) {
+  if(!chip)return;
+  const status=chip.querySelector('[data-role="card-lock"]');
+  if(status)status.className='dvb-card-frontend-lock'+
+    (frontend.locked?' locked':frontend.available?' unlocked':'');
+  const update=(role,prefix,value)=>{
+    const label=chip.querySelector('[data-role="'+role+'"]');
+    if(!label)return;
+    const present=frontend.available&&Number.isFinite(Number(value));
+    const pct=present?Math.max(0,Math.min(100,Number(value))):0;
+    label.textContent=prefix+(present?' '+Math.round(pct)+'%':' —');
+    label.dataset.present=present?'true':'false';
+    if(present)label.style.setProperty('--meter-color',dvbMeterColor(pct,frontend.locked));
+    else label.style.removeProperty('--meter-color');
+  };
+  update('card-s','S',frontend.signal);
+  update('card-q',frontend.estimated?'Q~':'Q',frontend.quality);
+  chip.title='Adapter '+frontend.adapter+' / Frontend '+frontend.frontend+
+    ' · '+subtitleUiTriText('Сигнал','Signal','Signal')+': '+
+    (frontend.available?Math.round(Number(frontend.signal)||0)+'%':'—')+
+    ' · '+subtitleUiTriText('Качество','Quality','Kvaliteta')+': '+
+    (frontend.available?Math.round(Number(frontend.quality)||0)+'%':'—')+
+    ' · '+(frontend.locked?'LOCK':frontend.available?'NO LOCK':'OFFLINE');
+}
 function updateDvbCardGroupCounts(tiles) {
-  const counts=new Map();
+  const groups=new Map();
   for(const stream of state.streams||[]) {
     const key=streamDvbCardKey(stream);
     if(!key)continue;
-    if(!counts.has(key))counts.set(key,{total:0,active:0});
-    const count=counts.get(key);
-    count.total++;
-    if(stream.active)count.active++;
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(stream);
   }
   for(const details of tiles.querySelectorAll('.dvb-card-group[data-card-key]')) {
-    const count=counts.get(details.dataset.cardKey);
+    const streams=groups.get(details.dataset.cardKey)||[];
     const label=details.querySelector('[data-card-count]');
-    if(label&&count)label.textContent=count.active+'/'+count.total+' '+t('cardActive');
+    if(label)label.textContent=streams.filter(stream=>stream.active).length+
+      '/'+streams.length+' '+t('cardActive');
+    // Update even if <details> is closed, using existing /api/state data.
+    // Never request signal independently or open a busy frontend.
+    const strip=details.querySelector('.dvb-card-signal-strip');
+    if(!strip)continue;
+    const samples=dvbCardFrontendSamples(streams);
+    const existing=new Map([...strip.querySelectorAll('[data-frontend-key]')]
+      .map(node=>[node.dataset.frontendKey,node]));
+    // Card/frontend changes trigger the normal tile structural re-render,
+    // so this is usually a no-op with live text/color updates only.
+    for(const sample of samples){
+      let chip=existing.get(sample.key);
+      if(!chip){chip=dvbCardFrontendSignalElement(sample);strip.appendChild(chip);}
+      updateDvbCardFrontendSignal(chip,sample);
+      existing.delete(sample.key);
+    }
+    for(const node of existing.values())node.remove();
   }
 }
 function dvbMeterColor(value, locked) {
@@ -4730,7 +4831,17 @@ function render(force=false) {
       count.dataset.cardCount = '1';
       count.textContent = group.streams.filter(stream => stream.active).length +
         '/' + group.streams.length + ' ' + t('cardActive');
-      summary.append(title, device, count);
+      const strip=document.createElement('span');
+      strip.className='dvb-card-signal-strip';
+      strip.title=subtitleUiTriText('Уровни сигнала всех frontend этой карты',
+        'Signal levels for all frontends of this card',
+        'Razine signala svih frontenda ove kartice');
+      for(const sample of dvbCardFrontendSamples(group.streams)){
+        const chip=dvbCardFrontendSignalElement(sample);
+        updateDvbCardFrontendSignal(chip,sample);
+        strip.appendChild(chip);
+      }
+      summary.append(title, device, strip, count);
       const grid = document.createElement('div');
       grid.className = 'tile-grid dvb-card-tiles';
       details.append(summary, grid);
