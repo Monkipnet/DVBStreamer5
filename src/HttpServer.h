@@ -121,6 +121,11 @@ private:
     const int64_t systemLoadHistoryStartEpoch_ =
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
+    // Independent /proc/stat baselines: 30-second disk sampler and 3-second UI.
+    std::map<unsigned int, std::pair<std::uint64_t, std::uint64_t>>
+        previousHistoryCoreTicks_;
+    std::map<unsigned int, std::pair<std::uint64_t, std::uint64_t>>
+        previousUiCoreTicks_;
     uint64_t previousHistoryCpuTotal_ = 0;
     uint64_t previousHistoryCpuIdle_ = 0;
     uint64_t previousCpuTotal = 0;
