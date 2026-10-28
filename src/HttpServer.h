@@ -62,6 +62,7 @@ private:
     bool validateHttpPortsForConfig(const AppConfig& config, std::string& error) const;
     std::string listInterfaces();
     std::string systemMetrics();
+    std::string systemLoadHistory(uint64_t periodSeconds);
     std::string currentState();
     std::string qualityHistory(const std::string& target);
     std::string dvbAdapters();
@@ -93,6 +94,7 @@ private:
     std::string renderIndexPage();
     void recordQualitySample(const StreamConfig& cfg, const Json::Value& state);
     void recordAllQualitySamples();
+    void recordSystemLoadHistorySample();
     void scheduleQualitySampler();
     void loadQualityHistoryFromDisk();
     void saveQualityHistoryToDisk();
@@ -115,6 +117,8 @@ private:
     mutable std::mutex panelSessionsMutex_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         panelSessions_;
+    uint64_t previousHistoryCpuTotal_ = 0;
+    uint64_t previousHistoryCpuIdle_ = 0;
     uint64_t previousCpuTotal = 0;
     uint64_t previousCpuIdle = 0;
     std::chrono::steady_clock::time_point previousMetricsSample;
