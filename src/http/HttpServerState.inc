@@ -197,6 +197,13 @@ struct GpuNvml {
     using DeviceUtil = int (*)(Handle, Utilization*);
     using DeviceMemory = int (*)(Handle, Memory*);
     using DeviceEngine = int (*)(Handle, unsigned int*, unsigned int*);
+    struct ProcessInfo {
+        unsigned int pid = 0;
+        unsigned long long usedGpuMemory = 0;
+        unsigned int gpuInstanceId = 0;
+        unsigned int computeInstanceId = 0;
+    };
+    using DeviceProcesses = int (*)(Handle, unsigned int*, ProcessInfo*);
     void* library = nullptr;
     Init init = nullptr;
     Shutdown shutdown = nullptr;
@@ -207,6 +214,8 @@ struct GpuNvml {
     DeviceMemory memory = nullptr;
     DeviceEngine encoder = nullptr;
     DeviceEngine decoder = nullptr;
+    DeviceProcesses computeProcesses = nullptr;
+    DeviceProcesses graphicsProcesses = nullptr;
     bool available = false;
 
     GpuNvml() {
@@ -221,6 +230,11 @@ struct GpuNvml {
         memory = reinterpret_cast<DeviceMemory>(dlsym(library, "nvmlDeviceGetMemoryInfo"));
         encoder = reinterpret_cast<DeviceEngine>(dlsym(library, "nvmlDeviceGetEncoderUtilization"));
         decoder = reinterpret_cast<DeviceEngine>(dlsym(library, "nvmlDeviceGetDecoderUtilization"));
+        // Optional NVML process-memory accounting; unsupported drivers return N/A.
+        computeProcesses = reinterpret_cast<DeviceProcesses>(
+            dlsym(library, "nvmlDeviceGetComputeRunningProcesses_v2"));
+        graphicsProcesses = reinterpret_cast<DeviceProcesses>(
+            dlsym(library, "nvmlDeviceGetGraphicsRunningProcesses_v2"));
         available = init && shutdown && count && byIndex &&
             init() == 0;
     }
@@ -275,6 +289,29 @@ Json::Value collectGpuMetrics() {
                 if (gpu.isMember("memory_controller_percent"))
                     engines["memory"]=gpu["memory_controller_percent"];
                 if (!engines.empty()) gpu["engines"]=std::move(engines);
+                // Report only memory explicitly attributed to this process.
+                // NVML does not provide universal per-process GPU percentage.
+                unsigned long long selfGpuBytes = 0;
+                bool selfGpuSeen = false;
+                const auto findProcess = [&](GpuNvml::DeviceProcesses fn) {
+                    if (!fn) return;
+                    std::vector<GpuNvml::ProcessInfo> processes(128U);
+                    unsigned int length = static_cast<unsigned int>(processes.size());
+                    if (fn(device,&length,processes.data()) != 0) return;
+                    for (unsigned int pi=0;pi<std::min<unsigned int>(length,128U);++pi) {
+                        const auto& item=processes[pi];
+                        if (item.pid==static_cast<unsigned int>(::getpid()) &&
+                            item.usedGpuMemory != ~0ULL) {
+                            selfGpuBytes=std::max(selfGpuBytes,item.usedGpuMemory);
+                            selfGpuSeen=true;
+                        }
+                    }
+                };
+                findProcess(nvml.computeProcesses);
+                findProcess(nvml.graphicsProcesses);
+                if (selfGpuSeen)
+                    gpu["process_memory_used_mb"] =
+                        static_cast<double>(selfGpuBytes) / 1048576.0;
                 if (nvml.memory) {
                     GpuNvml::Memory mem{};
                     if (nvml.memory(device, &mem) == 0) {
@@ -313,6 +350,12 @@ Json::Value collectGpuMetrics() {
         gpu["vendor"] = vendor;
         gpu["source"] = "DRM";
         gpu["card"] = card;
+        {
+            std::error_code pciError;
+            const auto realDev = std::filesystem::canonical(dev,pciError);
+            if (!pciError && realDev.filename().string().find(':') != std::string::npos)
+                gpu["pci_bus_id"] = realDev.filename().string();
+        }
         std::uint64_t value = 0;
         if (gpuSysfsNumber(dev / "gpu_busy_percent", value))
             gpu["utilization_percent"] = static_cast<unsigned int>(std::min<std::uint64_t>(value, 100));
