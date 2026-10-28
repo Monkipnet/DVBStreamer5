@@ -189,7 +189,10 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         }
         if (target == "/api/panel/logout") {
             res.set(http::field::content_type, "application/json");
-            if (req.method() == http::verb::post) {
+            const auto requestedWith = req.find("X-Requested-With");
+            if (req.method() == http::verb::post &&
+                requestedWith != req.end() &&
+                requestedWith->value() == "DVBStreamer5") {
                 res.set(http::field::set_cookie,
                     "dvbstreamer5_panel_logged_out=1; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax");
                 res.body() = R"({"result":"ok"})";
