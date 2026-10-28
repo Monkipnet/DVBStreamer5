@@ -51,6 +51,11 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .load-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.68rem;color:#afc0d4;margin:6px 0}
 .load-legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
 .load-app-info{margin-top:8px;font-size:.73rem;color:#d5b8ff}
+.load-series-legend{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-top:8px;max-height:112px;overflow:auto;padding:4px 2px}
+.load-series-legend label{display:inline-flex;align-items:center;gap:4px;font-size:.7rem;color:#c1cede;cursor:pointer;white-space:nowrap}
+.load-series-legend input{margin:0;width:13px;height:13px;accent-color:#7dd1ff;cursor:pointer}
+.load-series-dot{width:9px;height:9px;display:inline-block;border-radius:50%;flex:none}
+.load-series-legend label:has(input:not(:checked)){opacity:.45}
 .system-menu-item.logout-button{border-top:1px solid rgba(255,255,255,.1);margin-top:4px;color:#ffcbcb}
 .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .restart-button{border-color:rgba(255,184,77,.28);color:#ffe0a3;background:rgba(255,184,77,.1)}
@@ -409,7 +414,7 @@ const translations = {
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
     networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', udpInputFilter:'Filter inbound UDP', close:'Close',
-    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', logicalCores:'Logical CPU cores', gpuEngines:'GPU engines', appUsage:'DVBStreamer5 usage', totalUsage:'Entire system', busyLevels:'Load: green 0–39%, yellow 40–69%, orange 70–89%, red 90–100%', core:'Core', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
+    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', logicalCores:'Logical CPU cores', gpuEngines:'GPU engines', appUsage:'DVBStreamer5 usage', totalUsage:'Entire system', busyLevels:'Load: green 0–39%, yellow 40–69%, orange 70–89%, red 90–100%', core:'Core', coreTraces:'CPU core lines', engineTraces:'GPU engine lines', cpuHostShare:'of host CPU capacity', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
   },
   ru: {
     subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
@@ -417,7 +422,7 @@ const translations = {
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
     networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', udpInputFilter:'Фильтровать входящий UDP', close:'Закрыть',
-    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память', logicalCores:'Логические ядра CPU', gpuEngines:'Блоки GPU', appUsage:'Нагрузка DVBStreamer5', totalUsage:'Вся система', busyLevels:'Загрузка: зелёный 0–39%, жёлтый 40–69%, оранжевый 70–89%, красный 90–100%', core:'Ядро', showCharts:'Показывать графики', chart:'График', chartWindow:'Последние 6 минут · обновление каждые 3 секунды', chartNow:'Сейчас', gpuMemory:'Память GPU'
+    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память', logicalCores:'Логические ядра CPU', gpuEngines:'Блоки GPU', appUsage:'Нагрузка DVBStreamer5', totalUsage:'Вся система', busyLevels:'Загрузка: зелёный 0–39%, жёлтый 40–69%, оранжевый 70–89%, красный 90–100%', core:'Ядро', coreTraces:'Линии ядер CPU', engineTraces:'Линии блоков GPU', cpuHostShare:'от мощности CPU сервера', showCharts:'Показывать графики', chart:'График', chartWindow:'Последние 6 минут · обновление каждые 3 секунды', chartNow:'Сейчас', gpuMemory:'Память GPU'
   }
 };
 translations.hr = {
@@ -509,6 +514,9 @@ translations.hr = {
   "totalUsage": "Cijeli sustav",
   "busyLevels": "Opterećenje: zeleno 0–39%, žuto 40–69%, narančasto 70–89%, crveno 90–100%",
   "core": "Jezgra",
+  "coreTraces": "Linije CPU jezgri",
+  "engineTraces": "Linije GPU jedinica",
+  "cpuHostShare": "ukupnog CPU kapaciteta poslužitelja",
   "connectionMonitoring": "Neregistrirane veze",
   "monitoringHint": "Vidljive su HTTP, HLS i SRT sesije; UDP primatelji se ne mogu otkriti.",
   "clientIp": "IP adresa klijenta",
@@ -3330,6 +3338,41 @@ function loadEngineValues(engines) {
     typeof value === 'number' && Number.isFinite(value)).slice(0,32)
     .map(([name,percent])=>({name,percent}));
 }
+// Stable chart colors identify the physical/logical unit, while heat-map
+// chips keep their green-yellow-orange-red load severity colors.
+function loadSeriesColor(index) {
+  const colors = [
+    '#57d4c0','#f5cc61','#f58d8d','#b49af8',
+    '#75acf6','#e3a96b','#e585ce','#94d583',
+    '#e09b58','#78d7ee','#f0a5be','#b0c27b',
+    '#baa2ed','#dcdb69','#89c6d7','#e68db0'
+  ];
+  return colors[index % colors.length];
+}
+function appendLoadSeriesLegend(container, overlays) {
+  if (!overlays?.length) return;
+  const group=document.createElement('div');
+  group.className='load-series-legend';
+  for (const series of overlays.slice(0,48)) {
+    const label=document.createElement('label');
+    const checkbox=document.createElement('input');
+    checkbox.type='checkbox';
+    checkbox.checked=systemLoadChartPrefs.items[series.key]!==false;
+    checkbox.addEventListener('change',()=>{
+      systemLoadChartPrefs.items[series.key]=checkbox.checked;
+      saveSystemLoadChartPrefs();
+      refreshSystemLoadPanel(state.system_metrics || {});
+    });
+    const dot=document.createElement('span');
+    dot.className='load-series-dot';
+    dot.style.background=series.color;
+    const name=document.createElement('span');
+    name.textContent=series.name;
+    label.append(checkbox,dot,name);
+    group.appendChild(label);
+  }
+  container.appendChild(group);
+}
 function systemLoadGpuChartKey(gpu, index) {
   const source = String(gpu.source || 'DRM');
   const id = gpu.card ? String(gpu.card) : String(index) + ':' + String(gpu.name || gpu.vendor || 'GPU');
@@ -3413,7 +3456,7 @@ function recordSystemLoadChartSamples(metrics) {
       systemLoadChartHistory.delete(key);
   }
   // Never retain more than 64 GPU series plus the two host metrics.
-  while (systemLoadChartHistory.size > 130)
+  while (systemLoadChartHistory.size > 400)
     systemLoadChartHistory.delete(systemLoadChartHistory.keys().next().value);
 }
 function buildSystemLoadChart(key, secondaryKey, name, appKey=null) {
