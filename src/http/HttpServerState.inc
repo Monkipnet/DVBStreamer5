@@ -143,6 +143,159 @@ Json::Value collectGpuMetrics() {
 
 } // namespace
 
+namespace {
+
+constexpr const char* kSystemLoadHistoryPath = "/var/lib/dvbstreamer5/system-load-history.jsonl";
+constexpr std::uintmax_t kSystemLoadHistoryCompactBytes = 2ULL * 1024ULL * 1024ULL;
+constexpr int64_t kSystemLoadHistoryRetentionSeconds = 24LL * 60LL * 60LL;
+std::mutex& systemLoadHistoryDiskMutex() {
+    static std::mutex lock;
+    return lock;
+}
+int64_t systemLoadUnixTime() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+bool parseSystemLoadRow(const std::string& line, Json::Value& data) {
+    if (line.empty() || line.size() > 16384U) return false;
+    Json::CharReaderBuilder parser;
+    std::string errors;
+    std::istringstream input(line);
+    return Json::parseFromStream(parser, input, &data, &errors) &&
+        data.isObject() && data.isMember("t") && data["t"].isNumeric();
+}
+void compactSystemLoadHistory(int64_t now) {
+    const std::filesystem::path file(kSystemLoadHistoryPath);
+    const auto temp = file.string() + ".tmp";
+    std::ifstream input(file, std::ios::binary);
+    std::ofstream output(temp, std::ios::binary | std::ios::trunc);
+    if (!input.is_open() || !output.is_open()) return;
+    std::string line;
+    const int64_t cutoff = now - kSystemLoadHistoryRetentionSeconds;
+    while (std::getline(input, line)) {
+        Json::Value row;
+        if (parseSystemLoadRow(line, row) && row["t"].asInt64() >= cutoff)
+            output << line << '\n';
+    }
+    output.flush();
+    if (!output.good()) {
+        output.close();
+        std::error_code error;
+        std::filesystem::remove(temp, error);
+        return;
+    }
+    output.close();
+    input.close();
+    std::error_code ec;
+    std::filesystem::rename(temp, file, ec);
+    if (ec) {
+        std::cerr << "SYSTEM LOAD HISTORY compact failed: " << ec.message() << '\n';
+        std::filesystem::remove(temp, ec);
+    }
+}
+
+} // namespace
+
+void HttpServer::recordSystemLoadHistorySample() {
+    // Independent 30-second server-side sampler, even if nobody has the UI open.
+    // All work is best-effort and never influences the streaming pipeline.
+    std::ifstream stat("/proc/stat");
+    std::string tag;
+    uint64_t user=0,nice=0,sys=0,idle=0,wait=0,irq=0,soft=0,steal=0;
+    if (!(stat >> tag >> user >> nice >> sys >> idle >> wait >> irq >> soft >> steal)
+        || tag != "cpu") return;
+    const uint64_t total = user+nice+sys+idle+wait+irq+soft+steal;
+    const uint64_t idleTotal = idle+wait;
+    double cpuPercent = 0.0;
+    if (previousHistoryCpuTotal_ > 0 && total > previousHistoryCpuTotal_ &&
+        idleTotal >= previousHistoryCpuIdle_) {
+        const uint64_t delta = total - previousHistoryCpuTotal_;
+        const uint64_t idleDelta = idleTotal - previousHistoryCpuIdle_;
+        cpuPercent = 100.0 * static_cast<double>(delta - std::min(delta,idleDelta))/delta;
+    }
+    previousHistoryCpuTotal_ = total;
+    previousHistoryCpuIdle_ = idleTotal;
+
+    uint64_t totalKb = 0, availableKb = 0;
+    std::ifstream mem("/proc/meminfo");
+    std::string name, unit;
+    uint64_t kb = 0;
+    while (mem >> name >> kb >> unit) {
+        if (name == "MemTotal:") totalKb = kb;
+        else if (name == "MemAvailable:") availableKb = kb;
+    }
+    Json::Value row(Json::objectValue);
+    const int64_t now = systemLoadUnixTime();
+    row["t"] = Json::Int64(now);
+    row["cpu"] = std::clamp(cpuPercent,0.0,100.0);
+    if (totalKb) row["ram"] =
+        100.0 * static_cast<double>(totalKb-std::min(totalKb,availableKb))/totalKb;
+    Json::Value cards(Json::arrayValue);
+    const auto gpus = collectGpuMetrics();
+    for (Json::ArrayIndex i=0; i < gpus.size() && i < 32U; ++i) {
+        const auto& gpu = gpus[i];
+        Json::Value item(Json::objectValue);
+        // The key is shared with the browser live-series key.
+        const std::string source = gpu.get("source","DRM").asString();
+        const std::string name = gpu.get("name","GPU").asString();
+        const std::string card = gpu.get("card","").asString();
+        item["id"] = "gpu:" + source + ":" +
+            (card.empty()?std::to_string(i)+":"+name:card);
+        if (gpu.isMember("utilization_percent"))
+            item["usage"] = gpu["utilization_percent"];
+        const double memTotal = gpu.get("memory_total_mb",0.0).asDouble();
+        if (memTotal > 0 && gpu.isMember("memory_used_mb"))
+            item["vram"] = std::clamp(
+                100.0*gpu["memory_used_mb"].asDouble()/memTotal,0.0,100.0);
+        cards.append(std::move(item));
+    }
+    row["gpus"] = std::move(cards);
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+
+    std::lock_guard<std::mutex> guard(systemLoadHistoryDiskMutex());
+    std::error_code ec;
+    std::filesystem::create_directories(
+        std::filesystem::path(kSystemLoadHistoryPath).parent_path(),ec);
+    if (ec) {
+        std::cerr << "SYSTEM LOAD HISTORY directory unavailable: " << ec.message() << '\n';
+        return;
+    }
+    std::ofstream file(kSystemLoadHistoryPath, std::ios::app | std::ios::binary);
+    if (!file) {
+        std::cerr << "SYSTEM LOAD HISTORY cannot append: " << kSystemLoadHistoryPath << '\n';
+        return;
+    }
+    file << Json::writeString(writer,row) << '\n';
+    file.close();
+    const auto size = std::filesystem::file_size(kSystemLoadHistoryPath,ec);
+    if (!ec && size > kSystemLoadHistoryCompactBytes)
+        compactSystemLoadHistory(now);
+}
+
+std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
+    periodSeconds = std::clamp<uint64_t>(periodSeconds,360U,86400U);
+    const int64_t cutoff = systemLoadUnixTime()-static_cast<int64_t>(periodSeconds);
+    Json::Value output(Json::objectValue);
+    output["period_seconds"] = Json::UInt64(periodSeconds);
+    Json::Value samples(Json::arrayValue);
+    std::lock_guard<std::mutex> guard(systemLoadHistoryDiskMutex());
+    std::ifstream file(kSystemLoadHistoryPath, std::ios::binary);
+    std::string line;
+    while (std::getline(file,line)) {
+        Json::Value row;
+        if (parseSystemLoadRow(line,row) && row["t"].asInt64() >= cutoff)
+            samples.append(std::move(row));
+        // The file is a bounded 24-hour ring on disk (max approximately 2 MiB).
+        // Refuse oversized/broken data rather than building unbounded JSON.
+        if (samples.size() >= 3000U) break;
+    }
+    output["samples"] = std::move(samples);
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    return Json::writeString(writer,output);
+}
+
   std::string HttpServer::systemMetrics() {
     uint64_t cpuTotal = 0;
     uint64_t cpuIdle = 0;
