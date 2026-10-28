@@ -33,6 +33,7 @@
 #include "TelegramNotifier.h"
 
 class MptsOutputManager;
+class DvbNitSatelliteMonitor;
 
 struct ActiveStreamSession {
     std::string streamId;
@@ -284,6 +285,7 @@ struct StreamState {
 
     std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector> epgCollector;
     std::shared_ptr<DvbSubtitlePassthrough> dvbSubtitleMonitor;
+    std::shared_ptr<DvbNitSatelliteMonitor> nitSatelliteMonitor;
     std::string epgCacheKey;
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
