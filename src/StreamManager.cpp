@@ -13,6 +13,7 @@
 #include "ExternalXmltv.h"
 #include "DvbEitOutput.h"
 #include "DvbSubtitlePassthrough.h"
+#include "RestartScheduleClock.h"
 #include "media/NativeTsDemux.h"
 
 #include <algorithm>
@@ -2061,17 +2062,15 @@ void StreamManager::monitorGlobalRestartSchedule() {
         lastMinute = minuteKey;
         std::tm localTime {};
         if (localtime_r(&now, &localTime) == nullptr) continue;
-        const int dateKey = (localTime.tm_year + 1900) * 400 + localTime.tm_yday;
+        const int dateKey = dvbstreamer5::schedule::dateKey(localTime);
         if (dateKey != localDate) {
             executedSlots.clear();
             localDate = dateKey;
         }
-        if (!policy.enabled) continue;
+        if (!dvbstreamer5::schedule::matchesLocalTime(policy.enabled,
+                policy.weekdays, policy.hours, policy.minute, localTime)) continue;
         const int weekday = localTime.tm_wday == 0 ? 7 : localTime.tm_wday;
-        if (std::find(policy.weekdays.begin(), policy.weekdays.end(), weekday) == policy.weekdays.end() ||
-            std::find(policy.hours.begin(), policy.hours.end(), localTime.tm_hour) == policy.hours.end() ||
-            localTime.tm_min != policy.minute) continue;
-        const int slot = localTime.tm_hour * 60 + localTime.tm_min;
+        const int slot = dvbstreamer5::schedule::minuteSlot(localTime);
         if (!executedSlots.insert(slot).second) continue;
 
         // Copy live configs while protected, then release before any restart;
