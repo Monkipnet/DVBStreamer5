@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/LinuxDvbInput.h"
+#include "media/DvbNitMonitor.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +36,9 @@ public:
     bool warmStandby(
         const LinuxDvbTuneConfig& config,
         std::string& error);
+
+    // Read already-observed NIT metadata; never opens a device or retunes.
+    DvbNitInfo nitInfo(int adapter, int frontend) const;
 
     void unsubscribe(const std::string& streamId) noexcept;
     void stopAll() noexcept;
