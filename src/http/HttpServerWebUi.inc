@@ -26,6 +26,15 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .header-monitor strong{color:#fff;font-size:.74rem}
 .header-monitor .metric span{color:#7dd1ff;font-weight:700}
 .header-monitor .status span{color:#fff;font-weight:700}
+.system-load-list{display:grid;gap:12px;margin-top:12px}
+.system-load-item{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);border-radius:12px;padding:12px;min-width:0}
+.system-load-item-title{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:600;font-size:.85rem}
+.system-load-item-title span{overflow-wrap:anywhere}
+.system-load-value{color:#7dd1ff;white-space:nowrap;font-variant-numeric:tabular-nums}
+.system-load-bar{height:7px;border-radius:10px;margin-top:9px;background:rgba(255,255,255,.1);overflow:hidden}
+.system-load-bar-fill{height:100%;background:#28a6ed;border-radius:inherit;transition:width .3s}
+.system-load-detail{margin-top:6px;font-size:.72rem;color:#a5b4c7}
+.system-menu-item.logout-button{border-top:1px solid rgba(255,255,255,.1);margin-top:4px;color:#ffcbcb}
 .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .restart-button{border-color:rgba(255,184,77,.28);color:#ffe0a3;background:rgba(255,184,77,.1)}
 .restart-button:hover{background:rgba(255,184,77,.2);border-color:rgba(255,184,77,.38)}
@@ -335,6 +344,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <div class="header-monitor-group">
 <span class="metric"><strong>CPU</strong> <span id="cpuLoad">—%</span></span>
 <span class="metric"><strong>RAM</strong> <span id="ramLoad">—%</span></span>
+<span class="metric"><strong>GPU</strong> <span id="gpuLoad">—</span></span>
 </div>
 <div class="header-monitor-group">
 <span class="status"><strong data-i18n="total">Total:</strong> <span id="totalCount">0</span></span>
@@ -347,6 +357,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <details class="system-menu" id="systemMenu">
 <summary class="button-secondary" data-i18n="system">System</summary>
 <div class="system-menu-list">
+<button class="system-menu-item" onclick="openSystemLoadModal();closeSystemMenu()" data-i18n="systemLoad">System load</button>
 <button class="system-menu-item" onclick="openNetworkModal();closeSystemMenu()" data-i18n="network">Network</button>
 <button class="system-menu-item" onclick="openMptsModal();closeSystemMenu()">MPTS</button>
 <button class="system-menu-item" onclick="openLoginModal();closeSystemMenu()" data-i18n="user">User</button>
@@ -357,6 +368,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <button class="system-menu-item" onclick="window.location.href='/oscam-mini';closeSystemMenu()">OSCam-mini</button>
 <button class="system-menu-item" onclick="openAboutModal();closeSystemMenu()" data-i18n="about">About</button>
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
+<button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
 </div>
 </details>
 <button class="button-secondary" onclick="openPlaylistModal()" data-i18n="playlist">VLC playlist</button>
@@ -380,7 +392,7 @@ const translations = {
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
     networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', udpInputFilter:'Filter inbound UDP', close:'Close',
-    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for'
+    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory'
   },
   ru: {
     subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
@@ -388,7 +400,7 @@ const translations = {
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
     networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', udpInputFilter:'Фильтровать входящий UDP', close:'Закрыть',
-    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён'
+    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память'
   }
 };
 translations.hr = {
@@ -463,6 +475,12 @@ translations.hr = {
   "resetSession": "Ponovno postavi sesiju",
   "uptime": "Vrijeme rada",
   "connectedFor": "Povezan",
+  "systemLoad": "Opterećenje sustava",
+  "logout": "Odjava",
+  "graphicsAdapters": "Grafičke kartice",
+  "noGpu": "GPU nije pronađen",
+  "unavailable": "Nije dostupno",
+  "memoryUsed": "Memorija",
   "connectionMonitoring": "Neregistrirane veze",
   "monitoringHint": "Vidljive su HTTP, HLS i SRT sesije; UDP primatelji se ne mogu otkriti.",
   "clientIp": "IP adresa klijenta",
@@ -3078,6 +3096,7 @@ function fetchState() {
   if (stateFetchPromise) return stateFetchPromise;
   stateFetchPromise = fetch('/api/state', {cache:'no-store'})
     .then(response => {
+      if (response.status === 403) { window.location.replace('/logout'); throw new Error('Panel session logged out'); }
       if (!response.ok) throw new Error(`state HTTP ${response.status}`);
       return response.json();
     })
@@ -3135,6 +3154,18 @@ async function statePollLoop() {
 function updateSystemLoad(metrics) {
   document.getElementById('cpuLoad').textContent = `${Number(metrics.cpu_percent || 0).toFixed(1)}%`;
   document.getElementById('ramLoad').textContent = `${Number(metrics.ram_percent || 0).toFixed(1)}%`;
+  const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
+  const supported = gpus.filter(g => typeof g.utilization_percent === 'number' &&
+    Number.isFinite(g.utilization_percent));
+  const gpuLoad = document.getElementById('gpuLoad');
+  if (gpuLoad) {
+    gpuLoad.textContent = !gpus.length ? '—' : supported.length
+      ? Math.max(...supported.map(g => g.utilization_percent)).toFixed(0) + '%' +
+        (gpus.length > 1 ? ' (' + gpus.length + ')' : '')
+      : t('unavailable');
+    gpuLoad.title = gpus.map(g => String(g.name || g.vendor || 'GPU')).join(' · ');
+  }
+  refreshSystemLoadPanel(metrics);
   const table = document.getElementById('networkTableBody');
   if (!table) return;
   const interfaces = metrics.interfaces || [];
@@ -3149,6 +3180,85 @@ function updateSystemLoad(metrics) {
         onchange="setUdpInputFilter(this)"> ${t('udpInputFilter')}</label></td>
     </tr>
   `).join('') : `<tr><td colspan="4" class="network-empty">${t('interfacesNotFound')}</td></tr>`;
+}
+function refreshSystemLoadPanel(metrics) {
+  const root = document.getElementById('systemLoadContent');
+  if (!root) return;
+  root.replaceChildren();
+  function line(label, percent, detail) {
+    const item = document.createElement('div');
+    item.className = 'system-load-item';
+    const head = document.createElement('div');
+    head.className = 'system-load-item-title';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const value = document.createElement('strong');
+    value.className = 'system-load-value';
+    const available = typeof percent === 'number' && Number.isFinite(percent);
+    value.textContent = available ? Math.max(0, Math.min(100, percent)).toFixed(1) + '%' :
+      t('unavailable');
+    head.append(name, value);
+    item.appendChild(head);
+    if (available) {
+      const track = document.createElement('div');
+      track.className = 'system-load-bar';
+      const fill = document.createElement('div');
+      fill.className = 'system-load-bar-fill';
+      fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+      track.appendChild(fill);
+      item.appendChild(track);
+    }
+    if (detail) {
+      const info = document.createElement('div');
+      info.className = 'system-load-detail';
+      info.textContent = detail;
+      item.appendChild(info);
+    }
+    root.appendChild(item);
+  }
+  const ram = Number(metrics.ram_total_mb);
+  const ramUsed = Number(metrics.ram_used_mb);
+  const formatMb = value => value >= 1024 ? (value / 1024).toFixed(2) + ' GiB' :
+    value.toFixed(0) + ' MiB';
+  line('CPU', Number(metrics.cpu_percent || 0), '');
+  line('RAM', Number(metrics.ram_percent || 0),
+    Number.isFinite(ram) && ram > 0 && Number.isFinite(ramUsed) ?
+    t('memoryUsed') + ': ' + formatMb(ramUsed) + ' / ' + formatMb(ram) : '');
+  const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
+  if (!gpus.length) {
+    line('GPU', null, t('noGpu'));
+  } else {
+    for (const gpu of gpus) {
+      const used = Number(gpu.memory_used_mb);
+      const total = Number(gpu.memory_total_mb);
+      const memory = Number.isFinite(total) && total > 0 && Number.isFinite(used)
+        ? t('memoryUsed') + ': ' + formatMb(used) + ' / ' + formatMb(total)
+        : t('memoryUsed') + ': ' + t('unavailable');
+      line(String(gpu.name || gpu.vendor || 'GPU'),
+        typeof gpu.utilization_percent === 'number' ? gpu.utilization_percent : null,
+        memory + ' · ' + String(gpu.source || 'DRM'));
+    }
+  }
+}
+function openSystemLoadModal() {
+  openModal(`<h2>${t('systemLoad')}</h2><div id="systemLoadContent" class="system-load-list"></div>
+    <div class="modal-actions"><button class="button-secondary" onclick="closeModal()">${t('close')}</button></div>`);
+  refreshSystemLoadPanel(state.system_metrics || {});
+  void fetchSystemMetrics();
+}
+async function logoutPanel() {
+  closeSystemMenu();
+  try {
+    const response = await fetch('/api/panel/logout', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store'
+    });
+    if (!response.ok) throw new Error('Logout HTTP ' + response.status);
+    clearTimeout(statePollTimer);
+    clearTimeout(metricsPollTimer);
+    window.location.replace('/logout');
+  } catch (error) {
+    uiError(error?.message || error);
+  }
 }
 async function setUdpInputFilter(control) {
   const address = control.dataset.address || '';
@@ -3176,6 +3286,7 @@ function fetchSystemMetrics() {
   if (metricsFetchPromise) return metricsFetchPromise;
   metricsFetchPromise = fetch('/api/system-metrics', {cache:'no-store'})
     .then(response => {
+      if (response.status === 403) { window.location.replace('/logout'); throw new Error('Panel session logged out'); }
       if (!response.ok) throw new Error(`metrics HTTP ${response.status}`);
       return response.json();
     })
