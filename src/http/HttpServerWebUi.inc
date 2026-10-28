@@ -41,6 +41,16 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .system-load-graph{width:100%;height:154px;display:block;margin-top:9px;border:1px solid rgba(255,255,255,.06);background:rgba(4,12,25,.2);border-radius:8px}
 .system-load-graph-note{font-size:.68rem;color:#9caac0;margin-top:5px}
 .system-load-chart-legend{font-size:.68rem;color:#aac8e3;margin-top:3px}
+.load-breakdown{margin:9px 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;max-height:220px;overflow:auto}
+.load-chip{border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:6px 7px;background:rgba(255,255,255,.045);font-size:.71rem;min-width:0}
+.load-chip-name{color:#b7c5d6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.load-chip-value{font-size:.84rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.load-chip-meter{height:4px;background:rgba(255,255,255,.08);border-radius:5px;margin-top:5px;overflow:hidden}
+.load-chip-meter>span{display:block;height:100%;border-radius:5px}
+.load-breakdown-heading{font-weight:600;font-size:.74rem;margin:10px 0 3px;color:#c7dbef}
+.load-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.68rem;color:#afc0d4;margin:6px 0}
+.load-legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+.load-app-info{margin-top:8px;font-size:.73rem;color:#d5b8ff}
 .system-menu-item.logout-button{border-top:1px solid rgba(255,255,255,.1);margin-top:4px;color:#ffcbcb}
 .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .restart-button{border-color:rgba(255,184,77,.28);color:#ffe0a3;background:rgba(255,184,77,.1)}
@@ -399,7 +409,7 @@ const translations = {
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
     networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', udpInputFilter:'Filter inbound UDP', close:'Close',
-    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
+    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', logicalCores:'Logical CPU cores', gpuEngines:'GPU engines', appUsage:'DVBStreamer5 usage', totalUsage:'Entire system', busyLevels:'Load: green 0–39%, yellow 40–69%, orange 70–89%, red 90–100%', core:'Core', unavailable:'N/A', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
   },
   ru: {
     subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
@@ -407,7 +417,7 @@ const translations = {
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
     networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', udpInputFilter:'Фильтровать входящий UDP', close:'Закрыть',
-    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память', showCharts:'Показывать графики', chart:'График', chartWindow:'Последние 6 минут · обновление каждые 3 секунды', chartNow:'Сейчас', gpuMemory:'Память GPU'
+    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память', logicalCores:'Логические ядра CPU', gpuEngines:'Блоки GPU', appUsage:'Нагрузка DVBStreamer5', totalUsage:'Вся система', busyLevels:'Загрузка: зелёный 0–39%, жёлтый 40–69%, оранжевый 70–89%, красный 90–100%', core:'Ядро', showCharts:'Показывать графики', chart:'График', chartWindow:'Последние 6 минут · обновление каждые 3 секунды', chartNow:'Сейчас', gpuMemory:'Память GPU'
   }
 };
 translations.hr = {
@@ -493,6 +503,12 @@ translations.hr = {
   "chartWindow": "Zadnjih 6 minuta · osvježavanje svake 3 sekunde",
   "chartNow": "Sada",
   "gpuMemory": "GPU memorija",
+  "logicalCores": "Logičke CPU jezgre",
+  "gpuEngines": "GPU jedinice",
+  "appUsage": "Opterećenje DVBStreamer5",
+  "totalUsage": "Cijeli sustav",
+  "busyLevels": "Opterećenje: zeleno 0–39%, žuto 40–69%, narančasto 70–89%, crveno 90–100%",
+  "core": "Jezgra",
   "connectionMonitoring": "Neregistrirane veze",
   "monitoringHint": "Vidljive su HTTP, HLS i SRT sesije; UDP primatelji se ne mogu otkriti.",
   "clientIp": "IP adresa klijenta",
