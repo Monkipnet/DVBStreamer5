@@ -196,6 +196,25 @@ void compactSystemLoadHistory(int64_t now) {
 
 } // namespace
 
+void HttpServer::resetSystemLoadHistoryOnStartup() {
+    // User-selected policy: chart history is valid only for this run.
+    // Keep the on-disk journal during uptime, clear it when DVBStreamer5 starts.
+    std::lock_guard<std::mutex> guard(systemLoadHistoryDiskMutex());
+    std::error_code error;
+    std::filesystem::create_directories(
+        std::filesystem::path(kSystemLoadHistoryPath).parent_path(), error);
+    if (error) {
+        std::cerr << "SYSTEM LOAD HISTORY reset mkdir failed: "
+                  << error.message() << '\n';
+        return;
+    }
+    std::ofstream fresh(kSystemLoadHistoryPath,
+                        std::ios::binary | std::ios::trunc);
+    if (!fresh.is_open())
+        std::cerr << "SYSTEM LOAD HISTORY cannot clear at startup: "
+                  << kSystemLoadHistoryPath << '\n';
+}
+
 void HttpServer::recordSystemLoadHistorySample() {
     // Independent 30-second server-side sampler, even if nobody has the UI open.
     // All work is best-effort and never influences the streaming pipeline.
@@ -284,7 +303,8 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
     std::string line;
     while (std::getline(file,line)) {
         Json::Value row;
-        if (parseSystemLoadRow(line,row) && row["t"].asInt64() >= cutoff)
+        if (parseSystemLoadRow(line,row) &&
+            row["t"].asInt64() >= std::max(cutoff,systemLoadHistoryStartEpoch_))
             samples.append(std::move(row));
         // The file is a bounded 24-hour ring on disk (max approximately 2 MiB).
         // Refuse oversized/broken data rather than building unbounded JSON.
