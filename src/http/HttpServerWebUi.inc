@@ -3174,6 +3174,115 @@ async function statePollLoop() {
   clearTimeout(statePollTimer);
   statePollTimer = setTimeout(statePollLoop, document.hidden ? 15000 : 2000);
 }
+// Bounded, in-browser history: no new backend workers or API requests.
+// 120 samples x 3 seconds = approximately 6 minutes per visible series.
+const kSystemChartMaxSamples = 120;
+const kSystemChartWindowMs = 6 * 60 * 1000;
+function systemLoadGpuChartKey(gpu, index) {
+  const source = String(gpu.source || 'DRM');
+  const id = gpu.card ? String(gpu.card) : String(index) + ':' + String(gpu.name || gpu.vendor || 'GPU');
+  return 'gpu:' + source + ':' + id;
+}
+function systemLoadChartVisible(key) {
+  return systemLoadChartPrefs.enabled !== false &&
+    systemLoadChartPrefs.items[key] !== false;
+}
+function saveSystemLoadChartPrefs() {
+  try { localStorage.setItem(systemLoadChartStorageKey, JSON.stringify(systemLoadChartPrefs)); }
+  catch (_) { /* Preferences only: not required for streaming. */ }
+}
+function setSystemLoadChartVisibility(key, enabled) {
+  if (key === 'all') {
+    systemLoadChartPrefs.enabled = enabled;
+    if (!enabled) systemLoadChartHistory.clear();
+  } else {
+    systemLoadChartPrefs.items[key] = enabled;
+    if (!enabled) {
+      systemLoadChartHistory.delete(key);
+      systemLoadChartHistory.delete('vram:' + key);
+    }
+  }
+  saveSystemLoadChartPrefs();
+  refreshSystemLoadPanel(state.system_metrics || {});
+}
+function recordSystemLoadChartSamples(metrics) {
+  if (!systemLoadChartPrefs.enabled || document.hidden) return;
+  const now = Date.now();
+  if (now - systemLoadChartSampleAt < 2000) return;
+  systemLoadChartSampleAt = now;
+  function record(key, value) {
+    if (!systemLoadChartVisible(key) || typeof value !== 'number' || !Number.isFinite(value))
+      return;
+    let points = systemLoadChartHistory.get(key);
+    if (!points) { points = []; systemLoadChartHistory.set(key, points); }
+    points.push({t:now, y:Math.max(0,Math.min(100,value))});
+    if (points.length > kSystemChartMaxSamples)
+      points.splice(0, points.length - kSystemChartMaxSamples);
+  }
+  record('cpu', metrics.cpu_percent);
+  record('ram', metrics.ram_percent);
+  const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
+  gpus.forEach((gpu,index) => {
+    const key = systemLoadGpuChartKey(gpu,index);
+    record(key, gpu.utilization_percent);
+    const used = gpu.memory_used_mb, total = gpu.memory_total_mb;
+    if (typeof used === 'number' && typeof total === 'number' &&
+        Number.isFinite(used) && Number.isFinite(total) && total > 0 &&
+        systemLoadChartVisible(key))
+      record('vram:' + key, 100 * used / total);
+  });
+  // Disconnected or renamed cards cannot retain their old history indefinitely.
+  for (const [key,points] of systemLoadChartHistory) {
+    if (!points.length || now - points[points.length - 1].t > kSystemChartWindowMs)
+      systemLoadChartHistory.delete(key);
+  }
+  // Never retain more than 64 GPU series plus the two host metrics.
+  while (systemLoadChartHistory.size > 130)
+    systemLoadChartHistory.delete(systemLoadChartHistory.keys().next().value);
+}
+function buildSystemLoadChart(key, secondaryKey, name) {
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const node = (tag, attrs, content) => {
+    const el = document.createElementNS(svgNs,tag);
+    Object.entries(attrs || {}).forEach(([n,v]) => el.setAttribute(n,String(v)));
+    if (content !== undefined) el.textContent = String(content);
+    return el;
+  };
+  const svg = node('svg',{viewBox:'0 0 640 160',preserveAspectRatio:'none',
+    class:'system-load-graph',role:'img','aria-label':t('chart') + ': ' + name});
+  const x0 = 36, x1 = 626, y0 = 13, y1 = 125;
+  [0,25,50,75,100].forEach(v => {
+    const y = y1 - v * (y1-y0) / 100;
+    svg.appendChild(node('line',{x1:x0,x2:x1,y1:y,y2:y,
+      stroke:'rgba(147,177,205,.17)','stroke-width':1}));
+    svg.appendChild(node('text',{x:30,y:y+3,'text-anchor':'end',
+      fill:'#9caac0','font-size':9},v+'%'));
+  });
+  const now=Date.now(), start=now-kSystemChartWindowMs;
+  svg.appendChild(node('text',{x:x0,y:150,fill:'#9caac0','font-size':10},'-6 min'));
+  svg.appendChild(node('text',{x:x1,y:150,'text-anchor':'end',
+    fill:'#9caac0','font-size':10},t('chartNow')));
+  const plot = (id, color) => {
+    const arr = (systemLoadChartHistory.get(id) || []).filter(p => p.t >= start);
+    if (!arr.length) return;
+    const points = arr.map(p => {
+      const x = x0+(x1-x0)*Math.max(0,Math.min(1,(p.t-start)/kSystemChartWindowMs));
+      const y = y1-(y1-y0)*p.y/100;
+      return [x,y];
+    });
+    if (points.length === 1) {
+      svg.appendChild(node('circle',{cx:points[0][0],cy:points[0][1],
+        r:2.5,fill:color}));
+    } else {
+      svg.appendChild(node('polyline',{points:points.map(p=>p.join(',')).join(' '),
+        fill:'none',stroke:color,'stroke-width':2,
+        'stroke-linejoin':'round','stroke-linecap':'round'}));
+    }
+  };
+  plot(key,'#7dd1ff');
+  if (secondaryKey) plot(secondaryKey,'#9fe6aa');
+  return svg;
+}
 function updateSystemLoad(metrics) {
   document.getElementById('cpuLoad').textContent = `${Number(metrics.cpu_percent || 0).toFixed(1)}%`;
   document.getElementById('ramLoad').textContent = `${Number(metrics.ram_percent || 0).toFixed(1)}%`;
@@ -3188,6 +3297,7 @@ function updateSystemLoad(metrics) {
       : t('unavailable');
     gpuLoad.title = gpus.map(g => String(g.name || g.vendor || 'GPU')).join(' · ');
   }
+  recordSystemLoadChartSamples(metrics);
   refreshSystemLoadPanel(metrics);
   const table = document.getElementById('networkTableBody');
   if (!table) return;
