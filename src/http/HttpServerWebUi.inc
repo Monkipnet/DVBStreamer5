@@ -83,6 +83,22 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .container{padding:calc(var(--header-height,58px) + 10px) 12px 12px;max-width:1180px;margin:0 auto;box-sizing:border-box}
 .tile-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(calc(180px * 1.15), 1fr));gap:12px 1ch;justify-content:start}
 #tiles.tile-grid.grouped-tiles{display:flex;flex-direction:column;align-items:stretch;gap:12px}
+.restart-schedule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.restart-schedule-dropdown{position:relative;min-width:0;border:1px solid rgba(125,209,255,.22);border-radius:10px;padding:8px 9px;background:rgba(255,255,255,.035)}
+.restart-schedule-dropdown>summary{list-style:none;cursor:pointer;color:#ecf3ff;outline-offset:4px}
+.restart-schedule-dropdown>summary::-webkit-details-marker{display:none}
+.restart-schedule-dropdown>summary:after{content:"▾";float:right;color:#7dd1ff}
+.restart-schedule-dropdown[open]>summary:after{content:"▴"}
+.restart-schedule-dropdown small{display:block;font-size:10px;color:#9aaaba;margin-top:4px}
+.restart-schedule-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:10px}
+.restart-schedule-options.hours{grid-template-columns:repeat(8,minmax(0,1fr))}
+.restart-schedule-options label{display:flex;align-items:center;justify-content:center;gap:3px;padding:5px 2px;border-radius:7px;background:rgba(255,255,255,.045);cursor:pointer;font-size:11px;white-space:nowrap}
+.restart-schedule-options label:has(input:checked){background:rgba(23,194,97,.16);color:#bdf8cb}
+.restart-schedule-options input{accent-color:#17c261;margin:0}
+.restart-schedule-minute{display:grid;gap:5px;margin:12px 0;color:#d9e8f9}
+.restart-schedule-minute input{width:110px;max-width:100%;padding:9px;border-radius:8px}
+.restart-schedule-note{color:#9aaaba;font-size:11px;line-height:1.5}
+@media(max-width:560px){.restart-schedule-grid{grid-template-columns:1fr}}
 .dvb-card-group,.non-dvb-tile-group{width:100%;box-sizing:border-box;border:1px solid rgba(87,156,218,.22);border-radius:13px;background:rgba(18,27,40,.67);padding:0;min-width:0}
 .dvb-card-group>summary{list-style:none;display:flex;align-items:center;gap:9px;padding:11px 14px;cursor:pointer;color:#e3efff;user-select:none;min-width:0}
 .dvb-card-group>summary::-webkit-details-marker{display:none}
@@ -401,6 +417,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <summary class="button-secondary" data-i18n="system">System</summary>
 <div class="system-menu-list">
 <button class="system-menu-item" onclick="openSystemLoadModal();closeSystemMenu()" data-i18n="systemLoad">System load</button>
+<button class="system-menu-item" onclick="openGlobalRestartScheduleModal();closeSystemMenu()" data-ui-ru="Расписание перезапуска потоков" data-ui-en="Stream restart schedule" data-ui-hr="Raspored ponovnog pokretanja tokova">Расписание перезапуска потоков</button>
 <button class="system-menu-item" onclick="openNetworkModal();closeSystemMenu()" data-i18n="network">Network</button>
 <button class="system-menu-item" onclick="openMptsModal();closeSystemMenu()">MPTS</button>
 <button class="system-menu-item" onclick="openLoginModal();closeSystemMenu()" data-i18n="user">User</button>
@@ -3740,6 +3757,101 @@ function refreshSystemLoadPanel(metrics) {
           appDescription,overlays:engineOverlays
         });
     }
+  }
+}
+function openGlobalRestartScheduleModal() {
+  const policy=state.restart_schedule || {};
+  const enabled=policy.enabled===true;
+  const days=Array.isArray(policy.weekdays) ? policy.weekdays : [1,2,3,4,5,6,7];
+  const hours=Array.isArray(policy.hours) ? policy.hours : [5];
+  const dayNames=[
+    [1,'Пн','Mon','Pon'],[2,'Вт','Tue','Uto'],[3,'Ср','Wed','Sri'],
+    [4,'Чт','Thu','Čet'],[5,'Пт','Fri','Pet'],[6,'Сб','Sat','Sub'],
+    [7,'Вс','Sun','Ned']
+  ];
+  const dayBoxes=dayNames.map(([n,ru,en,hr])=>
+    '<label><input type="checkbox" class="restart-schedule-weekday" value="'+n+
+    '" '+(days.includes(n)?'checked':'')+' onchange="updateGlobalRestartScheduleSummaries()"><span>'+
+    subtitleUiTriText(ru,en,hr)+'</span></label>').join('');
+  const hourBoxes=Array.from({length:24},(_,h)=>
+    '<label><input type="checkbox" class="restart-schedule-hour" value="'+h+
+    '" '+(hours.includes(h)?'checked':'')+' onchange="updateGlobalRestartScheduleSummaries()"><span>'+
+    String(h).padStart(2,'0')+'</span></label>').join('');
+  openModal(
+    '<h2 '+subtitleUiTriAttrs('Расписание перезапуска всех потоков',
+        'Restart schedule for all streams','Raspored ponovnog pokretanja svih tokova')+'>'+
+      subtitleUiTriText('Расписание перезапуска всех потоков',
+        'Restart schedule for all streams','Raspored ponovnog pokretanja svih tokova')+'</h2>'+
+    '<label class="checkbox-inline"><input id="restartScheduleEnabled" type="checkbox" '+(enabled?'checked':'')+'>'+
+      '<span '+subtitleUiTriAttrs('Включить расписание','Enable schedule','Omogući raspored')+'>'+
+      subtitleUiTriText('Включить расписание','Enable schedule','Omogući raspored')+'</span></label>'+
+    '<div class="restart-schedule-grid">'+
+      '<details class="restart-schedule-dropdown"><summary>'+
+        subtitleUiTriText('Дни недели','Weekdays','Dani u tjednu')+
+        '<small id="restartScheduleDaysSummary"></small></summary>'+
+        '<div class="restart-schedule-options">'+dayBoxes+'</div></details>'+
+      '<details class="restart-schedule-dropdown"><summary>'+
+        subtitleUiTriText('Часы','Hours','Sati')+
+        '<small id="restartScheduleHoursSummary"></small></summary>'+
+        '<div class="restart-schedule-options hours">'+hourBoxes+'</div></details>'+
+    '</div>'+
+    '<label class="restart-schedule-minute"><span '+subtitleUiTriAttrs('Минута (0–59)',
+      'Minute (0–59)','Minuta (0–59)')+'>'+
+      subtitleUiTriText('Минута (0–59)','Minute (0–59)','Minuta (0–59)')+'</span>'+
+      '<input type="number" id="restartScheduleMinute" min="0" max="59" step="1" value="'+
+      Math.max(0,Math.min(59,Number(policy.minute)||0))+'"></label>'+
+    '<p class="restart-schedule-note" '+subtitleUiTriAttrs(
+      'Время сервера. Перезапускаются только работающие плитки, включая активные OnDemand; остановленные вручную не запускаются. Каждый выбранный час — отдельный запуск.',
+      'Server local time. Only running streams restart, including active OnDemand; manually stopped streams stay off. Each selected hour is a separate run.',
+      'Lokalno vrijeme poslužitelja. Ponovno se pokreću samo aktivni tokovi, uključujući aktivne OnDemand; ručno zaustavljeni ostaju zaustavljeni.')+'>'+
+      subtitleUiTriText(
+      'Время сервера. Перезапускаются только работающие плитки, включая активные OnDemand; остановленные вручную не запускаются. Каждый выбранный час — отдельный запуск.',
+      'Server local time. Only running streams restart, including active OnDemand; manually stopped streams stay off. Each selected hour is a separate run.',
+      'Lokalno vrijeme poslužitelja. Ponovno se pokreću samo aktivni tokovi, uključujući aktivne OnDemand; ručno zaustavljeni ostaju zaustavljeni.')+'</p>'+
+    '<div class="modal-actions"><button class="button-secondary" onclick="closeModal()">'+t('cancel')+'</button>'+
+      '<button id="restartScheduleSave" class="button-primary" onclick="saveGlobalRestartSchedule()">'+t('save')+'</button></div>'
+  );
+  updateGlobalRestartScheduleSummaries();
+}
+function updateGlobalRestartScheduleSummaries() {
+  const days=[...document.querySelectorAll('.restart-schedule-weekday:checked')].map(e=>Number(e.value));
+  const hours=[...document.querySelectorAll('.restart-schedule-hour:checked')].map(e=>Number(e.value));
+  const dayNames=language==='ru'?['Пн','Вт','Ср','Чт','Пт','Сб','Вс']:
+    language==='hr'?['Pon','Uto','Sri','Čet','Pet','Sub','Ned']:
+      ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dayLabel=document.getElementById('restartScheduleDaysSummary');
+  const hourLabel=document.getElementById('restartScheduleHoursSummary');
+  if(dayLabel)dayLabel.textContent=days.map(d=>dayNames[d-1]).join(', ') || '—';
+  if(hourLabel)hourLabel.textContent=hours.map(h=>String(h).padStart(2,'0')).join(', ') || '—';
+}
+async function saveGlobalRestartSchedule() {
+  const enabled=document.getElementById('restartScheduleEnabled')?.checked===true;
+  const weekdays=[...document.querySelectorAll('.restart-schedule-weekday:checked')].map(e=>Number(e.value));
+  const hours=[...document.querySelectorAll('.restart-schedule-hour:checked')].map(e=>Number(e.value));
+  const minuteValue=Number(document.getElementById('restartScheduleMinute')?.value);
+  if (!Number.isInteger(minuteValue) || minuteValue<0 || minuteValue>59 ||
+      (enabled && (!weekdays.length || !hours.length))) {
+    uiError(subtitleUiTriText(
+      'Укажите минуту от 0 до 59 и выберите дни и часы.',
+      'Choose a minute from 0 to 59, weekdays and hours.',
+      'Odaberite minutu 0–59, dane i sate.'));
+    return;
+  }
+  const button=document.getElementById('restartScheduleSave');
+  if(button)button.disabled=true;
+  try {
+    const response=await fetch('/api/save-config',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({restart_schedule:{enabled,weekdays,hours,minute:minuteValue}})
+    });
+    const result=await response.json();
+    if(!response.ok || result.result!=='ok')
+      throw new Error(result.error || 'Failed to save restart schedule');
+    closeModal();
+    await fetchState();
+  } catch(error) {
+    uiError(String(error.message || error));
+    if(button)button.disabled=false;
   }
 }
 function openSystemLoadModal() {
