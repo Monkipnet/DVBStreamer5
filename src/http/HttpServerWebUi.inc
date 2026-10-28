@@ -82,6 +82,20 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .button-danger{padding:7px 10px;border:1px solid rgba(239,68,68,.35);border-radius:999px;color:#ffc4c7;background:rgba(239,68,68,.10);cursor:pointer;font-size:.78rem}.button-danger:hover{background:rgba(239,68,68,.20)}
 .container{padding:calc(var(--header-height,58px) + 10px) 12px 12px;max-width:1180px;margin:0 auto;box-sizing:border-box}
 .tile-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(calc(180px * 1.15), 1fr));gap:12px 1ch;justify-content:start}
+#tiles.tile-grid.grouped-tiles{display:flex;flex-direction:column;align-items:stretch;gap:12px}
+.dvb-card-group,.non-dvb-tile-group{width:100%;box-sizing:border-box;border:1px solid rgba(87,156,218,.22);border-radius:13px;background:rgba(18,27,40,.67);padding:0;min-width:0}
+.dvb-card-group>summary{list-style:none;display:flex;align-items:center;gap:9px;padding:11px 14px;cursor:pointer;color:#e3efff;user-select:none;min-width:0}
+.dvb-card-group>summary::-webkit-details-marker{display:none}
+.dvb-card-group>summary:before{content:'▸';font-size:1rem;color:#7dd1ff;flex:none}
+.dvb-card-group[open]>summary:before{content:'▾'}
+.dvb-card-group>summary:hover{background:rgba(57,145,227,.07)}
+.dvb-card-title{font-weight:700;font-size:.86rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dvb-card-device{color:#9cb7d4;font-size:.72rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dvb-card-count{margin-left:auto;flex:none;color:#9fe7b3;font-size:.72rem;font-variant-numeric:tabular-nums}
+.dvb-card-tiles{padding:10px 12px 12px;border-top:1px solid rgba(255,255,255,.07)}
+.non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
+.non-dvb-tile-heading{color:#c2d3e6;margin:0 0 9px;font-size:.84rem;font-weight:700}
+@media(max-width:520px){.dvb-card-group>summary{flex-wrap:wrap}.dvb-card-device{width:100%;order:3;margin-left:18px}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
 .tile{position:relative;background:rgba(22,27,37,.94);padding:8px 10px 8px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:4px;height:252px;min-height:252px;width:100%;max-width:none;box-sizing:border-box;box-shadow:0 18px 42px rgba(0,0,0,.14);transition:transform .2s ease,border-color .2s ease;font-size:11px;overflow:hidden}
 .tile:before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:999px;background:linear-gradient(180deg,#3fc8ff,#1d69ff)}
 .tile:hover{transform:translateY(-1px);border-color:rgba(31,136,255,.3)}
@@ -414,7 +428,7 @@ const translations = {
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
     networkLoad:'Network interface load', interface:'Interface', incoming:'Incoming', outgoing:'Outgoing', udpInputFilter:'Filter inbound UDP', close:'Close',
-    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', logicalCores:'Logical CPU cores', gpuEngines:'GPU engines', appUsage:'DVBStreamer5 usage', totalUsage:'Entire system', busyLevels:'Load: green 0–39%, yellow 40–69%, orange 70–89%, red 90–100%', core:'Core', coreTraces:'CPU core lines', engineTraces:'GPU engine lines', cpuHostShare:'of host CPU capacity', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
+    about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', satelliteCard:'Satellite card', satelliteInputs:'DVB adapters', networkStreams:'IPTV / network streams', cardActive:'active', logicalCores:'Logical CPU cores', gpuEngines:'GPU engines', appUsage:'DVBStreamer5 usage', totalUsage:'Entire system', busyLevels:'Load: green 0–39%, yellow 40–69%, orange 70–89%, red 90–100%', core:'Core', coreTraces:'CPU core lines', engineTraces:'GPU engine lines', cpuHostShare:'of host CPU capacity', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
   },
   ru: {
     subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
@@ -422,7 +436,7 @@ const translations = {
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
     networkLoad:'Загрузка сетевых интерфейсов', interface:'Интерфейс', incoming:'Входящий', outgoing:'Исходящий', udpInputFilter:'Фильтровать входящий UDP', close:'Закрыть',
-    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память', logicalCores:'Логические ядра CPU', gpuEngines:'Блоки GPU', appUsage:'Нагрузка DVBStreamer5', totalUsage:'Вся система', busyLevels:'Загрузка: зелёный 0–39%, жёлтый 40–69%, оранжевый 70–89%, красный 90–100%', core:'Ядро', coreTraces:'Линии ядер CPU', engineTraces:'Линии блоков GPU', cpuHostShare:'от мощности CPU сервера', showCharts:'Показывать графики', chart:'График', chartWindow:'Последние 6 минут · обновление каждые 3 секунды', chartNow:'Сейчас', gpuMemory:'Память GPU'
+    about:'О программе', product:'Программа', version:'Версия', name:'Имя', country:'Страна', contactEmail:'Эл. почта', donate:'Донат', donateQr:'QR-код доната', donateWallet:'Telegram-кошелёк', cancel:'Отмена', save:'Сохранить', userTitle:'Пользователь', telegram:'Telegram API', quality:'Качество потока', playlist:'Плейлист VLC', subscribers:'Абоненты', streams:'Потоки', filtering:'Включить фильтрацию по IP', addSubscriber:'Добавить абонента', primaryIp:'Основной IP', backupIp:'Резервный IP', addedAt:'Дата добавления', subscriberName:'Наименование абонента', noSubscribers:'Абоненты не добавлены', noStreams:'Потоки не настроены', enabled:'Включен', disabled:'Отключен', exportSubscribers:'Экспорт TXT', session:'Сессия', activeSession:'Онлайн', offlineSession:'Офлайн', resetSession:'Сбросить', uptime:'Время работы', connectedFor:'Подключён', systemLoad:'Нагрузка системы', logout:'Выйти', graphicsAdapters:'Видеокарты', noGpu:'GPU не обнаружены', unavailable:'н/д', memoryUsed:'Память', satelliteCard:'Спутниковая карта', satelliteInputs:'DVB-адаптеры', networkStreams:'IPTV / сетевые потоки', cardActive:'активно', logicalCores:'Логические ядра CPU', gpuEngines:'Блоки GPU', appUsage:'Нагрузка DVBStreamer5', totalUsage:'Вся система', busyLevels:'Загрузка: зелёный 0–39%, жёлтый 40–69%, оранжевый 70–89%, красный 90–100%', core:'Ядро', coreTraces:'Линии ядер CPU', engineTraces:'Линии блоков GPU', cpuHostShare:'от мощности CPU сервера', showCharts:'Показывать графики', chart:'График', chartWindow:'Последние 6 минут · обновление каждые 3 секунды', chartNow:'Сейчас', gpuMemory:'Память GPU'
   }
 };
 translations.hr = {
@@ -503,6 +517,10 @@ translations.hr = {
   "noGpu": "GPU nije pronađen",
   "unavailable": "Nije dostupno",
   "memoryUsed": "Memorija",
+  "satelliteCard": "Satelitska kartica",
+  "satelliteInputs": "DVB adapteri",
+  "networkStreams": "IPTV / mrežni tokovi",
+  "cardActive": "aktivno",
   "showCharts": "Prikaži grafikone",
   "chart": "Grafikon",
   "chartWindow": "Zadnjih 6 minuta · osvježavanje svake 3 sekunde",
@@ -3015,6 +3033,13 @@ try {
       systemLoadChartPrefs.items = savedCharts.items;
   }
 } catch (_) { /* Browser storage may be disabled. */ }
+const dvbCardGroupStorageKey = 'dvbstreamer5-dvb-card-group-open-v1';
+let dvbCardGroupOpen = {};
+try {
+  const savedGroups = JSON.parse(localStorage.getItem(dvbCardGroupStorageKey) || '{}');
+  if (savedGroups && typeof savedGroups === 'object' && !Array.isArray(savedGroups))
+    dvbCardGroupOpen = savedGroups;
+} catch (_) { /* Private browsing or storage restrictions: use collapsed groups. */ }
 let lastTileStructureSignature = '';
 let lastKnownStreams = [];
 let allowEmptyStreamStateOnce = false;
@@ -4303,6 +4328,10 @@ function streamTileStructureSignature(stream) {
     id: stream.id,
     name: stream.name,
     input_uri: stream.input_uri,
+    dvb_input: stream.dvb_input === true,
+    dvb_adapter: stream.dvb_adapter,
+    dvb_frontend: stream.dvb_frontend,
+    dvb_card_key: stream.dvb_card_key || '',
     backup_input_uri: stream.backup_input_uri,
     backup_input_type: stream.backup_input_type,
     backup_file_loop: stream.backup_file_loop,
@@ -4323,6 +4352,76 @@ function tilesStructureSignature() {
     language,
     streams: (state.streams || []).map(streamTileStructureSignature)
   });
+}
+function streamDvbCardKey(stream) {
+  if (stream?.dvb_input !== true) return null;
+  const adapter = Number(stream.dvb_adapter);
+  const key = String(stream.dvb_card_key || '').trim();
+  if (key && key.length <= 100 && /^(pci|usb|adapter):[a-zA-Z0-9._:-]+$/.test(key))
+    return key;
+  return 'adapter:' + (Number.isInteger(adapter) && adapter >= 0 ? adapter : 'unknown');
+}
+function sortDvbCardStreams(a,b) {
+  const aa=Number(a.dvb_adapter), ba=Number(b.dvb_adapter);
+  if (Number.isFinite(aa) && Number.isFinite(ba) && aa!==ba) return aa-ba;
+  const af=Number(a.dvb_frontend),bf=Number(b.dvb_frontend);
+  if (Number.isFinite(af) && Number.isFinite(bf) && af!==bf) return af-bf;
+  return String(a.name||a.id).localeCompare(String(b.name||b.id),language,{numeric:true,sensitivity:'base'});
+}
+function makeDvbCardGroups(streams) {
+  const groups=new Map(),network=[];
+  for(const stream of streams) {
+    const key=streamDvbCardKey(stream);
+    if(!key){network.push(stream);continue;}
+    if(!groups.has(key))groups.set(key,{key,streams:[],adapters:new Set(),minAdapter:Infinity});
+    const group=groups.get(key);
+    group.streams.push(stream);
+    const adapter=Number(stream.dvb_adapter);
+    if(Number.isInteger(adapter)&&adapter>=0) {
+      group.adapters.add(adapter);
+      group.minAdapter=Math.min(group.minAdapter,adapter);
+    }
+  }
+  const sorted=[...groups.values()].sort((a,b)=>a.minAdapter-b.minAdapter||
+    a.key.localeCompare(b.key));
+  for(const group of sorted) group.streams.sort(sortDvbCardStreams);
+  return {cards:sorted,network};
+}
+function dvbCardDisplayTitle(group) {
+  const adapters=[...group.adapters].sort((a,b)=>a-b);
+  return t('satelliteCard')+(adapters.length===1?' '+adapters[0]:'');
+}
+function dvbCardDisplayDevice(group) {
+  const adapters=[...group.adapters].sort((a,b)=>a-b);
+  const names=adapters.map(a=>'adapter'+a).join(', ');
+  const hardware=group.key.startsWith('pci:')?'PCIe '+group.key.slice(4):
+    group.key.startsWith('usb:')?'USB '+group.key.slice(4):'';
+  return (hardware?hardware+' · ':'')+t('satelliteInputs')+': '+names;
+}
+function saveDvbCardGroupOpen() {
+  try {
+    // Keep only the most recent 128 physical card identities.
+    const keys=Object.keys(dvbCardGroupOpen);
+    if(keys.length>128) for(const key of keys.slice(0,keys.length-128))
+      delete dvbCardGroupOpen[key];
+    localStorage.setItem(dvbCardGroupStorageKey,JSON.stringify(dvbCardGroupOpen));
+  } catch (_) { /* Keeping the current collapse state is still possible. */ }
+}
+function updateDvbCardGroupCounts(tiles) {
+  const counts=new Map();
+  for(const stream of state.streams||[]) {
+    const key=streamDvbCardKey(stream);
+    if(!key)continue;
+    if(!counts.has(key))counts.set(key,{total:0,active:0});
+    const count=counts.get(key);
+    count.total++;
+    if(stream.active)count.active++;
+  }
+  for(const details of tiles.querySelectorAll('.dvb-card-group[data-card-key]')) {
+    const count=counts.get(details.dataset.cardKey);
+    const label=details.querySelector('[data-card-count]');
+    if(label&&count)label.textContent=count.active+'/'+count.total+' '+t('cardActive');
+  }
 }
 function dvbMeterColor(value, locked) {
   if (!locked) return '#d9363e';
