@@ -4507,34 +4507,46 @@ function updateDvbCardGroupLive(tiles) {
   const groups=makeDvbCardGroups(state.streams||[]);
   const byKey=new Map(groups.cards.map(group=>[group.key,group]));
   for (const details of tiles.querySelectorAll('.dvb-card-group[data-card-key]')) {
-    const strip=details.querySelector('.dvb-card-live-strip');
+    const satellites=details.querySelector('.dvb-card-satellite-strip');
+    const levels=details.querySelector('.dvb-card-level-strip');
     const group=byKey.get(details.dataset.cardKey);
-    if (!strip || !group) continue;
+    if (!satellites || !levels || !group) continue;
     const frontends=dvbFrontendCardSnapshots(group.streams);
-    // Preserve nodes between state polls: updating signal is independent of
-    // expanded/collapsed state and never reconstructs the user's tiles.
+    // Only rebuild when the frontend composition changes. Normal polls
+    // update text and meter widths even while <details> stays collapsed.
     const keys=frontends.map(fe=>fe.key).join('|');
-    if (strip.dataset.frontendKeys!==keys) {
-      strip.replaceChildren();
-      strip.dataset.frontendKeys=keys;
-      for (const frontend of frontends) {
-        const row=document.createElement('div');
-        row.className='dvb-card-fe-live';
-        row.dataset.frontendKey=frontend.key;
+    if (satellites.dataset.frontendKeys!==keys ||
+        levels.dataset.frontendKeys!==keys) {
+      satellites.replaceChildren();
+      levels.replaceChildren();
+      satellites.dataset.frontendKeys=keys;
+      levels.dataset.frontendKeys=keys;
+      for (const fe of frontends) {
+        const info=document.createElement('span');
+        info.className='dvb-card-fe-info';
+        info.dataset.frontendKey=fe.key;
         const name=document.createElement('span');
         name.className='dvb-card-fe-label';
-        name.textContent='A'+frontend.adapter+'/FE'+frontend.frontend;
-        const satellite=document.createElement('span');
-        satellite.className='dvb-card-sat';
-        const transponder=document.createElement('span');
-        transponder.className='dvb-card-tp';
-        row.append(name,satellite,transponder,
-          dvbCardMetricNode('signal'),dvbCardMetricNode('quality'));
-        strip.appendChild(row);
+        name.textContent='A'+fe.adapter+'/FE'+fe.frontend;
+        const sat=document.createElement('span');
+        sat.className='dvb-card-sat';
+        const tp=document.createElement('span');
+        tp.className='dvb-card-tp';
+        info.append(name,sat,tp);
+        satellites.appendChild(info);
+
+        const meters=document.createElement('span');
+        meters.className='dvb-card-fe-level';
+        meters.dataset.frontendKey=fe.key;
+        const meterName=document.createElement('span');
+        meterName.className='dvb-card-fe-label';
+        meterName.textContent='FE'+fe.frontend;
+        meters.append(meterName,dvbCardMetricNode('signal'),dvbCardMetricNode('quality'));
+        levels.appendChild(meters);
       }
     }
     const values=new Map(frontends.map(fe=>[fe.key,fe]));
-    for (const row of strip.querySelectorAll('.dvb-card-fe-live')) {
+    for (const row of satellites.querySelectorAll('.dvb-card-fe-info')) {
       const fe=values.get(row.dataset.frontendKey);
       if (!fe) continue;
       const sat=row.querySelector('.dvb-card-sat');
@@ -4547,6 +4559,10 @@ function updateDvbCardGroupLive(tiles) {
         tp.textContent=dvbCardTpText(fe);
         tp.title=t('tpLabel')+': '+tp.textContent+' MHz / kSym/s';
       }
+    }
+    for (const row of levels.querySelectorAll('.dvb-card-fe-level')) {
+      const fe=values.get(row.dataset.frontendKey);
+      if (!fe) continue;
       updateDvbCardMetric(row.querySelector('[data-kind="signal"]'),'signal',fe);
       updateDvbCardMetric(row.querySelector('[data-kind="quality"]'),'quality',fe);
     }
@@ -4884,6 +4900,9 @@ function render(force=false) {
       // Default closed; retain the user's choice on refresh and page reload.
       details.open = dvbCardGroupOpen[group.key] === true;
       const summary = document.createElement('summary');
+      // Satellite name + transponder stay on the LEFT of the collapsed header.
+      const left = document.createElement('div');
+      left.className = 'dvb-card-header-left';
       const title = document.createElement('strong');
       title.className = 'dvb-card-title';
       title.textContent = dvbCardDisplayTitle(group);
@@ -4891,15 +4910,22 @@ function render(force=false) {
       device.className = 'dvb-card-device';
       device.textContent = dvbCardDisplayDevice(group);
       device.title = device.textContent;
+      const satellites = document.createElement('div');
+      satellites.className = 'dvb-card-satellite-strip';
+      left.append(title, device, satellites);
+
+      // S/Q meters sit beside the active/total counter on the RIGHT.
+      const right = document.createElement('div');
+      right.className = 'dvb-card-header-right';
+      const levels = document.createElement('div');
+      levels.className = 'dvb-card-level-strip';
       const count = document.createElement('span');
       count.className = 'dvb-card-count';
       count.dataset.cardCount = '1';
       count.textContent = group.streams.filter(stream => stream.active).length +
         '/' + group.streams.length + ' ' + t('cardActive');
-      summary.append(title, device, count);
-      const liveStrip = document.createElement('div');
-      liveStrip.className = 'dvb-card-live-strip';
-      summary.appendChild(liveStrip);
+      right.append(levels, count);
+      summary.append(left, right);
       const grid = document.createElement('div');
       grid.className = 'tile-grid dvb-card-tiles';
       details.append(summary, grid);
