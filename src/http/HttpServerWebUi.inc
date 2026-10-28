@@ -4411,7 +4411,12 @@ function dvbCardFrontendEntries(group) {
     const params=new URLSearchParams(question<0 ? '' : inputUri.slice(question+1));
     // Unlike manually configured labels, the original V216 card caption is
     // always available. Keep satellite_name strictly optional for old channels.
-    const satellite=String(params.get('satellite_name') || '').trim().slice(0,80);
+    const nitNetwork=String(stream.dvb_nit_network_name || '').trim().slice(0,80);
+    const nitOrbit=String(stream.dvb_nit_orbital_position || '').trim().slice(0,30);
+    const manual=String(params.get('satellite_name') || '').trim().slice(0,80);
+    // Use live NIT actual metadata first; never derive satellite names from RF.
+    const satellite=nitNetwork ? nitNetwork+(nitOrbit && !nitNetwork.includes(nitOrbit) ? ' · '+nitOrbit : '')
+      : (nitOrbit || manual);
     const frequency=Number(params.get('frequency_khz')) / 1000;
     const symbolRate=Number(params.get('symbol_rate'));
     const polarity=String(params.get('polarity') || '').toUpperCase();
