@@ -1321,6 +1321,7 @@ std::string HttpServer::currentState() {
     // ioctl snapshot per live DVB URI for each /api/state response.
     std::map<std::string, Json::Value> dvbSignalCache;
     std::map<std::pair<int, int>, std::string> dvbCardKeyCache;
+    std::map<std::pair<int, int>, dvbstreamer5::media::network::DvbNitInfo> dvbNitCache;
     for (const auto& cfg : configManager.config.streams) {
         Json::Value item = cfg.toJson();
         const std::string configuredInput = normalizeInputUri(cfg.inputUri);
@@ -1474,6 +1475,13 @@ std::string HttpServer::currentState() {
                         physicalDvbCardKey(frontendKey.first, frontendKey.second)).first;
                 }
                 item["dvb_card_key"] = cachedCard->second;
+                auto cachedNit = dvbNitCache.find(frontendKey);
+                if (cachedNit == dvbNitCache.end()) {
+                    cachedNit = dvbNitCache.emplace(frontendKey,
+                        streamManager.dvbNitInfo(frontendKey.first, frontendKey.second)).first;
+                }
+                item["dvb_nit_network_name"] = cachedNit->second.networkName;
+                item["dvb_nit_orbital_position"] = cachedNit->second.orbitalPosition;
                 item["dvb_stream_id"] = configuredDvbParams.streamId;
                 item["dvb_diseqc_source"] = configuredDvbParams.diseqcSource;
                 item["dvb_unicable_mode"] = configuredDvbParams.unicableMode;
