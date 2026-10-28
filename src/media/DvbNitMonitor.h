@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dvbstreamer5::media::network {
