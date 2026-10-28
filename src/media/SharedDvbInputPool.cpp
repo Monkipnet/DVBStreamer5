@@ -468,9 +468,9 @@ struct SharedDvbInputPool::Impl {
     }
 
     DvbNitInfo nitInfo(int adapter, int frontend) const {
-        const std::string frontend = std::to_string(adapter)+":"+std::to_string(frontend);
+        const std::string frontendId = std::to_string(adapter)+":"+std::to_string(frontend);
         std::lock_guard<std::mutex> lock(mutex);
-        const auto owner = frontendOwner.find(frontend);
+        const auto owner = frontendOwner.find(frontendId);
         if (owner == frontendOwner.end()) return {};
         const auto bus = buses.find(owner->second);
         if (bus == buses.end() || !bus->second || !bus->second->nit) return {};
