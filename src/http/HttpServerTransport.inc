@@ -13,6 +13,7 @@ bool HttpServer::start() {
     // Restore persisted samples, record immediately, then continue every
     // 30 seconds even when no Web UI client is connected.
     if (!qualitySamplerStarted) {
+        resetSystemLoadHistoryOnStartup();
         loadQualityHistoryFromDisk();
         recordAllQualitySamples();
         qualityLastPersist = 0;
