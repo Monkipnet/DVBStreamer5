@@ -126,7 +126,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .dvb-card-tiles{padding:10px 12px 12px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
 .non-dvb-tile-heading{color:#c2d3e6;margin:0 0 9px;font-size:.84rem;font-weight:700}
-@media(max-width:520px){.dvb-card-header-left>.dvb-card-device{width:100%;order:3;margin-left:18px}.dvb-card-satellite-strip{order:4}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
+@media(max-width:520px){.dvb-card-header-left>.dvb-card-device{width:100%;order:2;margin-left:18px}.dvb-card-satellite-strip{order:0}.dvb-card-header-left>.dvb-card-title{order:1}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
 .tile{position:relative;background:rgba(22,27,37,.94);padding:8px 10px 8px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:4px;height:252px;min-height:252px;width:100%;max-width:none;box-sizing:border-box;box-shadow:0 18px 42px rgba(0,0,0,.14);transition:transform .2s ease,border-color .2s ease;font-size:11px;overflow:hidden}
 .tile:before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:999px;background:linear-gradient(180deg,#3fc8ff,#1d69ff)}
 .tile:hover{transform:translateY(-1px);border-color:rgba(31,136,255,.3)}
@@ -4912,7 +4912,7 @@ function render(force=false) {
       device.title = device.textContent;
       const satellites = document.createElement('div');
       satellites.className = 'dvb-card-satellite-strip';
-      left.append(title, device, satellites);
+      left.append(satellites, title, device);
 
       // S/Q meters sit beside the active/total counter on the RIGHT.
       const right = document.createElement('div');
