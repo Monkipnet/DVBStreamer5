@@ -20,6 +20,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -462,9 +463,14 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
         }
     });
     onDemandMonitorThread = std::thread(&StreamManager::monitorOnDemandStreams, this);
+    configureRestartSchedule();
+    restartScheduleThread = std::thread(&StreamManager::monitorGlobalRestartSchedule, this);
 }
 
 StreamManager::~StreamManager() {
+    restartScheduleStop.store(true, std::memory_order_release);
+    restartScheduleCv.notify_all();
+    if (restartScheduleThread.joinable()) restartScheduleThread.join();
     epgPersistStop_.store(true, std::memory_order_release);
     epgPersistCv_.notify_all();
     if (epgPersistThread_.joinable()) epgPersistThread_.join();
@@ -2022,6 +2028,76 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
               << " ca=" << (cfg.conditionalAccessClient.empty() ? "fta" : "managed")
               << std::endl;
     return true;
+}
+
+void StreamManager::configureRestartSchedule() {
+    {
+        std::lock_guard<std::mutex> lock(restartScheduleMutex);
+        restartScheduleConfig = configManager.config.restartSchedule;
+    }
+    restartScheduleCv.notify_all();
+}
+
+void StreamManager::monitorGlobalRestartSchedule() {
+    // Skip the current minute at daemon startup. No catch-up restarts and no
+    // duplicate restarts during repeated polls / DST fall-back wall time.
+    std::time_t initialTime = std::time(nullptr);
+    std::time_t lastMinute = initialTime / 60;
+    int localDate = -1;
+    std::set<int> executedSlots;
+    while (!restartScheduleStop.load(std::memory_order_acquire)) {
+        StreamRestartSchedule policy;
+        {
+            std::unique_lock<std::mutex> lock(restartScheduleMutex);
+            restartScheduleCv.wait_for(lock, std::chrono::seconds(2), [this] {
+                return restartScheduleStop.load(std::memory_order_acquire);
+            });
+            if (restartScheduleStop.load(std::memory_order_acquire)) break;
+            policy = restartScheduleConfig;
+        }
+        const std::time_t now = std::time(nullptr);
+        const std::time_t minuteKey = now / 60;
+        if (minuteKey == lastMinute) continue;
+        lastMinute = minuteKey;
+        std::tm localTime {};
+        if (localtime_r(&now, &localTime) == nullptr) continue;
+        const int dateKey = (localTime.tm_year + 1900) * 400 + localTime.tm_yday;
+        if (dateKey != localDate) {
+            executedSlots.clear();
+            localDate = dateKey;
+        }
+        if (!policy.enabled) continue;
+        const int weekday = localTime.tm_wday == 0 ? 7 : localTime.tm_wday;
+        if (std::find(policy.weekdays.begin(), policy.weekdays.end(), weekday) == policy.weekdays.end() ||
+            std::find(policy.hours.begin(), policy.hours.end(), localTime.tm_hour) == policy.hours.end() ||
+            localTime.tm_min != policy.minute) continue;
+        const int slot = localTime.tm_hour * 60 + localTime.tm_min;
+        if (!executedSlots.insert(slot).second) continue;
+
+        // Copy live configs while protected, then release before any restart;
+        // do not start streams that the operator previously stopped manually.
+        std::vector<StreamConfig> active;
+        {
+            std::lock_guard<std::mutex> lock(managerMutex);
+            for (const auto& [id, stream] : streams) {
+                (void)id;
+                if (stream && stream->active.load(std::memory_order_acquire))
+                    active.push_back(stream->config);
+            }
+        }
+        std::cerr << "GLOBAL STREAM RESTART SCHEDULE date=" << dateKey
+                  << " weekday=" << weekday << " at=" << localTime.tm_hour << ':'
+                  << localTime.tm_min << " active=" << active.size() << std::endl;
+        for (const auto& cfg : active) {
+            if (restartScheduleStop.load(std::memory_order_acquire)) break;
+            if (!isStreamActive(cfg.id)) continue;
+            std::string error;
+            const bool ok = restartStream(cfg, &error);
+            std::cerr << "GLOBAL STREAM RESTART stream=" << cfg.id
+                      << " result=" << (ok ? "ok" : "failed")
+                      << (error.empty() ? "" : " error=" + error) << std::endl;
+        }
+    }
 }
 
 void StreamManager::monitorOnDemandStreams() {
