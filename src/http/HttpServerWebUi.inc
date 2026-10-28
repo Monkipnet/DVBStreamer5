@@ -3250,7 +3250,8 @@ async function logoutPanel() {
   closeSystemMenu();
   try {
     const response = await fetch('/api/panel/logout', {
-      method: 'POST', credentials: 'same-origin', cache: 'no-store'
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: {'X-Requested-With': 'DVBStreamer5'}
     });
     if (!response.ok) throw new Error('Logout HTTP ' + response.status);
     clearTimeout(statePollTimer);
