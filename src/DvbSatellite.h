@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <vector>
 
 struct DvbSatelliteParams {
     int adapter = 0;
@@ -27,6 +28,26 @@ struct DvbSatelliteParams {
     int streamId = -1;
     // Colon-separated DVB PID filter. 8192 means full transport stream.
     std::string pids = "8192";
+};
+
+// Lightweight NIT-actual observer for a running full-MPTS satellite input.
+// Never opens or retunes /dev/dvb. Satellite position is accepted only from
+// DVB descriptor 0x43 matching the configured frequency, SR and polarization.
+class DvbNitSatelliteMonitor {
+public:
+    explicit DvbNitSatelliteMonitor(const DvbSatelliteParams& tuned);
+    void push(const std::uint8_t* bytes, std::size_t size);
+    std::string satelliteName() const;
+private:
+    void consume(const std::uint8_t* data, std::size_t length);
+    void parseSection(const std::vector<std::uint8_t>& section);
+    DvbSatelliteParams tuned_;
+    std::vector<std::uint8_t> section_;
+    std::size_t expected_ = 0;
+    std::uint8_t continuity_ = 0;
+    bool continuityKnown_ = false;
+    mutable std::mutex mutex_;
+    std::string satelliteName_;
 };
 
 namespace DvbSatellite {
