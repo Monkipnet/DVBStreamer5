@@ -173,9 +173,11 @@ void compactSystemLoadHistory(int64_t now) {
     std::string line;
     const int64_t cutoff = now - kSystemLoadHistoryRetentionSeconds;
     const int64_t recentCutoff = now - 3600; // Keep the most recent hour at 30 s.
+    std::error_code sizeError;
+    const auto bytes = std::filesystem::file_size(file, sizeError);
     const int64_t olderStep = static_cast<int64_t>(
         std::max<std::uintmax_t>(2U,
-          (std::filesystem::file_size(file) / kSystemLoadHistoryCompactBytes) + 1U)) * 60LL;
+          (sizeError ? 2U : bytes / kSystemLoadHistoryCompactBytes + 1U))) * 60LL;
     int64_t lastOlderSaved = 0;
     while (std::getline(input, line)) {
         Json::Value row;
