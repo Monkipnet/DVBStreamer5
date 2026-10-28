@@ -3744,7 +3744,7 @@ function dvbTuneDetails(stream) {
   const isi = Number(stream?.dvb_stream_id ?? -1);
   const mode = String(stream?.dvb_unicable_mode || 'none');
   const unicable = mode === 'en50494' || mode === 'en50607'
-    ? ` · ${mode === 'en50494' ? 'EN50494' : 'EN50607'} UB${Number(stream?.dvb_unicable_user_band ?? -1)} @ ${(Number(stream?.dvb_unicable_frequency_khz || 0)/1000).toFixed(0)} MHz`
+    ? ` · ${mode === 'en50494' ? 'EN50494' : 'EN50607'} · LNB ${Number(stream?.dvb_unicable_position ?? 0) + 1} · UB${Number(stream?.dvb_unicable_user_band ?? -1)} @ ${(Number(stream?.dvb_unicable_frequency_khz || 0)/1000).toFixed(0)} MHz`
     : ` · DiSEqC: ${diseqcSourceLabel(stream?.dvb_diseqc_source)}`;
   return `ISI: ${isi >= 0 ? isi : uiBiText('Авто','Auto')}${unicable}`;
 }
@@ -5184,6 +5184,32 @@ function updateSatelliteCapabilityInfo() {
   const no = language === 'ru' ? 'нет' : (language === 'hr' ? 'ne' : 'no');
   info.textContent = `Native Linux DVB · stream-id: ${dvbCapabilities.streamIdSupported ? yes : no} · diseqc-source: ${dvbCapabilities.diseqcSourceSupported ? yes : no}`;
 }
+// "LNB 1..4" identifies the configured satellite input (position 0..3)
+// of the Unicable switch, not a separate SCR/UB channel. Keep the wire
+// value 0-based so existing EN50494/EN50607 tune commands are unchanged.
+function unicableLnbOptionLabel(position) {
+  if (position < 4) return 'LNB ' + (position + 1) + ' · ' +
+    subtitleUiTriText('позиция ', 'position ', 'položaj ') + position;
+  return subtitleUiTriText('Позиция ', 'Position ', 'Položaj ') + position +
+    ' (LNB ' + (position + 1) + ')';
+}
+function unicablePositionOptions(mode, current=0) {
+  const max = mode === 'en50494' ? 1 : 63;
+  return Array.from({length:max+1},(_,i)=>
+    '<option value="' + i + '"' + (Number(current) === i ? ' selected' : '') +
+    '>' + unicableLnbOptionLabel(i) + '</option>').join('');
+}
+function refreshUnicablePositionSelect(select, mode) {
+  if (!select) return;
+  const max = mode === 'en50494' ? 1 : 63;
+  const existing = Number(select.value || 0);
+  const value = Number.isInteger(existing) && existing >= 0 ?
+    Math.min(existing,max) : 0;
+  if (select.dataset.unicableMode === mode && select.options.length === max+1)
+    return;
+  select.innerHTML = unicablePositionOptions(mode,value);
+  select.dataset.unicableMode = mode;
+}
 function updateSatelliteUnicableUi(triggerSignal=false) {
   const item = selectedDvbFrontend();
   const driverMode = Number(item?.driver_mode ?? -1);
@@ -5198,10 +5224,7 @@ function updateSatelliteUnicableUi(triggerSignal=false) {
     userBand.max = mode === 'en50494' ? '7' : '31';
     if (Number(userBand.value) > Number(userBand.max)) userBand.value = userBand.max;
   }
-  if (position) {
-    position.max = mode === 'en50494' ? '1' : '63';
-    if (Number(position.value) > Number(position.max)) position.value = position.max;
-  }
+  refreshUnicablePositionSelect(position, mode);
   const diseqc = document.getElementById('satDiseqc');
   if (diseqc) {
     diseqc.disabled = enabled || driverMode === 2;
@@ -5633,7 +5656,7 @@ function openAddChannelModal() {
       <div class="sat-field"><label>LNB / SCR режим</label><select id="satUnicableMode" onchange="updateSatelliteUnicableUi(true);applyTbsDriverModeUi()"><option value="none">Universal / Legacy</option><option value="en50494">Unicable I — EN50494</option><option value="en50607">Unicable II / JESS — EN50607</option></select></div>
       <div class="sat-field sat-unicable-field" style="display:none"><label>User Band ID (0-based)</label><input id="satUnicableUserBand" type="number" min="0" max="31" value="0" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field sat-unicable-field" style="display:none"><label>User Band frequency, MHz</label><input id="satUnicableFrequency" type="number" min="950" max="2150" step="1" value="1210" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field sat-unicable-field" style="display:none"><label>Satellite position</label><input id="satUnicablePosition" type="number" min="0" max="63" value="0" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-unicable-field" style="display:none"><label ${subtitleUiTriAttrs('LNB / спутник Unicable','Unicable LNB / satellite','Unicable LNB / satelit')}>${subtitleUiTriText('LNB / спутник Unicable','Unicable LNB / satellite','Unicable LNB / satelit')}</label><select id="satUnicablePosition" onchange="updateSatelliteSignal()">${unicablePositionOptions('en50607',0)}</select></div>
       <div class="sat-field sat-unicable-field" style="display:none"><label>PIN (-1 = off)</label><input id="satUnicablePin" type="number" min="-1" max="255" value="-1" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB LOF1, MHz</label><input id="satLof1" type="number" value="9750" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field"><label>LNB LOF2, MHz</label><input id="satLof2" type="number" value="10600" onchange="updateSatelliteSignal()" /></div>
@@ -6037,6 +6060,9 @@ function updateDvbUnicableFields() {
   const mode = document.getElementById('streamDvbUnicableMode')?.value || 'none';
   const row = document.getElementById('streamDvbUnicableFields');
   if (row) row.style.display = mode === 'none' ? 'none' : 'grid';
+  refreshUnicablePositionSelect(document.getElementById('streamDvbUnicablePosition'), mode);
+  const diseqc = document.getElementById('streamDvbDiseqc');
+  if (diseqc) diseqc.disabled = mode !== 'none'; // Legacy switch only; retain its stored value.
 }
 function rebuildDvbInputUriFromFields() {
   const input = document.getElementById('streamInput');
@@ -6226,7 +6252,7 @@ function openStreamForm(stream) {
           <div class="stream-video-grid" id="streamDvbUnicableFields" style="margin-top:8px;display:${dvbTuner.unicable_mode==='none'?'none':'grid'}">
             <div class="edit-field"><div class="edit-field-title">User Band</div><small class="field-help" ${uiBiAttrs('Номер SCR/UB выбранного порта.','SCR/UB number for the selected port.')}>${uiBiText('Номер SCR/UB выбранного порта.','SCR/UB number for the selected port.')}</small><input id="streamDvbUb" type="number" min="-1" max="31" value="${dvbTuner.unicable_user_band}" /></div>
             <div class="edit-field"><div class="edit-field-title">UB MHz</div><small class="field-help" ${uiBiAttrs('Центральная частота User Band.','User Band center frequency.')}>${uiBiText('Центральная частота User Band.','User Band center frequency.')}</small><input id="streamDvbUbFrequency" type="number" step="0.001" value="${dvbTuner.unicable_frequency_khz/1000}" /></div>
-            <div class="edit-field"><div class="edit-field-title">Position</div><small class="field-help" ${uiBiAttrs('Позиция/спутник Unicable.','Unicable position/satellite selector.')}>${uiBiText('Позиция/спутник Unicable.','Unicable position/satellite selector.')}</small><input id="streamDvbUnicablePosition" type="number" min="0" max="63" value="${dvbTuner.unicable_position}" /></div>
+            <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('LNB / спутник','LNB / satellite','LNB / satelit')}>${subtitleUiTriText('LNB / спутник','LNB / satellite','LNB / satelit')}</div><small class="field-help" ${subtitleUiTriAttrs('Выберите вход мультисвитча, LNB 1–4; зависит от настроек устройства.','Select multiswitch input LNB 1–4; mapping depends on hardware.','Odaberite ulaz multiswitcha LNB 1–4; raspored ovisi o uređaju.')}>${subtitleUiTriText('Выберите вход мультисвитча, LNB 1–4; зависит от настроек устройства.','Select multiswitch input LNB 1–4; mapping depends on hardware.','Odaberite ulaz multiswitcha LNB 1–4; raspored ovisi o uređaju.')}</small><select id="streamDvbUnicablePosition">${unicablePositionOptions(dvbTuner.unicable_mode,dvbTuner.unicable_position)}</select></div>
             <div class="edit-field"><div class="edit-field-title">PIN</div><small class="field-help" ${uiBiAttrs('-1 отключает PIN.','-1 disables the PIN.')}>${uiBiText('-1 отключает PIN.','-1 disables the PIN.')}</small><input id="streamDvbUnicablePin" type="number" min="-1" max="255" value="${dvbTuner.unicable_pin}" /></div>
           </div>
           <div class="edit-inline-note" ${uiBiAttrs('PID/SID и параметры dvb:// URL сохраняются.','PID/SID and dvb:// URL parameters are preserved.')}>${uiBiText('PID/SID и неизвестные параметры исходного dvb:// URL сохраняются при редактировании.','PID/SID and unknown parameters from the original dvb:// URL are preserved when editing.')}</div>
