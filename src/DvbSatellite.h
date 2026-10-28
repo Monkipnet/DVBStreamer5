@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -49,6 +50,7 @@ private:
     bool continuityKnown_ = false;
     mutable std::mutex mutex_;
     std::string satelliteName_;
+    std::atomic<bool> resolved_{false}; // No mutex or string allocation in subsequent TS callbacks.
 };
 
 namespace DvbSatellite {
