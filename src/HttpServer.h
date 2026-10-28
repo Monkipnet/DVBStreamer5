@@ -50,6 +50,9 @@ private:
     void handleSession(tcp::socket socket);
     bool requiresAuthentication(const std::string& target) const;
     bool isAuthorized(const http::request<http::string_body>& req) const;
+    bool isPanelSessionAuthorized(const http::request<http::string_body>& req) const;
+    std::string createPanelSession();
+    void revokePanelSession(const http::request<http::string_body>& req);
     bool isStreamClientAllowed(const tcp::socket& socket, const std::string& target) const;
     bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
     void writeUnauthorized(http::response<http::string_body>& res) const;
@@ -108,6 +111,10 @@ private:
         std::chrono::steady_clock::now();
     std::mutex qualityMutex;
     std::mutex metricsMutex;
+    // Explicit login sessions make Logout work even when a browser caches Basic Auth.
+    mutable std::mutex panelSessionsMutex_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+        panelSessions_;
     uint64_t previousCpuTotal = 0;
     uint64_t previousCpuIdle = 0;
     std::chrono::steady_clock::time_point previousMetricsSample;
