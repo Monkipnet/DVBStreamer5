@@ -92,22 +92,41 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .dvb-card-title{font-weight:700;font-size:.86rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dvb-card-device{color:#9cb7d4;font-size:.72rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dvb-card-count{margin-left:auto;flex:none;color:#9fe7b3;font-size:.72rem;font-variant-numeric:tabular-nums}
-.dvb-card-group>summary{flex-wrap:wrap}
-.dvb-card-live-strip{display:flex;flex:1 0 100%;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;margin-top:1px}
-.dvb-card-fe-live{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0;border:1px solid rgba(255,255,255,.09);border-radius:8px;background:rgba(255,255,255,.035);padding:4px 7px;font-size:.67rem;font-variant-numeric:tabular-nums}
+/* Desktop: satellite and transponder belong to the LEFT; S/Q + active count
+   are docked to the RIGHT, with no second summary row. */
+.dvb-card-group>summary{flex-wrap:nowrap;gap:10px}
+.dvb-card-header-left{display:flex;align-items:center;gap:9px;flex:1 1 auto;min-width:0;overflow:hidden}
+.dvb-card-header-right{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex:0 1 auto;min-width:0;margin-left:auto}
+.dvb-card-header-left>.dvb-card-title{flex:0 0 auto;max-width:145px}
+.dvb-card-header-left>.dvb-card-device{flex:0 1 120px;max-width:120px}
+.dvb-card-satellite-strip{display:flex;align-items:center;gap:8px;flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.dvb-card-level-strip{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex:0 1 auto;min-width:0;max-width:min(49vw,470px);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.dvb-card-fe-info,.dvb-card-fe-level{display:inline-flex;align-items:center;gap:5px;min-width:0;flex:0 0 auto;white-space:nowrap;padding:3px 5px;font-size:.68rem;font-variant-numeric:tabular-nums}
+.dvb-card-fe-info{border-left:1px solid rgba(255,255,255,.14);padding-left:8px}
+.dvb-card-fe-level{border:1px solid rgba(255,255,255,.09);border-radius:8px;background:rgba(255,255,255,.035)}
 .dvb-card-fe-label{font-weight:800;color:#b7d8f8;white-space:nowrap}
+.dvb-card-sat{color:#c0afd9;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis}
 .dvb-card-tp{color:#d4e2f2;font-weight:600;white-space:nowrap}
-.dvb-card-sat{color:#c0afd9;white-space:nowrap;max-width:175px;overflow:hidden;text-overflow:ellipsis}
+.dvb-card-header-right>.dvb-card-count{margin-left:0;flex:none}
 .dvb-card-meter{display:inline-flex;gap:3px;align-items:center;white-space:nowrap}
 .dvb-card-meter-name{font-weight:600;color:#a1b6ce}
 .dvb-card-meter-reading{font-weight:800;min-width:28px;text-align:right;color:#b7c7d7}
 .dvb-card-meter-rail{position:relative;display:inline-block;width:30px;height:6px;overflow:hidden;border-radius:99px;background:rgba(255,255,255,.11)}
 .dvb-card-meter-fill{position:absolute;left:0;top:0;bottom:0;width:0;background:#8794a5;transition:width .25s ease;border-radius:99px}
-@media(max-width:520px){.dvb-card-fe-live{padding:4px;gap:4px}.dvb-card-meter-rail{width:22px}}
+@media(max-width:820px){
+ .dvb-card-group>summary{flex-wrap:wrap}
+ .dvb-card-header-left{flex:1 1 calc(100% - 24px);flex-wrap:wrap;overflow:visible}
+ .dvb-card-header-left>.dvb-card-device{flex:1 1 auto;max-width:none}
+ .dvb-card-satellite-strip{flex:1 1 100%;width:100%;overflow:visible;flex-wrap:wrap}
+ .dvb-card-header-right{flex:1 1 100%;width:100%;margin-left:18px;justify-content:flex-end;flex-wrap:wrap}
+ .dvb-card-level-strip{max-width:100%;overflow:visible;flex-wrap:wrap}
+ .dvb-card-fe-info{padding:3px 5px}
+ .dvb-card-meter-rail{width:24px}
+}
 .dvb-card-tiles{padding:10px 12px 12px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
 .non-dvb-tile-heading{color:#c2d3e6;margin:0 0 9px;font-size:.84rem;font-weight:700}
-@media(max-width:520px){.dvb-card-group>summary{flex-wrap:wrap}.dvb-card-device{width:100%;order:3;margin-left:18px}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
+@media(max-width:520px){.dvb-card-header-left>.dvb-card-device{width:100%;order:3;margin-left:18px}.dvb-card-satellite-strip{order:4}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
 .tile{position:relative;background:rgba(22,27,37,.94);padding:8px 10px 8px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:4px;height:252px;min-height:252px;width:100%;max-width:none;box-sizing:border-box;box-shadow:0 18px 42px rgba(0,0,0,.14);transition:transform .2s ease,border-color .2s ease;font-size:11px;overflow:hidden}
 .tile:before{content:'';position:absolute;left:0;top:12px;bottom:12px;width:4px;border-radius:999px;background:linear-gradient(180deg,#3fc8ff,#1d69ff)}
 .tile:hover{transform:translateY(-1px);border-color:rgba(31,136,255,.3)}
