@@ -221,6 +221,21 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
         Json::Value response; response["result"] = "error"; response["error"] = message;
         Json::StreamWriterBuilder writer; return Json::writeString(writer, response);
     }
+    // Dedicated metadata-only save: never stop/recreate stream pipelines just
+    // because the operator changed the global restart clock.
+    if (root.isObject() && root.size() == 1 && root.isMember("restart_schedule")) {
+        const auto previous = configManager.config.restartSchedule;
+        configManager.config.restartSchedule = StreamRestartSchedule::fromJson(root["restart_schedule"]);
+        if (!configManager.save()) {
+            configManager.config.restartSchedule = previous;
+            return errorReply("failed to save global restart schedule");
+        }
+        streamManager.configureRestartSchedule();
+        Json::Value response(Json::objectValue);
+        response["result"] = "ok";
+        response["restart_schedule"] = configManager.config.restartSchedule.toJson();
+        return jsonReply(response);
+    }
     const AppConfig previousConfig = configManager.config;
     const auto previousStreams = streamConfigById(previousConfig.streams);
     const auto managedSnapshot = streamManager.snapshot();
@@ -239,6 +254,9 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     }
     if (!root.isMember("language")) {
         nextConfig.language = configManager.config.language;
+    }
+    if (!root.isMember("restart_schedule")) {
+        nextConfig.restartSchedule = previousConfig.restartSchedule;
     }
     if (!root.isMember("srt_vps_vds_optimization")) {
         nextConfig.srtVpsVdsOptimization = configManager.config.srtVpsVdsOptimization;
@@ -327,6 +345,7 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     // A changed XMLTV URL or daily schedule is metadata-only. It must not
     // retune a DVB card, reconfigure CA or interrupt transcoding.
     streamManager.configureExternalXmltvSources();
+    streamManager.configureRestartSchedule();
     // V10.8.100: CardManager::configure() synchronizes OSCam-mini and may
     // restart its systemd service when listener configuration changes. A
     // stream-only/partial config save must not restart OSCam or reload the CA
