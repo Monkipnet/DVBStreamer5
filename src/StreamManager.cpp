@@ -2410,6 +2410,11 @@ Json::Value StreamManager::dvbSubtitleTracks(const std::string& id) const {
     return result;
 }
 
+dvbstreamer5::media::network::DvbNitInfo StreamManager::dvbNitInfo(
+    int adapter, int frontend) const {
+    return sharedDvbInputs.nitInfo(adapter, frontend);
+}
+
 Json::Value StreamManager::epgSnapshot(const std::string& id) const {
     Json::Value root(Json::objectValue);
     root["stream_id"] = id;
