@@ -3520,7 +3520,9 @@ function refreshSystemLoadPanel(metrics) {
   if (master) master.checked = systemLoadChartPrefs.enabled !== false;
   const chartWindow = document.getElementById('systemLoadChartsWindow');
   if (chartWindow) chartWindow.style.display = systemLoadChartPrefs.enabled ? '' : 'none';
-  function line(label, percent, detail, chartKey=null, secondaryKey=null) {
+  appendLoadLegend(root);
+  function line(label, percent, detail, chartKey=null, secondaryKey=null, appChartKey=null,
+                breakdown=null) {
     const item = document.createElement('div');
     item.className = 'system-load-item';
     const head = document.createElement('div');
@@ -3564,14 +3566,26 @@ function refreshSystemLoadPanel(metrics) {
       info.textContent = detail;
       item.appendChild(info);
     }
-    if (chartKey && systemLoadChartVisible(chartKey)) {
-      item.appendChild(buildSystemLoadChart(chartKey, secondaryKey, label));
-      if (secondaryKey) {
-        const legend = document.createElement('div');
-        legend.className = 'system-load-chart-legend';
-        legend.textContent = '● ' + label + ' · ● ' + t('gpuMemory');
-        item.appendChild(legend);
+    if (breakdown) {
+      if (breakdown.appDescription) {
+        const info = document.createElement('div');
+        info.className = 'load-app-info';
+        info.textContent = breakdown.appDescription;
+        item.appendChild(info);
       }
+      if (Array.isArray(breakdown.chips) && breakdown.chips.length)
+        appendLoadChips(item, breakdown.heading || t('logicalCores'), breakdown.chips);
+      if (Array.isArray(breakdown.appChips) && breakdown.appChips.length)
+        appendLoadChips(item, t('appUsage'), breakdown.appChips);
+    }
+    if (chartKey && systemLoadChartVisible(chartKey)) {
+      item.appendChild(buildSystemLoadChart(chartKey, secondaryKey, label, appChartKey));
+      const legend = document.createElement('div');
+      legend.className = 'system-load-chart-legend';
+      legend.textContent = '🔵 ' + t('totalUsage') +
+        (secondaryKey ? ' · 🟢 ' + t('gpuMemory') : '') +
+        (appChartKey ? ' · 🟣 ' + t('appUsage') : '');
+      item.appendChild(legend);
     }
     root.appendChild(item);
   }
@@ -3579,10 +3593,27 @@ function refreshSystemLoadPanel(metrics) {
   const ramUsed = Number(metrics.ram_used_mb);
   const formatMb = value => value >= 1024 ? (value / 1024).toFixed(2) + ' GiB' :
     value.toFixed(0) + ' MiB';
-  line('CPU', Number(metrics.cpu_percent || 0), '', 'cpu');
+  const appCpu=loadPercentOrNull(metrics.process_cpu_percent);
+  const cpuCores=Array.isArray(metrics.cpu_cores)?metrics.cpu_cores:[];
+  const coreChips=cpuCores.filter(c=>Number.isInteger(c.id)).slice(0,256)
+    .map(c=>({name:t('core')+' '+c.id, percent:c.percent}));
+  line('CPU', Number(metrics.cpu_percent || 0), '', 'cpu', null, 'app:cpu', {
+    heading:t('logicalCores'),
+    chips:coreChips,
+    appDescription:t('appUsage')+': '+
+      (appCpu===null?t('unavailable'):appCpu.toFixed(2)+'% '+t('totalUsage'))
+  });
+  const appRamMb=typeof metrics.process_rss_mb === 'number'
+    ? metrics.process_rss_mb : null;
+  const appRam=loadPercentOrNull(metrics.process_ram_percent);
   line('RAM', Number(metrics.ram_percent || 0),
     Number.isFinite(ram) && ram > 0 && Number.isFinite(ramUsed) ?
-    t('memoryUsed') + ': ' + formatMb(ramUsed) + ' / ' + formatMb(ram) : '', 'ram');
+    t('memoryUsed') + ': ' + formatMb(ramUsed) + ' / ' + formatMb(ram) : '',
+    'ram',null,'app:ram', {
+      appDescription:t('appUsage')+': '+
+        (appRamMb===null?t('unavailable'):formatMb(appRamMb))+
+        (appRam===null?'':' ('+appRam.toFixed(2)+'%)')
+    });
   const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
   if (!gpus.length) {
     line('GPU', null, t('noGpu'));
@@ -3594,10 +3625,26 @@ function refreshSystemLoadPanel(metrics) {
       const memory = Number.isFinite(total) && total > 0 && Number.isFinite(used)
         ? t('memoryUsed') + ': ' + formatMb(used) + ' / ' + formatMb(total)
         : t('memoryUsed') + ': ' + t('unavailable');
+      const processGpu=loadProcessGpuForCard(metrics,gpu);
+      const engines=loadEngineValues(gpu.engines);
+      const appEngines=loadEngineValues(processGpu?.engines);
+      const appMemory=typeof gpu.process_memory_used_mb==='number' ?
+        gpu.process_memory_used_mb : (typeof processGpu?.memory_used_mb==='number' ?
+        processGpu.memory_used_mb : null);
+      const appChartKey=appEngines.length ? 'app:'+chartKey :
+        (appMemory!==null && total>0 ? 'app-vram:'+chartKey : null);
+      const appDescription=t('appUsage')+': '+
+        (appEngines.length ? appEngines.map(e=>e.name+' '+e.percent.toFixed(1)+'%').join(' · ') :
+        t('unavailable')) + ' · '+t('gpuMemory')+': '+
+        (appMemory===null ? t('unavailable') : formatMb(appMemory));
       line(String(gpu.name || gpu.vendor || 'GPU'),
         typeof gpu.utilization_percent === 'number' ? gpu.utilization_percent : null,
         memory + ' · ' + String(gpu.source || 'DRM'), chartKey,
-        Number.isFinite(total) && total > 0 ? 'vram:' + chartKey : null);
+        Number.isFinite(total) && total > 0 ? 'vram:' + chartKey : null,
+        appChartKey,{
+          heading:t('gpuEngines'),chips:engines,appChips:appEngines,
+          appDescription
+        });
     }
   }
 }
