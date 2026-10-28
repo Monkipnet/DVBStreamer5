@@ -446,6 +446,7 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
     root["ram_used_mb"] = static_cast<double>(memoryTotal - std::min(memoryTotal, memoryAvailable)) / 1024.0;
     root["ram_total_mb"] = static_cast<double>(memoryTotal) / 1024.0;
     root["gpus"] = collectGpuMetrics();
+    root["system_load_epoch"] = Json::Int64(systemLoadHistoryStartEpoch_);
     root["process_threads"] = Json::UInt64(processThreads);
     root["process_fds"] = Json::UInt64(processFds);
     root["process_rss_mb"] = static_cast<double>(processRssKb) / 1024.0;
