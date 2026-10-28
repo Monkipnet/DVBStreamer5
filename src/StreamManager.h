@@ -379,6 +379,8 @@ public:
     Json::Value mptsSnapshot() const;
     Json::Value epgSnapshot(const std::string& id) const;
     Json::Value dvbSubtitleTracks(const std::string& id) const;
+    // Passive NIT details from the already-running shared DVB full-TS reader.
+    dvbstreamer5::media::network::DvbNitInfo dvbNitInfo(int adapter, int frontend) const;
     void persistAllDvbEpg();
     void configureExternalXmltvSources();
     bool refreshExternalXmltv(const std::string& sourceId);
