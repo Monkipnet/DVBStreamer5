@@ -94,6 +94,7 @@ private:
     std::string renderIndexPage();
     void recordQualitySample(const StreamConfig& cfg, const Json::Value& state);
     void recordAllQualitySamples();
+    void resetSystemLoadHistoryOnStartup();
     void recordSystemLoadHistorySample();
     void scheduleQualitySampler();
     void loadQualityHistoryFromDisk();
@@ -117,6 +118,9 @@ private:
     mutable std::mutex panelSessionsMutex_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         panelSessions_;
+    const int64_t systemLoadHistoryStartEpoch_ =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
     uint64_t previousHistoryCpuTotal_ = 0;
     uint64_t previousHistoryCpuIdle_ = 0;
     uint64_t previousCpuTotal = 0;
