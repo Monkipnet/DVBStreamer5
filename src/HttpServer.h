@@ -126,6 +126,11 @@ private:
         previousHistoryCoreTicks_;
     std::map<unsigned int, std::pair<std::uint64_t, std::uint64_t>>
         previousUiCoreTicks_;
+    uint64_t previousUiProcessTicks_ = 0;
+    uint64_t previousHistoryProcessTicks_ = 0;
+    // Cumulative DRM fdinfo engine runtime (nanoseconds), per GPU and engine.
+    std::map<std::string, std::uint64_t> previousUiDrmEngineNs_;
+    std::map<std::string, std::uint64_t> previousHistoryDrmEngineNs_;
     uint64_t previousHistoryCpuTotal_ = 0;
     uint64_t previousHistoryCpuIdle_ = 0;
     uint64_t previousCpuTotal = 0;
