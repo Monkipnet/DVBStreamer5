@@ -3,6 +3,7 @@
 #include <jsoncpp/json/json.h>
 
 #include <cstdint>
+#include <cstddef>
 #include <mutex>
 #include <string>
 #include <vector>
