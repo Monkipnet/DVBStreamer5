@@ -15,6 +15,51 @@ namespace {
 
 // Read-only GPU discovery. Avoid shell commands (including nvidia-smi) and
 // heavyweight media initialization in the 3-second metrics polling path.
+// Each /proc/stat cpuN represents a logical CPU (hardware thread).
+// Use each caller's own previous counters to avoid mutual sampling interference.
+Json::Value collectLogicalCpuCores(
+    std::map<unsigned int, std::pair<std::uint64_t, std::uint64_t>>& previous) {
+    Json::Value rows(Json::arrayValue);
+    std::ifstream proc("/proc/stat");
+    std::string line;
+    std::set<unsigned int> seen;
+    while (std::getline(proc,line) && rows.size() < 256U) {
+        std::istringstream input(line);
+        std::string label;
+        if (!(input >> label) || label.size() < 4U ||
+            label.compare(0,3,"cpu") != 0 ||
+            !std::all_of(label.begin()+3,label.end(),
+                         [](unsigned char c){ return c >= '0' && c <= '9'; }))
+            continue;
+        unsigned long id = 0;
+        try { id = std::stoul(label.substr(3)); } catch (...) { continue; }
+        if (id > 4095U) continue;
+        std::uint64_t user=0,nice=0,sys=0,idle=0,wait=0,irq=0,soft=0,steal=0;
+        if (!(input >> user >> nice >> sys >> idle >> wait >> irq >> soft >> steal))
+            continue;
+        const std::uint64_t total=user+nice+sys+idle+wait+irq+soft+steal;
+        const std::uint64_t idleTicks=idle+wait;
+        const auto found=previous.find(static_cast<unsigned int>(id));
+        Json::Value row(Json::objectValue);
+        row["id"]=static_cast<unsigned int>(id);
+        if (found != previous.end() && total > found->second.first &&
+            idleTicks >= found->second.second) {
+            const std::uint64_t delta=total-found->second.first;
+            const std::uint64_t idleDelta=idleTicks-found->second.second;
+            row["percent"]=std::clamp(100.0*static_cast<double>(
+                delta-std::min(delta,idleDelta))/delta,0.0,100.0);
+        }
+        previous[static_cast<unsigned int>(id)]={total,idleTicks};
+        seen.insert(static_cast<unsigned int>(id));
+        rows.append(std::move(row));
+    }
+    for(auto it=previous.begin();it!=previous.end();) {
+        if(!seen.count(it->first)) it=previous.erase(it);
+        else ++it;
+    }
+    return rows;
+}
+
 bool gpuSysfsNumber(const std::filesystem::path& path, std::uint64_t& value) {
     std::ifstream file(path);
     return static_cast<bool>(file >> value);
@@ -31,6 +76,7 @@ struct GpuNvml {
     using DeviceName = int (*)(Handle, char*, unsigned int);
     using DeviceUtil = int (*)(Handle, Utilization*);
     using DeviceMemory = int (*)(Handle, Memory*);
+    using DeviceEngine = int (*)(Handle, unsigned int*, unsigned int*);
     void* library = nullptr;
     Init init = nullptr;
     Shutdown shutdown = nullptr;
@@ -39,6 +85,8 @@ struct GpuNvml {
     DeviceName name = nullptr;
     DeviceUtil utilization = nullptr;
     DeviceMemory memory = nullptr;
+    DeviceEngine encoder = nullptr;
+    DeviceEngine decoder = nullptr;
     bool available = false;
 
     GpuNvml() {
@@ -51,6 +99,8 @@ struct GpuNvml {
         name = reinterpret_cast<DeviceName>(dlsym(library, "nvmlDeviceGetName"));
         utilization = reinterpret_cast<DeviceUtil>(dlsym(library, "nvmlDeviceGetUtilizationRates"));
         memory = reinterpret_cast<DeviceMemory>(dlsym(library, "nvmlDeviceGetMemoryInfo"));
+        encoder = reinterpret_cast<DeviceEngine>(dlsym(library, "nvmlDeviceGetEncoderUtilization"));
+        decoder = reinterpret_cast<DeviceEngine>(dlsym(library, "nvmlDeviceGetDecoderUtilization"));
         available = init && shutdown && count && byIndex &&
             init() == 0;
     }
@@ -89,6 +139,22 @@ Json::Value collectGpuMetrics() {
                         gpu["memory_controller_percent"] = std::min(100U, util.memory);
                     }
                 }
+                Json::Value engines(Json::objectValue);
+                // NVML reports per-encoder/decoder aggregate utilization,
+                // not utilization of individual CUDA/shader cores.
+                if (nvml.encoder) {
+                    unsigned int percent=0, sampleUs=0;
+                    if (nvml.encoder(device,&percent,&sampleUs)==0)
+                        engines["encode"]=std::min(100U,percent);
+                }
+                if (nvml.decoder) {
+                    unsigned int percent=0, sampleUs=0;
+                    if (nvml.decoder(device,&percent,&sampleUs)==0)
+                        engines["decode"]=std::min(100U,percent);
+                }
+                if (gpu.isMember("memory_controller_percent"))
+                    engines["memory"]=gpu["memory_controller_percent"];
+                if (!engines.empty()) gpu["engines"]=std::move(engines);
                 if (nvml.memory) {
                     GpuNvml::Memory mem{};
                     if (nvml.memory(device, &mem) == 0) {
@@ -261,6 +327,16 @@ void HttpServer::recordSystemLoadHistorySample() {
     const int64_t now = systemLoadUnixTime();
     row["t"] = Json::Int64(now);
     row["cpu"] = std::clamp(cpuPercent,0.0,100.0);
+    Json::Value cores(Json::arrayValue);
+    const auto cpuCores = collectLogicalCpuCores(previousHistoryCoreTicks_);
+    for (const auto& core : cpuCores) {
+        if (!core.isMember("percent")) continue;
+        Json::Value item(Json::arrayValue);
+        item.append(core["id"]);
+        item.append(core["percent"]);
+        cores.append(std::move(item));
+    }
+    row["cores"] = std::move(cores);
     if (totalKb) row["ram"] =
         100.0 * static_cast<double>(totalKb-std::min(totalKb,availableKb))/totalKb;
     Json::Value cards(Json::arrayValue);
@@ -276,6 +352,8 @@ void HttpServer::recordSystemLoadHistorySample() {
             (card.empty()?std::to_string(i)+":"+name:card);
         if (gpu.isMember("utilization_percent"))
             item["usage"] = gpu["utilization_percent"];
+        if (gpu.isMember("engines"))
+            item["engines"] = gpu["engines"];
         const double memTotal = gpu.get("memory_total_mb",0.0).asDouble();
         if (memTotal > 0 && gpu.isMember("memory_used_mb"))
             item["vram"] = std::clamp(
@@ -448,6 +526,7 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
     }
     previousCpuTotal = cpuTotal;
     previousCpuIdle = cpuIdle;
+    root["cpu_cores"] = collectLogicalCpuCores(previousUiCoreTicks_);
     const double elapsedSeconds = previousMetricsSample.time_since_epoch().count() == 0
       ? 0.0
       : std::chrono::duration<double>(now - previousMetricsSample).count();
