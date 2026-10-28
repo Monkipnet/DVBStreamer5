@@ -1474,6 +1474,12 @@ std::string HttpServer::currentState() {
                         physicalDvbCardKey(frontendKey.first, frontendKey.second)).first;
                 }
                 item["dvb_card_key"] = cachedCard->second;
+                item["dvb_satellite_name"] = "";
+                if (snap.count(cfg.id) && snap.at(cfg.id) &&
+                    snap.at(cfg.id)->nitSatelliteMonitor) {
+                    item["dvb_satellite_name"] =
+                        snap.at(cfg.id)->nitSatelliteMonitor->satelliteName();
+                }
                 item["dvb_frequency_khz"] = Json::UInt(configuredDvbParams.frequencyKHz);
                 item["dvb_symbol_rate_k"] = Json::UInt(configuredDvbParams.symbolRateK);
                 item["dvb_polarity"] = configuredDvbParams.polarity;
