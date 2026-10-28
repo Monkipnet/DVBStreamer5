@@ -4426,8 +4426,11 @@ function dvbFrontendCardSnapshots(streams) {
       satellite:stream.dvb_satellite_name || ''
     };
     const existing=frontends.get(key);
-    if (!existing || (candidate.available && !existing.available) ||
-        (candidate.available && candidate.locked && !existing.locked))
+    if (!existing || (candidate.active && !existing.active) ||
+        (candidate.active === existing.active &&
+         ((candidate.available && !existing.available) ||
+          (candidate.available && candidate.locked && !existing.locked) ||
+          (candidate.satellite && !existing.satellite))))
       frontends.set(key,candidate);
   }
   return [...frontends.values()].sort((a,b)=>
