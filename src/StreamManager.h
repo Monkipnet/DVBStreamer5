@@ -373,6 +373,7 @@ public:
     size_t restartSrtOutputsForStreams(const std::vector<std::string>& streamIds);
     size_t restartAllSrtOutputs();
 
+    void configureRestartSchedule(); // update background server-local scheduler without media restart
     void configureMptsOutputs();
     bool startMptsOutput(const std::string& id, std::string* error = nullptr);
     bool stopMptsOutput(const std::string& id);
@@ -391,6 +392,7 @@ public:
 private:
     void monitorNativeStream(StreamState* state);
     void monitorOnDemandStreams();
+    void monitorGlobalRestartSchedule();
     bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
     bool isClientAllowedForStream(const std::string& streamId, const StreamClientIp& clientIp) const {
         if (clientIp.subscriberFilterExempt) return true;
@@ -455,5 +457,10 @@ private:
     std::set<std::string> onDemandStartedStreams;
     std::atomic<bool> onDemandMonitorStop{false};
     std::thread onDemandMonitorThread;
+    std::mutex restartScheduleMutex;
+    std::condition_variable restartScheduleCv;
+    StreamRestartSchedule restartScheduleConfig;
+    std::atomic<bool> restartScheduleStop{false};
+    std::thread restartScheduleThread;
     dvbstreamer5::media::SharedDvbInputPool sharedDvbInputs;
 };
