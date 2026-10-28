@@ -158,7 +158,8 @@ Json::Value buildDvbStreamerDrmMetrics(
     Json::Value gpus(Json::arrayValue);
     std::map<std::string,Json::Value> grouped;
     for (const auto& [key,now]:sample.engineNanoseconds) {
-        const auto separator=key.find(':');
+        // A PCI BDF itself contains ':' (e.g. 0000:03:00.0).
+        const auto separator=key.rfind(':');
         if (separator==std::string::npos) continue;
         const auto device=key.substr(0,separator);
         const auto engine=key.substr(separator+1U);
