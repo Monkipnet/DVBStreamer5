@@ -1211,3 +1211,159 @@ bool resolveServicePids(const DvbSatelliteParams& params, uint32_t serviceId,
 }
 
 } // namespace DvbSatellite
+
+
+namespace {
+int nitBcd(const std::uint8_t* p, std::size_t digits) {
+    int value = 0;
+    for (std::size_t i=0;i<digits;++i) {
+        const std::uint8_t v=p[i/2U];
+        const int digit=(i%2U==0U)?(v>>4U):(v&0x0fU);
+        if(digit>9) return -1;
+        value=value*10+digit;
+    }
+    return value;
+}
+bool nitCrcValid(const std::vector<std::uint8_t>& section) {
+    std::uint32_t crc=0xffffffffU;
+    for (const std::uint8_t b:section) {
+        crc ^= static_cast<std::uint32_t>(b)<<24U;
+        for(int bit=0;bit<8;++bit)
+            crc=(crc&0x80000000U)?((crc<<1U)^0x04c11db7U):(crc<<1U);
+    }
+    return crc==0;
+}
+std::string nitOrbitalLabel(int tenths, bool east) {
+    const std::map<int,std::string> knownEast = {
+        {48,"Astra 4A"},{70,"Eutelsat 7"},{90,"Eutelsat 9"},
+        {130,"Hot Bird"},{160,"Eutelsat 16"},{192,"Astra"},
+        {235,"Astra"},{282,"Astra"},{360,"Eutelsat 36"},
+        {390,"Hellas Sat"},{420,"Türksat"},{520,"TürkmenÄlem/MonacoSat"},
+        {750,"ABS-2"},{850,"Intelsat 15"}
+    };
+    const std::map<int,std::string> knownWest = {
+        {8,"Thor/Intelsat"},{40,"Amos"},{300,"Hispasat"}
+    };
+    const auto& known=east?knownEast:knownWest;
+    const auto match=known.find(tenths);
+    std::ostringstream result;
+    if(match!=known.end())result<<match->second<<" ";
+    result<<(tenths/10)<<"."<<(tenths%10)<<(east?"°E":"°W");
+    return result.str();
+}
+} // namespace
+
+DvbNitSatelliteMonitor::DvbNitSatelliteMonitor(const DvbSatelliteParams& tuned)
+    : tuned_(tuned) {
+    section_.reserve(1024U);
+}
+
+std::string DvbNitSatelliteMonitor::satelliteName() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return satelliteName_;
+}
+
+void DvbNitSatelliteMonitor::parseSection(const std::vector<std::uint8_t>& s) {
+    if(s.size()<16U||s[0]!=0x40U||(s[5]&0x01U)==0U||
+       !nitCrcValid(s))return;
+    const std::size_t payloadEnd=s.size()-4U;
+    const std::size_t networkLen=
+        ((static_cast<std::size_t>(s[8]&0x0fU)<<8U)|s[9]);
+    const std::size_t loopIndex=10U+networkLen;
+    if(loopIndex+2U>payloadEnd)return;
+    const std::size_t tsLength=
+        (static_cast<std::size_t>(s[loopIndex]&0x0fU)<<8U)|s[loopIndex+1U];
+    const std::size_t tsEnd=loopIndex+2U+tsLength;
+    if(tsEnd>payloadEnd)return;
+    for(std::size_t at=loopIndex+2U;at+6U<=tsEnd;) {
+        const std::size_t len=
+            (static_cast<std::size_t>(s[at+4U]&0x0fU)<<8U)|s[at+5U];
+        const std::size_t end=at+6U+len;
+        if(end>tsEnd)return;
+        for(std::size_t desc=at+6U;desc+2U<=end;) {
+            const std::uint8_t tag=s[desc];
+            const std::size_t n=s[desc+1U];
+            if(desc+2U+n>end)break;
+            if(tag==0x43U&&n>=11U) {
+                const std::uint8_t* p=s.data()+desc+2U;
+                const int freq=nitBcd(p,8U); // DVB: BCD units of 10 kHz
+                const int symbol=nitBcd(p+7U,7U); // DVB: BCD units of 100 baud
+                const int orbit=nitBcd(p+4U,4U); // tenths of degree
+                const int polarity=(p[6U]>>5U)&0x03U;
+                const bool east=(p[6U]&0x80U)!=0U;
+                const int configuredPol=tuned_.polarity=="H"?0:1;
+                // An NIT can describe many transponders and satellites.
+                // Never name the tuned input from a nonmatching record.
+                if(freq>=0&&symbol>=0&&orbit>=0&&
+                   polarity==configuredPol&&
+                   std::llabs(static_cast<long long>(freq)*10LL-
+                              tuned_.frequencyKHz)<=1000LL&&
+                   std::llabs(static_cast<long long>(symbol)/10LL-
+                              tuned_.symbolRateK)<=50LL) {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    satelliteName_=nitOrbitalLabel(orbit,east);
+                    return;
+                }
+            }
+            desc+=n+2U;
+        }
+        at=end;
+    }
+}
+
+void DvbNitSatelliteMonitor::consume(const std::uint8_t* data,std::size_t length) {
+    while(length>0U) {
+        if(section_.empty()&&data[0]==0xffU)return;
+        if(expected_==0U) {
+            const std::size_t need=3U-section_.size();
+            const std::size_t take=std::min(need,length);
+            section_.insert(section_.end(),data,data+take);
+            data+=take;length-=take;
+            if(section_.size()<3U)return;
+            expected_=3U+
+                ((static_cast<std::size_t>(section_[1]&0x0fU)<<8U)|section_[2]);
+            if(expected_<16U||expected_>4096U) {
+                section_.clear();expected_=0U;
+                return;
+            }
+        }
+        const std::size_t take=std::min(length,expected_-section_.size());
+        section_.insert(section_.end(),data,data+take);
+        data+=take;length-=take;
+        if(section_.size()==expected_) {
+            parseSection(section_);
+            section_.clear();expected_=0U;
+            if(!satelliteName().empty())return; // Already resolved for this source.
+        }
+    }
+}
+
+void DvbNitSatelliteMonitor::push(const std::uint8_t* data,std::size_t size) {
+    if(!data||size<188U||!satelliteName().empty())return;
+    // The shared receiver supplies aligned full-MPTS chunks. Inspect only
+    // NIT PID 0x0010; no frontend, tuning or conditional-access operations.
+    for(std::size_t at=0;at+188U<=size;at+=188U) {
+        const auto* p=data+at;
+        if(p[0]!=0x47U||(p[1]&0x1fU)!=0U||p[2]!=0x10U||
+           (p[1]&0x80U)!=0U)continue;
+        const std::uint8_t afc=(p[3]>>4U)&0x03U;
+        if((afc&0x01U)==0U)continue;
+        std::size_t off=4U;
+        if((afc&0x02U)!=0U)off+=1U+p[4];
+        if(off>=188U)continue;
+        const std::uint8_t cc=p[3]&0x0fU;
+        if(continuityKnown_ && cc != ((continuity_+1U)&0x0fU)) {
+            section_.clear();expected_=0U;
+        }
+        continuity_=cc;continuityKnown_=true;
+        if((p[1]&0x40U)!=0U) {
+            const std::size_t pointer=p[off++];
+            if(pointer>188U-off) {section_.clear();expected_=0U;continue;}
+            if(!section_.empty()&&pointer>0U)consume(p+off,pointer);
+            section_.clear();expected_=0U;
+            off+=pointer;
+        } else if(section_.empty())continue;
+        if(off<188U)consume(p+off,188U-off);
+        if(!satelliteName().empty())return;
+    }
+}
