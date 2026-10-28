@@ -503,6 +503,17 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
               res.set(http::field::content_type, "application/json");
               httpMetricsRequestCount.fetch_add(1, std::memory_order_relaxed);
               res.body() = systemMetrics();
+            } else if (target.rfind("/api/system-load-history", 0) == 0 &&
+                       (target.size() == 24U || target[24] == '?')) {
+              // Protected by the existing /api/* control-panel authentication.
+              // Never trust an unbounded client-supplied range.
+              res.set(http::field::content_type, "application/json");
+              uint64_t period = 3600;
+              const std::string requested = queryValue(target, "period");
+              if (requested == "360" || requested == "3600" || requested == "86400") {
+                  period = static_cast<uint64_t>(std::stoull(requested));
+              }
+              res.body() = systemLoadHistory(period);
             } else if (target == "/api/mpts/status") {
                 res.set(http::field::content_type, "application/json");
                 Json::StreamWriterBuilder writer;
