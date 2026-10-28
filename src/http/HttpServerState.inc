@@ -609,6 +609,11 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
       }
     }
 
+    // Sample process and host CPU clocks together. Previously process ticks
+    // were captured after the memory/quality/media diagnostics, skewing the
+    // two intervals and sometimes making one process exceed total host load.
+    std::uint64_t processTicks = 0;
+    const bool processReadable = readDvbStreamerCpuTicks(processTicks);
     uint64_t memoryTotal = 0;
     uint64_t memoryAvailable = 0;
     {
@@ -712,16 +717,23 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
       const uint64_t idleDelta = cpuIdle - previousCpuIdle;
       cpuPercent = 100.0 * static_cast<double>(totalDelta - std::min(totalDelta, idleDelta)) / totalDelta;
     }
-    std::uint64_t processTicks=0;
-    const bool processReadable=readDvbStreamerCpuTicks(processTicks);
     const bool processDelta=processReadable && previousUiProcessTicks_>0 &&
         processTicks>=previousUiProcessTicks_ && previousCpuTotal>0 &&
         cpuTotal>previousCpuTotal;
     double appCpuPercent=0.0;
     if (processDelta) {
-        appCpuPercent=std::clamp(
-          100.0*static_cast<double>(processTicks-previousUiProcessTicks_)/
-          static_cast<double>(cpuTotal-previousCpuTotal),0.0,100.0);
+        const std::uint64_t totalDelta = cpuTotal-previousCpuTotal;
+        const std::uint64_t idleDelta = cpuIdle>=previousCpuIdle
+          ? cpuIdle-previousCpuIdle : totalDelta;
+        const std::uint64_t hostBusyDelta =
+          totalDelta-std::min(totalDelta,idleDelta);
+        // Account for kernel clock quantization and sub-ms sampling skew.
+        // A single process cannot consume more than all busy CPU ticks.
+        const std::uint64_t processDeltaTicks =
+          processTicks-previousUiProcessTicks_;
+        appCpuPercent=100.0*static_cast<double>(
+          std::min(processDeltaTicks,hostBusyDelta))/
+          static_cast<double>(totalDelta);
     }
     if (processReadable) previousUiProcessTicks_=processTicks;
     previousCpuTotal = cpuTotal;
