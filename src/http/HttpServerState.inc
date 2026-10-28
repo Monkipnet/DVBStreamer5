@@ -1466,6 +1466,11 @@ std::string HttpServer::currentState() {
             if (DvbSatellite::parseUri(cfg.inputUri, configuredDvbParams, configuredDvbError)) {
                 item["dvb_adapter"] = configuredDvbParams.adapter;
                 item["dvb_frontend"] = configuredDvbParams.frontend;
+                // Read-only transponder metadata for compact card summaries.
+                // Values come from the configured DVB URI, not guessed orbital names.
+                item["dvb_frequency_khz"] = configuredDvbParams.frequencyKHz;
+                item["dvb_symbol_rate"] = configuredDvbParams.symbolRateK;
+                item["dvb_polarity"] = configuredDvbParams.polarity;
                 const auto frontendKey = std::make_pair(configuredDvbParams.adapter,
                                                         configuredDvbParams.frontend);
                 auto cachedCard = dvbCardKeyCache.find(frontendKey);
