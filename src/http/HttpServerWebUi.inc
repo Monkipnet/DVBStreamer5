@@ -4403,13 +4403,19 @@ function dvbCardFrontendEntries(group) {
       byFrontend.set(key,{key,adapter,frontend,labels:new Set(),streams:[]});
     const entry=byFrontend.get(key);
     entry.streams.push(stream);
-    const tune=parseDvbTunerUri(stream.input_uri || '');
-    const satellite=String(tune.satellite_name || '').trim() || t('satelliteNotSet');
-    const frequency=Number(tune.frequency_mhz);
-    const symbolRate=Number(tune.symbol_rate);
-    const polarity=String(tune.polarity || '').toUpperCase();
-    const valid=Number.isFinite(frequency) && frequency >= 900 &&
-      Number.isFinite(symbolRate) && symbolRate > 0 && /^[HV]$/.test(polarity);
+    const inputUri=String(stream.input_uri || '');
+    const question=inputUri.indexOf('?');
+    const params=new URLSearchParams(question<0 ? '' : inputUri.slice(question+1));
+    const satellite=String(params.get('satellite_name') || '').trim().slice(0,80) || t('satelliteNotSet');
+    const frequency=Number(params.get('frequency_khz')) / 1000;
+    const symbolRate=Number(params.get('symbol_rate'));
+    const polarity=String(params.get('polarity') || '').toUpperCase();
+    // Never synthesize a transponder from the default tuner form values.
+    const valid=params.has('frequency_khz') && params.has('symbol_rate') &&
+      params.has('polarity') && Number.isFinite(frequency) &&
+      frequency >= 900 && frequency <= 14000 &&
+      Number.isFinite(symbolRate) && symbolRate >= 100 &&
+      symbolRate <= 60000 && /^[HV]$/.test(polarity);
     const tp=valid ? 'TP '+Number(frequency.toFixed(3))+' '+polarity+' '+symbolRate : 'TP —';
     entry.labels.add(satellite+' · '+tp);
   }
