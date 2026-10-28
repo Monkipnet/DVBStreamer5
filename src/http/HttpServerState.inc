@@ -1,3 +1,32 @@
+namespace {
+// Resolve physical DVB hardware without opening or retuning a frontend.
+// Several /dev/dvb/adapterN frontends can belong to one multi-tuner PCIe card.
+std::string physicalDvbCardKey(int adapter, int frontend) {
+    const std::filesystem::path device =
+        std::filesystem::path("/sys/class/dvb") /
+        ("dvb" + std::to_string(adapter) + ".frontend" + std::to_string(frontend)) /
+        "device";
+    std::error_code ec;
+    auto resolved = std::filesystem::canonical(device, ec);
+    if (!ec) {
+        static const std::regex pci(R"(^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-7]$)");
+        static const std::regex usb(R"(^[0-9]+-[0-9]+(\.[0-9]+)*$)");
+        // Nearest physical controller wins: USB cards must not accidentally
+        // collapse into their common upstream PCI USB controller.
+        while (!resolved.empty() && resolved != resolved.root_path()) {
+            const std::string name = resolved.filename().string();
+            if (std::regex_match(name, usb)) return "usb:" + name;
+            if (std::regex_match(name, pci)) return "pci:" + name;
+            const auto parent = resolved.parent_path();
+            if (parent == resolved) break;
+            resolved = parent;
+        }
+    }
+    // Virtual/unsupported devices are still grouped deterministically.
+    return "adapter:" + std::to_string(adapter);
+}
+} // namespace
+
 std::string HttpServer::listInterfaces() {
     Json::Value root;
     auto interfaces = enumerateNetworkInterfaces();
@@ -1291,6 +1320,7 @@ std::string HttpServer::currentState() {
     // channel tiles may share the exact same DVB input/transponder. Cache one
     // ioctl snapshot per live DVB URI for each /api/state response.
     std::map<std::string, Json::Value> dvbSignalCache;
+    std::map<std::pair<int, int>, std::string> dvbCardKeyCache;
     for (const auto& cfg : configManager.config.streams) {
         Json::Value item = cfg.toJson();
         const std::string configuredInput = normalizeInputUri(cfg.inputUri);
@@ -1436,6 +1466,14 @@ std::string HttpServer::currentState() {
             if (DvbSatellite::parseUri(cfg.inputUri, configuredDvbParams, configuredDvbError)) {
                 item["dvb_adapter"] = configuredDvbParams.adapter;
                 item["dvb_frontend"] = configuredDvbParams.frontend;
+                const auto frontendKey = std::make_pair(configuredDvbParams.adapter,
+                                                        configuredDvbParams.frontend);
+                auto cachedCard = dvbCardKeyCache.find(frontendKey);
+                if (cachedCard == dvbCardKeyCache.end()) {
+                    cachedCard = dvbCardKeyCache.emplace(frontendKey,
+                        physicalDvbCardKey(frontendKey.first, frontendKey.second)).first;
+                }
+                item["dvb_card_key"] = cachedCard->second;
                 item["dvb_stream_id"] = configuredDvbParams.streamId;
                 item["dvb_diseqc_source"] = configuredDvbParams.diseqcSource;
                 item["dvb_unicable_mode"] = configuredDvbParams.unicableMode;
