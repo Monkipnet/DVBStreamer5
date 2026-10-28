@@ -60,6 +60,126 @@ Json::Value collectLogicalCpuCores(
     return rows;
 }
 
+// The process utime+stime count is in the same kernel tick units as /proc/stat.
+bool readDvbStreamerCpuTicks(std::uint64_t& ticks) {
+    std::ifstream stat("/proc/self/stat");
+    std::string line;
+    if (!std::getline(stat,line)) return false;
+    const auto right = line.rfind(')');
+    if (right == std::string::npos || right+2U >= line.size()) return false;
+    // Tokens after the executable name start with field 3 (state).
+    std::istringstream fields(line.substr(right+2U));
+    std::string token;
+    std::uint64_t user = 0, kernel = 0;
+    for (int field=3; field<=15; ++field) {
+        if (!(fields >> token)) return false;
+        if (field==14 || field==15) {
+            try {
+                const auto n=std::stoull(token);
+                if (field==14) user=n;
+                else kernel=n;
+            } catch (...) { return false; }
+        }
+    }
+    ticks=user+kernel;
+    return true;
+}
+
+std::uint64_t dvbStreamerResidentKb() {
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status,line)) {
+        if (line.rfind("VmRSS:",0)==0) {
+            std::istringstream value(line.substr(6));
+            std::uint64_t kb=0;
+            if (value >> kb) return kb;
+        }
+    }
+    return 0;
+}
+
+// Linux DRM fdinfo exposes process-owned GPU engine busy time and GPU memory.
+// This is per-process accounting, not the whole-card GPU utilization.
+// Only DRM drivers exporting fdinfo counters can provide these measurements.
+// Values are cumulative nanoseconds and must be differentiated between polls.
+struct ProcessGpuFdinfo {
+    std::map<std::string, std::uint64_t> engineNanoseconds;
+    std::map<std::string, std::uint64_t> memoryBytes;
+};
+ProcessGpuFdinfo collectDvbStreamerDrmFdinfo() {
+    ProcessGpuFdinfo result;
+    const std::filesystem::path dir("/proc/self/fdinfo");
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir,ec),end;
+    std::set<std::string> uniqueClients;
+    std::size_t scanned=0;
+    for (;!ec && it!=end && scanned<512U;it.increment(ec),++scanned) {
+        std::ifstream file(it->path());
+        if (!file) continue;
+        std::string line, device, clientId;
+        std::map<std::string,std::uint64_t> engines;
+        std::uint64_t totalMemory=0;
+        while (std::getline(file,line)) {
+            if (line.size()>512U) continue;
+            const auto colon=line.find(':');
+            if (colon==std::string::npos) continue;
+            const std::string key=line.substr(0,colon);
+            std::istringstream value(line.substr(colon+1U));
+            if (key=="drm-pdev") value >> device;
+            else if (key=="drm-client-id") value >> clientId;
+            else if (key.compare(0,11,"drm-engine-")==0) {
+                std::uint64_t ns=0;
+                std::string unit;
+                if (value>>ns>>unit && unit=="ns" && engines.size()<32U)
+                    engines[key.substr(11)]=ns;
+            } else if (key=="drm-memory-vram" || key=="drm-memory-system") {
+                std::uint64_t count=0;
+                std::string unit;
+                if (value>>count>>unit && unit=="KiB")
+                    totalMemory+=count*1024ULL;
+            }
+        }
+        if (device.empty()) continue;
+        // Multiple duplicated FDs often refer to the same DRM client.
+        const std::string clientKey=device+":"+clientId;
+        if (!clientId.empty() && !uniqueClients.insert(clientKey).second)
+            continue;
+        for (const auto& [engine,ns]:engines)
+            result.engineNanoseconds[device+":"+engine]+=ns;
+        result.memoryBytes[device]+=totalMemory;
+    }
+    return result;
+}
+
+Json::Value buildDvbStreamerDrmMetrics(
+    const ProcessGpuFdinfo& sample,
+    std::map<std::string,std::uint64_t>& previous,
+    double elapsedSeconds) {
+    Json::Value gpus(Json::arrayValue);
+    std::map<std::string,Json::Value> grouped;
+    for (const auto& [key,now]:sample.engineNanoseconds) {
+        const auto separator=key.find(':');
+        if (separator==std::string::npos) continue;
+        const auto device=key.substr(0,separator);
+        const auto engine=key.substr(separator+1U);
+        const auto prior=previous.find(key);
+        if (prior!=previous.end() && now>=prior->second && elapsedSeconds>0) {
+            const double percent=std::clamp(
+                (static_cast<double>(now-prior->second)/1e9/elapsedSeconds)*100.0,
+                0.0,100.0);
+            grouped[device]["engines"][engine]=percent;
+        }
+    }
+    previous=sample.engineNanoseconds;
+    for (const auto& [device,bytes]:sample.memoryBytes)
+        grouped[device]["memory_used_mb"]=static_cast<double>(bytes)/1048576.0;
+    for (auto& [device,gpu]:grouped) {
+        gpu["pci_bus_id"]=device;
+        gpus.append(std::move(gpu));
+    }
+    return gpus;
+}
+
 bool gpuSysfsNumber(const std::filesystem::path& path, std::uint64_t& value) {
     std::ifstream file(path);
     return static_cast<bool>(file >> value);
