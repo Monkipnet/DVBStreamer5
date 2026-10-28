@@ -142,7 +142,13 @@ void HttpServer::scheduleQualitySampler() {
         recordAllQualitySamples();
         // Read-only host/GPU telemetry is recorded even when the browser is closed.
         // Appends one bounded JSONL row per sampler tick (~30 seconds).
-        recordSystemLoadHistorySample();
+        // A monitoring failure must never stop the broadcast/control service.
+        try {
+            recordSystemLoadHistorySample();
+        } catch (const std::exception& error) {
+            std::cerr << "SYSTEM LOAD HISTORY sampling warning: "
+                      << error.what() << '\n';
+        }
         const int64_t now = unixNowSeconds();
         if (qualityLastPersist == 0 || now - qualityLastPersist >= kQualityPersistIntervalSeconds) {
             saveQualityHistoryToDisk();
