@@ -77,6 +77,7 @@ struct SharedDvbInputPool::Impl {
         std::string frontend;
         LinuxDvbTuneConfig tune;
         LinuxDvbInput input;
+        std::unique_ptr<DvbNitMonitor> nit;
 
         std::mutex mutex;
         std::map<std::string, std::shared_ptr<Subscriber>> subscribers;
@@ -87,7 +88,7 @@ struct SharedDvbInputPool::Impl {
         std::thread reader;
     };
 
-    std::mutex mutex;
+    mutable std::mutex mutex;
     std::map<std::string, std::shared_ptr<Bus>> buses;
     std::map<std::string, std::string> streamBus;
     std::map<std::string, std::string> frontendOwner;
@@ -246,6 +247,10 @@ struct SharedDvbInputPool::Impl {
             }
             if (received == 0) continue;
 
+            // Observe the full-MPTS before per-service filtering. One passive
+            // PID 0x10 parser per physical frontend, even with many channels.
+            if (bus->nit) bus->nit->observe(buffer.data(), received);
+
             std::vector<std::shared_ptr<Subscriber>> subscribers;
             {
                 std::lock_guard<std::mutex> lock(bus->mutex);
@@ -390,6 +395,7 @@ struct SharedDvbInputPool::Impl {
                 bus->key = key;
                 bus->frontend = frontend;
                 bus->tune = tune;
+                bus->nit = std::make_unique<DvbNitMonitor>(tune.frequencyKHz, tune.polarity);
                 bus->keepWarmOnIdle = keepWarmOnIdle;
 
                 if (!bus->input.open(tune, error)) {
@@ -459,6 +465,16 @@ struct SharedDvbInputPool::Impl {
         }
 
         return true;
+    }
+
+    DvbNitInfo nitInfo(int adapter, int frontend) const {
+        const std::string frontend = std::to_string(adapter)+":"+std::to_string(frontend);
+        std::lock_guard<std::mutex> lock(mutex);
+        const auto owner = frontendOwner.find(frontend);
+        if (owner == frontendOwner.end()) return {};
+        const auto bus = buses.find(owner->second);
+        if (bus == buses.end() || !bus->second || !bus->second->nit) return {};
+        return bus->second->nit->snapshot();
     }
 
     bool warmStandby(
@@ -654,6 +670,10 @@ bool SharedDvbInputPool::subscribe(
     return impl_->subscribe(
         streamId, config, std::move(onData), std::move(onFinish), error,
         keepWarmOnIdle);
+}
+
+DvbNitInfo SharedDvbInputPool::nitInfo(int adapter, int frontend) const {
+    return impl_ ? impl_->nitInfo(adapter, frontend) : DvbNitInfo{};
 }
 
 bool SharedDvbInputPool::warmStandby(
