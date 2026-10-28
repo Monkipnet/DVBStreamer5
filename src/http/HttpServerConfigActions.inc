@@ -226,15 +226,18 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     if (root.isObject() && root.size() == 1 && root.isMember("restart_schedule")) {
         const auto previous = configManager.config.restartSchedule;
         configManager.config.restartSchedule = StreamRestartSchedule::fromJson(root["restart_schedule"]);
+        Json::Value response(Json::objectValue);
         if (!configManager.save()) {
             configManager.config.restartSchedule = previous;
-            return errorReply("failed to save global restart schedule");
+            response["result"] = "error";
+            response["error"] = "failed to save global restart schedule";
+        } else {
+            streamManager.configureRestartSchedule();
+            response["result"] = "ok";
+            response["restart_schedule"] = configManager.config.restartSchedule.toJson();
         }
-        streamManager.configureRestartSchedule();
-        Json::Value response(Json::objectValue);
-        response["result"] = "ok";
-        response["restart_schedule"] = configManager.config.restartSchedule.toJson();
-        return jsonReply(response);
+        Json::StreamWriterBuilder writer;
+        return Json::writeString(writer, response);
     }
     const AppConfig previousConfig = configManager.config;
     const auto previousStreams = streamConfigById(previousConfig.streams);
