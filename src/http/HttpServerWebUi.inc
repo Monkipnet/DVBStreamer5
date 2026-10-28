@@ -2979,6 +2979,10 @@ const systemLoadChartStorageKey = 'dvbstreamer5-system-load-charts-v1';
 let systemLoadChartPrefs = {enabled:true, items:{}};
 const systemLoadChartHistory = new Map();
 let systemLoadChartSampleAt = 0;
+let systemLoadChartPeriodSeconds = 360;
+let systemLoadDiskHistory = new Map();
+let systemLoadChartFetchToken = 0;
+let systemLoadServerEpoch = null;
 try {
   const savedCharts = JSON.parse(localStorage.getItem(systemLoadChartStorageKey) || 'null');
   if (savedCharts && typeof savedCharts === 'object') {
@@ -3179,6 +3183,44 @@ async function statePollLoop() {
 // 120 samples x 3 seconds = approximately 6 minutes per visible series.
 const kSystemChartMaxSamples = 120;
 const kSystemChartWindowMs = 6 * 60 * 1000;
+async function fetchSystemLoadChartHistory() {
+  if (!systemLoadChartPrefs.enabled) return;
+  const token = ++systemLoadChartFetchToken;
+  const period = systemLoadChartPeriodSeconds;
+  try {
+    const data = await fetchJson('/api/system-load-history?period=' + period, {}, 12000);
+    if (token !== systemLoadChartFetchToken || period !== systemLoadChartPeriodSeconds)
+      return;
+    const history = new Map();
+    const rows = Array.isArray(data.samples) ? data.samples : [];
+    const cutoff = Date.now() - period * 1000;
+    const add = (key, time, value) => {
+      if (typeof value !== 'number' || !Number.isFinite(value) ||
+          time < cutoff || time > Date.now() + 10000) return;
+      let points = history.get(key);
+      if (!points) { points = []; history.set(key, points); }
+      if (points.length < 3000)
+        points.push({t:time, y:Math.max(0,Math.min(100,value))});
+    };
+    for (const row of rows.slice(-3000)) {
+      if (!row || typeof row !== 'object') continue;
+      const time = Number(row.t) * 1000;
+      if (!Number.isFinite(time)) continue;
+      add('cpu',time,row.cpu);
+      add('ram',time,row.ram);
+      if (Array.isArray(row.gpus)) for (const gpu of row.gpus.slice(0,64)) {
+        if (!gpu || typeof gpu.id !== 'string' || gpu.id.length > 160) continue;
+        add(gpu.id,time,gpu.usage);
+        add('vram:'+gpu.id,time,gpu.vram);
+      }
+    }
+    systemLoadDiskHistory = history;
+    refreshSystemLoadPanel(state.system_metrics || {});
+  } catch(error) {
+    if (token === systemLoadChartFetchToken)
+      console.warn('System load disk history unavailable:',error);
+  }
+}
 function systemLoadGpuChartKey(gpu, index) {
   const source = String(gpu.source || 'DRM');
   const id = gpu.card ? String(gpu.card) : String(index) + ':' + String(gpu.name || gpu.vendor || 'GPU');
@@ -3204,6 +3246,11 @@ function setSystemLoadChartVisibility(key, enabled) {
     }
   }
   saveSystemLoadChartPrefs();
+  if (systemLoadChartPrefs.enabled) void fetchSystemLoadChartHistory();
+  else {
+    ++systemLoadChartFetchToken;
+    systemLoadDiskHistory.clear();
+  }
   refreshSystemLoadPanel(state.system_metrics || {});
 }
 function recordSystemLoadChartSamples(metrics) {
@@ -3259,15 +3306,25 @@ function buildSystemLoadChart(key, secondaryKey, name) {
     svg.appendChild(node('text',{x:30,y:y+3,'text-anchor':'end',
       fill:'#9caac0','font-size':9},v+'%'));
   });
-  const now=Date.now(), start=now-kSystemChartWindowMs;
-  svg.appendChild(node('text',{x:x0,y:150,fill:'#9caac0','font-size':10},'-6 min'));
+  const now=Date.now();
+  const windowMs=systemLoadChartPeriodSeconds*1000;
+  const start=now-windowMs;
+  svg.appendChild(node('text',{x:x0,y:150,fill:'#9caac0','font-size':10},
+    systemLoadChartPeriodSeconds === 86400 ? '-24 h' :
+    systemLoadChartPeriodSeconds === 3600 ? '-1 h' : '-6 min'));
   svg.appendChild(node('text',{x:x1,y:150,'text-anchor':'end',
     fill:'#9caac0','font-size':10},t('chartNow')));
   const plot = (id, color) => {
-    const arr = (systemLoadChartHistory.get(id) || []).filter(p => p.t >= start);
+    const persisted = systemLoadDiskHistory.get(id) || [];
+    const recent = systemLoadChartHistory.get(id) || [];
+    // Keep at most ~600 SVG coordinates per line, even for a whole-day range.
+    const arr = [...persisted, ...recent].filter(p => p.t >= start && p.t <= now);
     if (!arr.length) return;
-    const points = arr.map(p => {
-      const x = x0+(x1-x0)*Math.max(0,Math.min(1,(p.t-start)/kSystemChartWindowMs));
+    arr.sort((a,b) => a.t-b.t);
+    const step = Math.max(1,Math.ceil(arr.length/600));
+    const sampled = arr.filter((p,index)=>index%step===0 || index===arr.length-1);
+    const points = sampled.map(p => {
+      const x = x0+(x1-x0)*Math.max(0,Math.min(1,(p.t-start)/windowMs));
       const y = y1-(y1-y0)*p.y/100;
       return [x,y];
     });
@@ -3285,6 +3342,17 @@ function buildSystemLoadChart(key, secondaryKey, name) {
   return svg;
 }
 function updateSystemLoad(metrics) {
+  const epoch = Number(metrics.system_load_epoch);
+  if (Number.isFinite(epoch) && epoch > 0 && epoch !== systemLoadServerEpoch) {
+    if (systemLoadServerEpoch !== null) {
+      systemLoadChartHistory.clear();
+      systemLoadDiskHistory.clear();
+      ++systemLoadChartFetchToken;
+      if (systemLoadChartPrefs.enabled &&
+          document.getElementById('systemLoadContent')) void fetchSystemLoadChartHistory();
+    }
+    systemLoadServerEpoch = epoch;
+  }
   document.getElementById('cpuLoad').textContent = `${Number(metrics.cpu_percent || 0).toFixed(1)}%`;
   document.getElementById('ramLoad').textContent = `${Number(metrics.ram_percent || 0).toFixed(1)}%`;
   const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
