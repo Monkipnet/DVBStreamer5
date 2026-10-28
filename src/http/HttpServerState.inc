@@ -11,6 +11,138 @@ std::string HttpServer::listInterfaces() {
     return Json::writeString(writer, root);
 }
 
+namespace {
+
+// Read-only GPU discovery. Avoid shell commands (including nvidia-smi) and
+// heavyweight media initialization in the 3-second metrics polling path.
+bool gpuSysfsNumber(const std::filesystem::path& path, std::uint64_t& value) {
+    std::ifstream file(path);
+    return static_cast<bool>(file >> value);
+}
+
+struct GpuNvml {
+    using Handle = void*;
+    struct Utilization { unsigned int gpu = 0; unsigned int memory = 0; };
+    struct Memory { unsigned long long total = 0; unsigned long long free = 0; unsigned long long used = 0; };
+    using Init = int (*)();
+    using Shutdown = int (*)();
+    using Count = int (*)(unsigned int*);
+    using DeviceByIndex = int (*)(unsigned int, Handle*);
+    using DeviceName = int (*)(Handle, char*, unsigned int);
+    using DeviceUtil = int (*)(Handle, Utilization*);
+    using DeviceMemory = int (*)(Handle, Memory*);
+    void* library = nullptr;
+    Init init = nullptr;
+    Shutdown shutdown = nullptr;
+    Count count = nullptr;
+    DeviceByIndex byIndex = nullptr;
+    DeviceName name = nullptr;
+    DeviceUtil utilization = nullptr;
+    DeviceMemory memory = nullptr;
+    bool available = false;
+
+    GpuNvml() {
+        library = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
+        if (!library) return;
+        init = reinterpret_cast<Init>(dlsym(library, "nvmlInit_v2"));
+        shutdown = reinterpret_cast<Shutdown>(dlsym(library, "nvmlShutdown"));
+        count = reinterpret_cast<Count>(dlsym(library, "nvmlDeviceGetCount_v2"));
+        byIndex = reinterpret_cast<DeviceByIndex>(dlsym(library, "nvmlDeviceGetHandleByIndex_v2"));
+        name = reinterpret_cast<DeviceName>(dlsym(library, "nvmlDeviceGetName"));
+        utilization = reinterpret_cast<DeviceUtil>(dlsym(library, "nvmlDeviceGetUtilizationRates"));
+        memory = reinterpret_cast<DeviceMemory>(dlsym(library, "nvmlDeviceGetMemoryInfo"));
+        available = init && shutdown && count && byIndex &&
+            init() == 0;
+    }
+    ~GpuNvml() {
+        if (available) shutdown();
+        if (library) dlclose(library);
+    }
+    GpuNvml(const GpuNvml&) = delete;
+    GpuNvml& operator=(const GpuNvml&) = delete;
+};
+
+Json::Value collectGpuMetrics() {
+    Json::Value gpus(Json::arrayValue);
+    // Static lifetime avoids repeated NVML init/shutdown and driver calls.
+    static GpuNvml nvml;
+    bool nvmlPresent = false;
+    if (nvml.available) {
+        unsigned int count = 0;
+        if (nvml.count(&count) == 0) {
+            for (unsigned int i = 0; i < count && i < 32U; ++i) {
+                GpuNvml::Handle device = nullptr;
+                if (nvml.byIndex(i, &device) != 0) continue;
+                Json::Value gpu(Json::objectValue);
+                gpu["vendor"] = "NVIDIA";
+                gpu["source"] = "NVML";
+                gpu["name"] = "NVIDIA GPU " + std::to_string(i);
+                if (nvml.name) {
+                    char label[128]{};
+                    if (nvml.name(device, label, sizeof(label)) == 0)
+                        gpu["name"] = label;
+                }
+                if (nvml.utilization) {
+                    GpuNvml::Utilization util{};
+                    if (nvml.utilization(device, &util) == 0) {
+                        gpu["utilization_percent"] = std::min(100U, util.gpu);
+                        gpu["memory_controller_percent"] = std::min(100U, util.memory);
+                    }
+                }
+                if (nvml.memory) {
+                    GpuNvml::Memory mem{};
+                    if (nvml.memory(device, &mem) == 0) {
+                        gpu["memory_used_mb"] = static_cast<double>(mem.used) / (1024.0 * 1024.0);
+                        gpu["memory_total_mb"] = static_cast<double>(mem.total) / (1024.0 * 1024.0);
+                    }
+                }
+                nvmlPresent = true;
+                gpus.append(std::move(gpu));
+            }
+        }
+    }
+
+    const std::filesystem::path drm("/sys/class/drm");
+    std::error_code ec;
+    std::filesystem::directory_iterator it(drm, ec), end;
+    for (; !ec && it != end && gpus.size() < 64U; it.increment(ec)) {
+        const std::string card = it->path().filename().string();
+        if (card.rfind("card", 0) != 0 || card.size() <= 4U ||
+            !std::all_of(card.begin() + 4, card.end(),
+                [](unsigned char c) { return c >= '0' && c <= '9'; }))
+            continue;
+        const auto dev = it->path() / "device";
+        std::ifstream vendorFile(dev / "vendor");
+        std::string vendorHex;
+        if (!(vendorFile >> vendorHex)) continue;
+        std::string vendor = "GPU";
+        if (vendorHex == "0x10de") vendor = "NVIDIA";
+        else if (vendorHex == "0x1002") vendor = "AMD";
+        else if (vendorHex == "0x8086") vendor = "Intel";
+        else if (vendorHex == "0x13b5") vendor = "Arm";
+        if (vendor == "NVIDIA" && nvmlPresent) continue;
+
+        Json::Value gpu(Json::objectValue);
+        gpu["name"] = vendor + " (" + card + ")";
+        gpu["vendor"] = vendor;
+        gpu["source"] = "DRM";
+        gpu["card"] = card;
+        std::uint64_t value = 0;
+        if (gpuSysfsNumber(dev / "gpu_busy_percent", value))
+            gpu["utilization_percent"] = static_cast<unsigned int>(std::min<std::uint64_t>(value, 100));
+        std::uint64_t used = 0, total = 0;
+        if (gpuSysfsNumber(dev / "mem_info_vram_used", used) &&
+            gpuSysfsNumber(dev / "mem_info_vram_total", total) && total > 0) {
+            gpu["memory_used_mb"] = static_cast<double>(used) / (1024.0 * 1024.0);
+            gpu["memory_total_mb"] = static_cast<double>(total) / (1024.0 * 1024.0);
+        }
+        gpus.append(std::move(gpu));
+    }
+    return gpus;
+}
+
+} // namespace
+
   std::string HttpServer::systemMetrics() {
     uint64_t cpuTotal = 0;
     uint64_t cpuIdle = 0;
@@ -138,6 +270,9 @@ std::string HttpServer::listInterfaces() {
     root["ram_percent"] = memoryTotal == 0
       ? 0.0
       : 100.0 * static_cast<double>(memoryTotal - std::min(memoryTotal, memoryAvailable)) / memoryTotal;
+    root["ram_used_mb"] = static_cast<double>(memoryTotal - std::min(memoryTotal, memoryAvailable)) / 1024.0;
+    root["ram_total_mb"] = static_cast<double>(memoryTotal) / 1024.0;
+    root["gpus"] = collectGpuMetrics();
     root["process_threads"] = Json::UInt64(processThreads);
     root["process_fds"] = Json::UInt64(processFds);
     root["process_rss_mb"] = static_cast<double>(processRssKb) / 1024.0;
