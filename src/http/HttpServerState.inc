@@ -432,6 +432,16 @@ void HttpServer::recordSystemLoadHistorySample() {
         const uint64_t idleDelta = idleTotal - previousHistoryCpuIdle_;
         cpuPercent = 100.0 * static_cast<double>(delta - std::min(delta,idleDelta))/delta;
     }
+    std::uint64_t processTicks=0;
+    const bool hasProcessCpu=readDvbStreamerCpuTicks(processTicks);
+    const bool hasProcessDelta=hasProcessCpu && previousHistoryProcessTicks_>0 &&
+        processTicks>=previousHistoryProcessTicks_ && previousHistoryCpuTotal_>0 &&
+        total>previousHistoryCpuTotal_;
+    const double appCpuPercent=hasProcessDelta
+        ? std::clamp(100.0*static_cast<double>(processTicks-previousHistoryProcessTicks_)/
+                     static_cast<double>(total-previousHistoryCpuTotal_),0.0,100.0)
+        : 0.0;
+    if (hasProcessCpu) previousHistoryProcessTicks_=processTicks;
     previousHistoryCpuTotal_ = total;
     previousHistoryCpuIdle_ = idleTotal;
 
@@ -447,6 +457,10 @@ void HttpServer::recordSystemLoadHistorySample() {
     const int64_t now = systemLoadUnixTime();
     row["t"] = Json::Int64(now);
     row["cpu"] = std::clamp(cpuPercent,0.0,100.0);
+    if (hasProcessDelta) row["app_cpu"]=appCpuPercent;
+    if (totalKb) row["app_ram"]=
+        std::clamp(100.0*static_cast<double>(dvbStreamerResidentKb())/totalKb,0.0,100.0);
+    row["app_ram_mb"]=static_cast<double>(dvbStreamerResidentKb())/1024.0;
     Json::Value cores(Json::arrayValue);
     const auto cpuCores = collectLogicalCpuCores(previousHistoryCoreTicks_);
     for (const auto& core : cpuCores) {
@@ -481,6 +495,10 @@ void HttpServer::recordSystemLoadHistorySample() {
         cards.append(std::move(item));
     }
     row["gpus"] = std::move(cards);
+    const auto drm=collectDvbStreamerDrmFdinfo();
+    const auto processGpu=buildDvbStreamerDrmMetrics(drm,
+        previousHistoryDrmEngineNs_,30.0);
+    row["app_gpus"]=processGpu;
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
 
@@ -644,8 +662,21 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
       const uint64_t idleDelta = cpuIdle - previousCpuIdle;
       cpuPercent = 100.0 * static_cast<double>(totalDelta - std::min(totalDelta, idleDelta)) / totalDelta;
     }
+    std::uint64_t processTicks=0;
+    const bool processReadable=readDvbStreamerCpuTicks(processTicks);
+    const bool processDelta=processReadable && previousUiProcessTicks_>0 &&
+        processTicks>=previousUiProcessTicks_ && previousCpuTotal>0 &&
+        cpuTotal>previousCpuTotal;
+    double appCpuPercent=0.0;
+    if (processDelta) {
+        appCpuPercent=std::clamp(
+          100.0*static_cast<double>(processTicks-previousUiProcessTicks_)/
+          static_cast<double>(cpuTotal-previousCpuTotal),0.0,100.0);
+    }
+    if (processReadable) previousUiProcessTicks_=processTicks;
     previousCpuTotal = cpuTotal;
     previousCpuIdle = cpuIdle;
+    if (processDelta) root["process_cpu_percent"]=appCpuPercent;
     root["cpu_cores"] = collectLogicalCpuCores(previousUiCoreTicks_);
     const double elapsedSeconds = previousMetricsSample.time_since_epoch().count() == 0
       ? 0.0
@@ -659,6 +690,11 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
     root["ram_used_mb"] = static_cast<double>(memoryTotal - std::min(memoryTotal, memoryAvailable)) / 1024.0;
     root["ram_total_mb"] = static_cast<double>(memoryTotal) / 1024.0;
     root["gpus"] = collectGpuMetrics();
+    const auto processDrm=collectDvbStreamerDrmFdinfo();
+    root["process_gpus"]=buildDvbStreamerDrmMetrics(processDrm,
+        previousUiDrmEngineNs_,elapsedSeconds);
+    if (memoryTotal) root["process_ram_percent"]=
+        std::clamp(100.0*static_cast<double>(processRssKb)/memoryTotal,0.0,100.0);
     root["system_load_epoch"] = Json::Int64(systemLoadHistoryStartEpoch_);
     root["process_threads"] = Json::UInt64(processThreads);
     root["process_fds"] = Json::UInt64(processFds);
