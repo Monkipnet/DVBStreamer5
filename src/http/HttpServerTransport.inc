@@ -84,8 +84,119 @@ void HttpServer::handleSession(tcp::socket socket) {
         res.keep_alive(false);
 
         const std::string target(req.target());
-        if (requiresAuthentication(target) && !isAuthorized(req)) {
+
+        // A logout guard cookie blocks the browser's cached Basic credentials.
+        // Logout affects control-panel authentication only; IPTV media and
+        // public playlists remain governed by their existing access rules.
+        constexpr const char* kPanelLogoutCookie = "dvbstreamer5_panel_logged_out=";
+        const auto cookieHeader = req.find(http::field::cookie);
+        const std::string cookies = cookieHeader == req.end()
+            ? std::string() : std::string(cookieHeader->value());
+        const auto cookieAt = cookies.find(kPanelLogoutCookie);
+        const bool loggedOut = cookieAt != std::string::npos &&
+            (cookieAt == 0 || cookies[cookieAt - 1] == ' ' ||
+             cookies[cookieAt - 1] == ';') &&
+            cookies.compare(cookieAt + std::strlen(kPanelLogoutCookie), 1U, "1") == 0;
+        if (target == "/logout" && req.method() == http::verb::get) {
+            res.set(http::field::content_type, "text/html; charset=UTF-8");
+            res.set(http::field::cache_control, "no-store");
+            res.set("Content-Security-Policy",
+                    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'");
+            res.body() = R"LOGOUT(<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DVBStreamer5 — Logout</title><style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#10141c;color:#e7edf8;font:14px system-ui,Arial,sans-serif}
+main{width:min(370px,calc(100% - 40px));padding:28px;background:#171f2b;border:1px solid #344255;border-radius:16px}
+h1{font-size:20px;margin:0 0 8px}p{color:#acbbca}label{display:block;margin:14px 0 5px}
+input{box-sizing:border-box;width:100%;padding:11px;background:#0e1723;color:#fff;border:1px solid #435168;border-radius:8px}
+button{margin-top:18px;padding:11px;width:100%;border:0;border-radius:8px;background:#267bd7;color:#fff;cursor:pointer}
+#error{color:#ffafa9;min-height:1em}
+</style></head><body><main><h1>DVBStreamer5</h1><p id="hint">Вы вышли из панели. Войдите снова.</p>
+<form id="loginForm"><label id="userLabel" for="login">Логин</label><input id="login" autocomplete="username" required>
+<label id="passLabel" for="password">Пароль</label><input id="password" type="password" autocomplete="current-password" required>
+<button id="submit" type="submit">Войти</button><p id="error" role="alert"></p></form></main>
+<script>
+const lang=localStorage.getItem('dvbstreamer5-language')||'ru';
+const words={ru:['Вы вышли из панели. Войдите снова.','Логин','Пароль','Войти','Неверный логин или пароль.'],
+en:['You have signed out. Sign in again.','Username','Password','Sign in','Invalid username or password.'],
+hr:['Odjavili ste se. Prijavite se ponovno.','Korisničko ime','Lozinka','Prijava','Neispravno korisničko ime ili lozinka.']}[lang]||
+['You have signed out. Sign in again.','Username','Password','Sign in','Invalid username or password.'];
+['hint','userLabel','passLabel','submit'].forEach((id,i)=>document.getElementById(id).textContent=words[i]);
+document.getElementById('loginForm').addEventListener('submit',async event=>{
+ event.preventDefault();
+ const button=document.getElementById('submit');button.disabled=true;
+ const error=document.getElementById('error');error.textContent='';
+ try{
+  const response=await fetch('/api/panel/login',{method:'POST',credentials:'same-origin',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({login:document.getElementById('login').value,password:document.getElementById('password').value})});
+  if(!response.ok)throw Error(words[4]);
+  window.location.replace('/');
+ }catch(e){error.textContent=e.message||words[4];button.disabled=false;}
+});
+</script></body></html>)LOGOUT";
+            res.content_length(res.body().size());
+            http::write(socket, res);
+            return;
+        }
+        if (target == "/api/panel/login") {
+            res.set(http::field::content_type, "application/json");
+            bool authenticated = false;
+            if (req.method() == http::verb::post && req.body().size() <= 4096U) {
+                Json::Value body;
+                Json::CharReaderBuilder reader;
+                std::istringstream input(req.body());
+                std::string parseErrors;
+                if (Json::parseFromStream(reader, input, &body, &parseErrors) &&
+                    body.isObject() && body["login"].isString() &&
+                    body["password"].isString()) {
+                    authenticated =
+                        constantTimeEquals(body["login"].asString(), configManager.config.login) &&
+                        constantTimeEquals(body["password"].asString(), configManager.config.password);
+                }
+            }
+            if (authenticated) {
+                res.set(http::field::set_cookie,
+                    "dvbstreamer5_panel_logged_out=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+                res.body() = R"({"result":"ok"})";
+            } else {
+                res.result(http::status::unauthorized);
+                res.body() = R"({"error":"Invalid credentials"})";
+            }
+            res.content_length(res.body().size());
+            http::write(socket, res);
+            return;
+        }
+        const bool panelProtected = requiresAuthentication(target);
+        if (loggedOut && panelProtected) {
+            if (req.method() == http::verb::get && target == "/") {
+                res.result(http::status::see_other);
+                res.set(http::field::location, "/logout");
+            } else {
+                // 403 (not 401): never trigger cached Basic Auth popup on logout.
+                res.result(http::status::forbidden);
+                res.set(http::field::content_type, "application/json");
+                res.body() = R"({"error":"Panel session logged out"})";
+            }
+            res.content_length(res.body().size());
+            http::write(socket, res);
+            return;
+        }
+        if (panelProtected && !isAuthorized(req)) {
             writeUnauthorized(res);
+            res.content_length(res.body().size());
+            http::write(socket, res);
+            return;
+        }
+        if (target == "/api/panel/logout") {
+            res.set(http::field::content_type, "application/json");
+            if (req.method() == http::verb::post) {
+                res.set(http::field::set_cookie,
+                    "dvbstreamer5_panel_logged_out=1; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax");
+                res.body() = R"({"result":"ok"})";
+            } else {
+                res.result(http::status::method_not_allowed);
+                res.body() = R"({"error":"POST required"})";
+            }
             res.content_length(res.body().size());
             http::write(socket, res);
             return;
