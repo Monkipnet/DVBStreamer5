@@ -1080,6 +1080,7 @@ std::string HttpServer::currentState() {
     root["telegram_token"] = configManager.config.telegramToken;
     root["telegram_chat_id"] = configManager.config.telegramChatId;
     root["srt_vps_vds_optimization"] = configManager.config.srtVpsVdsOptimization;
+    root["restart_schedule"] = configManager.config.restartSchedule.toJson();
     Json::Value xmltvConfig(Json::arrayValue);
     for (const auto& source : configManager.config.xmltvSources)
         xmltvConfig.append(source.toJson());
