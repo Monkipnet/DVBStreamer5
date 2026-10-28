@@ -4469,6 +4469,8 @@ function updateDvbCardMetric(node,kind,source) {
   const v=Number(kind==='signal'?source.signal:source.quality);
   const value=available&&Number.isFinite(v)?Math.max(0,Math.min(100,v)):null;
   const color=value!==null?dvbMeterColor(value,locked):'#8794a5';
+  const name=node.querySelector('.dvb-card-meter-name');
+  if(name)name.textContent=kind==='signal'?'S':(source.qualityEstimated?'Q~':'Q');
   const reading=node.querySelector('.dvb-card-meter-reading');
   const fill=node.querySelector('.dvb-card-meter-fill');
   if (reading) {
