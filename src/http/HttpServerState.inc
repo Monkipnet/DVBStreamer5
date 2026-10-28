@@ -527,6 +527,7 @@ void HttpServer::recordSystemLoadHistorySample() {
         const std::string card = gpu.get("card","").asString();
         item["id"] = "gpu:" + source + ":" +
             (card.empty()?std::to_string(i)+":"+name:card);
+        if (gpu.isMember("pci_bus_id")) item["pci_bus_id"]=gpu["pci_bus_id"];
         if (gpu.isMember("utilization_percent"))
             item["usage"] = gpu["utilization_percent"];
         if (gpu.isMember("process_memory_used_mb") &&
