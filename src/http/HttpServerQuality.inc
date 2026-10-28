@@ -140,6 +140,9 @@ void HttpServer::scheduleQualitySampler() {
         if (ec) return;
 
         recordAllQualitySamples();
+        // Read-only host/GPU telemetry is recorded even when the browser is closed.
+        // Appends one bounded JSONL row per sampler tick (~30 seconds).
+        recordSystemLoadHistorySample();
         const int64_t now = unixNowSeconds();
         if (qualityLastPersist == 0 || now - qualityLastPersist >= kQualityPersistIntervalSeconds) {
             saveQualityHistoryToDisk();
