@@ -65,6 +65,24 @@ void HttpServer::doAccept(std::shared_ptr<tcp::acceptor> listener, int port, uin
     });
 }
 
+namespace {
+// Parse only an exact cookie name, not an accidental substring in another key.
+std::string panelCookieValue(const http::request<http::string_body>& req,
+                             const std::string& name) {
+    const auto field = req.find(http::field::cookie);
+    if (field == req.end()) return {};
+    std::istringstream cookies(std::string(field->value()));
+    std::string token;
+    while (std::getline(cookies, token, ';')) {
+        boost::algorithm::trim(token);
+        const auto equal = token.find('=');
+        if (equal != std::string::npos && token.substr(0, equal) == name)
+            return token.substr(equal + 1U);
+    }
+    return {};
+}
+} // namespace
+
 void HttpServer::handleSession(tcp::socket socket) {
     try {
         boost::beast::flat_buffer buffer;
@@ -88,15 +106,8 @@ void HttpServer::handleSession(tcp::socket socket) {
         // A logout guard cookie blocks the browser's cached Basic credentials.
         // Logout affects control-panel authentication only; IPTV media and
         // public playlists remain governed by their existing access rules.
-        constexpr const char* kPanelLogoutCookie = "dvbstreamer5_panel_logged_out=";
-        const auto cookieHeader = req.find(http::field::cookie);
-        const std::string cookies = cookieHeader == req.end()
-            ? std::string() : std::string(cookieHeader->value());
-        const auto cookieAt = cookies.find(kPanelLogoutCookie);
-        const bool loggedOut = cookieAt != std::string::npos &&
-            (cookieAt == 0 || cookies[cookieAt - 1] == ' ' ||
-             cookies[cookieAt - 1] == ';') &&
-            cookies.compare(cookieAt + std::strlen(kPanelLogoutCookie), 1U, "1") == 0;
+        const bool loggedOut =
+            panelCookieValue(req, "dvbstreamer5_panel_logged_out") == "1";
         if (target == "/logout" && req.method() == http::verb::get) {
             res.set(http::field::content_type, "text/html; charset=UTF-8");
             res.set(http::field::cache_control, "no-store");
@@ -155,9 +166,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 }
             }
             if (authenticated) {
-                res.set(http::field::set_cookie,
-                    "dvbstreamer5_panel_logged_out=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
-                res.body() = R"({"result":"ok"})";
+                const std::string token = createPanelSession();
+                if (token.empty()) {
+                    res.result(http::status::service_unavailable);
+                    res.body() = R"({"error":"Unable to create login session"})";
+                } else {
+                    res.insert(http::field::set_cookie,
+                        "dvbstreamer5_panel_logged_out=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+                    res.insert(http::field::set_cookie,
+                        "dvbstreamer5_panel_session=" + token +
+                        "; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax");
+                    res.body() = R"({"result":"ok"})";
+                }
             } else {
                 res.result(http::status::unauthorized);
                 res.body() = R"({"error":"Invalid credentials"})";
@@ -181,7 +201,8 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket, res);
             return;
         }
-        if (panelProtected && !isAuthorized(req)) {
+        if (panelProtected && !isAuthorized(req) &&
+            !isPanelSessionAuthorized(req)) {
             writeUnauthorized(res);
             res.content_length(res.body().size());
             http::write(socket, res);
@@ -193,7 +214,10 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             if (req.method() == http::verb::post &&
                 requestedWith != req.end() &&
                 requestedWith->value() == "DVBStreamer5") {
-                res.set(http::field::set_cookie,
+                revokePanelSession(req);
+                res.insert(http::field::set_cookie,
+                    "dvbstreamer5_panel_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+                res.insert(http::field::set_cookie,
                     "dvbstreamer5_panel_logged_out=1; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax");
                 res.body() = R"({"result":"ok"})";
             } else {
@@ -820,6 +844,48 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             std::cerr << "HTTP session failed: " << message << std::endl;
         }
     }
+}
+
+std::string HttpServer::createPanelSession() {
+    std::array<unsigned char, 32U> random{};
+    if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1)
+        return {};
+    const char* digits = "0123456789abcdef";
+    std::string token;
+    token.reserve(random.size() * 2U);
+    for (unsigned char value : random) {
+        token.push_back(digits[value >> 4U]);
+        token.push_back(digits[value & 15U]);
+    }
+    std::lock_guard<std::mutex> lock(panelSessionsMutex_);
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = panelSessions_.begin(); it != panelSessions_.end();) {
+        if (it->second <= now) it = panelSessions_.erase(it);
+        else ++it;
+    }
+    // Keep the session registry bounded under repeated logins.
+    if (panelSessions_.size() >= 256U) panelSessions_.clear();
+    panelSessions_[token] = now + std::chrono::hours(12);
+    return token;
+}
+bool HttpServer::isPanelSessionAuthorized(
+    const http::request<http::string_body>& req) const {
+    const auto token = panelCookieValue(req, "dvbstreamer5_panel_session");
+    if (token.size() != 64U || !std::all_of(token.begin(), token.end(),
+           [](unsigned char c) { return (c >= '0' && c <= '9') ||
+                                         (c >= 'a' && c <= 'f'); }))
+        return false;
+    std::lock_guard<std::mutex> lock(panelSessionsMutex_);
+    const auto it = panelSessions_.find(token);
+    return it != panelSessions_.end() &&
+           std::chrono::steady_clock::now() < it->second;
+}
+void HttpServer::revokePanelSession(
+    const http::request<http::string_body>& req) {
+    const auto token = panelCookieValue(req, "dvbstreamer5_panel_session");
+    if (token.empty()) return;
+    std::lock_guard<std::mutex> lock(panelSessionsMutex_);
+    panelSessions_.erase(token);
 }
 
 bool HttpServer::requiresAuthentication(const std::string& target) const {
