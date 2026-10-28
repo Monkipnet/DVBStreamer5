@@ -303,6 +303,23 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
         Json::StreamWriterBuilder writer;
         return Json::writeString(writer, response);
     }
+    // Satellite label is presentation metadata in DVB URI, not a tune parameter.
+    // Ignore it for duplicate detection so rescanning cannot clone existing SIDs.
+    const auto tuneIdentity = [](const std::string& uri) {
+        const auto question = uri.find('?');
+        if (question == std::string::npos) return uri;
+        const std::string base = uri.substr(0, question + 1);
+        const std::string query = uri.substr(question + 1);
+        std::string filtered;
+        std::istringstream parts(query);
+        std::string part;
+        while (std::getline(parts, part, '&')) {
+            if (part == "satellite_name" || part.rfind("satellite_name=", 0) == 0) continue;
+            if (!filtered.empty()) filtered += '&';
+            filtered += part;
+        }
+        return base + filtered;
+    };
     const uint64_t targetBitrate = std::clamp<uint64_t>(
         request.get("target_bitrate_kbps", Json::UInt64(12000)).asUInt64(), 500, 100000) * 1000ULL;
 
@@ -339,7 +356,8 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
         const bool duplicate = std::any_of(
             configManager.config.streams.begin(), configManager.config.streams.end(),
             [&](const StreamConfig& existing) {
-                return existing.inputUri == inputUri && existing.inputServiceId == sid;
+                return tuneIdentity(existing.inputUri) == tuneIdentity(inputUri) &&
+                    existing.inputServiceId == sid;
             });
         if (duplicate) {
             ++skipped;
