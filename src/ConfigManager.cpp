@@ -702,6 +702,50 @@ XmltvSourceConfig XmltvSourceConfig::fromJson(const Json::Value& root) {
     return result;
 }
 
+Json::Value StreamRestartSchedule::toJson() const {
+    Json::Value result(Json::objectValue);
+    result["enabled"] = enabled;
+    Json::Value days(Json::arrayValue);
+    for (int day : weekdays) days.append(day);
+    result["weekdays"] = days;
+    Json::Value selectedHours(Json::arrayValue);
+    for (int hour : hours) selectedHours.append(hour);
+    result["hours"] = selectedHours;
+    result["minute"] = minute;
+    return result;
+}
+
+StreamRestartSchedule StreamRestartSchedule::fromJson(const Json::Value& root) {
+    StreamRestartSchedule schedule;
+    if (!root.isObject()) return schedule;
+    schedule.enabled = root.get("enabled", false).asBool();
+    if (root.isMember("weekdays")) {
+        schedule.weekdays.clear();
+        if (root["weekdays"].isArray()) {
+            std::set<int> unique;
+            for (const auto& value : root["weekdays"]) {
+                if (value.isInt() && value.asInt() >= 1 && value.asInt() <= 7)
+                    unique.insert(value.asInt());
+            }
+            schedule.weekdays.assign(unique.begin(), unique.end());
+        }
+    }
+    if (root.isMember("hours")) {
+        schedule.hours.clear();
+        if (root["hours"].isArray()) {
+            std::set<int> unique;
+            for (const auto& value : root["hours"]) {
+                if (value.isInt() && value.asInt() >= 0 && value.asInt() <= 23)
+                    unique.insert(value.asInt());
+            }
+            schedule.hours.assign(unique.begin(), unique.end());
+        }
+    }
+    schedule.minute = std::clamp(root.get("minute", 0).asInt(), 0, 59);
+    if (schedule.weekdays.empty() || schedule.hours.empty()) schedule.enabled = false;
+    return schedule;
+}
+
 Json::Value AppConfig::toJson() const {
     Json::Value root;
     root["login"] = login;
@@ -712,6 +756,7 @@ Json::Value AppConfig::toJson() const {
     root["telegram_token"] = telegramToken;
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
+    root["restart_schedule"] = restartSchedule.toJson();
     Json::Value udpFilterInterfaces(Json::arrayValue);
     for (const auto& address : udpInputFilterInterfaces) {
         if (!address.empty()) udpFilterInterfaces.append(address);
@@ -747,6 +792,7 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.telegramToken = root.get("telegram_token", "").asString();
     config.telegramChatId = root.get("telegram_chat_id", "").asString();
     config.srtVpsVdsOptimization = root.get("srt_vps_vds_optimization", false).asBool();
+    config.restartSchedule = StreamRestartSchedule::fromJson(root["restart_schedule"]);
     if (root.isMember("udp_input_filter_interfaces") && root["udp_input_filter_interfaces"].isArray()) {
         std::set<std::string> uniqueAddresses;
         for (const auto& item : root["udp_input_filter_interfaces"]) {
