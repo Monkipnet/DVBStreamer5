@@ -4406,7 +4406,9 @@ function dvbCardFrontendEntries(group) {
     const inputUri=String(stream.input_uri || '');
     const question=inputUri.indexOf('?');
     const params=new URLSearchParams(question<0 ? '' : inputUri.slice(question+1));
-    const satellite=String(params.get('satellite_name') || '').trim().slice(0,80) || t('satelliteNotSet');
+    // Unlike manually configured labels, the original V216 card caption is
+    // always available. Keep satellite_name strictly optional for old channels.
+    const satellite=String(params.get('satellite_name') || '').trim().slice(0,80);
     const frequency=Number(params.get('frequency_khz')) / 1000;
     const symbolRate=Number(params.get('symbol_rate'));
     const polarity=String(params.get('polarity') || '').toUpperCase();
@@ -4417,17 +4419,24 @@ function dvbCardFrontendEntries(group) {
       Number.isFinite(symbolRate) && symbolRate >= 100 &&
       symbolRate <= 60000 && /^[HV]$/.test(polarity);
     const tp=valid ? 'TP '+Number(frequency.toFixed(3))+' '+polarity+' '+symbolRate : 'TP —';
-    entry.labels.add(satellite+' · '+tp);
+    entry.labels.add((satellite ? satellite+' · ' : '')+tp);
   }
   return [...byFrontend.values()].sort((a,b)=>a.adapter-b.adapter || a.frontend-b.frontend);
 }
 function dvbCardDisplayTitle(group) {
+  // Preserve the V216 physical-card heading for DVB URIs that predate
+  // satellite_name. That label was never an orbital satellite identification.
+  const adapters=[...group.adapters].sort((a,b)=>a-b);
+  const cardTitle=t('satelliteCard')+(adapters.length===1 ? ' '+adapters[0] : '');
   const frontends=dvbCardFrontendEntries(group);
-  if (!frontends.length) return t('satelliteCard');
+  if (!frontends.length) return cardTitle;
   const unique=[...new Set(frontends.flatMap(fe=>[...fe.labels]))];
+  const hasSatellite=frontends.some(fe=>[...fe.labels].some(label=>!label.startsWith('TP ')));
   if (unique.length===1)
-    return unique[0]+(frontends.length>1 ? ' · '+frontends.length+' FE' : '');
-  return frontends.map(fe=>'A'+fe.adapter+'/FE'+fe.frontend+': '+[...fe.labels].join(' / ')).join(' | ');
+    return (hasSatellite ? '' : cardTitle+' · ')+unique[0]+
+      (frontends.length>1 ? ' · '+frontends.length+' FE' : '');
+  return (hasSatellite ? '' : cardTitle+' · ')+
+    frontends.map(fe=>'A'+fe.adapter+'/FE'+fe.frontend+': '+[...fe.labels].join(' / ')).join(' | ');
 }
 function dvbCardDisplayDevice(group) {
   const adapters=[...group.adapters].sort((a,b)=>a-b);
