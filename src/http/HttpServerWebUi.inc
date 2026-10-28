@@ -95,6 +95,9 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .dvb-card-meters{display:flex;align-items:center;gap:6px;min-width:0;max-width:48vw;overflow-x:auto;scrollbar-width:thin}
 .dvb-card-fe{display:inline-flex;align-items:center;gap:4px;flex:none;padding:2px 5px;border:1px solid rgba(125,209,255,.15);border-radius:6px;background:rgba(125,209,255,.04);font-size:.69rem;font-variant-numeric:tabular-nums}
 .dvb-card-fe-name{color:#9cb7d4}
+.dvb-card-meter{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:none;width:65px;height:15px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.09);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.dvb-card-meter-fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:inherit;transition:width .25s ease,background .25s ease;opacity:.9}
+.dvb-card-meter-label{position:relative;z-index:1;color:#fff;font-size:9px;font-weight:800;line-height:15px;text-shadow:0 1px 2px rgba(0,0,0,.95);white-space:nowrap;font-variant-numeric:tabular-nums}
 .dvb-card-count{flex:none;color:#9fe7b3;font-size:.72rem;font-variant-numeric:tabular-nums}
 .dvb-card-tiles{padding:10px 12px 12px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
@@ -4493,18 +4496,28 @@ function updateDvbCardGroupCounts(tiles) {
         fe.textContent='A'+entry.adapter+'/FE'+entry.frontend;
         meter.appendChild(fe);
       }
-      const valueText=(value)=>available && Number.isFinite(Number(value)) ?
-        Math.round(Math.max(0,Math.min(100,Number(value))))+'%' : '—';
-      const s=document.createElement('span');
-      s.textContent='S '+valueText(stream.dvb_signal);
-      s.style.color=available ? dvbMeterColor(Number(stream.dvb_signal),locked) : '#9cb7d4';
-      const q=document.createElement('span');
-      q.textContent=(stream.dvb_quality_estimated===true ? 'Q~ ' : 'Q ')+valueText(stream.dvb_quality);
-      q.style.color=available ? dvbMeterColor(Number(stream.dvb_quality),locked) : '#9cb7d4';
-      q.title=stream.dvb_quality_estimated===true ? subtitleUiTriText(
-        'Оценка качества без CNR/SNR','Quality estimated without CNR/SNR',
-        'Procjena kvalitete bez CNR/SNR') : '';
-      meter.append(s,q);
+      const drawBar=(kind,value,estimated=false)=>{
+        const numeric=Number(value);
+        const valid=available && Number.isFinite(numeric);
+        const level=valid ? Math.max(0,Math.min(100,numeric)) : 0;
+        const bar=document.createElement('span');
+        bar.className='dvb-card-meter';
+        const fill=document.createElement('span');
+        fill.className='dvb-card-meter-fill';
+        fill.style.width=valid ? level+'%' : '0%';
+        fill.style.background=valid ? dvbMeterColor(level,locked) : 'rgba(255,255,255,.12)';
+        const label=document.createElement('span');
+        label.className='dvb-card-meter-label';
+        label.textContent=(kind==='signal' ? 'S' : (estimated ? 'Q~' : 'Q'))+
+          ' '+(valid ? Math.round(level)+'%' : '—');
+        bar.title=estimated ? subtitleUiTriText(
+          'Оценка качества без CNR/SNR','Quality estimated without CNR/SNR',
+          'Procjena kvalitete bez CNR/SNR') : '';
+        bar.append(fill,label);
+        return bar;
+      };
+      meter.append(drawBar('signal',stream.dvb_signal),
+        drawBar('quality',stream.dvb_quality,stream.dvb_quality_estimated===true));
       fragment.appendChild(meter);
     }
     container.replaceChildren(fragment);
