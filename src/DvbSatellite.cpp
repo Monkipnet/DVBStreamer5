@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstdlib>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
