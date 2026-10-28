@@ -16,6 +16,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
 #include <boost/algorithm/string.hpp>
+#include <openssl/rand.h>
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
