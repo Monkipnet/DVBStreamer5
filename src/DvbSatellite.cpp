@@ -1303,6 +1303,7 @@ void DvbNitSatelliteMonitor::parseSection(const std::vector<std::uint8_t>& s) {
                               tuned_.symbolRateK)<=50LL) {
                     std::lock_guard<std::mutex> lock(mutex_);
                     satelliteName_=nitOrbitalLabel(orbit,east);
+                    resolved_.store(true,std::memory_order_release);
                     return;
                 }
             }
@@ -1334,13 +1335,13 @@ void DvbNitSatelliteMonitor::consume(const std::uint8_t* data,std::size_t length
         if(section_.size()==expected_) {
             parseSection(section_);
             section_.clear();expected_=0U;
-            if(!satelliteName().empty())return; // Already resolved for this source.
+            if(resolved_.load(std::memory_order_acquire))return; // Name resolved.
         }
     }
 }
 
 void DvbNitSatelliteMonitor::push(const std::uint8_t* data,std::size_t size) {
-    if(!data||size<188U||!satelliteName().empty())return;
+    if(!data||size<188U||resolved_.load(std::memory_order_acquire))return;
     // The shared receiver supplies aligned full-MPTS chunks. Inspect only
     // NIT PID 0x0010; no frontend, tuning or conditional-access operations.
     for(std::size_t at=0;at+188U<=size;at+=188U) {
@@ -1365,6 +1366,6 @@ void DvbNitSatelliteMonitor::push(const std::uint8_t* data,std::size_t size) {
             off+=pointer;
         } else if(section_.empty())continue;
         if(off<188U)consume(p+off,188U-off);
-        if(!satelliteName().empty())return;
+        if(resolved_.load(std::memory_order_acquire))return;
     }
 }
