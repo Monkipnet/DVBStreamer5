@@ -1489,9 +1489,18 @@ public:
         if (api_.nvEncLockInputBuffer(encoder_, &lock) != NV_ENC_SUCCESS) {
             error = "NVENC lock input failed"; return false;
         }
+        // NVENC may allocate a wider row pitch than the visible frame.
+        // Use that same pitch for I420->NV12 and NV_ENC_PIC_PARAMS: a zero
+        // inputPitch can make padded rows/chroma render as color bands.
+        const std::uint32_t inputPitch = lock.pitch;
+        if (!lock.bufferDataPtr || inputPitch < static_cast<std::uint32_t>(width_)) {
+            (void)api_.nvEncUnlockInputBuffer(encoder_, input_);
+            error = "NVENC input buffer has invalid NV12 pitch";
+            return false;
+        }
         auto* base = static_cast<std::uint8_t*>(lock.bufferDataPtr);
-        auto* uv = base + static_cast<std::size_t>(lock.pitch) * height_;
-        i420ToNv12(input, base, uv, static_cast<int>(lock.pitch));
+        auto* uv = base + static_cast<std::size_t>(inputPitch) * height_;
+        i420ToNv12(input, base, uv, static_cast<int>(inputPitch));
         api_.nvEncUnlockInputBuffer(encoder_, input_);
 
         const std::uint64_t frameNumber = frameIndex_++;
@@ -1500,7 +1509,7 @@ public:
 
         NV_ENC_PIC_PARAMS pic{}; pic.version = NV_ENC_PIC_PARAMS_VER;
         pic.inputWidth = width_; pic.inputHeight = height_;
-        pic.inputPitch = 0;
+        pic.inputPitch = inputPitch;
         pic.inputBuffer = input_;
         pic.bufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
         pic.outputBitstream = bitstream_;
