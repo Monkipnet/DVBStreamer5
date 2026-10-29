@@ -679,6 +679,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (streamConfig.transcodeEnabled) {
         state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
         dvbstreamer5::media::transcode::NativeTranscoderConfig tc;
+        tc.streamId = streamConfig.id;
         tc.videoCodec = toLower(streamConfig.transcodeVideoCodec);
         tc.videoEncoder = toLower(streamConfig.transcodeVideoEncoder);
         tc.audioCodec = toLower(streamConfig.transcodeAudioCodec);
