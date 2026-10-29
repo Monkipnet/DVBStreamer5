@@ -474,6 +474,12 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     if (config.hlsArchivePath.empty() || config.hlsArchivePath.front() != '/') {
         config.hlsArchivePath = "/var/lib/dvbstreamer5/archive";
     }
+    const int segmentDuration = root.get("hls_segment_duration", 0).asInt();
+    const int segmentCount = root.get("hls_segment_count", 0).asInt();
+    config.hlsSegmentDuration = segmentDuration > 0
+        ? static_cast<std::uint32_t>(std::clamp(segmentDuration, 1, 10)) : 0U;
+    config.hlsSegmentCount = segmentCount > 0
+        ? static_cast<std::uint32_t>(std::clamp(segmentCount, 3, 30)) : 0U;
     config.hlsContainer = toLower(root.get("hls_container", "mpegts").asString());
     if (config.hlsContainer != "mpegts" && config.hlsContainer != "cmaf") config.hlsContainer = "mpegts";
     config.hlsEncryption = toLower(root.get("hls_encryption", "none").asString());
@@ -619,6 +625,8 @@ Json::Value StreamConfig::toJson() const {
     root["hls_archive_enabled"] = hlsArchiveEnabled;
     root["hls_archive_hours"] = hlsArchiveHours;
     root["hls_archive_path"] = hlsArchivePath;
+    root["hls_segment_duration"] = hlsSegmentDuration;
+    root["hls_segment_count"] = hlsSegmentCount;
     root["hls_container"] = hlsContainer;
     root["hls_encryption"] = hlsEncryption;
     root["hls_encryption_key_uri"] = hlsEncryptionKeyUri;
