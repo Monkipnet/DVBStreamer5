@@ -127,6 +127,8 @@ public:
         }
         const char* vppProbe = std::getenv("DVBSTREAMER5_NVDEC_VPP_PROBE");
         nvdecVppProbe_ = vppProbe && std::strcmp(vppProbe, "1") == 0;
+        const char* uvProbe = std::getenv("DVBSTREAMER5_NVDEC_UV_PROBE");
+        nvdecUvProbe_ = uvProbe && std::strcmp(uvProbe, "1") == 0;
         if (!loadRuntime(error)) return false;
 
         if (cuInit_(0) != CUDA_SUCCESS ||
@@ -283,6 +285,11 @@ private:
             (!loadSymbol(cudaLib_, "cuMemsetD2D8Async", cuMemsetD2D8Async_) ||
              !loadSymbol(cudaLib_, "cuCtxSynchronize", cuCtxSynchronize_))) {
             error = "CUDA chroma diagnostic requires device memset/synchronize APIs";
+            return false;
+        }
+        if (nvdecUvProbe_ &&
+            !loadSymbol(cudaLib_, "cuMemcpyDtoH_v2", cuMemcpyDtoH_)) {
+            error = "CUDA chroma probe requires cuMemcpyDtoH_v2";
             return false;
         }
 
@@ -529,6 +536,7 @@ private:
                   << " deinterlace=" << vppName
                   << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
                   << " chroma_diag=" << (neutralChromaDiag_ ? "neutral" : "off")
+                  << " uv_probe=" << (nvdecUvProbe_ ? 1 : 0)
                   << " host_video_copies=0 gpu_surface_copies=" << (neutralChromaDiag_ ? 1 : safeGpuCopy_ ? 2 : 0)
                   << std::endl;
         return static_cast<int>(decodeSurfaces);
@@ -620,6 +628,65 @@ private:
             return 0;
         }
 
+        if (pitch < static_cast<unsigned>(outputWidth_)) {
+            (void)cuvidUnmapVideoFrame_(decoder_, devicePtr);
+            failCallback("NVDEC mapped NV12 pitch smaller than output width");
+            return 0;
+        }
+
+        // Sparse, opt-in GPU->CPU diagnostics only: read 128 bytes from Y
+        // and two UV rows. No frame leaves the GPU in regular operation.
+        // UV is interleaved NV12, so even bytes represent U and odd V.
+        const bool emitUvProbe = nvdecUvProbe_ &&
+            (nvdecDisplayFrames_ <= 4 ||
+             (nvdecDisplayFrames_ % 500ULL) == 0ULL);
+        if (emitUvProbe) {
+            const auto probe = [&](const char* plane, CUdeviceptr base,
+                                   std::size_t stride, std::size_t row,
+                                   bool interleaved) {
+                std::uint8_t bytes[128]{};
+                const std::size_t length = std::min<std::size_t>(
+                    sizeof(bytes), static_cast<std::size_t>(outputWidth_));
+                const std::size_t x = (static_cast<std::size_t>(outputWidth_) - length) / 2U;
+                const CUresult status = cuMemcpyDtoH_(
+                    bytes, base + static_cast<CUdeviceptr>(row * stride + x), length);
+                if (status != CUDA_SUCCESS) {
+                    std::cerr << "NATIVE NVDEC UV PROBE frame=" << nvdecDisplayFrames_
+                              << " plane=" << plane << " error=" << static_cast<int>(status)
+                              << std::endl;
+                    return;
+                }
+                std::uint64_t even = 0, odd = 0;
+                unsigned zero = 0, maximum = 0, minimum = 255;
+                for (std::size_t i = 0; i < length; ++i) {
+                    if ((i & 1U) == 0U) even += bytes[i];
+                    else odd += bytes[i];
+                    zero += bytes[i] == 0;
+                    minimum = std::min(minimum, static_cast<unsigned>(bytes[i]));
+                    maximum = std::max(maximum, static_cast<unsigned>(bytes[i]));
+                }
+                const std::size_t evenCount = (length + 1U) / 2U;
+                const std::size_t oddCount = length / 2U;
+                std::cerr << "NATIVE NVDEC UV PROBE frame=" << nvdecDisplayFrames_
+                          << " plane=" << plane
+                          << " pitch=" << stride << " row=" << row
+                          << " bytes=" << length
+                          << " avg0=" << (evenCount ? even / evenCount : 0)
+                          << " avg1=" << (oddCount ? odd / oddCount : 0)
+                          << " zeros=" << zero
+                          << " min=" << minimum << " max=" << maximum
+                          << " interleaved=" << (interleaved ? 1 : 0)
+                          << std::endl;
+            };
+            probe("src_y", devicePtr, pitch,
+                  static_cast<std::size_t>(outputHeight_ / 2), false);
+            const CUdeviceptr uv = devicePtr +
+                static_cast<CUdeviceptr>(pitch) * static_cast<CUdeviceptr>(outputHeight_);
+            probe("src_uv_top", uv, pitch, 0U, true);
+            probe("src_uv_mid", uv, pitch,
+                  static_cast<std::size_t>(outputHeight_ / 4), true);
+        }
+
         if (cuvidGetDecodeStatus_) {
             CUVIDGETDECODESTATUS decodeStatus{};
             if (cuvidGetDecodeStatus_(
@@ -679,6 +746,34 @@ private:
                 failCallback("NVDEC safe-copy CUDA device copy failed: " +
                              std::to_string(static_cast<int>(result)));
                 return 0;
+            }
+            if (emitUvProbe) {
+                std::uint8_t bytes[128]{};
+                const std::size_t length = std::min<std::size_t>(
+                    sizeof(bytes), static_cast<std::size_t>(outputWidth_));
+                const std::size_t x = (static_cast<std::size_t>(outputWidth_) - length) / 2U;
+                const CUresult stat = cuMemcpyDtoH_(
+                    bytes, gpuCopyFrame_ +
+                        static_cast<CUdeviceptr>(gpuCopyPitch_) *
+                        static_cast<CUdeviceptr>(outputHeight_ + outputHeight_ / 4) +
+                        static_cast<CUdeviceptr>(x), length);
+                if (stat == CUDA_SUCCESS) {
+                    std::uint64_t u = 0, v = 0;
+                    for (std::size_t j = 0; j + 1 < length; j += 2U) {
+                        u += bytes[j]; v += bytes[j + 1];
+                    }
+                    const std::size_t pairs = length / 2U;
+                    std::cerr << "NATIVE NVDEC UV PROBE frame=" << nvdecDisplayFrames_
+                              << " plane=dst_uv_mid"
+                              << " pitch=" << gpuCopyPitch_
+                              << " avg0=" << (pairs ? u / pairs : 0)
+                              << " avg1=" << (pairs ? v / pairs : 0)
+                              << " status=ok" << std::endl;
+                } else {
+                    std::cerr << "NATIVE NVDEC UV PROBE frame=" << nvdecDisplayFrames_
+                              << " plane=dst_uv_mid error=" << static_cast<int>(stat)
+                              << std::endl;
+                }
             }
         }
 
@@ -1125,6 +1220,7 @@ private:
     tcuCtxSynchronize* cuCtxSynchronize_ = nullptr;
     tcuMemsetD2D8Async* cuMemsetD2D8Async_ = nullptr;
     tcuMemAllocPitch_v2* cuMemAllocPitch_ = nullptr;
+    tcuMemcpyDtoH_v2* cuMemcpyDtoH_ = nullptr;
     tcuMemFree_v2* cuMemFree_ = nullptr;
     tcuMemcpy2D_v2* cuMemcpy2D_ = nullptr;
 
@@ -1145,6 +1241,7 @@ private:
     CUvideodecoder decoder_ = nullptr;
     bool safeGpuCopy_ = false;
     bool neutralChromaDiag_ = false;
+    bool nvdecUvProbe_ = false;
     std::string nvdecVppMode_ = "adaptive";
     bool nvdecVppProbe_ = false;
     std::uint64_t nvdecDisplayFrames_ = 0;
