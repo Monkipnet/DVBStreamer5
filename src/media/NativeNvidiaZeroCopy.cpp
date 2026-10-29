@@ -518,7 +518,11 @@ private:
 
         CUVIDPROCPARAMS proc{};
         proc.progressive_frame = display->progressive_frame;
-        proc.second_field = 0;
+        // NVIDIA's NvDecoder sample uses repeat_first_field + 1 here.
+        // For interlaced frames, always selecting field zero can map the
+        // incorrect field and produce combing/corrupted output after VPP.
+        // A value of -1 denotes an unpaired field and must not underflow.
+        proc.second_field = std::max(0, display->repeat_first_field + 1);
         proc.top_field_first = display->top_field_first;
         proc.unpaired_field = display->repeat_first_field < 0 ? 1 : 0;
 
@@ -1006,6 +1010,10 @@ private:
 
 bool nvidiaZeroCopyRuntimeAvailable() noexcept {
 #if defined(__linux__) && defined(DVBSTREAMER5_HAVE_NVDEC_HEADERS) && defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)
+    // Emergency runtime switch: keep CPU decode + ordinary NVENC available
+    // if an NVIDIA driver fails to produce correct zero-copy pictures.
+    const char* disable = std::getenv("DVBSTREAMER5_DISABLE_NVIDIA_ZERO_COPY");
+    if (disable && std::strcmp(disable, "1") == 0) return false;
     return canDlopen("libcuda.so.1") &&
            canDlopen("libnvcuvid.so.1") &&
            canDlopen("libnvidia-encode.so.1");
