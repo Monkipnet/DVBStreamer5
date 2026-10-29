@@ -2,6 +2,7 @@
 
 #include "media/NativeVideoProcessing.h"
 #include "media/DiagnosticI420Frame.h"
+#include "media/DiagnosticColorI420.h"
 #include "media/AvcDecoderDiagnostic.h"
 
 #include <algorithm>
@@ -166,6 +167,13 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     reset();
     config_ = config;
     diagnosticI420Enabled_ = false;
+    diagnosticColorI420Enabled_ = codec::forceOpenH264ForStream(
+        std::getenv("DVBSTREAMER5_DIAG_COLOR_STREAM_ID"), config_.streamId);
+    diagnosticColorI420Frames_ = 0;
+    if (diagnosticColorI420Enabled_)
+        std::cerr << "NATIVE VIDEO DIAG color-i420 enabled stream_id="
+                  << config_.streamId << " stage=post-decoder pre-encoder"
+                  << " layout=4-quadrants" << std::endl;
     diagnosticOpenH264Enabled_ = codec::forceOpenH264ForStream(
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"), config_.streamId);
     diagnosticI420Frames_ = 0;
@@ -1369,8 +1377,17 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         // Replace ONLY the decoded pixel buffer on the named diagnostic tile.
         // Keep original input decode, timing, geometry, and all downstream
         // scalers/encoders/muxers to localize the cause of colored stripes.
-        if (diagnosticI420Enabled_ &&
-            codec::fillDiagnosticNeutralI420(raw, diagnosticI420Frames_++)) {
+        if (diagnosticColorI420Enabled_) {
+            if (codec::fillDiagnosticColorI420(raw, diagnosticColorI420Frames_++) &&
+                (diagnosticColorI420Frames_ == 1 ||
+                 (diagnosticColorI420Frames_ % 500U) == 0U))
+                std::cerr << "NATIVE VIDEO DIAG color-i420 frame="
+                          << diagnosticColorI420Frames_
+                          << " stream_id=" << config_.streamId
+                          << " size=" << raw.width << "x" << raw.height
+                          << std::endl;
+        } else if (diagnosticI420Enabled_ &&
+                   codec::fillDiagnosticNeutralI420(raw, diagnosticI420Frames_++)) {
             if (diagnosticI420Frames_ == 1 ||
                 (diagnosticI420Frames_ % 500U) == 0U)
                 std::cerr << "NATIVE VIDEO DIAG neutral-i420 frame="
