@@ -30,6 +30,7 @@ struct NativeTranscoderConfig {
     std::string streamId; // diagnostic-only targeting; never serialized into media
     std::string videoCodec = "h264"; // h264 | hevc | copy
     std::string videoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
+    std::string videoDecoder = "auto"; // auto | ittiam | openh264
     std::string audioCodec = "aac";  // aac | mp2 | mp3 | copy
     int width = 0;
     int height = 0;
@@ -485,7 +486,7 @@ private:
     NativeTranscoderConfig config_;
     bool diagnosticI420Enabled_ = false;
     bool diagnosticColorI420Enabled_ = false;
-    bool diagnosticOpenH264Enabled_ = false;
+    std::string selectedAvcDecoder_ = "auto";
     std::uint64_t diagnosticI420Frames_ = 0;
     std::uint64_t diagnosticColorI420Frames_ = 0;
     mpegts::NativeTsDemux demux_;
