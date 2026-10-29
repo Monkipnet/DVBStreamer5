@@ -2,7 +2,7 @@
 
 **DVBStreamer5** — Linux-приложение для приёма, обработки, декодирования, транскодирования и раздачи DVB/IPTV-потоков с собственным native media engine и встроенным Web UI.
 
-Текущая версия: **10.8.223**
+Текущая версия: **10.8.224**
 
 > Проект не использует FFmpeg/libav или GStreamer как media framework. Транспорт, MPEG-TS mux/demux, HLS/CMAF, SRT, RTSP, RTMP, remap, EPG и основная логика транскодинга работают внутри DVBStreamer5. Кодеки подключаются как зафиксированные project-local библиотеки.
 
@@ -733,7 +733,7 @@ cd DVBStreamer5
 docker build \
   --build-arg CODEC_JOBS=2 \
   --build-arg BUILD_JOBS=2 \
-  -t dvbstreamer5:10.8.223 .
+  -t dvbstreamer5:10.8.224 .
 ```
 
 Persistent directories:
@@ -753,7 +753,7 @@ docker run -d \
   --network host \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.223
+  dvbstreamer5:10.8.224
 ```
 
 ## Docker + DVB adapter
@@ -770,7 +770,7 @@ docker run -d \
   --device /dev/dvb/adapter0/dvr0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.223
+  dvbstreamer5:10.8.224
 ```
 
 Посмотреть device nodes:
@@ -800,7 +800,7 @@ docker run -d \
   --device /dev/dri/card0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.223
+  dvbstreamer5:10.8.224
 ```
 
 ## Docker + NVIDIA NVENC
@@ -830,7 +830,7 @@ docker run -d \
   -e NVIDIA_DRIVER_CAPABILITIES=video,compute,utility \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.223
+  dvbstreamer5:10.8.224
 ```
 
 DVB + NVIDIA: добавьте к этой команде нужные `--device /dev/dvb/...`.
