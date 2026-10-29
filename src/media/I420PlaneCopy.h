@@ -38,4 +38,20 @@ inline bool copyDecoderI420(const std::uint8_t* y, int yStride,
     return true;
 }
 
+// OpenH264's SSysMEMBuffer exposes exactly TWO pitches: Y and a shared
+// chroma pitch for both U and V. The array-reference type prevents accidental
+// use of a nonexistent third stride. Other decoders may use 3 independent
+// pitches and should continue to call copyDecoderI420 directly.
+inline bool copyOpenH264I420(const std::uint8_t* y,
+                            const std::uint8_t* u,
+                            const std::uint8_t* v,
+                            const int (&strides)[2],
+                            int width, int height,
+                            std::vector<std::uint8_t>& output) {
+    return copyDecoderI420(y, strides[0],
+                           u, strides[1],
+                           v, strides[1],
+                           width, height, output);
+}
+
 } // namespace dvbstreamer5::media::codec
