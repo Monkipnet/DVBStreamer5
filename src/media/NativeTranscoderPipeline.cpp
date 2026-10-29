@@ -1,6 +1,7 @@
 #include "media/NativeTranscoderPipeline.h"
 
 #include "media/NativeVideoProcessing.h"
+#include "media/DiagnosticI420Frame.h"
 
 #include <algorithm>
 #include <cmath>
@@ -163,6 +164,19 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     error.clear();
     reset();
     config_ = config;
+    diagnosticI420Enabled_ = false;
+    diagnosticI420Frames_ = 0;
+    // Only the explicitly named stream is affected; never alter all streams
+    // based on a global 'enable' boolean or modify the original DVB source.
+    const char* diagnosticTarget = std::getenv("DVBSTREAMER5_DIAG_I420_STREAM_ID");
+    if (diagnosticTarget && *diagnosticTarget && !config_.streamId.empty() &&
+        config_.streamId == diagnosticTarget && config_.videoCodec != "copy") {
+        diagnosticI420Enabled_ = true;
+        std::cerr << "NATIVE VIDEO DIAG neutral-i420 enabled stream_id="
+                  << config_.streamId
+                  << " stage=post-decoder pre-encoder output=gray-grid"
+                  << std::endl;
+    }
     if (config_.videoCodec != "copy" && videoCodecFromName(config_.videoCodec) == mpegts::ElementaryCodec::Unknown) {
         error = "native transcoder: unsupported video output codec";
         return false;
@@ -1333,6 +1347,20 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         }
 
         if (config_.deinterlace) codec::deinterlaceBlendI420(raw);
+
+        // Replace ONLY the decoded pixel buffer on the named diagnostic tile.
+        // Keep original input decode, timing, geometry, and all downstream
+        // scalers/encoders/muxers to localize the cause of colored stripes.
+        if (diagnosticI420Enabled_ &&
+            codec::fillDiagnosticNeutralI420(raw, diagnosticI420Frames_++)) {
+            if (diagnosticI420Frames_ == 1 ||
+                (diagnosticI420Frames_ % 500U) == 0U)
+                std::cerr << "NATIVE VIDEO DIAG neutral-i420 frame="
+                          << diagnosticI420Frames_
+                          << " stream_id=" << config_.streamId
+                          << " size=" << raw.width << "x" << raw.height
+                          << std::endl;
+        }
 
         auto sharedRaw =
             std::make_shared<codec::RawVideoFrame>(std::move(raw));
