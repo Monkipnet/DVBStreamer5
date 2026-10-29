@@ -484,6 +484,7 @@ private:
     static constexpr auto kMuxStartupPeerWait = std::chrono::milliseconds(2500);
     NativeTranscoderConfig config_;
     bool diagnosticI420Enabled_ = false;
+    bool diagnosticOpenH264Enabled_ = false;
     std::uint64_t diagnosticI420Frames_ = 0;
     mpegts::NativeTsDemux demux_;
     mpegts::NativeMpegTsMux mux_;
