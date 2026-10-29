@@ -1,3 +1,12 @@
+### V10.8.235 — исправлена цветность NVDEC 1080i H.264 при сохранении GPU zero-copy
+
+- **Подтверждено пользователем на GTX 1050, DAZN 1/2:** в V10.8.234 режим `NVDEC → CUDA(NV12) → NVENC`, `bob`, `second_field=0` устранил зелёный оттенок и цветные горизонтальные полосы. Журнал показал `host_video_copies=0`, `gpu_surface_copies=0`.
+- Рабочая комбинация теперь **выбирается автоматически** при наличии чересстрочного H.264 и включённого деинтерлейсинга: `NVDEC Bob` + первое поле (`CUVIDPROCPARAMS.second_field=0`). В отличие от V10.8.234, `DVBSTREAMER5_NVDEC_FIRST_FIELD_TEST=1` и `DVBSTREAMER5_NVDEC_VPP_MODE=bob` **больше не нужны для этого сценария**.
+- Для прогрессивного контента и других кодеков сохранён прежний режим Adaptive по умолчанию. Явный `DVBSTREAMER5_NVDEC_VPP_MODE=adaptive|bob|weave` имеет приоритет; выключенный деинтерлейсинг в плитке принудительно сохраняет Weave. Выбор первого поля по умолчанию активен для чересстрочных H.264-кадров при Bob (включая явно выбранный Bob).
+- Логи: `NATIVE NVIDIA ZERO-COPY active ... deinterlace=bob auto_h264_bob=1 ... host_video_copies=0 gpu_surface_copies=0`. При `DVBSTREAMER5_NVDEC_VPP_PROBE=1` дополнительно `field_policy=first_h264_bob second_field=0` для чересстрочных H.264 кадров.
+- **После установки удалить временные systemd overrides** из прошлых диагностических тестов (после сохранения их резервной копии): `30-nvdec-safe-copy.conf`, `40-nvdec-vpp-test.conf`, `90-nvdec-uv-debug.conf`, `98-h264-capture.conf`, `99-nvenc-input-test.conf`, `zz-nvdec-field-ab.conf` в `/etc/systemd/system/dvbstreamer5.service.d`; затем `systemctl daemon-reload && systemctl restart dvbstreamer5.service`. Это возвращает обычную работу и исключает случайное включение диагностического `NVDEC→CPU(NV12)→NVENC`.
+- Пути Ittiam → NVENC, Intel VAAPI/QSV, обычный NVENC, OSCam-mini, EPG, subtitles и TS mux не менялись. Итоговую сборку V10.8.235 и воспроизведение **без** overrides следует отдельно проверить на сервере.
+
 ### V10.8.234 — A/B-проверка поля для NVDEC Bob по образцу FFmpeg CUVID
 
 - Сравнение одного и того же H.264 DAZN 1 (PID 2047) через `ffmpeg -c:v h264_cuvid -deint bob -drop_second_field 1 -resize 1280x720` и программный FFmpeg показало близкие RGB: общая средняя абсолютная разница 8.80/255, средние цвета по 10 горизонтальным зонам почти одинаковы. Это не гарантирует отсутствия узких полос, но аппаратный CUVID способен вывести изображения с почти той же средней цветностью.
