@@ -2,7 +2,7 @@
 
 **DVBStreamer5** — Linux-приложение для приёма, обработки, декодирования, транскодирования и раздачи DVB/IPTV-потоков с собственным native media engine и встроенным Web UI.
 
-Текущая версия: **10.8.224**
+Текущая версия: **10.8.225**
 
 > Проект не использует FFmpeg/libav или GStreamer как media framework. Транспорт, MPEG-TS mux/demux, HLS/CMAF, SRT, RTSP, RTMP, remap, EPG и основная логика транскодинга работают внутри DVBStreamer5. Кодеки подключаются как зафиксированные project-local библиотеки.
 
@@ -76,6 +76,8 @@
 - Intel QSV / oneVPL.
 - Intel/generic VAAPI.
 - NVIDIA NVDEC -> CUDA -> NVENC zero-copy, когда поддерживается системой.
+- Для чересстрочного NVIDIA-видео обработка полей в NVDEC исправлена в V10.8.225; при проблемах с конкретным драйвером можно отключить GPU decode, сохранив NVENC encoding: `DVBSTREAMER5_DISABLE_NVIDIA_ZERO_COPY=1` в окружении сервиса.
+- При `transcode_video_decoder=ittiam` или `openh264` выбранный CPU decoder имеет приоритет даже с `video_encoder=nvenc` (диагностический fallback).
 - Native scaling.
 - Deinterlace.
 - Resolution, FPS, bitrate, GOP, B-frames, reference frames.
@@ -733,7 +735,7 @@ cd DVBStreamer5
 docker build \
   --build-arg CODEC_JOBS=2 \
   --build-arg BUILD_JOBS=2 \
-  -t dvbstreamer5:10.8.224 .
+  -t dvbstreamer5:10.8.225 .
 ```
 
 Persistent directories:
@@ -753,7 +755,7 @@ docker run -d \
   --network host \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.224
+  dvbstreamer5:10.8.225
 ```
 
 ## Docker + DVB adapter
@@ -770,7 +772,7 @@ docker run -d \
   --device /dev/dvb/adapter0/dvr0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.224
+  dvbstreamer5:10.8.225
 ```
 
 Посмотреть device nodes:
@@ -800,7 +802,7 @@ docker run -d \
   --device /dev/dri/card0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.224
+  dvbstreamer5:10.8.225
 ```
 
 ## Docker + NVIDIA NVENC
@@ -830,7 +832,7 @@ docker run -d \
   -e NVIDIA_DRIVER_CAPABILITIES=video,compute,utility \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.224
+  dvbstreamer5:10.8.225
 ```
 
 DVB + NVIDIA: добавьте к этой команде нужные `--device /dev/dvb/...`.
