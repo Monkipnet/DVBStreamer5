@@ -918,9 +918,12 @@ private:
             std::memcpy(u + static_cast<std::size_t>(row) * (w / 2),
                         planes[1] + static_cast<std::size_t>(row) *
                             info.UsrData.sSystemBuffer.iStride[1], w / 2);
+            // OpenH264 has an independent row stride for the V plane.
+            // Reusing U stride can shift chroma columns / produce vertical
+            // tinted bands when a decoder returns differently padded planes.
             std::memcpy(v + static_cast<std::size_t>(row) * (w / 2),
                         planes[2] + static_cast<std::size_t>(row) *
-                            info.UsrData.sSystemBuffer.iStride[1], w / 2);
+                            info.UsrData.sSystemBuffer.iStride[2], w / 2);
         }
         output.push_back(std::move(frame));
         ++outputFrames_;
