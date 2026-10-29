@@ -739,14 +739,35 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
         const std::size_t limit = sample.kind == mpegts::ElementaryKind::Video
             ? kMaxMuxVideoQueue : kMaxMuxAudioQueue;
 
-        // V10.8.3 live backpressure policy: a slow peer encoder must never take the
-        // whole live HLS/TS output OFFLINE.  Keep the newest encoded samples and
-        // discard stale queue head entries when a bounded mux queue is exhausted.
-        // For audio this is especially important when video encoding (or one ABR
-        // rendition) temporarily falls behind: strict A/V lead intentionally holds
-        // audio, so treating a full audio queue as fatal creates a dead stream.
+        // V10.8.223: keep live backpressure recovery monotonic in media time.
+        // The old queue-full policy always popped the oldest sample.  When one
+        // track was already ahead of its peer, that deleted the nearest PTS the
+        // lagging track was trying to catch and moved the queue head even farther
+        // into the future.  A transient ~500 ms skew could therefore become a
+        // permanent full queue with ever-growing A/V drift and thousands of drops.
+        //
+        // If the full queue head is already more than the hard A/V envelope ahead
+        // of the peer clock, preserve that nearest queued timestamp and discard the
+        // newly arriving (even later) sample.  Otherwise retain the established
+        // live policy and discard the stale queue head.
+        bool dropIncoming = false;
+        const char* dropPolicy = "drop_head";
         if (queue.size() >= limit) {
-            queue.pop_front();
+            const std::uint64_t peerClock =
+                sample.kind == mpegts::ElementaryKind::Video
+                    ? lastMuxAudioClock90k_.load(std::memory_order_acquire)
+                    : lastMuxVideoClock90k_.load(std::memory_order_acquire);
+            const std::uint64_t headClock = muxClockOf(queue.front());
+            const bool headAheadOfPeer =
+                peerClock != 0 && headClock > peerClock + kMaxAvHardLead90k;
+
+            if (headAheadOfPeer) {
+                dropIncoming = true;
+                dropPolicy = "drop_incoming_preserve_head";
+            } else {
+                queue.pop_front();
+            }
+
             dropped = true;
             if (sample.kind == mpegts::ElementaryKind::Video) {
                 droppedVideo = true;
@@ -756,7 +777,9 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
                 muxDroppedAudio_.fetch_add(1, std::memory_order_relaxed);
             }
         }
-        queue.push_back(std::move(sample));
+        if (!dropIncoming) {
+            queue.push_back(std::move(sample));
+        }
         queueSize = queue.size();
     }
 
@@ -765,9 +788,12 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
             ? muxDroppedVideo_.load(std::memory_order_relaxed)
             : muxDroppedAudio_.load(std::memory_order_relaxed);
         if (count <= 4 || (count % 100U) == 0U) {
-            std::cerr << "NATIVE AV MUX DROP kind="
-                      << (droppedVideo ? "video" : "audio")
-                      << " reason=queue_full keep_live=1 dropped=" << count
+            std::cerr << "NATIVE AV MUX DROP"
+                      << " stream_id=" << config_.streamId
+                      << " kind=" << (droppedVideo ? "video" : "audio")
+                      << " reason=queue_full keep_live=1"
+                      << " policy=" << dropPolicy
+                      << " dropped=" << count
                       << " queue=" << queueSize << std::endl;
         }
     }
@@ -919,7 +945,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                             static_cast<long long>(lastAudioClock);
                 avDeltaMs /= 90;
             }
-            std::cerr << "NATIVE AV MUX vq=" << vqAfter
+            std::cerr << "NATIVE AV MUX"
+                      << " stream_id=" << config_.streamId
+                      << " vq=" << vqAfter
                       << " aq=" << aqAfter
                       << " video=" << muxedVideo
                       << " audio=" << muxedAudio
