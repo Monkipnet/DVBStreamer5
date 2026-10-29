@@ -1,8 +1,15 @@
+
+### V10.8.231 — сравнение входного NVENC буфера с программным путём
+
+- Для диагностики зелёных/красных полос: `DVBSTREAMER5_NVENC_SOFTWARE_INPUT_TEST=1` оставляет аппаратный NVDEC/deinterlace/scale, но загружает Y и UV плоскости NV12 в RAM и заполняет NVENC-owned `NV_ENC_CREATE_INPUT_BUFFER` построчно по реальному `nvEncLockInputBuffer.pitch`. Это тот же способ подачи кадра в NVENC, который использует рабочий Ittiam/I420→NV12 путь; входной decoder при этом **не переключается на Ittiam**.
+- По умолчанию режим отключён, основной NVDEC→CUDA→NVENC остаётся прежним. Включать только для A/B теста одного канала: передача GPU→RAM повышает загрузку CPU/PCIe и **не является production-оптимизацией**. Выключить после теста.
+- Если цвет становится нормальным, исследовать CUDA resource registration/mapped NV12 pitch в zero-copy. Если полосы сохраняются, исследовать NVDEC-decode status=9, входные H.264 access units и исходную NV12 цветность. Без результатов теста исправление цветности **не подтверждено**.
+
 # DVBStreamer5
 
 **DVBStreamer5** — Linux-приложение для приёма, обработки, декодирования, транскодирования и раздачи DVB/IPTV-потоков с собственным native media engine и встроенным Web UI.
 
-Текущая версия: **10.8.230**
+Текущая версия: **10.8.231**
 
 > Проект не использует FFmpeg/libav или GStreamer как media framework. Транспорт, MPEG-TS mux/demux, HLS/CMAF, SRT, RTSP, RTMP, remap, EPG и основная логика транскодинга работают внутри DVBStreamer5. Кодеки подключаются как зафиксированные project-local библиотеки.
 
@@ -76,14 +83,14 @@
 - Intel QSV / oneVPL.
 - Intel/generic VAAPI.
 - NVIDIA NVDEC -> CUDA -> NVENC zero-copy, когда поддерживается системой.
-- Для чересстрочного NVIDIA-видео обработка полей в NVDEC исправлена в V10.8.230; при проблемах с конкретным драйвером можно отключить GPU decode, сохранив NVENC encoding: `DVBSTREAMER5_DISABLE_NVIDIA_ZERO_COPY=1` в окружении сервиса.
+- Для чересстрочного NVIDIA-видео обработка полей в NVDEC исправлена в V10.8.231; при проблемах с конкретным драйвером можно отключить GPU decode, сохранив NVENC encoding: `DVBSTREAMER5_DISABLE_NVIDIA_ZERO_COPY=1` в окружении сервиса.
 - При `transcode_video_decoder=ittiam` или `openh264` выбранный CPU decoder имеет приоритет даже с `video_encoder=nvenc` (диагностический fallback).
 - Экспериментальная A/B диагностика NVIDIA: `DVBSTREAMER5_NVDEC_SAFE_COPY=1` включает копирование NV12 между двумя CUDA device surfaces (без RAM/CPU), чтобы исключить проблему прямой регистрации NVDEC mapping в NVENC; по умолчанию отключена. `NATIVE NVDEC DECODE ERROR` показывает, что GPU сообщил о повреждённом входном кадре.
-- Диагностика V10.8.230 для 1080i: `DVBSTREAMER5_NVDEC_VPP_MODE=adaptive|bob|weave` задаёт NVDEC VPP deinterlace (по умолчанию `adaptive`); `DVBSTREAMER5_NVDEC_VPP_PROBE=1` выводит флаги полей в журнал. При выключенном деинтерлейсе в настройках плитки используется `weave`, независимо от переменной. На уже работающих системах `bob` и `weave` следует проверять только в тестовом потоке, сравнивая артефакты и плавность движения.
-- Дополнительный тест V10.8.230 для зелёных кадров: `DVBSTREAMER5_NVDEC_DIAG_CHROMA=neutral` принудительно включает GPU safe copy и заменяет только NV12 UV-плоскость на нейтральные значения U=V=128 **на GPU**. Изображение в этом режиме намеренно чёрно-белое; если цветные полосы исчезают, вероятно повреждена UV-плоскость. Режим не исправляет цвет и по умолчанию отключён; удалите переменную после диагностического теста.
+- Диагностика V10.8.231 для 1080i: `DVBSTREAMER5_NVDEC_VPP_MODE=adaptive|bob|weave` задаёт NVDEC VPP deinterlace (по умолчанию `adaptive`); `DVBSTREAMER5_NVDEC_VPP_PROBE=1` выводит флаги полей в журнал. При выключенном деинтерлейсе в настройках плитки используется `weave`, независимо от переменной. На уже работающих системах `bob` и `weave` следует проверять только в тестовом потоке, сравнивая артефакты и плавность движения.
+- Дополнительный тест V10.8.231 для зелёных кадров: `DVBSTREAMER5_NVDEC_DIAG_CHROMA=neutral` принудительно включает GPU safe copy и заменяет только NV12 UV-плоскость на нейтральные значения U=V=128 **на GPU**. Изображение в этом режиме намеренно чёрно-белое; если цветные полосы исчезают, вероятно повреждена UV-плоскость. Режим не исправляет цвет и по умолчанию отключён; удалите переменную после диагностического теста.
 
-- Исправление V10.8.230: планировщик `NativeTranscoderPipeline::muxWorkerLoop` больше не делает повторные короткие/просроченные `pthread_cond_clockwait`, когда один поток A/V превышает допустимое опережение в 500 мс. Вместо этого ожидает поступления данных от отстающего потока; для допустимого временного удержания ждёт точного срока. Ограничения 150/500 мс, логика сброса очередей и порядок mux остаются прежними. Это исправление нагрузки CPU, не исправление цветных полос NVIDIA; NVDEC/UV ещё требуют отдельной проверки.
-- Диагностика V10.8.230: `DVBSTREAMER5_NVDEC_UV_PROBE=1` выводит статистику первых четырёх и каждого 500-го отображённого кадра: небольшие (не более 128 байт на область) пробы Y и двух UV-строк с CUDA device surface; с `DVBSTREAMER5_NVDEC_SAFE_COPY=1` также сверяет UV в целевом CUDA-буфере. Используйте вместе с `DVBSTREAMER5_NVDEC_DIAG_CHROMA` **отключённым**, иначе результат намеренно обесцвечен. Пробник включать временно: он создаёт редкие малые GPU→CPU чтения для диагностики и может слегка влиять на производительность.
+- Исправление V10.8.231: планировщик `NativeTranscoderPipeline::muxWorkerLoop` больше не делает повторные короткие/просроченные `pthread_cond_clockwait`, когда один поток A/V превышает допустимое опережение в 500 мс. Вместо этого ожидает поступления данных от отстающего потока; для допустимого временного удержания ждёт точного срока. Ограничения 150/500 мс, логика сброса очередей и порядок mux остаются прежними. Это исправление нагрузки CPU, не исправление цветных полос NVIDIA; NVDEC/UV ещё требуют отдельной проверки.
+- Диагностика V10.8.231: `DVBSTREAMER5_NVDEC_UV_PROBE=1` выводит статистику первых четырёх и каждого 500-го отображённого кадра: небольшие (не более 128 байт на область) пробы Y и двух UV-строк с CUDA device surface; с `DVBSTREAMER5_NVDEC_SAFE_COPY=1` также сверяет UV в целевом CUDA-буфере. Используйте вместе с `DVBSTREAMER5_NVDEC_DIAG_CHROMA` **отключённым**, иначе результат намеренно обесцвечен. Пробник включать временно: он создаёт редкие малые GPU→CPU чтения для диагностики и может слегка влиять на производительность.
 - Native scaling.
 - Deinterlace.
 - Resolution, FPS, bitrate, GOP, B-frames, reference frames.
@@ -741,7 +748,7 @@ cd DVBStreamer5
 docker build \
   --build-arg CODEC_JOBS=2 \
   --build-arg BUILD_JOBS=2 \
-  -t dvbstreamer5:10.8.230 .
+  -t dvbstreamer5:10.8.231 .
 ```
 
 Persistent directories:
@@ -761,7 +768,7 @@ docker run -d \
   --network host \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.230
+  dvbstreamer5:10.8.231
 ```
 
 ## Docker + DVB adapter
@@ -778,7 +785,7 @@ docker run -d \
   --device /dev/dvb/adapter0/dvr0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.230
+  dvbstreamer5:10.8.231
 ```
 
 Посмотреть device nodes:
@@ -808,7 +815,7 @@ docker run -d \
   --device /dev/dri/card0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.230
+  dvbstreamer5:10.8.231
 ```
 
 ## Docker + NVIDIA NVENC
@@ -838,7 +845,7 @@ docker run -d \
   -e NVIDIA_DRIVER_CAPABILITIES=video,compute,utility \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.230
+  dvbstreamer5:10.8.231
 ```
 
 DVB + NVIDIA: добавьте к этой команде нужные `--device /dev/dvb/...`.
