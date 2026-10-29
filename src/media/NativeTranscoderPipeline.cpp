@@ -878,15 +878,26 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                     }
                     chooseVideo = haveVideo;
                     if (!ready) {
-                        const auto now = std::chrono::steady_clock::now();
-                        const auto hardDeadline = otherClock == 0
-                            ? only.queuedAt + kMuxStartupPeerWait
-                            : only.queuedAt + kMuxSingleStreamMaxHold;
-                        const auto softDeadline =
-                            now + kMuxSingleStreamWait;
-                        const auto deadline =
-                            hardDeadline < softDeadline ? hardDeadline : softDeadline;
-                        muxQueueCv_.wait_until(lock, deadline);
+                        // V10.8.230: never spin on an expired timed wait.
+                        // When the single-stream clock is >500 ms ahead,
+                        // waiting longer cannot make the sample eligible:
+                        // only arrival of the lagging peer can restore the
+                        // A/V hard-lead bound.  Sleep until producer notification
+                        // (or stop) rather than issuing thousands of already-
+                        // expired pthread_cond_clockwait calls per second.
+                        // For an eligible bounded hold, use its exact deadline
+                        // instead of periodically waking every 120 ms.
+                        const bool peerCanCatchUpOnly =
+                            otherClock != 0 &&
+                            clock > otherClock + kMaxAvHardLead90k;
+                        if (peerCanCatchUpOnly) {
+                            muxQueueCv_.wait(lock);
+                        } else {
+                            const auto deadline = otherClock == 0
+                                ? only.queuedAt + kMuxStartupPeerWait
+                                : only.queuedAt + kMuxSingleStreamMaxHold;
+                            muxQueueCv_.wait_until(lock, deadline);
+                        }
                         if (muxStop_.load(std::memory_order_acquire) &&
                             muxVideoQueue_.empty() && muxAudioQueue_.empty()) break;
                         continue;
