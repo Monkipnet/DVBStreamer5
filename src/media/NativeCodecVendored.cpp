@@ -909,13 +909,15 @@ private:
         frame.dts90k = frame.pts90k;
         frame.hasPts = hasPts || info.uiOutYuvTimeStamp != 0;
         frame.hasDts = frame.hasPts;
-        // Each decoder plane can have a different stride (notably U vs V).
-        // Copying the V rows with the U stride caused tinted stripe artifacts.
-        if (!copyDecoderI420(planes[0], video.iStride[0],
-                             planes[1], video.iStride[1],
-                             planes[2], video.iStride[2],
-                             w, h, frame.i420)) {
-            error = "OpenH264 returned invalid I420 plane strides";
+        // OpenH264 SSystemBuffer has iStride[2]: [0]=Y, [1]=U and V.
+        // Its third *plane* does NOT have an iStride[2] entry.
+        if (!copyOpenH264I420(planes[0], planes[1], planes[2],
+                              video.iStride, w, h, frame.i420)) {
+            error = "OpenH264 returned invalid I420 plane strides: y=" +
+                std::to_string(video.iStride[0]) +
+                " uv=" + std::to_string(video.iStride[1]) +
+                " width=" + std::to_string(w) +
+                " height=" + std::to_string(h);
             return false;
         }
         output.push_back(std::move(frame));
