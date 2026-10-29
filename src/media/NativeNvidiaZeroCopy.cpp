@@ -121,6 +121,7 @@ public:
                         std::strcmp(vppMode, "bob") == 0 ||
                         std::strcmp(vppMode, "weave") == 0)) {
             nvdecVppMode_ = vppMode;
+            nvdecVppModeExplicit_ = true;
         } else if (vppMode && *vppMode) {
             std::cerr << "NATIVE NVDEC VPP invalid mode=" << vppMode
                       << " fallback=adaptive" << std::endl;
@@ -487,18 +488,24 @@ private:
         create.display_area.right = static_cast<short>(format->display_area.right);
         create.display_area.bottom = static_cast<short>(format->display_area.bottom);
         create.OutputFormat = cudaVideoSurfaceFormat_NV12;
-        // V10.8.227: isolated A/B test for field-processing artifacts on
-        // interlaced H.264. Default is the original adaptive path; the
-        // explicit per-tile deinterlace=off continues to force weave.
+        // V10.8.235: default to the user-verified FFmpeg CUVID bob path for
+        // interlaced H.264. Keep the prior adaptive default for all other
+        // codecs and progressive sequences. A user-specified VPP mode and
+        // a tile's explicit deinterlace=off always take precedence.
         const bool doDeinterlace = config_.deinterlace;
-        const char* vppName = !doDeinterlace ? "weave" : nvdecVppMode_.c_str();
-        create.DeinterlaceMode = !doDeinterlace || nvdecVppMode_ == "weave"
+        nvdecAutoH264Bob_ = doDeinterlace && !nvdecVppModeExplicit_ &&
+            config_.inputCodec == mpegts::ElementaryCodec::H264 &&
+            !format->progressive_sequence;
+        nvdecEffectiveVppMode_ = nvdecAutoH264Bob_ ? "bob" : nvdecVppMode_;
+        const char* vppName = !doDeinterlace ? "weave" : nvdecEffectiveVppMode_.c_str();
+        create.DeinterlaceMode = !doDeinterlace || nvdecEffectiveVppMode_ == "weave"
             ? cudaVideoDeinterlaceMode_Weave
-            : nvdecVppMode_ == "bob"
+            : nvdecEffectiveVppMode_ == "bob"
                 ? cudaVideoDeinterlaceMode_Bob
                 : cudaVideoDeinterlaceMode_Adaptive;
         std::cerr << "NATIVE NVDEC VPP configuration mode=" << vppName
                   << " requested_deinterlace=" << (config_.deinterlace ? 1 : 0)
+                  << " auto_h264_bob=" << (nvdecAutoH264Bob_ ? 1 : 0)
                   << " progressive_sequence=" << static_cast<int>(format->progressive_sequence)
                   << " coded=" << format->coded_width << "x" << format->coded_height
                   << " target=" << outputWidth_ << "x" << outputHeight_
@@ -571,6 +578,7 @@ private:
                   << " source=" << sourceWidth_ << "x" << sourceHeight_
                   << " encode=" << outputWidth_ << "x" << outputHeight_
                   << " deinterlace=" << vppName
+                  << " auto_h264_bob=" << (nvdecAutoH264Bob_ ? 1 : 0)
                   << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
                   << " chroma_diag=" << (neutralChromaDiag_ ? "neutral" : "off")
                   << " uv_probe=" << (nvdecUvProbe_ ? 1 : 0)
@@ -636,13 +644,21 @@ private:
 
         CUVIDPROCPARAMS proc{};
         proc.progressive_frame = display->progressive_frame;
-        // NVIDIA's NvDecoder sample uses repeat_first_field + 1 here.
-        // For interlaced frames, always selecting field zero can map the
-        // incorrect field and produce combing/corrupted output after VPP.
-        // A value of -1 denotes an unpaired field and must not underflow.
-        proc.second_field = nvdecFirstFieldTest_ && config_.deinterlace &&
-            nvdecVppMode_ != "weave" ? 0 :
-            std::max(0, display->repeat_first_field + 1);
+        // V10.8.235: DAZN 1080i validated clean colors/zero-copy with
+        // Bob + first field (second_field=0). Follow that policy by default
+        // for interlaced H.264 Bob output, like FFmpeg CUVID
+        // -deint bob -drop_second_field 1. Preserve the prior mapping for
+        // progressive, weave, and other codecs. The old A/B flag remains
+        // available for non-Bob modes, but is no longer needed for H.264 Bob.
+        const bool h264BobFirstField =
+            config_.deinterlace &&
+            config_.inputCodec == mpegts::ElementaryCodec::H264 &&
+            !display->progressive_frame &&
+            nvdecEffectiveVppMode_ == "bob";
+        const bool abFirstField = nvdecFirstFieldTest_ &&
+            config_.deinterlace && nvdecEffectiveVppMode_ != "weave";
+        proc.second_field = (h264BobFirstField || abFirstField)
+            ? 0 : std::max(0, display->repeat_first_field + 1);
         proc.top_field_first = display->top_field_first;
         proc.unpaired_field = display->repeat_first_field < 0 ? 1 : 0;
         ++nvdecDisplayFrames_;
@@ -655,9 +671,10 @@ private:
                       << " top_first=" << display->top_field_first
                       << " repeat_first=" << display->repeat_first_field
                       << " second_field=" << proc.second_field
-                      << " field_policy=" << (nvdecFirstFieldTest_ ? "first_test" : "default")
+                      << " field_policy=" << (h264BobFirstField
+                          ? "first_h264_bob" : abFirstField ? "first_test" : "legacy")
                       << " unpaired=" << proc.unpaired_field
-                      << " mode=" << (config_.deinterlace ? nvdecVppMode_ : "weave")
+                      << " mode=" << (config_.deinterlace ? nvdecEffectiveVppMode_ : "weave")
                       << std::endl;
         }
 
@@ -1376,6 +1393,9 @@ private:
     bool nvdecFirstFieldTest_ = false;
     bool nvencSoftwareInputTest_ = false;
     std::string nvdecVppMode_ = "adaptive";
+    std::string nvdecEffectiveVppMode_ = "adaptive";
+    bool nvdecVppModeExplicit_ = false;
+    bool nvdecAutoH264Bob_ = false;
     bool nvdecVppProbe_ = false;
     std::uint64_t nvdecDisplayFrames_ = 0;
     CUdeviceptr gpuCopyFrame_ = 0;
