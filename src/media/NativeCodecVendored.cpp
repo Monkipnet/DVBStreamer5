@@ -1,4 +1,5 @@
 #include "media/NativeCodecRuntime.h"
+#include "media/I420PlaneCopy.h"
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeIttiamAvc.h"
 #include "media/NativeAc3Decoder.h"
@@ -893,8 +894,10 @@ private:
         if (info.iBufferStatus != 1) return true;
         const int w = info.UsrData.sSystemBuffer.iWidth;
         const int h = info.UsrData.sSystemBuffer.iHeight;
-        if (w <= 0 || h <= 0 || !planes[0] || !planes[1] || !planes[2]) {
-            error = "OpenH264 returned invalid I420";
+        const auto& video = info.UsrData.sSystemBuffer;
+        if (w <= 0 || h <= 0 || (w & 1) || (h & 1) ||
+            !planes[0] || !planes[1] || !planes[2]) {
+            error = "OpenH264 returned invalid I420 frame geometry";
             return false;
         }
 
@@ -905,25 +908,14 @@ private:
         frame.dts90k = frame.pts90k;
         frame.hasPts = hasPts || info.uiOutYuvTimeStamp != 0;
         frame.hasDts = frame.hasPts;
-        frame.i420.resize(static_cast<std::size_t>(w) * h * 3U / 2U);
-        auto* y = frame.i420.data();
-        auto* u = y + static_cast<std::size_t>(w) * h;
-        auto* v = u + static_cast<std::size_t>(w / 2) * (h / 2);
-        for (int row = 0; row < h; ++row) {
-            std::memcpy(y + static_cast<std::size_t>(row) * w,
-                        planes[0] + static_cast<std::size_t>(row) *
-                            info.UsrData.sSystemBuffer.iStride[0], w);
-        }
-        for (int row = 0; row < h / 2; ++row) {
-            std::memcpy(u + static_cast<std::size_t>(row) * (w / 2),
-                        planes[1] + static_cast<std::size_t>(row) *
-                            info.UsrData.sSystemBuffer.iStride[1], w / 2);
-            // OpenH264 has an independent row stride for the V plane.
-            // Reusing U stride can shift chroma columns / produce vertical
-            // tinted bands when a decoder returns differently padded planes.
-            std::memcpy(v + static_cast<std::size_t>(row) * (w / 2),
-                        planes[2] + static_cast<std::size_t>(row) *
-                            info.UsrData.sSystemBuffer.iStride[2], w / 2);
+        // Each decoder plane can have a different stride (notably U vs V).
+        // Copying the V rows with the U stride caused tinted stripe artifacts.
+        if (!copyDecoderI420(planes[0], video.iStride[0],
+                             planes[1], video.iStride[1],
+                             planes[2], video.iStride[2],
+                             w, h, frame.i420)) {
+            error = "OpenH264 returned invalid I420 plane strides";
+            return false;
         }
         output.push_back(std::move(frame));
         ++outputFrames_;
