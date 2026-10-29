@@ -129,6 +129,12 @@ public:
         nvdecVppProbe_ = vppProbe && std::strcmp(vppProbe, "1") == 0;
         const char* uvProbe = std::getenv("DVBSTREAMER5_NVDEC_UV_PROBE");
         nvdecUvProbe_ = uvProbe && std::strcmp(uvProbe, "1") == 0;
+        // A/B isolation: use the identical NVENC-owned input buffer layout as
+        // the working software-decoder -> NVENC encoder instead of registering
+        // an external CUDA pointer. NVDEC stays hardware. This mode downloads
+        // the full Y and UV planes and is strictly diagnostic, not zero-copy.
+        const char* swInput = std::getenv("DVBSTREAMER5_NVENC_SOFTWARE_INPUT_TEST");
+        nvencSoftwareInputTest_ = swInput && std::strcmp(swInput, "1") == 0;
         if (!loadRuntime(error)) return false;
 
         if (cuInit_(0) != CUDA_SUCCESS ||
@@ -276,9 +282,13 @@ private:
         }
         if (safeGpuCopy_ &&
             (!loadSymbol(cudaLib_, "cuMemAllocPitch_v2", cuMemAllocPitch_) ||
-             !loadSymbol(cudaLib_, "cuMemFree_v2", cuMemFree_) ||
-             !loadSymbol(cudaLib_, "cuMemcpy2D_v2", cuMemcpy2D_))) {
-            error = "CUDA pitched allocation/copy driver functions missing";
+             !loadSymbol(cudaLib_, "cuMemFree_v2", cuMemFree_))) {
+            error = "CUDA pitched allocation driver functions missing";
+            return false;
+        }
+        if ((safeGpuCopy_ || nvencSoftwareInputTest_) &&
+            !loadSymbol(cudaLib_, "cuMemcpy2D_v2", cuMemcpy2D_)) {
+            error = "CUDA NV12 plane copying requires cuMemcpy2D_v2";
             return false;
         }
         if (neutralChromaDiag_ &&
@@ -507,6 +517,25 @@ private:
             destroyDecoder();
             return 0;
         }
+        if (nvencSoftwareInputTest_) {
+            NV_ENC_CREATE_INPUT_BUFFER input{};
+            input.version = NV_ENC_CREATE_INPUT_BUFFER_VER;
+            input.width = static_cast<std::uint32_t>(outputWidth_);
+            input.height = static_cast<std::uint32_t>(outputHeight_);
+            input.bufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
+            const NVENCSTATUS createStatus =
+                api_.nvEncCreateInputBuffer(encoder_, &input);
+            if (createStatus != NV_ENC_SUCCESS || !input.inputBuffer) {
+                failCallback("NVENC software-input diagnostic buffer allocation failed: " +
+                             std::to_string(static_cast<int>(createStatus)));
+                destroyEncoder();
+                destroyDecoder();
+                return 0;
+            }
+            nvencSoftwareInputBuffer_ = input.inputBuffer;
+            hostNv12_.resize(static_cast<std::size_t>(outputWidth_) *
+                             static_cast<std::size_t>(outputHeight_) * 3U / 2U);
+        }
         if (safeGpuCopy_) {
             const CUresult allocResult = cuMemAllocPitch_(
                 &gpuCopyFrame_, &gpuCopyPitch_,
@@ -530,14 +559,18 @@ private:
         std::cerr << "NATIVE NVIDIA ZERO-COPY active gpu=" << gpuOrdinal_
                   << " input=" << codecName(config_.inputCodec)
                   << " output=" << codecName(config_.outputCodec)
-                  << " path=NVDEC->CUDA(NV12)->NVENC"
+                  << " path=" << (nvencSoftwareInputTest_
+                      ? "NVDEC->CPU(NV12)->NVENC"
+                      : "NVDEC->CUDA(NV12)->NVENC")
                   << " source=" << sourceWidth_ << "x" << sourceHeight_
                   << " encode=" << outputWidth_ << "x" << outputHeight_
                   << " deinterlace=" << vppName
                   << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
                   << " chroma_diag=" << (neutralChromaDiag_ ? "neutral" : "off")
                   << " uv_probe=" << (nvdecUvProbe_ ? 1 : 0)
-                  << " host_video_copies=0 gpu_surface_copies=" << (neutralChromaDiag_ ? 1 : safeGpuCopy_ ? 2 : 0)
+                  << " nvenc_software_input_test=" << (nvencSoftwareInputTest_ ? 1 : 0)
+                  << " host_video_copies=" << (nvencSoftwareInputTest_ ? 2 : 0)
+                  << " gpu_surface_copies=" << (neutralChromaDiag_ ? 1 : safeGpuCopy_ ? 2 : 0)
                   << std::endl;
         return static_cast<int>(decodeSurfaces);
     }
@@ -804,24 +837,108 @@ private:
             (void)cuvidUnmapVideoFrame_(decoder_, devicePtr);
         };
 
-        NVENCSTATUS status = api_.nvEncRegisterResource(
-            encoder_, &registration);
-        if (status != NV_ENC_SUCCESS || !registration.registeredResource) {
-            cleanup();
-            failCallback("NVENC register NVDEC CUDA surface failed: " +
-                         std::to_string(static_cast<int>(status)));
-            return 0;
+        NVENCSTATUS status = NV_ENC_SUCCESS;
+        if (nvencSoftwareInputTest_) {
+            // Download the exact same NV12 layout that the software decoder
+            // writes: Y followed by interleaved UV, both with *width* bytes
+            // per row.  Then copy row-by-row into NVENC's own locked buffer
+            // using the pitch returned by nvEncLockInputBuffer.  This isolates
+            // CUDA resource registration from NVDEC's decoded pixel values.
+            if (!nvencSoftwareInputBuffer_ || hostNv12_.empty()) {
+                cleanup();
+                failCallback("NVENC software-input diagnostic buffer unavailable");
+                return 0;
+            }
+            const CUdeviceptr source =
+                safeGpuCopy_ ? gpuCopyFrame_ : devicePtr;
+            const std::size_t sourcePitch =
+                safeGpuCopy_ ? gpuCopyPitch_ : pitch;
+            const std::size_t rowBytes =
+                static_cast<std::size_t>(outputWidth_);
+            const std::size_t lumaRows =
+                static_cast<std::size_t>(outputHeight_);
+            CUDA_MEMCPY2D transfer{};
+            transfer.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            transfer.dstMemoryType = CU_MEMORYTYPE_HOST;
+            transfer.srcDevice = source;
+            transfer.srcPitch = sourcePitch;
+            transfer.dstHost = hostNv12_.data();
+            transfer.dstPitch = rowBytes;
+            transfer.WidthInBytes = rowBytes;
+            transfer.Height = lumaRows;
+            CUresult copyStatus = cuMemcpy2D_(&transfer);
+            if (copyStatus == CUDA_SUCCESS) {
+                transfer.srcDevice = source +
+                    static_cast<CUdeviceptr>(sourcePitch) *
+                    static_cast<CUdeviceptr>(lumaRows);
+                transfer.dstHost = hostNv12_.data() + rowBytes * lumaRows;
+                transfer.Height = lumaRows / 2U;
+                copyStatus = cuMemcpy2D_(&transfer);
+            }
+            if (copyStatus != CUDA_SUCCESS) {
+                cleanup();
+                failCallback("NVENC software-input CUDA NV12 download failed: " +
+                             std::to_string(static_cast<int>(copyStatus)));
+                return 0;
+            }
+            NV_ENC_LOCK_INPUT_BUFFER inputLock{};
+            inputLock.version = NV_ENC_LOCK_INPUT_BUFFER_VER;
+            inputLock.inputBuffer = nvencSoftwareInputBuffer_;
+            status = api_.nvEncLockInputBuffer(encoder_, &inputLock);
+            if (status != NV_ENC_SUCCESS) {
+                cleanup();
+                failCallback("NVENC software-input lock failed: " +
+                             std::to_string(static_cast<int>(status)));
+                return 0;
+            }
+            if (!inputLock.bufferDataPtr || inputLock.pitch < rowBytes) {
+                (void)api_.nvEncUnlockInputBuffer(
+                    encoder_, nvencSoftwareInputBuffer_);
+                cleanup();
+                failCallback("NVENC software-input invalid pitch or pointer");
+                return 0;
+            }
+            auto* dstY = static_cast<std::uint8_t*>(inputLock.bufferDataPtr);
+            auto* dstUV = dstY +
+                static_cast<std::size_t>(inputLock.pitch) * lumaRows;
+            const auto* srcY = hostNv12_.data();
+            const auto* srcUV = srcY + rowBytes * lumaRows;
+            for (std::size_t row = 0; row < lumaRows; ++row)
+                std::memcpy(dstY + row * inputLock.pitch,
+                            srcY + row * rowBytes, rowBytes);
+            for (std::size_t row = 0; row < lumaRows / 2U; ++row)
+                std::memcpy(dstUV + row * inputLock.pitch,
+                            srcUV + row * rowBytes, rowBytes);
+            registration.pitch = inputLock.pitch;
+            status = api_.nvEncUnlockInputBuffer(
+                encoder_, nvencSoftwareInputBuffer_);
+            if (status != NV_ENC_SUCCESS) {
+                cleanup();
+                failCallback("NVENC software-input unlock failed: " +
+                             std::to_string(static_cast<int>(status)));
+                return 0;
+            }
+            mapped.mappedResource = nvencSoftwareInputBuffer_;
+            mapped.mappedBufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
+        } else {
+            status = api_.nvEncRegisterResource(encoder_, &registration);
+            if (status != NV_ENC_SUCCESS || !registration.registeredResource) {
+                cleanup();
+                failCallback("NVENC register NVDEC CUDA surface failed: " +
+                             std::to_string(static_cast<int>(status)));
+                return 0;
+            }
+            resourceRegistered = true;
+            mapped.registeredResource = registration.registeredResource;
+            status = api_.nvEncMapInputResource(encoder_, &mapped);
+            if (status != NV_ENC_SUCCESS || !mapped.mappedResource) {
+                cleanup();
+                failCallback("NVENC map NVDEC CUDA surface failed: " +
+                             std::to_string(static_cast<int>(status)));
+                return 0;
+            }
+            resourceMapped = true;
         }
-        resourceRegistered = true;
-        mapped.registeredResource = registration.registeredResource;
-        status = api_.nvEncMapInputResource(encoder_, &mapped);
-        if (status != NV_ENC_SUCCESS || !mapped.mappedResource) {
-            cleanup();
-            failCallback("NVENC map NVDEC CUDA surface failed: " +
-                         std::to_string(static_cast<int>(status)));
-            return 0;
-        }
-        resourceMapped = true;
 
         const std::uint64_t frameNumber = frameIndex_++;
         const bool forceRandomAccess =
@@ -1154,12 +1271,16 @@ private:
 
     void destroyEncoder() noexcept {
         if (encoder_) {
+            if (nvencSoftwareInputBuffer_ && api_.nvEncDestroyInputBuffer)
+                (void)api_.nvEncDestroyInputBuffer(encoder_, nvencSoftwareInputBuffer_);
             if (bitstream_ && api_.nvEncDestroyBitstreamBuffer)
                 (void)api_.nvEncDestroyBitstreamBuffer(encoder_, bitstream_);
             if (api_.nvEncDestroyEncoder)
                 (void)api_.nvEncDestroyEncoder(encoder_);
         }
         bitstream_ = nullptr;
+        nvencSoftwareInputBuffer_ = nullptr;
+        hostNv12_.clear();
         encoder_ = nullptr;
         if (gpuCopyFrame_ && cuMemFree_) (void)cuMemFree_(gpuCopyFrame_);
         gpuCopyFrame_ = 0;
@@ -1242,6 +1363,7 @@ private:
     bool safeGpuCopy_ = false;
     bool neutralChromaDiag_ = false;
     bool nvdecUvProbe_ = false;
+    bool nvencSoftwareInputTest_ = false;
     std::string nvdecVppMode_ = "adaptive";
     bool nvdecVppProbe_ = false;
     std::uint64_t nvdecDisplayFrames_ = 0;
@@ -1251,6 +1373,8 @@ private:
 
     NV_ENCODE_API_FUNCTION_LIST api_{};
     void* encoder_ = nullptr;
+    NV_ENC_INPUT_PTR nvencSoftwareInputBuffer_ = nullptr;
+    std::vector<std::uint8_t> hostNv12_;
     NV_ENC_OUTPUT_PTR bitstream_ = nullptr;
 
     std::vector<EncodedVideoFrame>* callbackOutput_ = nullptr;
