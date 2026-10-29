@@ -110,6 +110,17 @@ public:
         // pitched NVENC input buffer. Default unchanged for production tiles.
         const char* safeCopy = std::getenv("DVBSTREAMER5_NVDEC_SAFE_COPY");
         safeGpuCopy_ = safeCopy && std::strcmp(safeCopy, "1") == 0;
+        const char* vppMode = std::getenv("DVBSTREAMER5_NVDEC_VPP_MODE");
+        if (vppMode && (std::strcmp(vppMode, "adaptive") == 0 ||
+                        std::strcmp(vppMode, "bob") == 0 ||
+                        std::strcmp(vppMode, "weave") == 0)) {
+            nvdecVppMode_ = vppMode;
+        } else if (vppMode && *vppMode) {
+            std::cerr << "NATIVE NVDEC VPP invalid mode=" << vppMode
+                      << " fallback=adaptive" << std::endl;
+        }
+        const char* vppProbe = std::getenv("DVBSTREAMER5_NVDEC_VPP_PROBE");
+        nvdecVppProbe_ = vppProbe && std::strcmp(vppProbe, "1") == 0;
         if (!loadRuntime(error)) return false;
 
         if (cuInit_(0) != CUDA_SUCCESS ||
@@ -441,9 +452,24 @@ private:
         create.display_area.right = static_cast<short>(format->display_area.right);
         create.display_area.bottom = static_cast<short>(format->display_area.bottom);
         create.OutputFormat = cudaVideoSurfaceFormat_NV12;
-        create.DeinterlaceMode = config_.deinterlace
-            ? cudaVideoDeinterlaceMode_Adaptive
-            : cudaVideoDeinterlaceMode_Weave;
+        // V10.8.227: isolated A/B test for field-processing artifacts on
+        // interlaced H.264. Default is the original adaptive path; the
+        // explicit per-tile deinterlace=off continues to force weave.
+        const bool doDeinterlace = config_.deinterlace;
+        const char* vppName = !doDeinterlace ? "weave" : nvdecVppMode_.c_str();
+        create.DeinterlaceMode = !doDeinterlace || nvdecVppMode_ == "weave"
+            ? cudaVideoDeinterlaceMode_Weave
+            : nvdecVppMode_ == "bob"
+                ? cudaVideoDeinterlaceMode_Bob
+                : cudaVideoDeinterlaceMode_Adaptive;
+        std::cerr << "NATIVE NVDEC VPP configuration mode=" << vppName
+                  << " requested_deinterlace=" << (config_.deinterlace ? 1 : 0)
+                  << " progressive_sequence=" << static_cast<int>(format->progressive_sequence)
+                  << " coded=" << format->coded_width << "x" << format->coded_height
+                  << " target=" << outputWidth_ << "x" << outputHeight_
+                  << " fps=" << format->frame_rate.numerator
+                  << "/" << format->frame_rate.denominator
+                  << std::endl;
         create.ulTargetWidth = static_cast<tcu_ulong>(outputWidth_);
         create.ulTargetHeight = static_cast<tcu_ulong>(outputHeight_);
         create.ulNumOutputSurfaces = 4;
@@ -488,7 +514,7 @@ private:
                   << " path=NVDEC->CUDA(NV12)->NVENC"
                   << " source=" << sourceWidth_ << "x" << sourceHeight_
                   << " encode=" << outputWidth_ << "x" << outputHeight_
-                  << " deinterlace=" << (config_.deinterlace ? "nvdec-adaptive" : "off")
+                  << " deinterlace=" << vppName
                   << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
                   << " host_video_copies=0 gpu_surface_copies=" << (safeGpuCopy_ ? 2 : 0)
                   << std::endl;
@@ -556,6 +582,20 @@ private:
         proc.second_field = std::max(0, display->repeat_first_field + 1);
         proc.top_field_first = display->top_field_first;
         proc.unpaired_field = display->repeat_first_field < 0 ? 1 : 0;
+        ++nvdecDisplayFrames_;
+        if (nvdecVppProbe_ &&
+            (nvdecDisplayFrames_ <= 12 ||
+             (nvdecDisplayFrames_ % 500ULL) == 0ULL)) {
+            std::cerr << "NATIVE NVDEC VPP FRAME count=" << nvdecDisplayFrames_
+                      << " picture=" << display->picture_index
+                      << " progressive=" << display->progressive_frame
+                      << " top_first=" << display->top_field_first
+                      << " repeat_first=" << display->repeat_first_field
+                      << " second_field=" << proc.second_field
+                      << " unpaired=" << proc.unpaired_field
+                      << " mode=" << (config_.deinterlace ? nvdecVppMode_ : "weave")
+                      << std::endl;
+        }
 
         CUdeviceptr devicePtr = 0;
         unsigned int pitch = 0;
@@ -1079,6 +1119,9 @@ private:
     CUvideoparser parser_ = nullptr;
     CUvideodecoder decoder_ = nullptr;
     bool safeGpuCopy_ = false;
+    std::string nvdecVppMode_ = "adaptive";
+    bool nvdecVppProbe_ = false;
+    std::uint64_t nvdecDisplayFrames_ = 0;
     CUdeviceptr gpuCopyFrame_ = 0;
     std::size_t gpuCopyPitch_ = 0;
     std::uint64_t nvdecCorruptFrames_ = 0;
