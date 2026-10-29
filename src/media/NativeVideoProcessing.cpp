@@ -1,4 +1,5 @@
 #include "media/NativeVideoProcessing.h"
+#include "media/NativeScaleMode.h"
 
 #include <algorithm>
 #include <cmath>
@@ -413,12 +414,24 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
     const std::size_t expected = static_cast<std::size_t>(input.width) * input.height * 3U / 2U;
     if (input.i420.size() < expected) { error = "native I420 input frame is truncated"; return false; }
 #if defined(DVBSTREAMER5_HAVE_VAAPI)
-    if (input.width != width || input.height != height) {
+    if (!forceCpuVideoScaling() &&
+        (input.width != width || input.height != height)) {
         thread_local VaapiVppScaler vppScaler;
         if (vppScaler.scale(input, width, height, output))
             return true;
     }
 #endif
+
+    if (forceCpuVideoScaling()) {
+        static const bool diagnosticLogged = [] {
+            std::cerr << "NATIVE VIDEO SCALE diagnostic=force-cpu"
+                      << " vaapi-vpp-bypass=1"
+                      << " env=DVBSTREAMER5_FORCE_CPU_SCALE"
+                      << std::endl;
+            return true;
+        }();
+        (void)diagnosticLogged;
+    }
 
     output = {};
     output.width = width; output.height = height;
