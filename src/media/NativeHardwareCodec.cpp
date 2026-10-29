@@ -1,4 +1,5 @@
 #include "media/NativeHardwareCodec.h"
+#include "media/NativeScaleMode.h"
 
 #include <algorithm>
 #include <array>
@@ -328,7 +329,11 @@ bool hasH264NalType(
 
 class VaapiH264Encoder final : public VideoEncoder {
 public:
-    bool supportsNativeScaling() const noexcept override { return true; }
+    // Diagnostic mode: route the decoded I420 frame through CPU scaling
+    // before the VAAPI encoder, bypassing VAAPI VPP without changing encode.
+    bool supportsNativeScaling() const noexcept override {
+        return !forceCpuVideoScaling();
+    }
     explicit VaapiH264Encoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
     ~VaapiH264Encoder() override { close(); }
 
