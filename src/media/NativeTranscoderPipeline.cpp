@@ -965,10 +965,11 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
     inputVideoCodec_ = codecType;
     if (diagnosticOpenH264Enabled_ &&
         codecType == mpegts::ElementaryCodec::H264) {
-        videoDecoder_ = codec::createOpenH264VideoDecoder(error);
+        videoDecoder_ = codec::createOpenH264VideoDecoder(error, config_.streamId);
         if (videoDecoder_)
-            std::cerr << "NATIVE AVC DECODER diagnostic active=openh264"
-                      << " stream_id=" << config_.streamId << std::endl;
+            std::cerr << "NATIVE AVC DECODER diagnostic selected=openh264-probe"
+                      << " stream_id=" << config_.streamId
+                      << " fallback=ittiam-on-failure" << std::endl;
     } else {
         videoDecoder_ = codec::createVideoDecoder(codecType, error);
     }
