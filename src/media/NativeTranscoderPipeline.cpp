@@ -79,7 +79,10 @@ StartupParameterSets inspectAnnexBStartup(const std::vector<std::uint8_t>& data,
 
 std::uint64_t videoDuration90k(double fps) {
     if (fps < 1.0) fps = 25.0;
-    return static_cast<std::uint64_t>(std::llround(90000// V10.8.232: diagnostic-only capture of the exact Annex-B H.264 samples
+    return static_cast<std::uint64_t>(std::llround(90000.0 / fps));
+}
+
+// V10.8.232: diagnostic-only capture of the exact Annex-B H.264 samples
 // handed to the chosen decoder. A single global output file is unsafe when
 // two or more channel pipelines run concurrently: their access units get
 // interleaved into an invalid stream. Keep one file, index and 64 MiB budget
@@ -192,9 +195,6 @@ void dumpH264ElementarySample(const mpegts::DemuxSample& sample,
                   << " stream_id=" << streamId
                   << " bytes=" << file.bytes
                   << " last=" << sample.data.size() << std::endl;
-    }
-}
-:endl;
     }
 }
 
