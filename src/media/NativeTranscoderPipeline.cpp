@@ -3,7 +3,8 @@
 #include "media/NativeVideoProcessing.h"
 #include "media/DiagnosticI420Frame.h"
 #include "media/DiagnosticColorI420.h"
-#include "media/AvcDecoderDiagnostic.h"
+#include "media/AvcDecoderSelection.h"
+#include "media/NativeIttiamAvc.h"
 
 #include <algorithm>
 #include <cmath>
@@ -174,13 +175,15 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
         std::cerr << "NATIVE VIDEO DIAG color-i420 enabled stream_id="
                   << config_.streamId << " stage=post-decoder pre-encoder"
                   << " layout=4-quadrants" << std::endl;
-    diagnosticOpenH264Enabled_ = codec::forceOpenH264ForStream(
-        std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"), config_.streamId);
+    selectedAvcDecoder_ = codec::chooseAvcDecoder(
+        config_.videoDecoder, config_.streamId,
+        std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
     diagnosticI420Frames_ = 0;
-    if (diagnosticOpenH264Enabled_) {
-        std::cerr << "NATIVE AVC DECODER diagnostic request=openh264"
+    if (selectedAvcDecoder_ != "auto") {
+        std::cerr << "NATIVE AVC DECODER preference=" << selectedAvcDecoder_
                   << " stream_id=" << config_.streamId
-                  << " zero_copy_bypass=1 output_encoder=unchanged"
+                  << " origin=" << (config_.videoDecoder == "auto" ? "diagnostic-env" : "per-tile")
+                  << " zero_copy_h264_bypass=1 output_encoder=unchanged"
                   << std::endl;
     }
     // Only the explicitly named stream is affected; never alter all streams
@@ -963,13 +966,19 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
     if (videoDecoder_ && inputVideoCodec_ == codecType) return true;
     videoDecoder_.reset();
     inputVideoCodec_ = codecType;
-    if (diagnosticOpenH264Enabled_ &&
-        codecType == mpegts::ElementaryCodec::H264) {
+    if (codecType == mpegts::ElementaryCodec::H264 &&
+        selectedAvcDecoder_ == "openh264") {
         videoDecoder_ = codec::createOpenH264VideoDecoder(error, config_.streamId);
         if (videoDecoder_)
-            std::cerr << "NATIVE AVC DECODER diagnostic selected=openh264-probe"
+            std::cerr << "NATIVE AVC DECODER preference selected=openh264"
                       << " stream_id=" << config_.streamId
                       << " fallback=ittiam-on-failure" << std::endl;
+    } else if (codecType == mpegts::ElementaryCodec::H264 &&
+               selectedAvcDecoder_ == "ittiam") {
+        videoDecoder_ = codec::createIttiamAvcDecoder(error);
+        if (videoDecoder_)
+            std::cerr << "NATIVE AVC DECODER preference selected=ittiam"
+                      << " stream_id=" << config_.streamId << std::endl;
     } else {
         videoDecoder_ = codec::createVideoDecoder(codecType, error);
     }
@@ -1122,13 +1131,16 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
 
+    const bool softwareAvcOverride =
+        sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        selectedAvcDecoder_ != "auto";
     const bool zeroCopyCodec =
         sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ||
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
         sample.stream.codec == mpegts::ElementaryCodec::H265;
     const bool zeroCopyBackend =
         config_.videoEncoder == "nvenc" || config_.videoEncoder == "auto";
-    if (!diagnosticOpenH264Enabled_ && !abrRawFanout &&
+    if (!softwareAvcOverride && !abrRawFanout &&
         zeroCopyCodec && zeroCopyBackend) {
         if (!nvidiaZeroCopyAttempted_) {
             nvidiaZeroCopyAttempted_ = true;
@@ -1222,7 +1234,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video;
     const bool intelZeroCopyBackend =
         config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
-    if (!diagnosticOpenH264Enabled_ && !abrRawFanout && !nvidiaZeroCopy_ &&
+    if (!softwareAvcOverride && !abrRawFanout && !nvidiaZeroCopy_ &&
         intelZeroCopyCodec && intelZeroCopyBackend) {
         if (!intelZeroCopyAttempted_) {
             intelZeroCopyAttempted_ = true;
