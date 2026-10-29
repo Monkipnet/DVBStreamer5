@@ -1,5 +1,6 @@
 #include "media/NativeCodecRuntime.h"
 #include "media/I420PlaneCopy.h"
+#include "media/DiagnosticAvcFallback.h"
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeIttiamAvc.h"
 #include "media/NativeAc3Decoder.h"
@@ -1453,15 +1454,33 @@ private:plm_buffer_t*buffer_=nullptr;plm_audio_t*audio_=nullptr;
 } // namespace
 
 RuntimeCapabilities inspectRuntimeCapabilities(){RuntimeCapabilities c;c.h264Decoder=c.h264Encoder=c.hevcDecoder=c.hevcEncoder=c.aacDecoder=c.aacEncoder=c.mpegAudioDecoder=true;c.h264Library="built-in Ittiam libavc static (OpenH264 fallback)";c.hevcDecoderLibrary="built-in libde265 1.1.3 static";c.hevcEncoderLibrary="built-in Kvazaar 2.3.2 static";c.aacDecoderLibrary=c.aacEncoderLibrary="built-in FDK-AAC 2.0.3 static";c.mpegAudioLibrary="built-in PL_MPEG static";const auto hw=inspectNativeHardwareCapabilities();c.vaapiRuntime=hw.vaapiRuntime;c.qsvEncoder=hw.qsvAvailable;c.qsvH264Encoder=hw.qsvH264;c.qsvHevcEncoder=hw.qsvHevc;c.nvencEncoder=hw.nvencAvailable;c.nvencH264Encoder=hw.nvencH264;c.nvencHevcEncoder=hw.nvencHevc;c.intelHardwareLibrary=hw.intelBackend;c.nvencHardwareLibrary=hw.nvencBackend;return c;}
-std::unique_ptr<VideoDecoder> createOpenH264VideoDecoder(std::string& error) {
+std::unique_ptr<VideoDecoder> createOpenH264VideoDecoder(
+    std::string& error, const std::string& streamId) {
     error.clear();
     auto decoder = std::make_unique<OpenH264Decoder>();
     if (!decoder->valid()) {
-        error = "OpenH264 diagnostic decoder failed to initialize";
-        return {};
+        // The baseline Ittiam decoder worked on this input before the test.
+        // Do not fail the selected tile solely because the optional diagnostic
+        // decoder cannot initialize; report the actual backend in the journal.
+        std::string fallbackError;
+        auto fallback = createIttiamAvcDecoder(fallbackError);
+        if (!fallback) {
+            error = "OpenH264 init failed; Ittiam fallback failed: " + fallbackError;
+            return {};
+        }
+        std::cerr << "NATIVE AVC DECODER diagnostic fallback=ittiam-libavc"
+                  << " stream_id=" << streamId
+                  << " cause=openh264_init_failed" << std::endl;
+        return fallback;
     }
-    std::cerr << "NATIVE AVC DECODER selected=openh264 reason=diagnostic-ab" << std::endl;
-    return decoder;
+    std::cerr << "NATIVE AVC DECODER selected=openh264 reason=diagnostic-ab"
+              << " stream_id=" << streamId << std::endl;
+    return std::make_unique<DiagnosticAvcFallbackDecoder>(
+        std::move(decoder),
+        [](std::string& fallbackError) {
+            return createIttiamAvcDecoder(fallbackError);
+        },
+        streamId);
 }
 std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){std::string ittiamError;auto p=createIttiamAvcDecoder(ittiamError);if(p){std::cerr<<"NATIVE AVC DECODER selected=ittiam-libavc\n";return p;}std::cerr<<"NATIVE AVC DECODER Ittiam unavailable reason="<<ittiamError<<" fallback=openh264\n";auto fallback=std::make_unique<OpenH264Decoder>();if(fallback->valid())return fallback;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<De265Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::Mpeg2Video){auto p=std::make_unique<IttiamMpeg2Decoder>();if(p->valid())return p;}error="built-in decoder does not support/initialize requested codec";return{};}
 static std::unique_ptr<VideoEncoder> createCpuVideoEncoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Encoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<KvazaarEncoder>();if(p->valid())return p;}error="built-in CPU encoder does not support/initialize requested codec";return{};}
