@@ -1159,9 +1159,27 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
 
+    // An explicitly selected NVENC backend means "use the NVIDIA hardware
+    // transcode path when it is available".  Keep a manually selected software
+    // H.264 decoder (Ittiam/OpenH264) as the fallback preference instead of
+    // letting that diagnostic/legacy setting disable NVDEC entirely.  This
+    // preserves the exact old behaviour for CPU/auto encoder selection while
+    // allowing existing NVENC tiles to benefit from NVDEC->NVENC without a
+    // configuration migration.
+    const bool explicitNvencBackend = config_.videoEncoder == "nvenc";
     const bool softwareAvcOverride =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
-        selectedAvcDecoder_ != "auto";
+        selectedAvcDecoder_ != "auto" &&
+        !explicitNvencBackend;
+    if (explicitNvencBackend &&
+        sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        selectedAvcDecoder_ != "auto" &&
+        !nvidiaZeroCopyAttempted_) {
+        std::cerr << "NATIVE NVIDIA ZERO-COPY software decoder preference="
+                  << selectedAvcDecoder_
+                  << " deferred=1 role=fallback"
+                  << std::endl;
+    }
     const bool zeroCopyCodec =
         sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ||
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
