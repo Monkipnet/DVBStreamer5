@@ -27,6 +27,7 @@
 namespace dvbstreamer5::media::transcode {
 
 struct NativeTranscoderConfig {
+    std::string streamId; // diagnostic-only targeting; never serialized into media
     std::string videoCodec = "h264"; // h264 | hevc | copy
     std::string videoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
     std::string audioCodec = "aac";  // aac | mp2 | mp3 | copy
@@ -482,6 +483,8 @@ private:
     // decoder emits a usable IDR. Do not release seconds of audio first.
     static constexpr auto kMuxStartupPeerWait = std::chrono::milliseconds(2500);
     NativeTranscoderConfig config_;
+    bool diagnosticI420Enabled_ = false;
+    std::uint64_t diagnosticI420Frames_ = 0;
     mpegts::NativeTsDemux demux_;
     mpegts::NativeMpegTsMux mux_;
     std::unique_ptr<codec::VideoDecoder> videoDecoder_;
