@@ -2,7 +2,7 @@
 
 **DVBStreamer5** — Linux-приложение для приёма, обработки, декодирования, транскодирования и раздачи DVB/IPTV-потоков с собственным native media engine и встроенным Web UI.
 
-Текущая версия: **10.8.226**
+Текущая версия: **10.8.227**
 
 > Проект не использует FFmpeg/libav или GStreamer как media framework. Транспорт, MPEG-TS mux/demux, HLS/CMAF, SRT, RTSP, RTMP, remap, EPG и основная логика транскодинга работают внутри DVBStreamer5. Кодеки подключаются как зафиксированные project-local библиотеки.
 
@@ -76,9 +76,10 @@
 - Intel QSV / oneVPL.
 - Intel/generic VAAPI.
 - NVIDIA NVDEC -> CUDA -> NVENC zero-copy, когда поддерживается системой.
-- Для чересстрочного NVIDIA-видео обработка полей в NVDEC исправлена в V10.8.226; при проблемах с конкретным драйвером можно отключить GPU decode, сохранив NVENC encoding: `DVBSTREAMER5_DISABLE_NVIDIA_ZERO_COPY=1` в окружении сервиса.
+- Для чересстрочного NVIDIA-видео обработка полей в NVDEC исправлена в V10.8.227; при проблемах с конкретным драйвером можно отключить GPU decode, сохранив NVENC encoding: `DVBSTREAMER5_DISABLE_NVIDIA_ZERO_COPY=1` в окружении сервиса.
 - При `transcode_video_decoder=ittiam` или `openh264` выбранный CPU decoder имеет приоритет даже с `video_encoder=nvenc` (диагностический fallback).
 - Экспериментальная A/B диагностика NVIDIA: `DVBSTREAMER5_NVDEC_SAFE_COPY=1` включает копирование NV12 между двумя CUDA device surfaces (без RAM/CPU), чтобы исключить проблему прямой регистрации NVDEC mapping в NVENC; по умолчанию отключена. `NATIVE NVDEC DECODE ERROR` показывает, что GPU сообщил о повреждённом входном кадре.
+- Диагностика V10.8.227 для 1080i: `DVBSTREAMER5_NVDEC_VPP_MODE=adaptive|bob|weave` задаёт NVDEC VPP deinterlace (по умолчанию `adaptive`); `DVBSTREAMER5_NVDEC_VPP_PROBE=1` выводит флаги полей в журнал. При выключенном деинтерлейсе в настройках плитки используется `weave`, независимо от переменной. На уже работающих системах `bob` и `weave` следует проверять только в тестовом потоке, сравнивая артефакты и плавность движения.
 - Native scaling.
 - Deinterlace.
 - Resolution, FPS, bitrate, GOP, B-frames, reference frames.
@@ -736,7 +737,7 @@ cd DVBStreamer5
 docker build \
   --build-arg CODEC_JOBS=2 \
   --build-arg BUILD_JOBS=2 \
-  -t dvbstreamer5:10.8.226 .
+  -t dvbstreamer5:10.8.227 .
 ```
 
 Persistent directories:
@@ -756,7 +757,7 @@ docker run -d \
   --network host \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.226
+  dvbstreamer5:10.8.227
 ```
 
 ## Docker + DVB adapter
@@ -773,7 +774,7 @@ docker run -d \
   --device /dev/dvb/adapter0/dvr0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.226
+  dvbstreamer5:10.8.227
 ```
 
 Посмотреть device nodes:
@@ -803,7 +804,7 @@ docker run -d \
   --device /dev/dri/card0 \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.226
+  dvbstreamer5:10.8.227
 ```
 
 ## Docker + NVIDIA NVENC
@@ -833,7 +834,7 @@ docker run -d \
   -e NVIDIA_DRIVER_CAPABILITIES=video,compute,utility \
   -v "$PWD/docker/config:/etc/dvbstreamer5" \
   -v "$PWD/docker/archive:/var/lib/dvbstreamer5" \
-  dvbstreamer5:10.8.226
+  dvbstreamer5:10.8.227
 ```
 
 DVB + NVIDIA: добавьте к этой команде нужные `--device /dev/dvb/...`.
