@@ -2,6 +2,7 @@
 
 #include "media/NativeVideoProcessing.h"
 #include "media/DiagnosticI420Frame.h"
+#include "media/AvcDecoderDiagnostic.h"
 
 #include <algorithm>
 #include <cmath>
@@ -165,7 +166,15 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     reset();
     config_ = config;
     diagnosticI420Enabled_ = false;
+    diagnosticOpenH264Enabled_ = codec::forceOpenH264ForStream(
+        std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"), config_.streamId);
     diagnosticI420Frames_ = 0;
+    if (diagnosticOpenH264Enabled_) {
+        std::cerr << "NATIVE AVC DECODER diagnostic request=openh264"
+                  << " stream_id=" << config_.streamId
+                  << " zero_copy_bypass=1 output_encoder=unchanged"
+                  << std::endl;
+    }
     // Only the explicitly named stream is affected; never alter all streams
     // based on a global 'enable' boolean or modify the original DVB source.
     const char* diagnosticTarget = std::getenv("DVBSTREAMER5_DIAG_I420_STREAM_ID");
@@ -946,7 +955,15 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
     if (videoDecoder_ && inputVideoCodec_ == codecType) return true;
     videoDecoder_.reset();
     inputVideoCodec_ = codecType;
-    videoDecoder_ = codec::createVideoDecoder(codecType, error);
+    if (diagnosticOpenH264Enabled_ &&
+        codecType == mpegts::ElementaryCodec::H264) {
+        videoDecoder_ = codec::createOpenH264VideoDecoder(error);
+        if (videoDecoder_)
+            std::cerr << "NATIVE AVC DECODER diagnostic active=openh264"
+                      << " stream_id=" << config_.streamId << std::endl;
+    } else {
+        videoDecoder_ = codec::createVideoDecoder(codecType, error);
+    }
     return static_cast<bool>(videoDecoder_);
 }
 
@@ -1102,7 +1119,8 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.stream.codec == mpegts::ElementaryCodec::H265;
     const bool zeroCopyBackend =
         config_.videoEncoder == "nvenc" || config_.videoEncoder == "auto";
-    if (!abrRawFanout && zeroCopyCodec && zeroCopyBackend) {
+    if (!diagnosticOpenH264Enabled_ && !abrRawFanout &&
+        zeroCopyCodec && zeroCopyBackend) {
         if (!nvidiaZeroCopyAttempted_) {
             nvidiaZeroCopyAttempted_ = true;
             std::string zeroCopyError;
@@ -1195,7 +1213,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video;
     const bool intelZeroCopyBackend =
         config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
-    if (!abrRawFanout && !nvidiaZeroCopy_ &&
+    if (!diagnosticOpenH264Enabled_ && !abrRawFanout && !nvidiaZeroCopy_ &&
         intelZeroCopyCodec && intelZeroCopyBackend) {
         if (!intelZeroCopyAttempted_) {
             intelZeroCopyAttempted_ = true;
