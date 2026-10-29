@@ -1,0 +1,35 @@
+services:
+  dvbstreamer5:
+    build:
+      context: .
+      args:
+        CODEC_JOBS: "2"
+        BUILD_JOBS: "2"
+    image: dvbstreamer5:10.8.223
+    container_name: dvbstreamer5
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      DVBSTREAMER5_CONFIG_DIR: /etc/dvbstreamer5
+      DVBSTREAMER5_CA_PLUGIN_DIR: /opt/DVBStreamer5/ca-plugins
+      DVBSTREAMER5_OSCAM_CONFIG_DIR: /etc/dvbstreamer5/oscam-mini
+      DVBSTREAMER5_OSCAM_BINARY: /opt/DVBStreamer5/oscam-mini/oscam-mini
+    volumes:
+      - ./docker/config:/etc/dvbstreamer5
+      - ./docker/archive:/var/lib/dvbstreamer5
+
+    # Hardware examples (enable only what exists on the host):
+    #
+    # Intel VAAPI/QSV:
+    # devices:
+    #   - /dev/dri/renderD128:/dev/dri/renderD128
+    #   - /dev/dri/card0:/dev/dri/card0
+    #
+    # Linux DVB adapter example:
+    # devices:
+    #   - /dev/dvb/adapter0/frontend0:/dev/dvb/adapter0/frontend0
+    #   - /dev/dvb/adapter0/demux0:/dev/dvb/adapter0/demux0
+    #   - /dev/dvb/adapter0/dvr0:/dev/dvb/adapter0/dvr0
+    #
+    # NVIDIA: add "gpus: all" with Docker Compose supporting the gpus key,
+    # and install NVIDIA Container Toolkit on the host.
