@@ -105,6 +105,11 @@ public:
 
         gpuOrdinal_ = configuredGpuOrdinal(error);
         if (gpuOrdinal_ < 0) return false;
+        // Opt-in diagnostic GPU-only repack. No CPU pixels or FFmpeg path:
+        // NVDEC mapped NV12 -> CUDA device-to-device copies into a dedicated
+        // pitched NVENC input buffer. Default unchanged for production tiles.
+        const char* safeCopy = std::getenv("DVBSTREAMER5_NVDEC_SAFE_COPY");
+        safeGpuCopy_ = safeCopy && std::strcmp(safeCopy, "1") == 0;
         if (!loadRuntime(error)) return false;
 
         if (cuInit_(0) != CUDA_SUCCESS ||
@@ -250,6 +255,13 @@ private:
             error = "CUDA context API symbols missing";
             return false;
         }
+        if (safeGpuCopy_ &&
+            (!loadSymbol(cudaLib_, "cuMemAllocPitch_v2", cuMemAllocPitch_) ||
+             !loadSymbol(cudaLib_, "cuMemFree_v2", cuMemFree_) ||
+             !loadSymbol(cudaLib_, "cuMemcpy2D_v2", cuMemcpy2D_))) {
+            error = "CUDA pitched allocation/copy driver functions missing";
+            return false;
+        }
 
         if (!loadSymbol(cuvidLib_, "cuvidGetDecoderCaps", cuvidGetDecoderCaps_) ||
             !loadSymbol(cuvidLib_, "cuvidCreateVideoParser", cuvidCreateVideoParser_) ||
@@ -263,6 +275,9 @@ private:
             error = "NVDEC/CUVID runtime symbols missing";
             return false;
         }
+        // Optional on SDK/driver combinations without decode status support.
+        (void)loadSymbol(cuvidLib_, "cuvidGetDecodeStatus",
+                         cuvidGetDecodeStatus_);
 
         using CreateNvencApi = NVENCSTATUS (NVENCAPI *)(NV_ENCODE_API_FUNCTION_LIST*);
         auto createApi = reinterpret_cast<CreateNvencApi>(
@@ -447,6 +462,21 @@ private:
             destroyDecoder();
             return 0;
         }
+        if (safeGpuCopy_) {
+            const CUresult allocResult = cuMemAllocPitch_(
+                &gpuCopyFrame_, &gpuCopyPitch_,
+                static_cast<std::size_t>(outputWidth_),
+                static_cast<std::size_t>(outputHeight_) * 3U / 2U, 16U);
+            if (allocResult != CUDA_SUCCESS || !gpuCopyFrame_ ||
+                gpuCopyPitch_ < static_cast<std::size_t>(outputWidth_) ||
+                gpuCopyPitch_ > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
+                failCallback("NVDEC safe-copy CUDA pitched surface allocation failed: " +
+                             std::to_string(static_cast<int>(allocResult)));
+                destroyEncoder();
+                destroyDecoder();
+                return 0;
+            }
+        }
 
         frameIndex_ = 0;
         forcedIdrCount_ = 0;
@@ -459,7 +489,8 @@ private:
                   << " source=" << sourceWidth_ << "x" << sourceHeight_
                   << " encode=" << outputWidth_ << "x" << outputHeight_
                   << " deinterlace=" << (config_.deinterlace ? "nvdec-adaptive" : "off")
-                  << " decode_copies=0 gpu_surface_copies=0"
+                  << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
+                  << " host_video_copies=0 gpu_surface_copies=" << (safeGpuCopy_ ? 2 : 0)
                   << std::endl;
         return static_cast<int>(decodeSurfaces);
     }
@@ -536,14 +567,68 @@ private:
             return 0;
         }
 
+        if (cuvidGetDecodeStatus_) {
+            CUVIDGETDECODESTATUS decodeStatus{};
+            if (cuvidGetDecodeStatus_(
+                    decoder_, display->picture_index, &decodeStatus) == CUDA_SUCCESS &&
+                (decodeStatus.decodeStatus == cuvidDecodeStatus_Error ||
+                 decodeStatus.decodeStatus == cuvidDecodeStatus_Error_Concealed)) {
+                ++nvdecCorruptFrames_;
+                if (nvdecCorruptFrames_ <= 8 ||
+                    (nvdecCorruptFrames_ % 100ULL) == 0ULL) {
+                    std::cerr << "NATIVE NVDEC DECODE ERROR status="
+                              << static_cast<int>(decodeStatus.decodeStatus)
+                              << " picture=" << display->picture_index
+                              << " count=" << nvdecCorruptFrames_ << std::endl;
+                }
+            }
+        }
+
+        // Repack NV12 planes on-device only. A dedicated, correctly pitched
+        // CUDA allocation avoids binding NVENC directly to the NVDEC mapping.
+        // Only a single frame is in flight (synchronous bitstream lock).
+        if (safeGpuCopy_) {
+            CUDA_MEMCPY2D copy{};
+            copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+            copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+            copy.srcDevice = devicePtr;
+            copy.srcPitch = pitch;
+            copy.dstDevice = gpuCopyFrame_;
+            copy.dstPitch = gpuCopyPitch_;
+            copy.WidthInBytes = static_cast<std::size_t>(outputWidth_);
+            copy.Height = static_cast<std::size_t>(outputHeight_);
+            CUresult result = cuMemcpy2D_(&copy);
+            if (result == CUDA_SUCCESS) {
+                // NVDEC VPP was configured for exactly outputHeight_ rows;
+                // NVIDIA's decoder reference uses ulTargetHeight as the UV
+                // plane offset on its mapped NV12 output surface.
+                copy.srcDevice = devicePtr +
+                    static_cast<CUdeviceptr>(pitch) *
+                    static_cast<CUdeviceptr>(outputHeight_);
+                copy.dstDevice = gpuCopyFrame_ +
+                    static_cast<CUdeviceptr>(gpuCopyPitch_) *
+                    static_cast<CUdeviceptr>(outputHeight_);
+                copy.Height = static_cast<std::size_t>(outputHeight_) / 2U;
+                result = cuMemcpy2D_(&copy);
+            }
+            if (result != CUDA_SUCCESS) {
+                (void)cuvidUnmapVideoFrame_(decoder_, devicePtr);
+                failCallback("NVDEC safe-copy CUDA device copy failed: " +
+                             std::to_string(static_cast<int>(result)));
+                return 0;
+            }
+        }
+
         NV_ENC_REGISTER_RESOURCE registration{};
         registration.version = NV_ENC_REGISTER_RESOURCE_VER;
         registration.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR;
         registration.width = static_cast<std::uint32_t>(outputWidth_);
         registration.height = static_cast<std::uint32_t>(outputHeight_);
-        registration.pitch = pitch;
+        registration.pitch = static_cast<std::uint32_t>(
+            safeGpuCopy_ ? gpuCopyPitch_ : pitch);
         registration.resourceToRegister = reinterpret_cast<void*>(
-            static_cast<std::uintptr_t>(devicePtr));
+            static_cast<std::uintptr_t>(
+                safeGpuCopy_ ? gpuCopyFrame_ : devicePtr));
         registration.bufferFormat = NV_ENC_BUFFER_FORMAT_NV12;
         registration.bufferUsage = NV_ENC_INPUT_IMAGE;
 
@@ -589,7 +674,7 @@ private:
         pic.version = NV_ENC_PIC_PARAMS_VER;
         pic.inputWidth = static_cast<std::uint32_t>(outputWidth_);
         pic.inputHeight = static_cast<std::uint32_t>(outputHeight_);
-        pic.inputPitch = pitch;
+        pic.inputPitch = registration.pitch;
         pic.frameIdx = static_cast<std::uint32_t>(frameNumber & 0xffffffffULL);
         pic.inputBuffer = mapped.mappedResource;
         pic.bufferFmt = mapped.mappedBufferFmt;
@@ -910,16 +995,17 @@ private:
     }
 
     void destroyEncoder() noexcept {
-        if (!encoder_) {
-            bitstream_ = nullptr;
-            return;
+        if (encoder_) {
+            if (bitstream_ && api_.nvEncDestroyBitstreamBuffer)
+                (void)api_.nvEncDestroyBitstreamBuffer(encoder_, bitstream_);
+            if (api_.nvEncDestroyEncoder)
+                (void)api_.nvEncDestroyEncoder(encoder_);
         }
-        if (bitstream_ && api_.nvEncDestroyBitstreamBuffer)
-            (void)api_.nvEncDestroyBitstreamBuffer(encoder_, bitstream_);
         bitstream_ = nullptr;
-        if (api_.nvEncDestroyEncoder)
-            (void)api_.nvEncDestroyEncoder(encoder_);
         encoder_ = nullptr;
+        if (gpuCopyFrame_ && cuMemFree_) (void)cuMemFree_(gpuCopyFrame_);
+        gpuCopyFrame_ = 0;
+        gpuCopyPitch_ = 0;
     }
 
     void destroyDecoder() noexcept {
@@ -973,8 +1059,12 @@ private:
     tcuCtxDestroy_v2* cuCtxDestroy_ = nullptr;
     tcuCtxPushCurrent_v2* cuCtxPushCurrent_ = nullptr;
     tcuCtxPopCurrent_v2* cuCtxPopCurrent_ = nullptr;
+    tcuMemAllocPitch_v2* cuMemAllocPitch_ = nullptr;
+    tcuMemFree_v2* cuMemFree_ = nullptr;
+    tcuMemcpy2D_v2* cuMemcpy2D_ = nullptr;
 
     tcuvidGetDecoderCaps* cuvidGetDecoderCaps_ = nullptr;
+    tcuvidGetDecodeStatus* cuvidGetDecodeStatus_ = nullptr;
     tcuvidCreateVideoParser* cuvidCreateVideoParser_ = nullptr;
     tcuvidParseVideoData* cuvidParseVideoData_ = nullptr;
     tcuvidDestroyVideoParser* cuvidDestroyVideoParser_ = nullptr;
@@ -988,6 +1078,10 @@ private:
     CUcontext context_ = nullptr;
     CUvideoparser parser_ = nullptr;
     CUvideodecoder decoder_ = nullptr;
+    bool safeGpuCopy_ = false;
+    CUdeviceptr gpuCopyFrame_ = 0;
+    std::size_t gpuCopyPitch_ = 0;
+    std::uint64_t nvdecCorruptFrames_ = 0;
 
     NV_ENCODE_API_FUNCTION_LIST api_{};
     void* encoder_ = nullptr;
