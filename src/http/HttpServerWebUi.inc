@@ -6723,7 +6723,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_preset:'balanced', transcode_profile:'auto', transcode_level:'auto', transcode_gop_frames:50, transcode_bframes:0, transcode_ref_frames:0, transcode_open_gop:false, transcode_aq_strength:8, transcode_multibitrate_enabled:false, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_preset:'balanced', transcode_profile:'auto', transcode_level:'auto', transcode_gop_frames:50, transcode_bframes:0, transcode_ref_frames:0, transcode_open_gop:false, transcode_aq_strength:8, transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
@@ -7356,6 +7356,21 @@ function openStreamForm(stream) {
         <div class="form-row full"><label>Транскодирование</label><div class="checkbox-inline"><input id="streamTranscodeEnabled" type="checkbox" ${(stream.transcode_enabled && transcoderAvailable) ? 'checked' : ''} ${transcoderAvailable ? '' : 'disabled'} onchange="updateTranscodeControls()" /><span>Обрабатывать видео/аудио: транскодирование или независимый проброс оригинальных потоков</span></div><small style="color:${transcoderAvailable ? '#7ee2a8' : '#ff9f9f'}" ${uiBiAttrs(transcoderStatusRu, transcoderStatusEn)}>${uiBiText(transcoderStatusRu, transcoderStatusEn)}</small></div>
         <div class="form-row full"><label>HLS архив (DVR)</label><div class="row-inline compact-row"><label class="checkbox-inline"><input id="streamHlsArchiveEnabled" type="checkbox" ${stream.hls_archive_enabled?'checked':''} /><span>Записывать архив</span></label><input id="streamHlsArchiveHours" type="number" min="1" max="168" value="${stream.hls_archive_hours||24}" style="max-width:110px" /><span>часов</span><input id="streamHlsArchivePath" value="${stream.hls_archive_path||'/var/lib/dvbstreamer5/archive'}" placeholder="/var/lib/dvbstreamer5/archive" /></div><small>Архив сохраняет HLS TS-сегменты на диск. Совместимые URL: /КАНАЛ/archive-UTC-ДЛИТЕЛЬНОСТЬ.m3u8, /КАНАЛ/rewind-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_rel-СЕКУНДЫ.m3u8, /КАНАЛ/timeshift_abs-UTC.m3u8.</small></div>
         <div class="form-row full"><label>HLS контейнер / шифрование</label><div class="row-inline compact-row"><select id="streamHlsContainer"><option value="mpegts" ${(stream.hls_container||'mpegts')==='mpegts'?'selected':''}>MPEG-TS</option><option value="cmaf" ${stream.hls_container==='cmaf'?'selected':''}>fMP4 / CMAF + EXT-X-MAP</option></select><select id="streamHlsEncryption"><option value="none" ${(!stream.hls_encryption||stream.hls_encryption==='none')?'selected':''}>Без шифрования</option><option value="aes-128" ${stream.hls_encryption==='aes-128'?'selected':''}>AES-128</option><option value="sample-aes" ${stream.hls_encryption==='sample-aes'?'selected':''}>SAMPLE-AES (TS/CMAF)</option></select><input id="streamHlsEncryptionKeyUri" value="${stream.hls_encryption_key_uri||'key.bin'}" placeholder="key.bin" /><input id="streamHlsEncryptionKeyHex" value="${stream.hls_encryption_key_hex||''}" autocomplete="off" placeholder="32 hex; пусто = сгенерировать" /></div><small ${uiBiAttrs('CMAF: init.mp4/.m4s и EXT-X-MAP; SAMPLE-AES — TS/CMAF; AES-128 — только MPEG-TS.','CMAF: init.mp4/.m4s with EXT-X-MAP; SAMPLE-AES supports TS/CMAF; AES-128 only MPEG-TS.')}>${uiBiText('CMAF: init.mp4/.m4s и EXT-X-MAP; SAMPLE-AES — TS/CMAF; AES-128 — только MPEG-TS.','CMAF: init.mp4/.m4s with EXT-X-MAP; SAMPLE-AES supports TS/CMAF; AES-128 only MPEG-TS.')}</small></div>
+        <div class="form-row full">
+          <label ${subtitleUiTriAttrs('HLS сегменты','HLS segments','HLS segmenti')}>${subtitleUiTriText('HLS сегменты','HLS segments','HLS segmenti')}</label>
+          <div class="row-inline compact-row">
+            <div class="edit-field">
+              <div class="edit-field-title" ${subtitleUiTriAttrs('segment_duration (сек)','segment_duration (sec)','segment_duration (sek)')}>${subtitleUiTriText('segment_duration (сек)','segment_duration (sec)','segment_duration (sek)')}</div>
+              <small class="field-help" ${subtitleUiTriAttrs('0 = Авто: MPEG-TS 4 с, CMAF 2 с; вручную 1–10.','0 = Auto: MPEG-TS 4 s, CMAF 2 s; custom 1–10.','0 = Auto: MPEG-TS 4 s, CMAF 2 s; ručno 1–10.')}>${subtitleUiTriText('0 = Авто: MPEG-TS 4 с, CMAF 2 с; вручную 1–10.','0 = Auto: MPEG-TS 4 s, CMAF 2 s; custom 1–10.','0 = Auto: MPEG-TS 4 s, CMAF 2 s; ručno 1–10.')}</small>
+              <input type="number" id="streamHlsSegmentDuration" min="0" max="10" step="1" value="${Number(stream.hls_segment_duration || 0)}" />
+            </div>
+            <div class="edit-field">
+              <div class="edit-field-title" ${subtitleUiTriAttrs('segment_count (шт)','segment_count (items)','segment_count (kom)')}>${subtitleUiTriText('segment_count (шт)','segment_count (items)','segment_count (kom)')}</div>
+              <small class="field-help" ${subtitleUiTriAttrs('0 = Авто: MPEG-TS 8, CMAF 6; вручную 3–30.','0 = Auto: MPEG-TS 8, CMAF 6; custom 3–30.','0 = Auto: MPEG-TS 8, CMAF 6; ručno 3–30.')}>${subtitleUiTriText('0 = Авто: MPEG-TS 8, CMAF 6; вручную 3–30.','0 = Auto: MPEG-TS 8, CMAF 6; custom 3–30.','0 = Auto: MPEG-TS 8, CMAF 6; ručno 3–30.')}</small>
+              <input type="number" id="streamHlsSegmentCount" min="0" max="30" step="1" value="${Number(stream.hls_segment_count || 0)}" />
+            </div>
+          </div>
+        </div>
         <details class="form-row full edit-section edit-collapsible" id="streamTranscodeControls" style="display:${(stream.transcode_enabled && transcoderAvailable)?'block':'none'}">
           <summary class="edit-section-head"><span ${uiBiAttrs('Настройки транскодирования','Transcoding settings')}>${uiBiText('Настройки транскодирования','Transcoding settings')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
           <div class="edit-collapse-body">
@@ -7796,6 +7811,20 @@ function saveSettings() {
     .catch(error => uiError(error?.message || error));
 }
 function saveStream(id) {
+  const hlsDurationRaw=String(document.getElementById('streamHlsSegmentDuration')?.value ?? '0').trim();
+  const hlsCountRaw=String(document.getElementById('streamHlsSegmentCount')?.value ?? '0').trim();
+  const hlsDuration=Number(hlsDurationRaw);
+  const hlsCount=Number(hlsCountRaw);
+  if (hlsDurationRaw==='' || !Number.isInteger(hlsDuration) ||
+      hlsDuration<0 || hlsDuration>10 ||
+      hlsCountRaw==='' || !Number.isInteger(hlsCount) ||
+      hlsCount<0 || (hlsCount>0 && hlsCount<3) || hlsCount>30) {
+    uiError(subtitleUiTriText(
+      'HLS: длительность — 0 или 1–10 секунд, количество — 0 или 3–30.',
+      'HLS: duration must be 0 or 1–10 seconds; count 0 or 3–30.',
+      'HLS: trajanje 0 ili 1–10 sekundi; broj 0 ili 3–30.'));
+    return;
+  }
   const outputs = collectOutputRows();
   const primaryOutput = outputs[0] || {output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234};
   const cbrCheckbox = document.getElementById('streamCbr');
@@ -7906,6 +7935,8 @@ function saveStream(id) {
     transcode_open_gop: document.getElementById('streamTranscodeOpenGop')?.checked === true,
     transcode_aq_strength: Number(document.getElementById('streamTranscodeAq')?.value || 8),
     transcode_multibitrate_enabled: document.getElementById('streamTranscodeMultibitrate')?.checked === true,
+    hls_segment_duration: hlsDuration,
+    hls_segment_count: hlsCount,
     hls_archive_enabled: document.getElementById('streamHlsArchiveEnabled')?.checked === true,
     hls_archive_hours: Math.max(1, Math.min(168, Number(document.getElementById('streamHlsArchiveHours')?.value || 24))),
     hls_archive_path: document.getElementById('streamHlsArchivePath')?.value.trim() || '/var/lib/dvbstreamer5/archive',
