@@ -1,0 +1,22 @@
+[Unit]
+Description=DVBStreamer5 native DVB/IPTV streamer and transcoder
+Wants=network-online.target
+After=network-online.target local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/DVBStreamer5
+Environment=DVBSTREAMER5_CONFIG_DIR=/etc/dvbstreamer5
+Environment=DVBSTREAMER5_CA_PLUGIN_DIR=/opt/DVBStreamer5/ca-plugins
+Environment=DVBSTREAMER5_OSCAM_CONFIG_DIR=/etc/dvbstreamer5/oscam-mini
+Environment=DVBSTREAMER5_OSCAM_BINARY=/opt/DVBStreamer5/oscam-mini/oscam-mini
+ExecStart=/opt/DVBStreamer5/bin/DVBStreamer5
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65536
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target
