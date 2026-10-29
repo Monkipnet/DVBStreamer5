@@ -682,6 +682,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.streamId = streamConfig.id;
         tc.videoCodec = toLower(streamConfig.transcodeVideoCodec);
         tc.videoEncoder = toLower(streamConfig.transcodeVideoEncoder);
+        tc.videoDecoder = toLower(streamConfig.transcodeVideoDecoder);
         tc.audioCodec = toLower(streamConfig.transcodeAudioCodec);
         if (!TranscoderModule::resolutionSize(streamConfig.transcodeResolution, tc.width, tc.height)) {
             CardManager::instance().releaseService(streamConfig.id);
