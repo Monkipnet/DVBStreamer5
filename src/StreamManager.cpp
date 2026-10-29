@@ -15,6 +15,7 @@
 #include "DvbSubtitlePassthrough.h"
 #include "RestartScheduleClock.h"
 #include "media/NativeTsDemux.h"
+#include "media/HlsSegmentSettings.h"
 
 #include <algorithm>
 #include <array>
@@ -1421,12 +1422,12 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         hlsConfig.directory = streamConfig.hlsArchiveEnabled
             ? std::filesystem::path(streamConfig.hlsArchivePath) / streamConfig.id
             : std::filesystem::path("/tmp/dvbstreamer5-hls") / streamConfig.id;
-        hlsConfig.durationExplicit = streamConfig.hlsSegmentDuration > 0;
-        hlsConfig.countExplicit = streamConfig.hlsSegmentCount > 0;
-        hlsConfig.targetDurationSeconds = hlsConfig.durationExplicit
-            ? static_cast<double>(streamConfig.hlsSegmentDuration) : 2.0;
-        hlsConfig.liveWindowSegments = hlsConfig.countExplicit
-            ? static_cast<std::size_t>(streamConfig.hlsSegmentCount) : 6U;
+        const auto segmentSettings = dvbstreamer5::media::hls::resolveSegmentSettings(
+            streamConfig.hlsSegmentDuration, streamConfig.hlsSegmentCount, false);
+        hlsConfig.durationExplicit = segmentSettings.customDuration;
+        hlsConfig.countExplicit = segmentSettings.customCount;
+        hlsConfig.targetDurationSeconds = segmentSettings.durationSeconds;
+        hlsConfig.liveWindowSegments = segmentSettings.count;
         hlsConfig.archiveEnabled = streamConfig.hlsArchiveEnabled;
         hlsConfig.archiveHours = streamConfig.hlsArchiveHours;
         hlsConfig.independentSegments =
@@ -1507,10 +1508,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         cfg.directory = streamConfig.hlsArchiveEnabled
             ? std::filesystem::path(streamConfig.hlsArchivePath) / streamConfig.id
             : std::filesystem::path("/tmp/dvbstreamer5-hls") / streamConfig.id;
-        cfg.targetDurationSeconds = streamConfig.hlsSegmentDuration > 0
-            ? static_cast<double>(streamConfig.hlsSegmentDuration) : 2.0;
-        cfg.liveWindowSegments = streamConfig.hlsSegmentCount > 0
-            ? static_cast<std::size_t>(streamConfig.hlsSegmentCount) : 6U;
+        const auto segmentSettings = dvbstreamer5::media::hls::resolveSegmentSettings(
+            streamConfig.hlsSegmentDuration, streamConfig.hlsSegmentCount, true);
+        cfg.targetDurationSeconds = segmentSettings.durationSeconds;
+        cfg.liveWindowSegments = segmentSettings.count;
         cfg.archiveEnabled = streamConfig.hlsArchiveEnabled;
         cfg.archiveHours = streamConfig.hlsArchiveHours;
         cfg.encryption = enc;
