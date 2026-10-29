@@ -529,7 +529,7 @@ private:
                   << " deinterlace=" << vppName
                   << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
                   << " chroma_diag=" << (neutralChromaDiag_ ? "neutral" : "off")
-                  << " host_video_copies=0 gpu_surface_copies=" << (safeGpuCopy_ ? 2 : 0)
+                  << " host_video_copies=0 gpu_surface_copies=" << (neutralChromaDiag_ ? 1 : safeGpuCopy_ ? 2 : 0)
                   << std::endl;
         return static_cast<int>(decodeSurfaces);
     }
