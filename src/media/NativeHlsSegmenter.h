@@ -19,6 +19,9 @@ struct NativeHlsSegmenterConfig {
     std::filesystem::path directory;
     double targetDurationSeconds = 2.0;
     std::size_t liveWindowSegments = 6;
+    // Keep the V10.8.76 stability minimums for legacy/Auto settings only.
+    bool durationExplicit = false;
+    bool countExplicit = false;
     bool archiveEnabled = false;
     std::uint32_t archiveHours = 24;
     // For transcoded ABR renditions every published segment must begin at a
