@@ -732,6 +732,7 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
     bool dropped = false;
     bool droppedVideo = false;
     bool droppedAudio = false;
+    const char* dropPolicy = "drop_head";
     std::size_t queueSize = 0;
     {
         std::lock_guard<std::mutex> lock(muxQueueMutex_);
@@ -751,7 +752,6 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
         // newly arriving (even later) sample.  Otherwise retain the established
         // live policy and discard the stale queue head.
         bool dropIncoming = false;
-        const char* dropPolicy = "drop_head";
         if (queue.size() >= limit) {
             const std::uint64_t peerClock =
                 sample.kind == mpegts::ElementaryKind::Video
