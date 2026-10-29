@@ -110,6 +110,12 @@ public:
         // pitched NVENC input buffer. Default unchanged for production tiles.
         const char* safeCopy = std::getenv("DVBSTREAMER5_NVDEC_SAFE_COPY");
         safeGpuCopy_ = safeCopy && std::strcmp(safeCopy, "1") == 0;
+        // V10.8.228: strictly opt-in chroma isolation test. Keep the
+        // decoded Y plane unchanged and force interleaved UV bytes to 0x80
+        // on GPU. The intentional output is grayscale, not a color fix.
+        const char* chromaDiag = std::getenv("DVBSTREAMER5_NVDEC_DIAG_CHROMA");
+        neutralChromaDiag_ = chromaDiag && std::strcmp(chromaDiag, "neutral") == 0;
+        if (neutralChromaDiag_) safeGpuCopy_ = true;
         const char* vppMode = std::getenv("DVBSTREAMER5_NVDEC_VPP_MODE");
         if (vppMode && (std::strcmp(vppMode, "adaptive") == 0 ||
                         std::strcmp(vppMode, "bob") == 0 ||
@@ -271,6 +277,12 @@ private:
              !loadSymbol(cudaLib_, "cuMemFree_v2", cuMemFree_) ||
              !loadSymbol(cudaLib_, "cuMemcpy2D_v2", cuMemcpy2D_))) {
             error = "CUDA pitched allocation/copy driver functions missing";
+            return false;
+        }
+        if (neutralChromaDiag_ &&
+            (!loadSymbol(cudaLib_, "cuMemsetD2D8Async", cuMemsetD2D8Async_) ||
+             !loadSymbol(cudaLib_, "cuCtxSynchronize", cuCtxSynchronize_))) {
+            error = "CUDA chroma diagnostic requires device memset/synchronize APIs";
             return false;
         }
 
@@ -516,6 +528,7 @@ private:
                   << " encode=" << outputWidth_ << "x" << outputHeight_
                   << " deinterlace=" << vppName
                   << " safe_gpu_copy=" << (safeGpuCopy_ ? 1 : 0)
+                  << " chroma_diag=" << (neutralChromaDiag_ ? "neutral" : "off")
                   << " host_video_copies=0 gpu_surface_copies=" << (safeGpuCopy_ ? 2 : 0)
                   << std::endl;
         return static_cast<int>(decodeSurfaces);
@@ -639,9 +652,8 @@ private:
             copy.Height = static_cast<std::size_t>(outputHeight_);
             CUresult result = cuMemcpy2D_(&copy);
             if (result == CUDA_SUCCESS) {
-                // NVDEC VPP was configured for exactly outputHeight_ rows;
-                // NVIDIA's decoder reference uses ulTargetHeight as the UV
-                // plane offset on its mapped NV12 output surface.
+                // The source UV offset follows NVIDIA's decoder sample:
+                // mapped pitch * configured output surface height.
                 copy.srcDevice = devicePtr +
                     static_cast<CUdeviceptr>(pitch) *
                     static_cast<CUdeviceptr>(outputHeight_);
@@ -649,7 +661,18 @@ private:
                     static_cast<CUdeviceptr>(gpuCopyPitch_) *
                     static_cast<CUdeviceptr>(outputHeight_);
                 copy.Height = static_cast<std::size_t>(outputHeight_) / 2U;
-                result = cuMemcpy2D_(&copy);
+                if (!neutralChromaDiag_) {
+                    result = cuMemcpy2D_(&copy);
+                } else {
+                    // Force a neutral U=V=128 plane, preserving the entire Y
+                    // plane. Wait for completion before NVENC consumes it.
+                    result = cuMemsetD2D8Async_(
+                        copy.dstDevice, gpuCopyPitch_, 128U,
+                        static_cast<std::size_t>(outputWidth_),
+                        static_cast<std::size_t>(outputHeight_) / 2U,
+                        nullptr);
+                    if (result == CUDA_SUCCESS) result = cuCtxSynchronize_();
+                }
             }
             if (result != CUDA_SUCCESS) {
                 (void)cuvidUnmapVideoFrame_(decoder_, devicePtr);
@@ -1099,6 +1122,8 @@ private:
     tcuCtxDestroy_v2* cuCtxDestroy_ = nullptr;
     tcuCtxPushCurrent_v2* cuCtxPushCurrent_ = nullptr;
     tcuCtxPopCurrent_v2* cuCtxPopCurrent_ = nullptr;
+    tcuCtxSynchronize* cuCtxSynchronize_ = nullptr;
+    tcuMemsetD2D8Async* cuMemsetD2D8Async_ = nullptr;
     tcuMemAllocPitch_v2* cuMemAllocPitch_ = nullptr;
     tcuMemFree_v2* cuMemFree_ = nullptr;
     tcuMemcpy2D_v2* cuMemcpy2D_ = nullptr;
@@ -1119,6 +1144,7 @@ private:
     CUvideoparser parser_ = nullptr;
     CUvideodecoder decoder_ = nullptr;
     bool safeGpuCopy_ = false;
+    bool neutralChromaDiag_ = false;
     std::string nvdecVppMode_ = "adaptive";
     bool nvdecVppProbe_ = false;
     std::uint64_t nvdecDisplayFrames_ = 0;
