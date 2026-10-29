@@ -12,6 +12,7 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -78,79 +79,122 @@ StartupParameterSets inspectAnnexBStartup(const std::vector<std::uint8_t>& data,
 
 std::uint64_t videoDuration90k(double fps) {
     if (fps < 1.0) fps = 25.0;
-    return static_cast<std::uint64_t>(std::llround(90000.0 / fps));
-}
-
-// V10.2 diagnostic-only elementary-stream capture.  This is deliberately
-// disabled unless DVBSTREAMER5_DUMP_H264_ES is set.  It writes the exact
-// H.264 bytes handed from NativeTsDemux to the decoder, without changing
-// runtime packetization or adding any multimedia dependency.
-void dumpH264ElementarySample(const mpegts::DemuxSample& sample) {
-    if (sample.stream.codec != mpegts::ElementaryCodec::H264 || sample.data.empty()) return;
+    return static_cast<std::uint64_t>(std::llround(90000// V10.8.232: diagnostic-only capture of the exact Annex-B H.264 samples
+// handed to the chosen decoder. A single global output file is unsafe when
+// two or more channel pipelines run concurrently: their access units get
+// interleaved into an invalid stream. Keep one file, index and 64 MiB budget
+// per streamId/PID pair; never truncate an AU at the size limit.
+// No additional work is performed unless the environment variable is set.
+void dumpH264ElementarySample(const mpegts::DemuxSample& sample,
+                              const std::string& streamId) {
+    if (sample.stream.codec != mpegts::ElementaryCodec::H264 ||
+        sample.data.empty()) return;
     const char* env = std::getenv("DVBSTREAMER5_DUMP_H264_ES");
     if (!env || !*env) return;
 
-    struct State {
-        std::mutex mutex;
+    struct FileState {
         std::string path;
         std::ofstream es;
         std::ofstream index;
         std::uint64_t samples = 0;
         std::uint64_t bytes = 0;
+        bool initialized = false;
         bool limitLogged = false;
     };
-    static State state;
+    struct DumpState {
+        std::mutex mutex;
+        std::map<std::string, FileState> files;
+    };
+    static DumpState dump;
     constexpr std::uint64_t kMaxBytes = 64ULL * 1024ULL * 1024ULL;
 
-    std::lock_guard<std::mutex> lock(state.mutex);
-    const std::string path(env);
-    if (state.path != path || !state.es.is_open()) {
-        if (state.es.is_open()) state.es.close();
-        if (state.index.is_open()) state.index.close();
-        state.path = path;
-        state.samples = 0;
-        state.bytes = 0;
-        state.limitLogged = false;
-        state.es.open(path, std::ios::binary | std::ios::trunc);
-        state.index.open(path + ".index.csv", std::ios::trunc);
-        if (state.index) state.index << "sample,size,pts90k,dts90k,has_pts,has_dts,random\n";
-        std::cerr << "NATIVE AVC ES DUMP open path=" << path
-                  << " limit_mb=64" << std::endl;
-    }
-    if (!state.es) return;
-    if (state.bytes >= kMaxBytes) {
-        if (!state.limitLogged) {
-            std::cerr << "NATIVE AVC ES DUMP limit reached bytes=" << state.bytes << std::endl;
-            state.limitLogged = true;
+    // The same elementary PID can exist on distinct transponders; streamId
+    // must be part of both the map key and path. Sanitize filename characters
+    // and retain a stable FNV-1a suffix even when sanitization collides.
+    const std::string key = streamId + "#" + std::to_string(sample.stream.pid);
+    std::lock_guard<std::mutex> lock(dump.mutex);
+    auto& file = dump.files[key];
+    if (!file.initialized) {
+        file.initialized = true;
+        std::string safeId;
+        safeId.reserve(std::min<std::size_t>(streamId.size(), 64U));
+        std::uint64_t hash = 14695981039346656037ULL;
+        for (unsigned char ch : streamId) {
+            hash ^= ch;
+            hash *= 1099511628211ULL;
+            if (safeId.size() < 64U) {
+                if ((ch >= 'a' && ch <= 'z') ||
+                    (ch >= 'A' && ch <= 'Z') ||
+                    (ch >= '0' && ch <= '9') || ch == '-' || ch == '_') {
+                    safeId.push_back(static_cast<char>(ch));
+                } else {
+                    safeId.push_back('_');
+                }
+            }
         }
+        if (safeId.empty()) safeId = "stream";
+        std::string base(env);
+        if (base.size() >= 5U &&
+            base.compare(base.size() - 5U, 5U, ".h264") == 0) {
+            base.resize(base.size() - 5U);
+        }
+        file.path = base + "." + safeId + "." + std::to_string(hash) +
+            ".pid-" + std::to_string(sample.stream.pid) + ".h264";
+        file.es.open(file.path, std::ios::binary | std::ios::trunc);
+        if (file.es) {
+            file.index.open(file.path + ".index.csv", std::ios::trunc);
+            if (file.index)
+                file.index << "sample,size,pts90k,dts90k,has_pts,has_dts,random,pid,stream_id\n";
+            std::cerr << "NATIVE AVC ES DUMP open path=" << file.path
+                      << " stream_id=" << streamId
+                      << " pid=" << sample.stream.pid
+                      << " limit_mb=64 split_per_stream=1" << std::endl;
+        } else {
+            std::cerr << "NATIVE AVC ES DUMP open failed path="
+                      << file.path << std::endl;
+            return;
+        }
+    }
+    if (!file.es.is_open() || file.limitLogged) return;
+    if (sample.data.size() > kMaxBytes - file.bytes) {
+        file.limitLogged = true;
+        file.es.close();
+        if (file.index.is_open()) file.index.close();
+        std::cerr << "NATIVE AVC ES DUMP limit reached path=" << file.path
+                  << " bytes=" << file.bytes
+                  << " last_au_preserved=1" << std::endl;
         return;
     }
-
-    const std::uint64_t remaining = kMaxBytes - state.bytes;
-    const std::size_t toWrite = static_cast<std::size_t>(
-        std::min<std::uint64_t>(remaining, sample.data.size()));
-    state.es.write(reinterpret_cast<const char*>(sample.data.data()),
-                   static_cast<std::streamsize>(toWrite));
-    if (!state.es) {
-        std::cerr << "NATIVE AVC ES DUMP write failed path=" << path << std::endl;
-        state.es.close();
+    file.es.write(reinterpret_cast<const char*>(sample.data.data()),
+                  static_cast<std::streamsize>(sample.data.size()));
+    if (!file.es) {
+        std::cerr << "NATIVE AVC ES DUMP write failed path="
+                  << file.path << std::endl;
+        file.es.close();
+        if (file.index.is_open()) file.index.close();
         return;
     }
-    ++state.samples;
-    state.bytes += toWrite;
-    if (state.index) {
-        state.index << state.samples << ',' << toWrite << ','
-                    << sample.pts90k << ',' << sample.dts90k << ','
-                    << (sample.hasPts ? 1 : 0) << ','
-                    << (sample.hasDts ? 1 : 0) << ','
-                    << (sample.randomAccess ? 1 : 0) << '\n';
-        state.index.flush();
+    ++file.samples;
+    file.bytes += sample.data.size();
+    if (file.index) {
+        file.index << file.samples << ',' << sample.data.size() << ','
+                   << sample.pts90k << ',' << sample.dts90k << ','
+                   << (sample.hasPts ? 1 : 0) << ','
+                   << (sample.hasDts ? 1 : 0) << ','
+                   << (sample.randomAccess ? 1 : 0) << ','
+                   << sample.stream.pid << ',' << streamId << '\n';
+        file.index.flush();
     }
-    state.es.flush();
-    if (state.samples <= 4 || (state.samples % 100U) == 0U) {
-        std::cerr << "NATIVE AVC ES DUMP samples=" << state.samples
-                  << " bytes=" << state.bytes
-                  << " last=" << toWrite << std::endl;
+    file.es.flush();
+    if (file.samples <= 4U || (file.samples % 100U) == 0U) {
+        std::cerr << "NATIVE AVC ES DUMP samples=" << file.samples
+                  << " pid=" << sample.stream.pid
+                  << " stream_id=" << streamId
+                  << " bytes=" << file.bytes
+                  << " last=" << sample.data.size() << std::endl;
+    }
+}
+:endl;
     }
 }
 
@@ -1135,7 +1179,8 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     ++inputVideoSamples_;
     // Capture exactly what the selected live H.264 decoder receives.
     // No-op in production unless DVBSTREAMER5_DUMP_H264_ES is explicitly set.
-    if (sample.stream.pid == inputVideoPid_) dumpH264ElementarySample(sample);
+    if (sample.stream.pid == inputVideoPid_)
+        dumpH264ElementarySample(sample, config_.streamId);
     if ((inputVideoSamples_ % 100U) == 0U) {
         std::cerr << "NATIVE TRANSCODER VIDEO samples=" << inputVideoSamples_
                   << " decoded=" << decodedVideoFrames_
