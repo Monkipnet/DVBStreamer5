@@ -129,6 +129,12 @@ public:
         nvdecVppProbe_ = vppProbe && std::strcmp(vppProbe, "1") == 0;
         const char* uvProbe = std::getenv("DVBSTREAMER5_NVDEC_UV_PROBE");
         nvdecUvProbe_ = uvProbe && std::strcmp(uvProbe, "1") == 0;
+        // V10.8.234 diagnostic A/B: FFmpeg h264_cuvid -deint bob
+        // -drop_second_field 1 maps the first field (second_field=0).
+        // The standard NVIDIA NvDecoder sample instead maps
+        // repeat_first_field+1. Keep the old behavior unless enabled.
+        const char* firstField = std::getenv("DVBSTREAMER5_NVDEC_FIRST_FIELD_TEST");
+        nvdecFirstFieldTest_ = firstField && std::strcmp(firstField, "1") == 0;
         // A/B isolation: use the identical NVENC-owned input buffer layout as
         // the working software-decoder -> NVENC encoder instead of registering
         // an external CUDA pointer. NVDEC stays hardware. This mode downloads
@@ -569,6 +575,7 @@ private:
                   << " chroma_diag=" << (neutralChromaDiag_ ? "neutral" : "off")
                   << " uv_probe=" << (nvdecUvProbe_ ? 1 : 0)
                   << " nvenc_software_input_test=" << (nvencSoftwareInputTest_ ? 1 : 0)
+                  << " nvdec_first_field_test=" << (nvdecFirstFieldTest_ ? 1 : 0)
                   << " host_video_copies=" << (nvencSoftwareInputTest_ ? 2 : 0)
                   << " gpu_surface_copies=" << (neutralChromaDiag_ ? 1 : safeGpuCopy_ ? 2 : 0)
                   << std::endl;
@@ -633,7 +640,9 @@ private:
         // For interlaced frames, always selecting field zero can map the
         // incorrect field and produce combing/corrupted output after VPP.
         // A value of -1 denotes an unpaired field and must not underflow.
-        proc.second_field = std::max(0, display->repeat_first_field + 1);
+        proc.second_field = nvdecFirstFieldTest_ && config_.deinterlace &&
+            nvdecVppMode_ != "weave" ? 0 :
+            std::max(0, display->repeat_first_field + 1);
         proc.top_field_first = display->top_field_first;
         proc.unpaired_field = display->repeat_first_field < 0 ? 1 : 0;
         ++nvdecDisplayFrames_;
@@ -646,6 +655,7 @@ private:
                       << " top_first=" << display->top_field_first
                       << " repeat_first=" << display->repeat_first_field
                       << " second_field=" << proc.second_field
+                      << " field_policy=" << (nvdecFirstFieldTest_ ? "first_test" : "default")
                       << " unpaired=" << proc.unpaired_field
                       << " mode=" << (config_.deinterlace ? nvdecVppMode_ : "weave")
                       << std::endl;
@@ -1363,6 +1373,7 @@ private:
     bool safeGpuCopy_ = false;
     bool neutralChromaDiag_ = false;
     bool nvdecUvProbe_ = false;
+    bool nvdecFirstFieldTest_ = false;
     bool nvencSoftwareInputTest_ = false;
     std::string nvdecVppMode_ = "adaptive";
     bool nvdecVppProbe_ = false;
