@@ -116,6 +116,10 @@ struct StreamConfig {
     uint32_t hlsArchiveHours = 24;
     std::string hlsArchivePath = "/var/lib/dvbstreamer5/archive";
     // Native HLS container/security: mpegts | cmaf and none | aes-128 | sample-aes.
+    // 0 = legacy Auto: MPEG-TS uses 4s/8, CMAF uses 2s/6.
+    // Explicit values override the legacy minimum only for this stream.
+    std::uint32_t hlsSegmentDuration = 0; // seconds: 0 (Auto) or 1..10
+    std::uint32_t hlsSegmentCount = 0;    // live manifest: 0 (Auto) or 3..30
     std::string hlsContainer = "mpegts";
     std::string hlsEncryption = "none";
     std::string hlsEncryptionKeyUri = "key.bin";
