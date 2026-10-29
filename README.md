@@ -1,3 +1,11 @@
+### V10.8.234 — A/B-проверка поля для NVDEC Bob по образцу FFmpeg CUVID
+
+- Сравнение одного и того же H.264 DAZN 1 (PID 2047) через `ffmpeg -c:v h264_cuvid -deint bob -drop_second_field 1 -resize 1280x720` и программный FFmpeg показало близкие RGB: общая средняя абсолютная разница 8.80/255, средние цвета по 10 горизонтальным зонам почти одинаковы. Это не гарантирует отсутствия узких полос, но аппаратный CUVID способен вывести изображения с почти той же средней цветностью.
+- Анализ исходников установил конкретную разницу: FFmpeg при `-drop_second_field 1` подаёт в `cuvidMapVideoFrame` `CUVIDPROCPARAMS.second_field=0`, а штатный путь DVBStreamer5 (по примеру NVIDIA NvDecoder) — `repeat_first_field + 1` (обычно 1). Это **гипотеза**, а не подтверждённое исправление дефекта.
+- Добавлен безопасный отключаемый A/B режим `DVBSTREAMER5_NVDEC_FIRST_FIELD_TEST=1`: только при выбранном deinterlace и VPP режиме Bob/Adaptive принудительно `second_field=0`. По умолчанию поведение не изменено. Проверка осуществляется на одном канале, а в логе `NATIVE NVIDIA ZERO-COPY active` будет `nvdec_first_field_test=1`.
+- Чтобы тест был чистым, одновременно установите `DVBSTREAMER5_NVENC_SOFTWARE_INPUT_TEST=0`, `DVBSTREAMER5_NVDEC_SAFE_COPY=0`, `DVBSTREAMER5_NVDEC_DIAG_CHROMA=off`, `DVBSTREAMER5_NVDEC_VPP_MODE=bob`; временно отключите захват H.264. После визуального A/B сравнения первого поля удалите тестовый systemd override и перезапустите сервис.
+- Обычные Ittiam → NVENC, Intel, OSCam-mini, EPG, subtitles и оптимизация mux не менялись. Успешность полного CMake build и исправления цвета на GTX 1050 требует проверки на сервере.
+
 ### V10.8.233 — исправление компиляции захвата H.264
 
 - Исправлена регрессия V10.8.232 в `src/media/NativeTranscoderPipeline.cpp`: восстановлен расчёт `videoDuration90k` (`90000.0 / fps`), удалены посторонние токены после диагностической функции захвата. Эта ошибка ранее приводила к синтаксическим ошибкам и множеству вторичных сообщений C++ компилятора.
