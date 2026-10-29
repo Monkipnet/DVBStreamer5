@@ -436,6 +436,11 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.transcodeVideoEncoder != "vaapi") {
         config.transcodeVideoEncoder = "auto";
     }
+    config.transcodeVideoDecoder = toLower(root.get("transcode_video_decoder", "auto").asString());
+    if (config.transcodeVideoDecoder != "auto" &&
+        config.transcodeVideoDecoder != "ittiam" &&
+        config.transcodeVideoDecoder != "openh264")
+        config.transcodeVideoDecoder = "auto";
     config.transcodeVideoBitrate = root.get("transcode_video_bitrate", Json::UInt64(6000000)).asUInt64();
     config.transcodeFps = root.get("transcode_fps", 25.0).asDouble();
     if (config.transcodeFps < 1.0 || config.transcodeFps > 60.0) config.transcodeFps = 25.0;
@@ -601,6 +606,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_resolution"] = transcodeResolution;
     root["transcode_video_codec"] = transcodeVideoCodec;
     root["transcode_video_encoder"] = transcodeVideoEncoder;
+    root["transcode_video_decoder"] = transcodeVideoDecoder;
     root["transcode_video_bitrate"] = Json::UInt64(transcodeVideoBitrate);
     root["transcode_fps"] = transcodeFps;
     root["transcode_deinterlace"] = transcodeDeinterlace;
