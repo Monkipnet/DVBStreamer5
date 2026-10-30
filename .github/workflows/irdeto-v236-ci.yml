@@ -1,0 +1,55 @@
+name: Irdeto V10.8.236 isolated verification
+
+on:
+  push:
+    branches:
+      - ca-irdeto-v10.8.236
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run standalone parity/CW tests
+        run: bash scripts/test_irdeto_cw_policy.sh
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config python3 nodejs curl ca-certificates \
+            binutils nasm autoconf automake libtool \
+            libpcsclite-dev libssl-dev libcrypt-dev libmp3lame-dev \
+            libcurl4-openssl-dev libxml2-dev zlib1g-dev
+      - name: Vendor pinned SRT and codec sources
+        run: |
+          bash scripts/vendor_srt_source.sh
+          bash scripts/vendor_native_codecs.sh
+          DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
+      - name: Configure CPU-only test build
+        run: |
+          cmake -S . -B build-irdeto-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDVBSTREAMER5_ENABLE_NVENC=OFF \
+            -DDVBSTREAMER5_ENABLE_VAAPI=OFF \
+            -DDVBSTREAMER5_ENABLE_INTEL_QSV=OFF
+      - name: Compile Newcamd plugin, OSCam-mini, and application
+        run: |
+          cmake --build build-irdeto-ci --parallel 2 --target dvbstreamer5_ca_newcamd
+          cmake --build build-irdeto-ci --parallel 2 --target DVBStreamer5
+      - name: Verify generated binary
+        run: |
+          test -s build-irdeto-ci/DVBStreamer5
+          test -s build-irdeto-ci/ca-plugins/dvbstreamer5-ca-newcamd.so
