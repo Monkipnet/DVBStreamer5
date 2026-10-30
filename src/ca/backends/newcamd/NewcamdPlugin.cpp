@@ -1746,8 +1746,11 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
                             if (item.hasIrdetoChid) {
                                 if (binding.irdetoChidSelected &&
                                     binding.selectedIrdetoChid != item.irdetoChid) {
-                                    if (!binding.irdetoChidRestored ||
-                                        item.queuedMs < binding.irdetoChidRestoreDeadlineMs) {
+                                    if (!dvbstreamer5::ca::newcamd::
+                                            IrdetoChidPreferenceCache::shouldFallback(
+                                                binding.irdetoChidRestored,
+                                                item.queuedMs,
+                                                binding.irdetoChidRestoreDeadlineMs)) {
                                         continue;
                                     }
                                     // No usable ECM for the cached CHID appeared
