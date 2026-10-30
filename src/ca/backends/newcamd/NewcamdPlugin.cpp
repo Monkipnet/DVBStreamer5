@@ -3,6 +3,7 @@
 // and removal of the artificial per-reader service-session limit.
 #include "../../CaBackendPluginApi.h"
 #include "NewcamdClient.h"
+#include "IrdetoCwBufferPolicy.h"
 extern "C" {
 #include <dvbcsa/dvbcsa.h>
 }
@@ -991,6 +992,12 @@ void configure_service_callback(NewcamdInstance* inst,
                 const uint8_t tscParity = (parity & 1) ? 3U : 2U;
                 const bool zeroCw = cw_is_zero(cw);
                 const bool changedCw = !zeroCw && cw_differs(slot, cw);
+                const auto irdetoDecision =
+                    dvbstreamer5::ca::newcamd::IrdetoCwBufferPolicy::decide(
+                        zeroCw, changedCw, slot.valid,
+                        target->irdetoObservedTsc, tscParity);
+                using IrdetoDecision =
+                    dvbstreamer5::ca::newcamd::IrdetoCwBufferPolicy::Decision;
 
                 bool installed = false;
                 bool staged = false;
@@ -1008,11 +1015,13 @@ void configure_service_callback(NewcamdInstance* inst,
                     ++target->fastEcmUnchangedCwSkips;
                     acceptedCw = true;
                     fastAction = "skip-unchanged";
-                } else if (irdetoBuffer && zeroCw) {
+                } else if (irdetoBuffer &&
+                           irdetoDecision == IrdetoDecision::SkipZero) {
                     // An empty Newcamd half must not erase a valid Irdeto key.
                     ++target->irdetoZeroSkips;
                     fastAction = "skip-zero";
-                } else if (irdetoBuffer && !changedCw && slot.valid) {
+                } else if (irdetoBuffer &&
+                           irdetoDecision == IrdetoDecision::SkipUnchanged) {
                     ++target->irdetoSameCwSkips;
                     acceptedCw = true;
                     fastAction = "skip-unchanged";
@@ -1046,7 +1055,7 @@ void configure_service_callback(NewcamdInstance* inst,
                         std::memcpy(slot.lastReceivedCw.data(), cw, slot.lastReceivedCw.size());
                         slot.haveLastReceivedCw = true;
                         acceptedCw = true;
-                        if (slot.valid && target->irdetoObservedTsc == tscParity) {
+                        if (irdetoDecision == IrdetoDecision::Stage) {
                             std::memcpy(slot.pendingCw.data(), cw, slot.pendingCw.size());
                             slot.pendingEcmMode = currentEcmMode;
                             slot.pendingValid = true;
@@ -1756,12 +1765,18 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             }
         }
 
-        if (irdetoBuffer && (scramblingControl == 2 || scramblingControl == 3) &&
+        if (irdetoBuffer &&
+            dvbstreamer5::ca::newcamd::IrdetoCwBufferPolicy::isScrambledParity(
+                scramblingControl) &&
             binding.irdetoObservedTsc != scramblingControl) {
-            binding.irdetoObservedTsc = scramblingControl;
             ControlWordSlot& enteringSlot =
                 scramblingControl == 3 ? binding.odd : binding.even;
-            if (enteringSlot.pendingValid) {
+            const bool activate =
+                dvbstreamer5::ca::newcamd::IrdetoCwBufferPolicy::shouldActivate(
+                    enteringSlot.pendingValid, binding.irdetoObservedTsc,
+                    scramblingControl);
+            binding.irdetoObservedTsc = scramblingControl;
+            if (activate) {
                 // Flush old-parity lanes in this TS batch before replacing
                 // the key, otherwise old encrypted bytes see the new CW.
                 auto& pendingBatch = scramblingControl == 3
