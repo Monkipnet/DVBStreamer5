@@ -1133,6 +1133,38 @@ Json::Value OscamMiniManager::statusLocked() {
     }
     result["log"] = log;
 
+    // Startup's "ready for requests" eventually falls out of the last 240
+    // journal lines on busy readers. Recent successful ECM replies are much
+    // stronger live evidence than a missing old startup message. Read only
+    // a short, time-bounded journal slice and never expose CW bytes.
+    std::string recentReaderLog;
+    if (serviceActive && !pid.empty()) {
+        recentReaderLog = run(
+            "journalctl -u " + std::string(kService) + " _PID=" + pid +
+            " --since '-45 seconds' --no-pager -o cat");
+        if (recentReaderLog.size() > 32000) {
+            recentReaderLog.erase(0, recentReaderLog.size() - 32000);
+        }
+    }
+    const auto readerRecentlyFoundEcm = [&](const std::string& label) {
+        if (label.empty()) return false;
+        std::istringstream lines(recentReaderLog);
+        std::string line;
+        const std::string marker = " by " + label;
+        while (std::getline(lines, line)) {
+            if (line.find(" (ecm) ") == std::string::npos ||
+                line.find("): found (") == std::string::npos) continue;
+            const auto pos = line.rfind(marker);
+            if (pos != std::string::npos &&
+                (pos + marker.size() == line.size() ||
+                 std::isspace(static_cast<unsigned char>(
+                     line[pos + marker.size()])))) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     const Settings settings = loadLocked();
     // Include socket ownership so Remote Newcamd reader state is based on the
     // OSCam-mini process itself instead of an unrelated TCP connection that
@@ -1195,9 +1227,12 @@ Json::Value OscamMiniManager::statusLocked() {
             const bool remoteLoggedReady = remoteReader &&
                 (log.find(reader.label + " " + protocolTag + " proxy initialized") != std::string::npos ||
                  log.find(reader.label + " [newcamd] Newcamd Server: " + remoteEndpoint + " - UserID:") != std::string::npos);
+            const bool recentlyFoundEcm =
+                !remoteReader && readerRecentlyFoundEcm(reader.label);
             const bool ready = remoteReader
                 ? (remoteSocketReady || remoteLoggedReady)
-                : (log.find(readyNeedle) != std::string::npos ||
+                : (recentlyFoundEcm ||
+                   log.find(readyNeedle) != std::string::npos ||
                    log.find(readyMouseNeedle) != std::string::npos);
             const bool initializing = remoteReader
                 ? log.find(reader.label + " " + protocolTag) != std::string::npos
@@ -1220,7 +1255,8 @@ Json::Value OscamMiniManager::statusLocked() {
 
             if (ready) {
                 state = "active";
-                detail = remoteReader ? ("Remote CA " + reader.protocol + " подключён") : "Карта готова";
+                detail = remoteReader ? ("Remote CA " + reader.protocol + " подключён")
+                    : (recentlyFoundEcm ? "ECM успешно обработан — ридер активен" : "Карта готова");
             } else if (error) {
                 state = "down";
                 detail = remoteReader ? ("Ошибка Remote CA " + reader.protocol) : "Ошибка ридера";
