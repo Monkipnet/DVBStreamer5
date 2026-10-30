@@ -1,3 +1,25 @@
+### V10.8.237 (EXPERIMENTAL CHID LIFECYCLE) — remember per-service Irdeto CHID across Newcamd session recreation
+
+- **Separate branch:** `ca-irdeto-v10.8.237`, based on experimental V10.8.236. `main` remains V10.8.235. Do not deploy to the live `iptv` server before an isolated build, CI validation and a scheduled maintenance window.
+- Production observation (2026-10-30): a single physical Irdeto 0652/0400DC card successfully serves eight independently decrypted services. When stream/CA service restarts (e.g. SID 460 at 11:23:04, 11:23:39 and 11:25:41, server time), the old `ServiceBinding` and selected CHID are destroyed. The new service probes unsubscribed CHID `0x002e` before finding subscribed CHID `0x0133`. OSCam logs show `not found (unsubscribed channel)` followed by `found`; other services likewise have distinct subscribed CHIDs. A `NEWCAMD SERVICE SESSION` line proves session recreation, **not** its cause. Investigate `ONDEMAND DEACTIVATE/ACTIVATE`, `CAM manager: released`, `CA backend service stopped`, and stream-stop reasons first.
+- Store only successfully processed CHID preference, not CW/ECM secrets. Cache is scoped to reader ID + stream ID + SID + CAID + provider; 10-minute expiry and 128-entry bound. It survives `stop_service`/`start_service` within the same plugin instance but not the whole process or plugin unload. Restored CHID must receive a valid fresh CW from OSCam as usual. An explicit ECM failure invalidates its preference; a four-second grace window ensures fallback to normal CHID search if the cached value is absent. No hardcoded channel or CHID values.
+- Logs: `NEWCAMD IRDETO CHID RESTORE` on starting a previously decoded service and `NEWCAMD IRDETO CHID FALLBACK` if the cached CHID was not seen in time. `NEWCAMD IRDETO CHID SELECT` continues logging a new valid CHID.
+- Tests: `bash scripts/test_irdeto_cw_policy.sh` and `bash scripts/test_irdeto_chid_cache.sh`. CI workflow `.github/workflows/irdeto-v236-ci.yml` includes both standalone test programs and CPU-only CMake build on the test branch. **Full binary compilation and live-video regression testing have not been verified here.**
+- Example commands for **isolated build machine only**:
+
+  ```bash
+  git clone -b ca-irdeto-v10.8.237 https://github.com/Monkipnet/DVBStreamer5.git
+  cd DVBStreamer5
+  bash scripts/test_irdeto_cw_policy.sh
+  bash scripts/test_irdeto_chid_cache.sh
+  bash scripts/vendor_srt_source.sh
+  bash scripts/vendor_native_codecs.sh
+  DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
+  cmake -S . -B build-irdeto-237 -DCMAKE_BUILD_TYPE=Release
+  cmake --build build-irdeto-237 --parallel 2
+  bash scripts/make_portable_linux_bundle.sh --build-dir build-irdeto-237 --binary build-irdeto-237/DVBStreamer5 --output-dir dist/DVBStreamer5-linux-x86_64 --with-oscam --archive
+  ```
+
 ### V10.8.236 (TEST BRANCH) — per-service Irdeto CW buffer for single-card / multi-channel setups
 
 - **Not a production release.** Developed separately on `ca-irdeto-v10.8.236`; `main` (V10.8.235) is unchanged. No reboot or restart of the production `iptv` host is required.
