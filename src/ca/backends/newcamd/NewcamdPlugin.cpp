@@ -4,6 +4,7 @@
 #include "../../CaBackendPluginApi.h"
 #include "NewcamdClient.h"
 #include "IrdetoCwBufferPolicy.h"
+#include "IrdetoChidPreferenceCache.h"
 extern "C" {
 #include <dvbcsa/dvbcsa.h>
 }
@@ -192,6 +193,8 @@ struct ServiceBinding {
     // unsubscribed ECM forever.
     bool irdetoChidSelected = false;
     uint16_t selectedIrdetoChid = 0;
+    bool irdetoChidRestored = false;
+    uint64_t irdetoChidRestoreDeadlineMs = 0;
     std::map<uint16_t, uint64_t> rejectedIrdetoChidUntilMs;
 
     uint64_t diagLastLogMs = 0;
@@ -339,7 +342,17 @@ struct NewcamdInstance {
     // affecting any other service that uses the same OSCam reader/account.
     std::map<std::string, std::shared_ptr<NewcamdSession>> sessionsByStream;
     std::map<std::string, std::shared_ptr<ServiceBinding>> servicesByStream;
+    dvbstreamer5::ca::newcamd::IrdetoChidPreferenceCache irdetoChidPreferences;
 };
+
+// A cache entry is scoped to a configured reader AND a logical service.
+// Different channels on the same Irdeto card must never share CHID preference.
+dvbstreamer5::ca::newcamd::IrdetoChidPreferenceCache::Key
+irdeto_chid_key(const std::string& reader, const std::string& stream,
+                const ServiceBinding& binding) {
+    return {reader, stream, binding.serviceId, binding.defaultCaid,
+            binding.defaultProvid};
+}
 
 constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited
 constexpr uint64_t kEmmDuplicateTtlMs = 30000;
@@ -946,7 +959,10 @@ void configure_service_callback(NewcamdInstance* inst,
                 target->rejectedIrdetoChidUntilMs[currentIrdetoChid] = now + 15000;
                 if (target->irdetoChidSelected && target->selectedIrdetoChid == currentIrdetoChid) {
                     target->irdetoChidSelected = false;
+                    target->irdetoChidRestored = false;
                 }
+                inst->irdetoChidPreferences.forgetIfMatches(
+                    irdeto_chid_key(clientKey, streamId, *target), currentIrdetoChid);
                 std::cerr << "NEWCAMD IRDETO CHID REJECT: client=" << clientKey
                           << " stream=" << streamId
                           << " sid=" << target->serviceId
@@ -1122,11 +1138,22 @@ void configure_service_callback(NewcamdInstance* inst,
                     target->lastSuccessfulEcmSignature = currentSignature;
                 }
 
-                if (currentIsIrdeto && currentHasIrdetoChid && !target->irdetoChidSelected) {
-                    target->irdetoChidSelected = true;
-                    target->selectedIrdetoChid = currentIrdetoChid;
-                    target->rejectedIrdetoChidUntilMs.clear();
-                    newlySelectedChid = true;
+                // Prefer only CHIDs that have actually delivered a valid,
+                // complete Newcamd CW response. OSCam not-found is handled above.
+                if (currentIsIrdeto && currentHasIrdetoChid &&
+                    (parity & 1U) && acceptedCw) {
+                    if (!target->irdetoChidSelected) {
+                        target->irdetoChidSelected = true;
+                        target->selectedIrdetoChid = currentIrdetoChid;
+                        target->rejectedIrdetoChidUntilMs.clear();
+                        newlySelectedChid = true;
+                    }
+                    if (target->selectedIrdetoChid == currentIrdetoChid) {
+                        target->irdetoChidRestored = false;
+                        inst->irdetoChidPreferences.remember(
+                            irdeto_chid_key(clientKey, streamId, *target),
+                            currentIrdetoChid, monotonic_ms());
+                    }
                 }
             }
             const uint64_t now = monotonic_ms();
@@ -1375,6 +1402,23 @@ static int newcamd_start_service(void* instance, const char* reader_key,
     binding->defaultCaid = config.caid;
     binding->defaultProvid = config.provid;
 
+    // Restore only CHID preference, never old CW keys. Bound the tentative
+    // selection so a changed/expired card subscription cannot stall decoding.
+    if (is_irdeto_caid(binding->defaultCaid)) {
+        uint16_t previousChid = 0;
+        const auto now = monotonic_ms();
+        if (inst->irdetoChidPreferences.recover(
+                irdeto_chid_key(clientKey, streamId, *binding),
+                now, previousChid)) {
+            binding->irdetoChidSelected = true;
+            binding->selectedIrdetoChid = previousChid;
+            binding->irdetoChidRestored = true;
+            binding->irdetoChidRestoreDeadlineMs =
+                now + dvbstreamer5::ca::newcamd::
+                    IrdetoChidPreferenceCache::kRestoreGraceMs;
+        }
+    }
+
     auto session = std::make_shared<NewcamdSession>();
     session->client = std::make_unique<NewcamdClient>(
         config.host, config.port, config.user, config.pass, config.des);
@@ -1421,6 +1465,16 @@ static int newcamd_start_service(void* instance, const char* reader_key,
               << " ecm_duplicate_suppression=on"
               << " ca_diagnostics=" << (caDiagnosticsEnabled() ? "on" : "off")
               << std::endl;
+    if (binding->irdetoChidRestored) {
+        std::cerr << "NEWCAMD IRDETO CHID RESTORE: client=" << clientKey
+                  << " stream=" << streamId
+                  << " sid=" << binding->serviceId
+                  << " chid=0x" << std::hex << binding->selectedIrdetoChid
+                  << std::dec << " grace_ms="
+                  << dvbstreamer5::ca::newcamd::
+                         IrdetoChidPreferenceCache::kRestoreGraceMs
+                  << std::endl;
+    }
     return DVBSTREAMER5_CA_RESULT_OK;
 }
 
@@ -1692,7 +1746,25 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
                             if (item.hasIrdetoChid) {
                                 if (binding.irdetoChidSelected &&
                                     binding.selectedIrdetoChid != item.irdetoChid) {
-                                    continue;
+                                    if (!binding.irdetoChidRestored ||
+                                        item.queuedMs < binding.irdetoChidRestoreDeadlineMs) {
+                                        continue;
+                                    }
+                                    // No usable ECM for the cached CHID appeared
+                                    // during the short grace window: resume normal
+                                    // selection instead of black-screening the service.
+                                    inst->irdetoChidPreferences.forgetIfMatches(
+                                        irdeto_chid_key(binding.clientKey, stream_id, binding),
+                                        binding.selectedIrdetoChid);
+                                    std::cerr << "NEWCAMD IRDETO CHID FALLBACK: client="
+                                              << binding.clientKey
+                                              << " stream=" << stream_id
+                                              << " sid=" << binding.serviceId
+                                              << " cached_chid=0x" << std::hex
+                                              << binding.selectedIrdetoChid << std::dec
+                                              << " reason=restore-grace-expired" << std::endl;
+                                    binding.irdetoChidSelected = false;
+                                    binding.irdetoChidRestored = false;
                                 }
                                 const auto rejected = binding.rejectedIrdetoChidUntilMs.find(item.irdetoChid);
                                 if (!binding.irdetoChidSelected && rejected != binding.rejectedIrdetoChidUntilMs.end()) {
