@@ -14,7 +14,8 @@ import sys
 RECORD = re.compile(r"^(\S+).*?CA V238 MONITOR:\s+(.*)$")
 PAIR = re.compile(r"([a-z][a-z0-9_]*)=([^\s]+)")
 ERROR_KEYS = (
-    "in_tei", "in_bad_afc", "in_cc_gaps", "no_key_packets",
+    "in_tei", "in_bad_afc", "in_cc_gaps", "in_pcr_backwards",
+    "in_pcr_jump_gt_1s", "no_key_packets",
     "post_still_scrambled", "post_pes_bad", "nal_bad",
 )
 WARN_KEYS = ("in_cc_repeats", "ecm_not_found", "ecm_over_500ms")
