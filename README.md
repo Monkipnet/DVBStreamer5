@@ -1,3 +1,14 @@
+### V10.8.236 (TEST BRANCH) — per-service Irdeto CW buffer for single-card / multi-channel setups
+
+- **Not a production release.** Developed separately on `ca-irdeto-v10.8.236`; `main` (V10.8.235) is unchanged. No reboot or restart of the production `iptv` host is required.
+- An OSCam-mini instance using **one physical Irdeto smartcard** can serve multiple distinct encrypted services over per-service Newcamd TCP connections. Even when their reader is shared, EVEN/ODD control words are **never** shared between different service IDs. This implementation keeps a separate key pair and next-key buffer for each `ServiceBinding`.
+- There was already a one-entry per-service exact ECM signature de-duplication and an in-flight ECM queue. A cache cannot predict future unknown CWs; the card still needs to process each new ECM. The ~153–176 ms observed at OSCam is normal for this deployment and not by itself proof of a CA problem.
+- New **opt-in test mode** `DVBSTREAMER5_IRDETO_CW_BUFFER=1`: retain an active parity's current key while an updated CW is received; stage its next CW and activate after a TSC parity change returns to that parity. Flush outstanding CSA bitslice batches before switching keys. This is a *hypothesis* to diagnose brief 1–2 second visual breakup and **must be compared with the baseline**: some ECM/CAS timing may require different switching semantics.
+- In opt-in mode, ignore all-zero Irdeto CW halves instead of replacing a previously working key. Skip unchanged CWs for a valid key. Non-Irdeto CAS paths and V10.8.235 behavior are untouched when the switch is unset.
+- With `DVBSTREAMER5_CA_DIAGNOSTICS=1`, log `NEWCAMD IRDETO CW BUFFER` and `NEWCAMD IRDETO CW ACTIVATE`, plus cumulative `irdeto_staged`, `irdeto_activated`, `irdeto_zero_skips`, and `irdeto_unchanged_skips` counters in `CA TS DIAG`. Only parity, SID, timing, and counters are logged; **never** control-word bytes.
+- Build on an isolated test server: `git fetch origin && git switch ca-irdeto-v10.8.236 && git pull --ff-only`, then use the project CMake and portable-bundle commands below. For test A/B set environment variables **only for the test process**. Do not install the test build or add systemd overrides to production `iptv`.
+- Expected verification: parity transitions, PES validation, continuity counters, normal video and audio, same 8 services, and no new regressions. **No completed build or runtime video test is claimed for V10.8.236.**
+
 ### V10.8.235 — исправлена цветность NVDEC 1080i H.264 при сохранении GPU zero-copy
 
 - **Подтверждено пользователем на GTX 1050, DAZN 1/2:** в V10.8.234 режим `NVDEC → CUDA(NV12) → NVENC`, `bob`, `second_field=0` устранил зелёный оттенок и цветные горизонтальные полосы. Журнал показал `host_video_copies=0`, `gpu_surface_copies=0`.
