@@ -18,6 +18,8 @@ public:
         std::uint64_t in_cc_gaps = 0;
         std::uint64_t in_cc_repeats = 0;
         std::uint64_t in_discontinuities = 0;
+        std::uint64_t in_pcr_backwards = 0;
+        std::uint64_t in_pcr_jump_gt_1s = 0;
         std::uint64_t in_scrambled = 0;
         std::uint64_t parity_changes = 0;
         std::uint64_t missing_key_packets = 0;
@@ -55,7 +57,40 @@ public:
         }
         const bool discontinuity = hasAdaptation && packet[4] > 0 &&
             (packet[5] & 0x80) != 0;
-        if (discontinuity) { ++totals_.in_discontinuities; p.cc_valid = false; }
+        if (discontinuity) {
+            ++totals_.in_discontinuities;
+            p.cc_valid = false;
+            p.pcr_valid = false;
+        }
+        if (hasAdaptation && packet[4] >= 7 && (packet[5] & 0x10)) {
+            // 33-bit PCR_base + 9-bit PCR_extension, 27 MHz timebase.
+            // Counter wraps after roughly 26.5 hours. No wall-clock
+            // synchronisation is assumed; >1s PCR gaps are a *heuristic*.
+            const std::uint64_t base =
+                (static_cast<std::uint64_t>(packet[6]) << 25) |
+                (static_cast<std::uint64_t>(packet[7]) << 17) |
+                (static_cast<std::uint64_t>(packet[8]) << 9) |
+                (static_cast<std::uint64_t>(packet[9]) << 1) |
+                (static_cast<std::uint64_t>(packet[10]) >> 7);
+            const std::uint64_t ext =
+                (static_cast<std::uint64_t>(packet[10] & 1) << 8) |
+                packet[11];
+            const std::uint64_t current = base * 300 + ext;
+            constexpr std::uint64_t kWrap = (std::uint64_t{1} << 33) * 300;
+            if (p.pcr_valid) {
+                const bool backwards = p.last_pcr > current &&
+                    p.last_pcr - current < kWrap / 2;
+                if (backwards) {
+                    ++totals_.in_pcr_backwards;
+                } else {
+                    const auto delta = current >= p.last_pcr
+                        ? current - p.last_pcr : kWrap - p.last_pcr + current;
+                    if (delta > 27000000ULL) ++totals_.in_pcr_jump_gt_1s;
+                }
+            }
+            p.last_pcr = current;
+            p.pcr_valid = true;
+        }
         const bool hasPayload = afc == 1 ||
             (afc == 3 && (5U + packet[4]) < size);
         if (hasPayload) {
@@ -174,6 +209,8 @@ private:
     struct PidState {
         bool selected = false;
         bool cc_valid = false;
+        bool pcr_valid = false;
+        std::uint64_t last_pcr = 0;
         std::uint8_t last_cc = 0;
         std::uint8_t last_tsc = 0;
         std::uint8_t video_codec = 0;
