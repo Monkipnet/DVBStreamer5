@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <map>
 #include <mutex>
 #include <string>
@@ -28,6 +29,12 @@ public:
     static constexpr std::uint64_t kTtlMs = 10 * 60 * 1000;
     static constexpr std::size_t kMaxEntries = 128;
     static constexpr std::uint64_t kRestoreGraceMs = 4000;
+
+    static constexpr bool shouldFallback(bool tentativeRestore,
+                                         std::uint64_t nowMs,
+                                         std::uint64_t deadlineMs) noexcept {
+        return tentativeRestore && nowMs >= deadlineMs;
+    }
 
     void remember(const Key& key, std::uint16_t chid, std::uint64_t nowMs) {
         if (chid == 0) return;
