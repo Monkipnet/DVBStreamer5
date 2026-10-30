@@ -1,10 +1,11 @@
-name: Irdeto V10.8.238 TS diagnostic verification
+name: DVBStreamer5 Irdeto diagnostics and DVB selected-service build
 
 on:
   push:
     branches:
       - ca-irdeto-v10.8.236
       - ca-irdeto-v10.8.238
+      - dvb-vbr-null-v10.8.239
   workflow_dispatch:
 
 permissions:
