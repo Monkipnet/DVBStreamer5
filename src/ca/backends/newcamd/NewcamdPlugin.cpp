@@ -4,6 +4,7 @@
 #include "../../CaBackendPluginApi.h"
 #include "NewcamdClient.h"
 #include "IrdetoCwBufferPolicy.h"
+#include "TsIntegrityMonitor.h"
 extern "C" {
 #include <dvbcsa/dvbcsa.h>
 }
@@ -40,6 +41,14 @@ bool caDiagnosticsEnabled() {
 }
 
 // Explicitly opt in on a test server. Production defaults to V10.8.235.
+bool tsIntegrityMonitorEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("DVBSTREAMER5_CA_TS_MONITOR");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
 bool irdetoCwBufferEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("DVBSTREAMER5_IRDETO_CW_BUFFER");
@@ -193,6 +202,11 @@ struct ServiceBinding {
     bool irdetoChidSelected = false;
     uint16_t selectedIrdetoChid = 0;
     std::map<uint16_t, uint64_t> rejectedIrdetoChidUntilMs;
+
+    // Independent from CA_DIAGNOSTICS and from the experimental CW buffer.
+    std::unique_ptr<dvbstreamer5::ca::newcamd::TsIntegrityMonitor> tsMonitor;
+    dvbstreamer5::ca::newcamd::TsIntegrityMonitor::Counters tsMonitorPrevious{};
+    uint64_t tsMonitorLastLogMs = 0;
 
     uint64_t diagLastLogMs = 0;
     uint64_t diagCalls = 0;
@@ -575,7 +589,10 @@ void parse_pmt_section(const std::vector<uint8_t>& section, ServiceBinding& bind
     std::set<uint16_t> newPayloadPids;
 
     const uint16_t pcrPid = static_cast<uint16_t>(((section[8] & 0x1F) << 8) | section[9]);
-    if (pcrPid > 0 && pcrPid < kNullPid) newPayloadPids.insert(pcrPid);
+    if (pcrPid > 0 && pcrPid < kNullPid) {
+        newPayloadPids.insert(pcrPid);
+        if (binding.tsMonitor) binding.tsMonitor->select(pcrPid);
+    }
 
     const uint16_t programInfoLength = static_cast<uint16_t>(((section[10] & 0x0F) << 8) | section[11]);
     size_t pos = 12;
@@ -585,11 +602,15 @@ void parse_pmt_section(const std::vector<uint8_t>& section, ServiceBinding& bind
     pos += programInfoLength;
 
     while (pos + 5 <= crcStart) {
+        const uint8_t streamType = section[pos];
         const uint16_t elementaryPid = static_cast<uint16_t>(((section[pos + 1] & 0x1F) << 8) | section[pos + 2]);
         const uint16_t esInfoLength = static_cast<uint16_t>(((section[pos + 3] & 0x0F) << 8) | section[pos + 4]);
         pos += 5;
         if (pos + esInfoLength > crcStart) break;
-        if (elementaryPid > 0 && elementaryPid < kNullPid) newPayloadPids.insert(elementaryPid);
+        if (elementaryPid > 0 && elementaryPid < kNullPid) {
+            newPayloadPids.insert(elementaryPid);
+            if (binding.tsMonitor) binding.tsMonitor->select(elementaryPid, streamType);
+        }
         collect_ca_descriptors(section.data() + pos, esInfoLength, newEcmPids);
         pos += esInfoLength;
     }
@@ -944,6 +965,8 @@ void configure_service_callback(NewcamdInstance* inst,
                 std::lock_guard<std::mutex> serviceLock(target->mutex);
                 const uint64_t now = monotonic_ms();
                 target->rejectedIrdetoChidUntilMs[currentIrdetoChid] = now + 15000;
+                if (target->tsMonitor)
+                    target->tsMonitor->onEcmResult(false, now >= startedMs ? now - startedMs : 0);
                 if (target->irdetoChidSelected && target->selectedIrdetoChid == currentIrdetoChid) {
                     target->irdetoChidSelected = false;
                 }
@@ -1116,6 +1139,18 @@ void configure_service_callback(NewcamdInstance* inst,
                               << std::endl;
                 }
                 sid = target->serviceId;
+                if (target->tsMonitor && (parity & 1U) && acceptedCw) {
+                    const uint64_t completedMs = monotonic_ms();
+                    const uint64_t latency = completedMs >= startedMs
+                        ? completedMs - startedMs : 0;
+                    target->tsMonitor->onEcmResult(true, latency);
+                    std::cerr << "CA V238 CW EVENT: stream=" << streamId
+                              << " sid=" << sid
+                              << " parity=ODD"
+                              << " chid=0x" << std::hex << currentIrdetoChid << std::dec
+                              << " latency_ms=" << latency
+                              << " cw_action=" << fastAction << std::endl;
+                }
                 if (((!fastEcm && !irdetoBuffer && (parity & 1)) ||
                      ((!fastEcm && irdetoBuffer) && (parity & 1) && acceptedCw) ||
                      (fastEcm && acceptedCw)) && !currentSignature.empty()) {
@@ -1374,6 +1409,10 @@ static int newcamd_start_service(void* instance, const char* reader_key,
         ? static_cast<uint16_t>(service->service_id) : 0;
     binding->defaultCaid = config.caid;
     binding->defaultProvid = config.provid;
+    if (tsIntegrityMonitorEnabled()) {
+        binding->tsMonitor =
+            std::make_unique<dvbstreamer5::ca::newcamd::TsIntegrityMonitor>();
+    }
 
     auto session = std::make_shared<NewcamdSession>();
     session->client = std::make_unique<NewcamdClient>(
@@ -1420,6 +1459,7 @@ static int newcamd_start_service(void* instance, const char* reader_key,
               << " full_native_batch=on"
               << " ecm_duplicate_suppression=on"
               << " ca_diagnostics=" << (caDiagnosticsEnabled() ? "on" : "off")
+              << " ca_ts_monitor=" << (binding->tsMonitor ? "on" : "off")
               << std::endl;
     return DVBSTREAMER5_CA_RESULT_OK;
 }
@@ -1567,6 +1607,7 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
 
         result->packets_seen++;
         const uint16_t pid = parse_pid(packet);
+        if (binding.tsMonitor) binding.tsMonitor->before(packet);
         const bool payloadStart = (packet[1] & 0x40) != 0;
         const uint8_t scramblingControl = static_cast<uint8_t>((packet[3] >> 6) & 0x03);
 
@@ -1806,6 +1847,7 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
 
         ControlWordSlot& slot = scramblingControl == 3 ? binding.odd : binding.even;
         if (!slot.valid || !slot.scalarKey || !slot.bsKey) {
+            if (binding.tsMonitor) binding.tsMonitor->missingKey();
             waitingForKey = true;
             continue;
         }
@@ -1867,6 +1909,48 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
 
     if (diagnostics) {
         for (const auto& probe : verifyProbes) verify_csa_probe(binding, probe);
+    }
+
+    if (binding.tsMonitor) {
+        // The CA plugin sees service-selected TS before and after its in-place
+        // CSA operation. This does not inspect downstream UDP/HLS network loss.
+        for (size_t offset = 0; offset + kTsPacketSize <= size; offset += kTsPacketSize) {
+            binding.tsMonitor->after(data + offset);
+        }
+        const uint64_t tsNow = monotonic_ms();
+        if (binding.tsMonitorLastLogMs == 0 ||
+            tsNow - binding.tsMonitorLastLogMs >= 1000) {
+            const auto& c = binding.tsMonitor->counters();
+            const auto& p = binding.tsMonitorPrevious;
+            // All counters here are interval deltas, except the explicitly
+            // cumulative ECM peak. One service-independent line per second.
+            std::cerr << "CA V238 MONITOR: stream=" << stream_id
+                      << " sid=" << binding.serviceId
+                      << " window_ms=" << (binding.tsMonitorLastLogMs
+                          ? tsNow - binding.tsMonitorLastLogMs : 0)
+                      << " in_packets=" << c.in_packets - p.in_packets
+                      << " in_tei=" << c.in_tei - p.in_tei
+                      << " in_bad_afc=" << c.in_bad_afc - p.in_bad_afc
+                      << " in_cc_gaps=" << c.in_cc_gaps - p.in_cc_gaps
+                      << " in_cc_repeats=" << c.in_cc_repeats - p.in_cc_repeats
+                      << " in_discont=" << c.in_discontinuities - p.in_discontinuities
+                      << " in_scrambled=" << c.in_scrambled - p.in_scrambled
+                      << " parity_changes=" << c.parity_changes - p.parity_changes
+                      << " no_key_packets=" << c.missing_key_packets - p.missing_key_packets
+                      << " post_packets=" << c.post_packets - p.post_packets
+                      << " post_still_scrambled=" << c.post_still_scrambled - p.post_still_scrambled
+                      << " post_pes_ok=" << c.post_pes_ok - p.post_pes_ok
+                      << " post_pes_bad=" << c.post_pes_bad - p.post_pes_bad
+                      << " nal_headers=" << c.post_video_nal_headers - p.post_video_nal_headers
+                      << " nal_bad=" << c.post_video_nal_bad - p.post_video_nal_bad
+                      << " ecm_found=" << c.cw_responses - p.cw_responses
+                      << " ecm_not_found=" << c.ecm_not_found - p.ecm_not_found
+                      << " ecm_over_500ms=" << c.ecm_latency_slow - p.ecm_latency_slow
+                      << " ecm_peak_ms_total=" << c.ecm_latency_max_ms
+                      << std::endl;
+            binding.tsMonitorPrevious = c;
+            binding.tsMonitorLastLogMs = tsNow;
+        }
     }
 
     const uint64_t diagNowMs = diagnostics ? monotonic_ms() : 0;
