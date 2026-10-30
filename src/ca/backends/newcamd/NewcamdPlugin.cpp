@@ -38,6 +38,15 @@ bool caDiagnosticsEnabled() {
     return enabled;
 }
 
+// Explicitly opt in on a test server. Production defaults to V10.8.235.
+bool irdetoCwBufferEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("DVBSTREAMER5_IRDETO_CW_BUFFER");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
 struct EcmDescriptor {
     uint16_t pid = kNullPid;
     uint16_t caid = 0;
@@ -211,6 +220,13 @@ struct ServiceBinding {
     uint64_t fastEcmPendingActivations = 0;
     uint64_t fastEcmZeroCwSkips = 0;
     uint64_t fastEcmUnchangedCwSkips = 0;
+    // Service-private, parity-specific Irdeto CW cache; never shared
+    // between services, even when all use a single physical smartcard.
+    uint8_t irdetoObservedTsc = 0;
+    uint64_t irdetoCwStages = 0;
+    uint64_t irdetoCwActivations = 0;
+    uint64_t irdetoZeroSkips = 0;
+    uint64_t irdetoSameCwSkips = 0;
     uint16_t diagVerifySamplePid = 0;
     uint16_t diagSamplePid = 0;
     uint8_t diagSampleScrambling = 0;
@@ -959,6 +975,8 @@ void configure_service_callback(NewcamdInstance* inst,
                 std::lock_guard<std::mutex> serviceLock(target->mutex);
                 const bool fastEcm =
                     currentEcmMode != 0 && is_fast_ecm_caid(target->defaultCaid);
+                const bool irdetoBuffer = !fastEcm &&
+                    is_irdeto_caid(target->defaultCaid) && irdetoCwBufferEnabled();
                 const uint8_t expectedParity =
                     currentEcmTableId == 0x81 ? 1U : 0U;
                 const bool responseMatchesEcm =
@@ -990,6 +1008,14 @@ void configure_service_callback(NewcamdInstance* inst,
                     ++target->fastEcmUnchangedCwSkips;
                     acceptedCw = true;
                     fastAction = "skip-unchanged";
+                } else if (irdetoBuffer && zeroCw) {
+                    // An empty Newcamd half must not erase a valid Irdeto key.
+                    ++target->irdetoZeroSkips;
+                    fastAction = "skip-zero";
+                } else if (irdetoBuffer && !changedCw && slot.valid) {
+                    ++target->irdetoSameCwSkips;
+                    acceptedCw = true;
+                    fastAction = "skip-unchanged";
                 } else {
                     if (fastEcm) {
                         std::memcpy(
@@ -1013,6 +1039,27 @@ void configure_service_callback(NewcamdInstance* inst,
                             install_control_word(slot, currentEcmMode, cw);
                             installed = true;
                         }
+                    } else if (irdetoBuffer) {
+                        // Keep the CW currently decrypting this TSC parity.
+                        // Stage the incoming CW until TS leaves this parity
+                        // and returns. The other parity can be updated now.
+                        std::memcpy(slot.lastReceivedCw.data(), cw, slot.lastReceivedCw.size());
+                        slot.haveLastReceivedCw = true;
+                        acceptedCw = true;
+                        if (slot.valid && target->irdetoObservedTsc == tscParity) {
+                            std::memcpy(slot.pendingCw.data(), cw, slot.pendingCw.size());
+                            slot.pendingEcmMode = currentEcmMode;
+                            slot.pendingValid = true;
+                            ++target->irdetoCwStages;
+                            staged = true;
+                            fastAction = "stage";
+                        } else {
+                            slot.pendingValid = false;
+                            slot.pendingEcmMode = 0;
+                            slot.pendingCw.fill(0);
+                            install_control_word(slot, currentEcmMode, cw);
+                            installed = true;
+                        }
                     } else {
                         install_control_word(slot, currentEcmMode, cw);
                         installed = true;
@@ -1020,6 +1067,20 @@ void configure_service_callback(NewcamdInstance* inst,
                     }
 
                     if (installed) ++target->cwUpdates;
+                }
+
+                if (irdetoBuffer && (caDiagnosticsEnabled() || staged ||
+                                     zeroCw)) {
+                    const uint64_t responseMs = monotonic_ms();
+                    std::cerr << "NEWCAMD IRDETO CW BUFFER: stream=" << streamId
+                              << " sid=" << target->serviceId
+                              << " parity=" << ((parity & 1) ? "ODD" : "EVEN")
+                              << " observed_tsc="
+                              << static_cast<unsigned>(target->irdetoObservedTsc)
+                              << " action=" << fastAction
+                              << " latency_ms="
+                              << (responseMs >= startedMs ? responseMs - startedMs : 0)
+                              << std::endl;
                 }
 
                 if (currentEcmMode != 0 && !target->icamModeLogged) {
@@ -1046,8 +1107,9 @@ void configure_service_callback(NewcamdInstance* inst,
                               << std::endl;
                 }
                 sid = target->serviceId;
-                if ((!fastEcm && (parity & 1) && !currentSignature.empty()) ||
-                    (fastEcm && acceptedCw && !currentSignature.empty())) {
+                if (((!fastEcm && !irdetoBuffer && (parity & 1)) ||
+                     ((!fastEcm && irdetoBuffer) && (parity & 1) && acceptedCw) ||
+                     (fastEcm && acceptedCw)) && !currentSignature.empty()) {
                     target->lastSuccessfulEcmSignature = currentSignature;
                 }
 
@@ -1476,6 +1538,8 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
     bool waitingForKey = false;
     bool sawEcm = false;
     const bool diagnostics = caDiagnosticsEnabled();
+    const bool irdetoBuffer =
+        is_irdeto_caid(binding.defaultCaid) && irdetoCwBufferEnabled();
     std::vector<CsaVerifyProbe> verifyProbes;
 
     if (diagnostics) {
@@ -1692,6 +1756,39 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             }
         }
 
+        if (irdetoBuffer && (scramblingControl == 2 || scramblingControl == 3) &&
+            binding.irdetoObservedTsc != scramblingControl) {
+            binding.irdetoObservedTsc = scramblingControl;
+            ControlWordSlot& enteringSlot =
+                scramblingControl == 3 ? binding.odd : binding.even;
+            if (enteringSlot.pendingValid) {
+                // Flush old-parity lanes in this TS batch before replacing
+                // the key, otherwise old encrypted bytes see the new CW.
+                auto& pendingBatch = scramblingControl == 3
+                    ? binding.csaBatch.odd : binding.csaBatch.even;
+                size_t& pendingCount = scramblingControl == 3
+                    ? binding.csaBatch.oddCount : binding.csaBatch.evenCount;
+                decrypt_csa_batch_chunk(
+                    enteringSlot, pendingBatch, pendingCount, false,
+                    binding, diagnostics);
+                install_control_word(
+                    enteringSlot, enteringSlot.pendingEcmMode,
+                    enteringSlot.pendingCw.data());
+                enteringSlot.pendingValid = false;
+                enteringSlot.pendingEcmMode = 0;
+                enteringSlot.pendingCw.fill(0);
+                ++binding.cwUpdates;
+                ++binding.irdetoCwActivations;
+                if (diagnostics) {
+                    std::cerr << "NEWCAMD IRDETO CW ACTIVATE: stream="
+                              << stream_id << " sid=" << binding.serviceId
+                              << " parity=" << (scramblingControl == 3 ? "ODD" : "EVEN")
+                              << " activations=" << binding.irdetoCwActivations
+                              << std::endl;
+                }
+            }
+        }
+
         ControlWordSlot& slot = scramblingControl == 3 ? binding.odd : binding.even;
         if (!slot.valid || !slot.scalarKey || !slot.bsKey) {
             waitingForKey = true;
@@ -1790,6 +1887,11 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             << " fast_activations=" << binding.fastEcmPendingActivations
             << " fast_zero_skips=" << binding.fastEcmZeroCwSkips
             << " fast_unchanged_skips=" << binding.fastEcmUnchangedCwSkips
+            << " irdeto_cw_buffer=" << (irdetoBuffer ? 1 : 0)
+            << " irdeto_staged=" << binding.irdetoCwStages
+            << " irdeto_activated=" << binding.irdetoCwActivations
+            << " irdeto_zero_skips=" << binding.irdetoZeroSkips
+            << " irdeto_unchanged_skips=" << binding.irdetoSameCwSkips
             << std::endl;
         std::cerr
             << "CSA VERIFY: stream=" << stream_id
