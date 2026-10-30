@@ -49,6 +49,15 @@ bool irdetoCwBufferEnabled() {
     return enabled;
 }
 
+// Separate opt-in: CHID preference across service stop/start (not CW reuse).
+bool irdetoChidCacheEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("DVBSTREAMER5_IRDETO_CHID_CACHE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
 struct EcmDescriptor {
     uint16_t pid = kNullPid;
     uint16_t caid = 0;
@@ -1150,9 +1159,11 @@ void configure_service_callback(NewcamdInstance* inst,
                     }
                     if (target->selectedIrdetoChid == currentIrdetoChid) {
                         target->irdetoChidRestored = false;
-                        inst->irdetoChidPreferences.remember(
-                            irdeto_chid_key(clientKey, streamId, *target),
-                            currentIrdetoChid, monotonic_ms());
+                        if (irdetoChidCacheEnabled()) {
+                            inst->irdetoChidPreferences.remember(
+                                irdeto_chid_key(clientKey, streamId, *target),
+                                currentIrdetoChid, monotonic_ms());
+                        }
                     }
                 }
             }
@@ -1404,7 +1415,7 @@ static int newcamd_start_service(void* instance, const char* reader_key,
 
     // Restore only CHID preference, never old CW keys. Bound the tentative
     // selection so a changed/expired card subscription cannot stall decoding.
-    if (is_irdeto_caid(binding->defaultCaid)) {
+    if (is_irdeto_caid(binding->defaultCaid) && irdetoChidCacheEnabled()) {
         uint16_t previousChid = 0;
         const auto now = monotonic_ms();
         if (inst->irdetoChidPreferences.recover(
