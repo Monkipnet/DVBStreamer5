@@ -1,3 +1,43 @@
+### V10.8.238 (ISOLATED DIAGNOSTIC BRANCH): simultaneous Irdeto / TS integrity monitoring
+
+**Branch:** `ca-irdeto-v10.8.238` is based directly on `ca-irdeto-v10.8.236` (NOT V237). `main` is unchanged. It does not include V237 CHID preference caching. This version is for diagnosing occasional picture breakup on eight concurrent satellite services sharing one physical Irdeto card; it does **not** claim to repair the corruption.
+
+**Opt-in:** add `DVBSTREAMER5_CA_TS_MONITOR=1` only for a controlled test of this build. Disabled by default; neither the CW algorithm nor service lifecycle is modified by the monitor. The independent V236 `DVBSTREAMER5_IRDETO_CW_BUFFER=1` remains available; when comparing old/new monitoring conditions, keep that flag at a consistent setting.
+
+- **Input TS before decryption:** per-selected PID continuity-counter gaps, repeats, TEI, invalid adaptation fields, explicit discontinuity indicators, scrambled-packet totals and EVEN/ODD TSC changes. Independent continuity state per PID prevents conflating interleaved elementary streams.
+- **Immediately after in-place DVB-CSA (still inside CA plugin):** packets whose TSC remains set, missing-key packets, video PES start code/header sanity and H.264/H.265 Annex-B NAL header syntax. A malformed NAL header is a *heuristic*, not proof that an entire frame is incorrect. PES NAL scan is limited to AVC/HEVC PIDs identified in PMT and does not perform complete access-unit or decoder validation.
+- **ECM/CW correlation:** completed valid Newcamd CW response latency, responses slower than 500 ms, peak latency and no-CW response counts; log per successful transaction (`CA V238 CW EVENT`) with SID, CHID, parity, duration, action and **never the CW bytes**. CA V236 normal CHID selection/rejection events remain available.
+- One journal line per monitored service per second: `CA V238 MONITOR: stream=... sid=... in_cc_gaps=... post_pes_bad=... nal_bad=... ecm_over_500ms=...`. Counters are interval deltas (except `ecm_peak_ms_total`). The aggregate is per-service, allowing all eight channels to be observed without eight TVs.
+- **Limitations:** the CA plugin sits *after* the transport source's selection and *before* final remuxing, rate pacing, SRT/UDP/HTTP output and the client decoder. It cannot prove the original RF input has no errors, determine packet loss on a viewer's network, verify every encrypted byte, or assert that all detected NAL anomalies are real picture breakup. Correlate with DVB tuner signal readings and a client-side TS capture when investigating an anomaly. A CC repeat can be a harmless transport duplicate.
+- **CPU impact:** while enabled, every selected 188-byte TS packet is inspected twice (pre/post CSA) with small per-PID state; write volume ~8 summary lines per second, plus CW events on eight active services. Disable for continuous production operation.
+- **Unit/CI tests:** `bash scripts/test_irdeto_cw_policy.sh`; `bash scripts/test_ts_integrity_monitor.sh`. Existing `.github/workflows/irdeto-v236-ci.yml` workflow is extended to cover V238 and attempt CPU-only full CMake compilation. CI cannot emulate a physical Irdeto smartcard or DVB-S2 receiver.
+- Build on a separate Ubuntu host, or in a separate directory on `iptv` without touching installed production files:
+
+```bash
+git clone -b ca-irdeto-v10.8.238 https://github.com/Monkipnet/DVBStreamer5.git DVBStreamer5-v238
+cd DVBStreamer5-v238
+bash scripts/test_irdeto_cw_policy.sh
+bash scripts/test_ts_integrity_monitor.sh
+bash scripts/vendor_srt_source.sh
+bash scripts/vendor_native_codecs.sh
+DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
+cmake -S . -B build-v238 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-v238 --parallel 2
+bash scripts/make_portable_linux_bundle.sh --build-dir build-v238 --binary build-v238/DVBStreamer5 --output-dir dist/DVBStreamer5-linux-x86_64 --with-oscam --archive
+```
+
+- **Read-only monitor retrieval after explicitly authorized deployment and one controlled service restart:**
+
+```bash
+journalctl -u dvbstreamer5.service --since '-20 min' -o short-iso --no-pager |
+  grep -E 'CA V238 MONITOR:|CA V238 CW EVENT:|NEWCAMD IRDETO CHID' > /tmp/v238-ca-monitor.log
+python3 scripts/analyze_ca_ts_monitor.py /tmp/v238-ca-monitor.log
+```
+
+**DO NOT copy the test binary/plugin over the live `/opt/DVBStreamer5` files or restart `dvbstreamer5.service` on `iptv` during routine build.** For a maintenance deployment, back up the binary, newcamd .so, config and service drop-ins and define rollback before restarting; only the operator should authorize the restart. Both CA plugin and matching main binary must come from the same build.
+
+---
+
 ### V10.8.236 (TEST BRANCH) — per-service Irdeto CW buffer for single-card / multi-channel setups
 
 - **Not a production release.** Developed separately on `ca-irdeto-v10.8.236`; `main` (V10.8.235) is unchanged. No reboot or restart of the production `iptv` host is required.
