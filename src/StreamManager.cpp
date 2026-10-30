@@ -1116,8 +1116,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::shared_ptr<SharedDvbServicePrefilter> sharedDvbPrefilter;
     if (sharedDvbInputSource && relay.remapEnabled) {
         sharedDvbPrefilter = std::make_shared<SharedDvbServicePrefilter>();
-        const bool dropSourceNullPackets =
-            streamConfig.cbr && streamConfig.targetBitrate > 0;
+        // V10.8.239: An individual DVB service must never inherit the
+        // transponder's NULL PID stuffing. In VBR mode that stuffing could
+        // raise a ~2.7 Mbit/s service to tens of Mbit/s and overload the
+        // downstream IPTV input. Keep the existing CBR shaper responsible
+        // for adding its own NULL packets up to the configured target rate.
+        // Only the shared-DVB selected-service path uses this prefilter;
+        // full-MPTS paths and non-DVB inputs are not affected.
+        const bool dropSourceNullPackets = true;
         std::string prefilterError;
         if (!sharedDvbPrefilter->initialize(
                 streamConfig.id,
