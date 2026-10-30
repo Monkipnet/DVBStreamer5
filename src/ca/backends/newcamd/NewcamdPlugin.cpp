@@ -1934,6 +1934,8 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
                       << " in_cc_gaps=" << c.in_cc_gaps - p.in_cc_gaps
                       << " in_cc_repeats=" << c.in_cc_repeats - p.in_cc_repeats
                       << " in_discont=" << c.in_discontinuities - p.in_discontinuities
+                      << " in_pcr_backwards=" << c.in_pcr_backwards - p.in_pcr_backwards
+                      << " in_pcr_jump_gt_1s=" << c.in_pcr_jump_gt_1s - p.in_pcr_jump_gt_1s
                       << " in_scrambled=" << c.in_scrambled - p.in_scrambled
                       << " parity_changes=" << c.parity_changes - p.parity_changes
                       << " no_key_packets=" << c.missing_key_packets - p.missing_key_packets
