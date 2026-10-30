@@ -1,9 +1,10 @@
-name: Irdeto V10.8.236 isolated verification
+name: Irdeto V10.8.238 TS diagnostic verification
 
 on:
   push:
     branches:
       - ca-irdeto-v10.8.236
+      - ca-irdeto-v10.8.238
   workflow_dispatch:
 
 permissions:
@@ -16,7 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compile and run standalone parity/CW tests
-        run: bash scripts/test_irdeto_cw_policy.sh
+        run: |
+          bash scripts/test_irdeto_cw_policy.sh
+          bash scripts/test_ts_integrity_monitor.sh
 
   build:
     runs-on: ubuntu-24.04
