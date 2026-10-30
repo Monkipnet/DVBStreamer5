@@ -1,3 +1,36 @@
+### V10.8.239 (ISOLATED DVB VBR NULL-PACKET FIX)
+
+**Branch:** `dvb-vbr-null-v10.8.239`, directly based on experimental `ca-irdeto-v10.8.238`; stable `main` is unchanged.
+
+- **Fix:** The shared DVB selected-service prefilter always strips *source-transponder* NULL packets (PID `0x1FFF`), regardless of CBR/VBR mode. Previously it stripped NULL packets only for CBR, so selecting UDP-VBR could send tens of Mbit/s for a ~2.7 Mbit/s service.
+- **CBR unchanged:** The CBR worker generates its own NULL packets to meet the configured target bitrate. The fix does not affect full-transponder/MPTS passthrough, other inputs, OSCam, Irdeto CW buffering or DVB-CSA.
+- **WISI Chameleon:** For controlled comparison, keep working CBR output at its known rate first. Then switch **one** selected DVB service to UDP-VBR and verify its measured *output* rate is close to its non-NULL service rate (not the full transponder rate). Watch WISI input-buffer/overflow alarms and RF DVB-C BER separately. VBR can still have bursts; CBR remains preferable if the downstream receiver requires a paced CBR input.
+- **Status:** GitHub branch source patch; compile/CI results and live WISI results must be verified independently.
+
+Build on Ubuntu (from source):
+
+```bash
+git clone --recurse-submodules -b dvb-vbr-null-v10.8.239 https://github.com/Monkipnet/DVBStreamer5.git DVBStreamer5-v239
+cd DVBStreamer5-v239
+bash scripts/vendor_srt_source.sh
+bash scripts/vendor_native_codecs.sh
+DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
+cmake -S . -B build-v239 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-v239 --parallel 2
+bash scripts/make_portable_linux_bundle.sh --build-dir build-v239 --binary build-v239/DVBStreamer5 --output-dir dist/DVBStreamer5-linux-x86_64 --with-oscam --archive
+```
+
+Update existing clone:
+
+```bash
+git fetch origin
+git switch dvb-vbr-null-v10.8.239 || git switch -c dvb-vbr-null-v10.8.239 --track origin/dvb-vbr-null-v10.8.239
+git pull --ff-only
+```
+
+Confirm VBR filtering in application logs: `SHARED DVB service prefilter enabled ... drop_source_null=1`. That line must appear for a DVB service with CBR **off**, as well as for CBR **on**.
+
+---
 ### V10.8.238 (ISOLATED DIAGNOSTIC BRANCH): simultaneous Irdeto / TS integrity monitoring
 
 **Branch:** `ca-irdeto-v10.8.238` is based directly on `ca-irdeto-v10.8.236` (NOT V237). `main` is unchanged. It does not include V237 CHID preference caching. This version is for diagnosing occasional picture breakup on eight concurrent satellite services sharing one physical Irdeto card; it does **not** claim to repair the corruption.
