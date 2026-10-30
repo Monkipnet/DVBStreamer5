@@ -19,6 +19,17 @@ static Packet ts(std::uint16_t pid, unsigned cc, unsigned tsc = 2,
     return p;
 }
 
+static void setPcr(Packet& p, std::uint64_t base) {
+    p[4] = 7;
+    p[5] = 0x10;
+    p[6] = static_cast<std::uint8_t>(base >> 25);
+    p[7] = static_cast<std::uint8_t>(base >> 17);
+    p[8] = static_cast<std::uint8_t>(base >> 9);
+    p[9] = static_cast<std::uint8_t>(base >> 1);
+    p[10] = static_cast<std::uint8_t>(((base & 1U) << 7) | 0x7E);
+    p[11] = 0;
+}
+
 static void pes(Packet& p, std::uint8_t nalHeader, bool hevc = false) {
     const std::uint8_t prefix[] = {
         0, 0, 1, 0xE0, 0, 0, 0x80, 0x80, 0,
@@ -77,6 +88,20 @@ int main() {
     m.before(badAdaptation.data());
     assert(m.counters().in_tei == 1);
     assert(m.counters().in_bad_afc == 1);
+
+    // Source PCR anomaly detection; explicit discontinuity suppresses
+    // PCR continuity checks, just as for TS CC.
+    auto pcr0 = ts(video, 0, 0, false, 3);
+    setPcr(pcr0, 100000);
+    m.before(pcr0.data());
+    auto pcrBack = ts(video, 1, 0, false, 3);
+    setPcr(pcrBack, 99000);
+    m.before(pcrBack.data());
+    assert(m.counters().in_pcr_backwards == 1);
+    auto pcrJump = ts(video, 2, 0, false, 3);
+    setPcr(pcrJump, 300000);
+    m.before(pcrJump.data());
+    assert(m.counters().in_pcr_jump_gt_1s == 1);
 
     auto missingCw = ts(video, 0, 2);
     m.after(missingCw.data());
