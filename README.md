@@ -1,3 +1,11 @@
+### V10.8.252 — FFmpeg 25fps PAL PTS clock stabilization
+
+- В логах V251 на канале 8 FFmpeg чисто декодирует interlaced 720×576 25fps, но generic `NATIVE VIDEO FPS GATE` отбросил более 1000 изображений при входном PAL 25fps. Выходной AV mux показывал стабильные +300…+500ms (`av_delta_ms`), без переполнений mux.
+- Только для **явно выбранного FFmpeg H.264**, интерлейсного выходного кадра и целевого **ровно 25fps** введён отдельный clock. После 25 последовательно выданных FFmpeg-кадров он сравнивает реальный PTS-диапазон с PAL cadence и включается лишь при соответствии (±120ms). Переупорядоченные/дрожащие PTS заменяются display-order PTS c шагом 3600/90k, до legacy `FPS GATE`; H264 пиксели и реальные sample count не меняются.
+- Нестабильный/30/50 fps источник не проходит PAL eligibility и продолжает использовать стандартный FPS gate. При PTS discontinuity >1sec clock перенастраивается; лог `NATIVE AVC FFMPEG PTS discontinuity`. При lock лог `NATIVE AVC FFMPEG PTS cadence ... locked=1`.
+- Есть отдельный тест `tests/test_ffmpeg_pal_pts_clock.cpp` для PAL jitter, 30fps bypass, 33-bit PTS wrap и discontinuity; компиляция теста: `g++ -std=c++17 -Isrc tests/test_ffmpeg_pal_pts_clock.cpp -o /tmp/test_ffmpeg_pal_pts_clock && /tmp/test_ffmpeg_pal_pts_clock`.
+- Изменение не применяется к Ittiam, OpenH264, Intel oneVPL, NVIDIA NVDEC/NVENC, progressive AVC, AV mux, AAC и encoder. Дальнейшая runtime-проверка обязательна: `NATIVE VIDEO FPS GATE dropped` должен перестать расти после lock, а `av_delta_ms` требуется сравнить с V251, поскольку аудио PTS отдельно не сдвигались.
+
 ### V10.8.251 — независимый FFmpeg H.264 decoder для interlaced IPTV
 
 - По скриншоту V250 видны сохраняющиеся вертикальные блочные артефакты на вещательном AVC 720×576 25 fps. Дамп того же канала успешно декодируется независимым FFmpeg, а NativeTsDemux уже правильно собирает пары полей. Поэтому добавлен отдельный selectable software H.264 decoder на libavcodec без замены Ittiam/OpenH264 или аппаратных энкодеров.
