@@ -828,38 +828,34 @@ private:
         if (!synchronized_) {
             if (!h264.hasIdr || sps_.empty() || pps_.empty()) return true;
 
-            // V10.8.46: keep the decoder instance continuous. The previous
-            // fallback uninitialized and initialized OpenH264 immediately
-            // before every recovery IDR. Prime the cached parameter sets
-            // first, matching OpenH264's GMP integration, then decode the
-            // complete picture through the normal no-delay path.
-            std::vector<std::uint8_t> parameterSets;
-            parameterSets.reserve(sps_.size() + pps_.size());
-            parameterSets.insert(parameterSets.end(), sps_.begin(), sps_.end());
-            parameterSets.insert(parameterSets.end(), pps_.begin(), pps_.end());
-
-            unsigned char* primePlanes[3]{};
-            SBufferInfo primeInfo{};
-            const DECODING_STATE primeRc = decoder_->DecodeFrame2(
-                parameterSets.data(), static_cast<int>(parameterSets.size()),
-                primePlanes, &primeInfo);
-            const int primeState = static_cast<int>(primeRc);
+            // OpenH264 must receive coherent Annex B parameter sets and an
+            // access unit. Feeding SPS+PPS in a separate DecodeFrame2 call
+            // leaves some streams reporting dsNoParamSets on every IDR.
+            // Supply missing cached parameters together with the IDR instead.
+            std::vector<std::uint8_t> accessUnit;
+            if (!h264.hasSps)
+                accessUnit.insert(accessUnit.end(), sps_.begin(), sps_.end());
+            if (!h264.hasPps)
+                accessUnit.insert(accessUnit.end(), pps_.begin(), pps_.end());
+            accessUnit.insert(accessUnit.end(), picture.begin(), picture.end());
             ++parameterPrimeCalls_;
-            if (primeState != 0) {
+            const bool ok = decodePictureBytes(
+                accessUnit.data(), accessUnit.size(), pts90k, hasPts, output, error);
+            if (!ok || output.empty()) {
                 ++parameterPrimeErrors_;
                 if (parameterPrimeErrors_ <= 8U ||
-                    (parameterPrimeErrors_ % 100U) == 0U) {
-                    std::cerr << "NATIVE AVC PARAM PRIME state=" << primeState
+                    (parameterPrimeErrors_ % 100U) == 0U)
+                    std::cerr << "NATIVE AVC OPENH264 sync pending"
+                              << " attempts=" << parameterPrimeCalls_
+                              << " no_output=" << parameterPrimeErrors_
                               << " sps_bytes=" << sps_.size()
                               << " pps_bytes=" << pps_.size()
-                              << " calls=" << parameterPrimeCalls_
-                              << " errors=" << parameterPrimeErrors_ << '\n';
-                }
+                              << " status=" << (ok ? "no_frame" : error)
+                              << std::endl;
             }
-
-            synchronized_ = true;
-            return decodePictureBytes(
-                picture.data(), picture.size(), pts90k, hasPts, output, error);
+            if (ok && !output.empty())
+                synchronized_ = true;
+            return ok;
         }
 
         return decodePictureBytes(
