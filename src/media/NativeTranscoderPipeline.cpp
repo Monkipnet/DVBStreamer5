@@ -5,6 +5,7 @@
 #include "media/DiagnosticColorI420.h"
 #include "media/AvcDecoderSelection.h"
 #include "media/NativeIttiamAvc.h"
+#include "media/NativeIntelHardwareDecoder.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1069,8 +1070,12 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
                       << " stream_id=" << config_.streamId << std::endl;
     } else if (codecType == mpegts::ElementaryCodec::H264 &&
                selectedAvcDecoder_ == "intel_hw") {
-        error = "Intel HW AVC decoder must use the oneVPL zero-copy path";
-        return false;
+        videoDecoder_ = codec::createIntelHardwareVideoDecoder(codecType, error);
+        if (videoDecoder_)
+            std::cerr << "NATIVE AVC DECODER preference selected=intel_hw"
+                      << " stream_id=" << config_.streamId
+                      << " output=system-memory-i420 encoder_independent=1"
+                      << std::endl;
     } else if (codecType == mpegts::ElementaryCodec::H264 &&
                selectedAvcDecoder_ == "nvidia_hw") {
         error = "NVIDIA HW AVC decoder must use the NVDEC/CUDA/NVENC zero-copy path";
@@ -1228,16 +1233,13 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
 
-    // Explicit per-tile software decoder selection stays authoritative.
-    // Hardware decoder modes are routed explicitly to their existing
-    // zero-copy pipelines without changing the encoder implementations.
-    const bool softwareAvcOverride =
+    // Explicit frame-producing decoders bypass whole-pipeline zero-copy.
+    // Intel HW is now an encoder-independent oneVPL decoder that returns I420.
+    const bool explicitFrameDecoder =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         (selectedAvcDecoder_ == "openh264" ||
-         selectedAvcDecoder_ == "ittiam");
-    const bool forceIntelHardwareAvc =
-        sample.stream.codec == mpegts::ElementaryCodec::H264 &&
-        selectedAvcDecoder_ == "intel_hw";
+         selectedAvcDecoder_ == "ittiam" ||
+         selectedAvcDecoder_ == "intel_hw");
     const bool forceNvidiaHardwareAvc =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         selectedAvcDecoder_ == "nvidia_hw";
@@ -1252,7 +1254,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 "the current NVIDIA decoder is the NVDEC/CUDA/NVENC zero-copy path";
         return false;
     }
-    if (!softwareAvcOverride && !forceIntelHardwareAvc && !abrRawFanout &&
+    if (!explicitFrameDecoder && !abrRawFanout &&
         zeroCopyCodec && zeroCopyBackend) {
         if (!nvidiaZeroCopyAttempted_) {
             nvidiaZeroCopyAttempted_ = true;
@@ -1354,12 +1356,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
 
     const bool intelZeroCopyBackend =
         config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
-    if (forceIntelHardwareAvc && !intelZeroCopyBackend) {
-        error = "Intel HW decoder requires video encoder=qsv or auto because "
-                "the current Intel decoder is the oneVPL zero-copy decode/VPP/encode path";
-        return false;
-    }
-    if (!softwareAvcOverride && !forceNvidiaHardwareAvc && !abrRawFanout && !nvidiaZeroCopy_ &&
+    if (!explicitFrameDecoder && !forceNvidiaHardwareAvc && !abrRawFanout && !nvidiaZeroCopy_ &&
         intelZeroCopyCodec && intelZeroCopyBackend) {
         if (!intelZeroCopyAttempted_) {
             intelZeroCopyAttempted_ = true;
@@ -1445,21 +1442,12 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 return true;
             }
         }
-        if (forceIntelHardwareAvc && !intelZeroCopy_) {
-            error = "Intel HW decoder requested but oneVPL zero-copy decoder is unavailable";
-            return false;
-        }
     }
 
     if (forceNvidiaHardwareAvc) {
         error = "NVIDIA HW decoder requested but no NVIDIA hardware decode path was selected";
         return false;
     }
-    if (forceIntelHardwareAvc) {
-        error = "Intel HW decoder requested but no Intel hardware decode path was selected";
-        return false;
-    }
-
     if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
 
     std::vector<codec::RawVideoFrame> decoded;
