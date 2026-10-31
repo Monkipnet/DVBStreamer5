@@ -3,6 +3,7 @@
 #include "media/DiagnosticAvcFallback.h"
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeIttiamAvc.h"
+#include "media/NativeFfmpegAvcDecoder.h"
 #include "media/NativeAc3Decoder.h"
 
 #include <wels/codec_api.h>
