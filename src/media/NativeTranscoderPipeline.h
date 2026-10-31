@@ -515,6 +515,11 @@ private:
     bool audioEncoderConfigured_ = false;
     bool unsupportedAudioPassthroughLogged_ = false;
     bool videoStartupReady_ = false;
+    bool videoStartupH264Sps_ = false;
+    bool videoStartupH264Pps_ = false;
+    bool videoStartupH265Vps_ = false;
+    bool videoStartupH265Sps_ = false;
+    bool videoStartupH265Pps_ = false;
     std::uint64_t videoStartupDropped_ = 0;
     std::uint64_t inputVideoSamples_ = 0;
     std::uint64_t inputAudioSamples_ = 0;
