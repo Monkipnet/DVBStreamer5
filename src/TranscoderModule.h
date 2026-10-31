@@ -11,6 +11,7 @@ struct TranscoderCapabilities {
     bool nvencAvailable = false;
     bool intelAvailable = false;
     bool intelHwDecoderAvailable = false;
+    bool ffmpegAvcDecoderAvailable = false;
     std::string intelEncoder;
     std::string hevcVideoEncoder;
     bool x265Available = false;
