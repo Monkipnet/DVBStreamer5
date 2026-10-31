@@ -438,6 +438,11 @@ void NativeTranscoderPipeline::reset() {
     audioEncoderConfigured_ = false;
     unsupportedAudioPassthroughLogged_ = false;
     videoStartupReady_ = false;
+    videoStartupH264Sps_ = false;
+    videoStartupH264Pps_ = false;
+    videoStartupH265Vps_ = false;
+    videoStartupH265Sps_ = false;
+    videoStartupH265Pps_ = false;
     videoStartupDropped_ = 0;
     inputVideoSamples_ = 0;
     inputAudioSamples_ = 0;
@@ -1678,16 +1683,44 @@ bool NativeTranscoderPipeline::emitVideo(const codec::EncodedVideoFrame& frame, 
     const auto outputCodec = videoCodecFromName(config_.videoCodec);
     if (!videoStartupReady_ && outputCodec != mpegts::ElementaryCodec::Unknown) {
         const auto sets = inspectAnnexBStartup(frame.data, outputCodec);
+        if (outputCodec == mpegts::ElementaryCodec::H264) {
+            videoStartupH264Sps_ = videoStartupH264Sps_ || sets.h264Sps;
+            videoStartupH264Pps_ = videoStartupH264Pps_ || sets.h264Pps;
+        } else {
+            videoStartupH265Vps_ = videoStartupH265Vps_ || sets.h265Vps;
+            videoStartupH265Sps_ = videoStartupH265Sps_ || sets.h265Sps;
+            videoStartupH265Pps_ = videoStartupH265Pps_ || sets.h265Pps;
+        }
         const bool ready = outputCodec == mpegts::ElementaryCodec::H264
-            ? (frame.keyFrame && sets.h264Idr && sets.h264Sps && sets.h264Pps)
-            : (frame.keyFrame && sets.h265Irap && sets.h265Vps && sets.h265Sps && sets.h265Pps);
+            ? (sets.h264Idr && videoStartupH264Sps_ && videoStartupH264Pps_)
+            : (sets.h265Irap && videoStartupH265Vps_ &&
+               videoStartupH265Sps_ && videoStartupH265Pps_);
         if (!ready) {
             ++videoStartupDropped_;
-            // Never publish an undecodable first video PES. Audio/PSI may flow
-            // while the encoder reaches its first self-contained random-access AU.
+            if (videoStartupDropped_ <= 4U ||
+                (videoStartupDropped_ % 100U) == 0U) {
+                std::cerr << "NATIVE VIDEO STARTUP waiting"
+                          << " codec=" << (outputCodec == mpegts::ElementaryCodec::H264 ? "h264" : "hevc")
+                          << " dropped=" << videoStartupDropped_
+                          << " key_flag=" << (frame.keyFrame ? 1 : 0)
+                          << " h264_sps=" << (videoStartupH264Sps_ ? 1 : 0)
+                          << " h264_pps=" << (videoStartupH264Pps_ ? 1 : 0)
+                          << " h264_idr=" << (sets.h264Idr ? 1 : 0)
+                          << " h265_vps=" << (videoStartupH265Vps_ ? 1 : 0)
+                          << " h265_sps=" << (videoStartupH265Sps_ ? 1 : 0)
+                          << " h265_pps=" << (videoStartupH265Pps_ ? 1 : 0)
+                          << " h265_irap=" << (sets.h265Irap ? 1 : 0)
+                          << std::endl;
+            }
             return true;
         }
         videoStartupReady_ = true;
+        std::cerr << "NATIVE VIDEO STARTUP ready"
+                  << " codec=" << (outputCodec == mpegts::ElementaryCodec::H264 ? "h264" : "hevc")
+                  << " dropped=" << videoStartupDropped_
+                  << " key_flag=" << (frame.keyFrame ? 1 : 0)
+                  << " nal_random_access=1"
+                  << std::endl;
     }
     MuxQueuedSample sample;
     sample.kind = mpegts::ElementaryKind::Video;
