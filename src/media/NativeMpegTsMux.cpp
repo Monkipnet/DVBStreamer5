@@ -1,5 +1,6 @@
 #include "media/NativeMpegTsMux.h"
 #include "media/DvbText.h"
+#include "media/PtsClock33.h"
 
 #include <algorithm>
 #include <cstring>
@@ -320,9 +321,21 @@ std::uint64_t NativeMpegTsMux::sampleClock(
     const std::uint64_t fallbackDuration = sample.duration90k != 0
         ? sample.duration90k
         : (kind == ElementaryKind::Video ? kDefaultVideoDuration90k : kDefaultAudioDuration90k);
-    std::uint64_t value = sample.hasDts ? sample.dts90k : (sample.hasPts ? sample.pts90k : 0);
-    if ((!sample.hasDts && !sample.hasPts) || (previous != 0 && value <= previous)) {
+    const bool hasSourceClock = sample.hasDts || sample.hasPts;
+    const std::uint64_t sourceClock = sample.hasDts
+        ? sample.dts90k : (sample.hasPts ? sample.pts90k : 0);
+    std::uint64_t value = sourceClock;
+    if (!hasSourceClock) {
         value = previous != 0 ? previous + fallbackDuration : fallbackDuration;
+    } else if (previous != 0) {
+        // A/V encoders may disagree about whether their 33-bit timestamps
+        // are unwrapped. Preserve a monotonically increasing *internal*
+        // clock on a legitimate wrap, not a forced +one-frame fallback at
+        // every subsequent packet after the audio timeline wraps.
+        const std::int64_t delta = ptsDelta90k(sourceClock, previous);
+        value = delta > 0
+            ? previous + static_cast<std::uint64_t>(delta)
+            : previous + fallbackDuration;
     }
     previous = value;
     return value;
@@ -433,8 +446,9 @@ bool NativeMpegTsMux::write(
     const std::uint64_t originalClock = sample.hasDts ? sample.dts90k : (sample.hasPts ? sample.pts90k : 0);
     const std::uint64_t clock90k = sampleClock(kind, sample);
     ElementarySample normalized = sample;
-    if (sample.hasPts && sample.hasDts && sample.pts90k >= originalClock) {
-        normalized.pts90k = clock90k + (sample.pts90k - originalClock);
+    const std::int64_t ptsVsDts = ptsDelta90k(sample.pts90k, originalClock);
+    if (sample.hasPts && sample.hasDts && ptsVsDts >= 0) {
+        normalized.pts90k = clock90k + static_cast<std::uint64_t>(ptsVsDts);
         normalized.dts90k = clock90k;
         normalized.hasPts = true;
         normalized.hasDts = true;
