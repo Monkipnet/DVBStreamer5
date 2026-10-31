@@ -451,6 +451,8 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     if (!std::isfinite(config.transcodeFps) || config.transcodeFps < 1.0 ||
         config.transcodeFps > 60.0) config.transcodeFps = 25.0;
     config.transcodeDeinterlace = root.get("transcode_deinterlace", true).asBool();
+    config.transcodeAudioSyncOffsetMs = std::clamp(
+        root.get("transcode_audio_sync_offset_ms", 0).asInt(), -500, 500);
     // V10.8.240: manual legacy knobs are ignored on config load and API save.
     // The output FPS, selected resolution and video bitrate are authoritative.
     // This also migrates previously saved CPU/NVENC/Intel manual profiles.
@@ -603,6 +605,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_video_bitrate"] = Json::UInt64(transcodeVideoBitrate);
     root["transcode_fps"] = transcodeFps;
     root["transcode_deinterlace"] = transcodeDeinterlace;
+    root["transcode_audio_sync_offset_ms"] = transcodeAudioSyncOffsetMs;
     root["transcode_preset"] = transcodePreset;
     root["transcode_profile"] = transcodeProfile;
     root["transcode_level"] = transcodeLevel;
