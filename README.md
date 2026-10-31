@@ -4,8 +4,8 @@
 
 - **Simplified stream editor:** Video codec (including Copy), encoder (Auto/CPU/NVIDIA NVENC/Intel QSV/Intel VAAPI), H.264 decoder, output resolution, video bitrate, FPS, deinterlace, audio controls and HLS ABR remain user-selectable.
 - **Advanced controls removed:** no manual Preset, Profile, Level, GOP, reference frames, AQ strength, B-frames or Open GOP. `Profile=auto` and `Level=auto` are enforced for all backends; the encoder negotiates the effective hardware-supported profile/level.
-- **Automatic policy:** output bitrate in bits per coded pixel per frame and output FPS determine a supported real-time speed/quality preset and adaptive quantization; GOP is approximately 2 seconds (`round(fps * 2)`). Live video uses B-frames 0, refs auto, Open GOP off. On high-throughput 1080p50/60 use a faster preset, and CPU 4K50/60 uses fastest. This does **not** change the user-specified bitrate, frame rate, resolution, audio or encoder choice.
-- **CBR-safe:** the runtime policy is evaluated after the existing video-to-TS CBR headroom limiter, using the effective video bitrate. Each lower HLS ABR rendition is automatically tuned for its own size/bitrate.
+- **Automatic policy:** the explicitly configured **transcoding video bitrate** (not the TS/UDP-CBR bitrate), output resolution and FPS determine a supported real-time speed/quality preset and adaptive quantization; GOP is approximately 2 seconds (`round(fps * 2)`). Live video uses B-frames 0, refs auto, Open GOP off. On high-throughput 1080p50/60 use a faster preset, and CPU 4K50/60 uses fastest. This does **not** change the user-specified bitrate, frame rate, resolution, audio or encoder choice.
+- **CBR-independent:** automatic preset/GOP/AQ use the bitrate entered under **Transcoding → Video bitrate**, even if a separate MPEG-TS CBR output limit constrains the effective encoder bitrate. Transport CBR remains independent. Each lower HLS ABR rendition is automatically tuned using its own configured rendition video bitrate.
 - **Migrates older configs:** legacy manually saved advanced properties are ignored by config load and stream API save; the new automatic values are stored for consistent UI/API state. Existing transcoding copy/paste transfers only user-visible controls. Original copy/pass-through and non-transcoded streams are unaffected.
 - **Tests:** `bash scripts/test_auto_transcode_policy.sh`; also part of the experimental branch's CI. A successful CI build, actual NVIDIA/Intel encoding and hardware playback must be verified independently.
 
@@ -34,7 +34,7 @@ git switch transcode-auto-v10.8.240 || git switch -c transcode-auto-v10.8.240 --
 git pull --ff-only
 ```
 
-Inspect startup logs for `NATIVE TRANSCODE AUTO stream=...` to confirm actual selected FPS, bitrate, GOP and automatic profile. Do not replace a working production binary or restart its service until compiling and testing this branch.
+Inspect startup logs for `NATIVE TRANSCODE AUTO stream=...` to confirm `configured_video_kbps`, `effective_video_kbps`, FPS, preset, GOP and automatic profile. Do not replace a working production binary or restart its service until compiling and testing this branch.
 
 ---
 
