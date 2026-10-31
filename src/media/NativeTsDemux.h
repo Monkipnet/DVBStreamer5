@@ -29,6 +29,10 @@ struct DemuxSample {
     bool hasPts = false;
     bool hasDts = false;
     bool randomAccess = false;
+    // Set only when H.264 parsing confirms an actual field-coded picture.
+    // OpenH264 has no reliable broadcast-field support; callers can select
+    // an interlaced-capable software decoder without guessing by resolution.
+    bool h264FieldCoded = false;
 };
 
 class NativeTsDemux {
@@ -100,6 +104,7 @@ private:
         std::map<std::uint32_t, H264PpsState> h264Pps;
         std::uint64_t h264FieldPairs = 0;
         std::uint64_t h264SingleFields = 0;
+        bool h264FieldCoded = false;
     };
 
     void consumePacket(const Packet& packet, std::string& error);
