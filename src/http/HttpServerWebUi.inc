@@ -6735,7 +6735,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_preset:'balanced', transcode_profile:'auto', transcode_level:'auto', transcode_gop_frames:50, transcode_bframes:0, transcode_ref_frames:0, transcode_open_gop:false, transcode_aq_strength:8, transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
@@ -7402,7 +7402,6 @@ function openStreamForm(stream) {
           </div>
           <div class="stream-video-grid transcode-quick-grid">
             <div class="edit-field"><div class="edit-field-title">FPS</div><small class="field-help" ${uiBiAttrs('Частота кадров выходного потока.','Output stream frame rate.')}>${uiBiText('Частота кадров выходного потока.','Output stream frame rate.')}</small><select id="streamTranscodeFps"><option value="25" ${Number(stream.transcode_fps||25)===25?'selected':''}>25</option><option value="50" ${Number(stream.transcode_fps)===50?'selected':''}>50</option><option value="29.97" ${Math.abs(Number(stream.transcode_fps)-29.97)<0.01?'selected':''}>29.97</option><option value="30" ${Number(stream.transcode_fps)===30?'selected':''}>30</option><option value="59.94" ${Math.abs(Number(stream.transcode_fps)-59.94)<0.01?'selected':''}>59.94</option><option value="60" ${Number(stream.transcode_fps)===60?'selected':''}>60</option></select></div>
-            <div class="edit-field"><div class="edit-field-title">Preset</div><small class="field-help" ${uiBiAttrs('Скорость кодирования против качества изображения.','Encoding speed versus image quality.')}>${uiBiText('Скорость кодирования против качества изображения.','Encoding speed versus image quality.')}</small><select id="streamTranscodePreset"><option value="fastest" ${stream.transcode_preset==='fastest'?'selected':''} ${uiBiAttrs('Самый быстрый','Fastest')}>${uiBiText('Самый быстрый','Fastest')}</option><option value="fast" ${stream.transcode_preset==='fast'?'selected':''} ${uiBiAttrs('Быстрый','Fast')}>${uiBiText('Быстрый','Fast')}</option><option value="balanced" ${(!stream.transcode_preset||stream.transcode_preset==='balanced')?'selected':''} ${uiBiAttrs('Сбалансированный','Balanced')}>${uiBiText('Сбалансированный','Balanced')}</option><option value="quality" ${stream.transcode_preset==='quality'?'selected':''} ${uiBiAttrs('Качество','Quality')}>${uiBiText('Качество','Quality')}</option><option value="best" ${stream.transcode_preset==='best'?'selected':''} ${uiBiAttrs('Максимальное качество','Best quality')}>${uiBiText('Максимальное качество','Best quality')}</option></select></div>
             <div class="edit-toggle"><div class="edit-field-title">Deinterlace</div><small class="field-help" ${uiBiAttrs('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}>${uiBiText('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}</small><label class="checkbox-inline"><input id="streamTranscodeDeinterlace" type="checkbox" ${stream.transcode_deinterlace!==false?'checked':''}/><span ${uiBiAttrs('Включено','Enabled')}>${uiBiText('Включено','Enabled')}</span></label></div>
           </div>
           <div class="transcode-section-caption" ${subtitleUiTriAttrs('Аудио и адаптивное качество','Audio and adaptive streaming','Zvuk i prilagodljiva kvaliteta')}>${subtitleUiTriText('Аудио и адаптивное качество','Audio and adaptive streaming','Zvuk i prilagodljiva kvaliteta')}</div>
@@ -7411,29 +7410,7 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Аудио bitrate','Audio bitrate')}>${uiBiText('Аудио bitrate','Audio bitrate')}</div><small class="field-help" ${uiBiAttrs('Используется только при перекодировании аудио.','Used only when audio is being re-encoded.')}>${uiBiText('Используется только при перекодировании аудио.','Used only when audio is being re-encoded.')}</small><select id="streamTranscodeAudioBitrate" ${stream.transcode_audio_codec==='copy'?'disabled':''}><option value="96000" ${(stream.transcode_audio_bitrate||192000)===96000?'selected':''}>96 kbps</option><option value="128000" ${(stream.transcode_audio_bitrate||192000)===128000?'selected':''}>128 kbps</option><option value="160000" ${(stream.transcode_audio_bitrate||192000)===160000?'selected':''}>160 kbps</option><option value="192000" ${(stream.transcode_audio_bitrate||192000)===192000?'selected':''}>192 kbps</option><option value="256000" ${(stream.transcode_audio_bitrate||192000)===256000?'selected':''}>256 kbps</option><option value="320000" ${(stream.transcode_audio_bitrate||192000)===320000?'selected':''}>320 kbps</option></select></div>
             <div class="edit-toggle"><div class="edit-field-title">HLS ABR</div><small class="field-help" ${uiBiAttrs('Создаёт master.m3u8 и дополнительные профили качества.','Creates master.m3u8 and additional quality renditions.')}>${uiBiText('Создаёт master.m3u8 и дополнительные профили качества.','Creates master.m3u8 and additional quality renditions.')}</small><label class="checkbox-inline"><input id="streamTranscodeMultibitrate" type="checkbox" ${stream.transcode_multibitrate_enabled?'checked':''} /><span ${uiBiAttrs('Мультибитрейт','Multibitrate')}>${uiBiText('Мультибитрейт','Multibitrate')}</span></label></div>
           </div>
-          <details id="streamVideoAdvanced" class="edit-section edit-collapsible transcode-options" style="margin-top:10px">
-            <summary class="edit-section-head"><span ${subtitleUiTriAttrs('Расширенные настройки видео','Advanced video settings','Napredne video postavke')}>${subtitleUiTriText('Расширенные настройки видео','Advanced video settings','Napredne video postavke')}</span><small ${subtitleUiTriAttrs('Profile, Level, GOP, Ref, AQ','Profile, Level, GOP, Ref, AQ','Profile, Level, GOP, Ref, AQ')}>Profile · Level · GOP · Ref · AQ</small></summary>
-            <div class="edit-collapse-body">
-          <div class="stream-video-grid secondary transcode-advanced-grid">
-            <div class="edit-field"><div class="edit-field-title">Profile</div><small class="field-help" ${uiBiAttrs('Профиль H.264; Auto рекомендуется по умолчанию.','H.264 profile; Auto is recommended by default.')}>${uiBiText('Профиль H.264; Auto рекомендуется по умолчанию.','H.264 profile; Auto is recommended by default.')}</small><select id="streamTranscodeProfile"><option value="auto" ${(!stream.transcode_profile||stream.transcode_profile==='auto')?'selected':''}>Auto</option><option value="main" ${stream.transcode_profile==='main'?'selected':''}>Main</option><option value="high" ${stream.transcode_profile==='high'?'selected':''}>High</option></select></div>
-            <div class="edit-field"><div class="edit-field-title">Level</div><small class="field-help" ${uiBiAttrs('Ограничение уровня H.264 для совместимости устройств.','H.264 level limit for device compatibility.')}>${uiBiText('Ограничение уровня H.264 для совместимости устройств.','H.264 level limit for device compatibility.')}</small><select id="streamTranscodeLevel"><option value="auto" ${(!stream.transcode_level||stream.transcode_level==='auto')?'selected':''}>Auto</option><option value="3.1" ${stream.transcode_level==='3.1'?'selected':''}>3.1</option><option value="4.0" ${stream.transcode_level==='4.0'?'selected':''}>4.0</option><option value="4.1" ${stream.transcode_level==='4.1'?'selected':''}>4.1</option><option value="5.0" ${stream.transcode_level==='5.0'?'selected':''}>5.0</option><option value="5.1" ${stream.transcode_level==='5.1'?'selected':''}>5.1</option></select></div>
-            <div class="edit-field"><div class="edit-field-title">GOP</div><small class="field-help" ${uiBiAttrs('Интервал ключевых кадров в кадрах.','Keyframe interval measured in frames.')}>${uiBiText('Интервал ключевых кадров в кадрах.','Keyframe interval measured in frames.')}</small><input id="streamTranscodeGop" type="number" min="1" max="1000" value="${Number(stream.transcode_gop_frames||50)}" /></div>
-            <div class="edit-field"><div class="edit-field-title">Reference frames</div><small class="field-help" ${uiBiAttrs('0 = выбор кодировщика; максимум 4.','0 = encoder default; maximum 4.')}>${uiBiText('0 = выбор кодировщика; максимум 4.','0 = encoder default; maximum 4.')}</small><input id="streamTranscodeRefFrames" type="number" min="0" max="4" value="${Number(stream.transcode_ref_frames||0)}" /></div>
-            <div class="edit-field"><div class="edit-field-title">AQ strength</div><small class="field-help" ${uiBiAttrs('Сила адаптивного квантования 1–15.','Adaptive quantization strength from 1 to 15.')}>${uiBiText('Сила адаптивного квантования 1–15.','Adaptive quantization strength from 1 to 15.')}</small><input id="streamTranscodeAq" type="number" min="1" max="15" value="${Number(stream.transcode_aq_strength||8)}" /></div>
-          </div>
-              <small class="edit-inline-note" ${subtitleUiTriAttrs('Эти значения передаются кодировщику, если поддерживаются выбранным backend.','Applied when supported by the selected encoder backend.','Primjenjuju se ako ih odabrani koder podržava.')}>${subtitleUiTriText('Эти значения передаются кодировщику, если поддерживаются выбранным backend.','Applied when supported by the selected encoder backend.','Primjenjuju se ako ih odabrani koder podržava.')}</small>
-              <details class="edit-collapsible transcode-legacy-options" style="margin-top:10px">
-                <summary class="edit-section-head"><span ${subtitleUiTriAttrs('Неактивные параметры','Inactive legacy settings','Neaktivne stare postavke')}>${subtitleUiTriText('Неактивные параметры','Inactive legacy settings','Neaktivne stare postavke')}</span></summary>
-                <div class="edit-collapse-body">
-                  <small class="edit-inline-note transcode-legacy-note" ${subtitleUiTriAttrs('Live-кодировщики используют B-frames = 0 и Open GOP = Off. Сохранённые значения остаются в конфигурации.','Live encoders enforce B-frames = 0 and Open GOP = Off. Saved values remain unchanged.','Live koderi koriste B-frames = 0 i Open GOP = Off. Spremljene vrijednosti ostaju iste.')}>${subtitleUiTriText('Live-кодировщики используют B-frames = 0 и Open GOP = Off. Сохранённые значения остаются в конфигурации.','Live encoders enforce B-frames = 0 and Open GOP = Off. Saved values remain unchanged.','Live koderi koriste B-frames = 0 i Open GOP = Off. Spremljene vrijednosti ostaju iste.')}</small>
-          <div class="stream-video-grid secondary transcode-legacy-grid">
-            <div class="edit-field"><div class="edit-field-title">B-frames</div><small class="field-help" ${uiBiAttrs('Сохраняется в конфиге; live backend пока применяет 0.','Stored in config; live backends currently apply 0.')}>${uiBiText('Сохраняется в конфиге; live backend пока применяет 0.','Stored in config; live backends currently apply 0.')}</small><input id="streamTranscodeBFrames" disabled type="number" min="0" max="3" value="${Number(stream.transcode_bframes||0)}" /></div>
-            <div class="edit-toggle"><div class="edit-field-title">Open GOP</div><small class="field-help" ${uiBiAttrs('Сохраняется в конфиге; live zero-reorder пока использует Off.','Stored in config; live zero-reorder currently keeps this Off.')}>${uiBiText('Сохраняется в конфиге; live zero-reorder пока использует Off.','Stored in config; live zero-reorder currently keeps this Off.')}</small><label class="checkbox-inline"><input id="streamTranscodeOpenGop" disabled type="checkbox" ${stream.transcode_open_gop===true?'checked':''}/><span>On</span></label></div>
-          </div>
-                </div>
-              </details>
-            </div>
-          </details>
+          <small class="field-help" ${subtitleUiTriAttrs('Profile — Авто; расширенные настройки рассчитываются по FPS и битрейту.','Profile — Auto; advanced settings follow FPS and bitrate.','Profil — Automatski; napredne postavke slijede FPS i bitrate.')}> ${subtitleUiTriText('Profile — Авто; параметры рассчитываются по FPS, разрешению и качеству для CPU, NVIDIA и Intel.','Profile — Auto; parameters follow FPS, resolution and quality for CPU, NVIDIA and Intel.','Profil — Automatski; parametri slijede FPS, rezoluciju i kvalitetu za CPU, NVIDIA i Intel.')} </small>
           </div>
         </details>
         <div class="form-row full"><label>Online / OnDemand</label><select id="streamActivationMode" onchange="const a=document.getElementById('streamAutoStart');if(a){a.disabled=this.value==='ondemand';if(this.value==='ondemand')a.checked=false;}"><option value="online" ${(stream.activation_mode||'online')==='online'?'selected':''}>Online</option><option value="ondemand" ${stream.activation_mode==='ondemand'?'selected':''}>OnDemand</option></select><small ${uiBiAttrs('OnDemand: запуск по первому HTTP/HLS клиенту, остановка без клиентов; для UDP/RTP/SRT/RTSP/RTMP — Online.','OnDemand: starts for the first HTTP/HLS client and stops when idle; use Online for UDP/RTP/SRT/RTSP/RTMP.')}>${uiBiText('OnDemand: запуск по первому HTTP/HLS клиенту, остановка без клиентов; для UDP/RTP/SRT/RTSP/RTMP — Online.','OnDemand: starts for the first HTTP/HLS client and stops when idle; use Online for UDP/RTP/SRT/RTSP/RTMP.')}</small></div>
@@ -7489,14 +7466,6 @@ const transcodeClipboardFields = Object.freeze([
   ['streamTranscodeBitrate','transcode_video_bitrate_kbps','number'],
   ['streamTranscodeFps','transcode_fps','select'],
   ['streamTranscodeDeinterlace','transcode_deinterlace','checkbox'],
-  ['streamTranscodePreset','transcode_preset','select'],
-  ['streamTranscodeProfile','transcode_profile','select'],
-  ['streamTranscodeLevel','transcode_level','select'],
-  ['streamTranscodeGop','transcode_gop_frames','number'],
-  ['streamTranscodeBFrames','transcode_bframes','number'],
-  ['streamTranscodeRefFrames','transcode_ref_frames','number'],
-  ['streamTranscodeOpenGop','transcode_open_gop','checkbox'],
-  ['streamTranscodeAq','transcode_aq_strength','number'],
   ['streamTranscodeMultibitrate','transcode_multibitrate_enabled','checkbox'],
   ['streamTranscodeAudioCodec','transcode_audio_codec','select'],
   ['streamTranscodeAudioBitrate','transcode_audio_bitrate','select']
@@ -7645,20 +7614,12 @@ function updateTranscodeVideoControls() {
   const resolution = document.getElementById('streamTranscodeResolution');
   const bitrate = document.getElementById('streamTranscodeBitrate');
   const multibitrate = document.getElementById('streamTranscodeMultibitrate');
-  const advanced = document.getElementById('streamVideoAdvanced');
   const copy = codec && codec.value === 'copy';
   const hevc = codec && codec.value === 'hevc';
-  if (advanced) advanced.style.display = copy ? 'none' : 'block';
   // Keep stored values intact while Copy bypasses the video encoder.
-  for (const id of ['streamTranscodeFps','streamTranscodePreset','streamTranscodeDeinterlace']) {
+  for (const id of ['streamTranscodeFps','streamTranscodeDeinterlace']) {
     const control = document.getElementById(id);
     if (control) control.disabled = Boolean(copy);
-  }
-  const profile = document.getElementById('streamTranscodeProfile');
-  if (profile) {
-    const highOption = profile.querySelector('option[value="high"]');
-    if (highOption) highOption.disabled = hevc;
-    if (hevc && profile.value === 'high') profile.value = 'main';
   }
   if (encoder) {
     encoder.disabled = copy;
@@ -7960,14 +7921,6 @@ function saveStream(id) {
     transcode_video_decoder: document.getElementById('streamTranscodeVideoDecoder').value,
     transcode_fps: Number(document.getElementById('streamTranscodeFps')?.value || 25),
     transcode_deinterlace: document.getElementById('streamTranscodeDeinterlace')?.checked !== false,
-    transcode_preset: document.getElementById('streamTranscodePreset')?.value || 'balanced',
-    transcode_profile: document.getElementById('streamTranscodeProfile')?.value || 'auto',
-    transcode_level: document.getElementById('streamTranscodeLevel')?.value || 'auto',
-    transcode_gop_frames: Number(document.getElementById('streamTranscodeGop')?.value || 50),
-    transcode_bframes: Number(document.getElementById('streamTranscodeBFrames')?.value || 0),
-    transcode_ref_frames: Number(document.getElementById('streamTranscodeRefFrames')?.value || 0),
-    transcode_open_gop: document.getElementById('streamTranscodeOpenGop')?.checked === true,
-    transcode_aq_strength: Number(document.getElementById('streamTranscodeAq')?.value || 8),
     transcode_multibitrate_enabled: document.getElementById('streamTranscodeMultibitrate')?.checked === true,
     hls_segment_duration: hlsDuration,
     hls_segment_count: hlsCount,
