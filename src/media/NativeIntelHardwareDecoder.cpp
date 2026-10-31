@@ -105,6 +105,17 @@ public:
             return false;
         }
 
+        mfxVersion version{};
+        if (MFXQueryVersion(session_, &version) < MFX_ERR_NONE ||
+            (version.Major < 2) ||
+            (version.Major == 2 && version.Minor < 1)) {
+            error = "Intel HW decoder requires oneVPL 2.1+ hardware implementation "
+                    "with mapped surfaces; legacy Intel GPUs require a separate "
+                    "VAAPI VLD decoder (i965)";
+            close();
+            return false;
+        }
+
         std::memset(&params_, 0, sizeof(params_));
         params_.mfx.CodecId = codecId(codec_);
         params_.IOPattern = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
@@ -411,7 +422,12 @@ bool intelHardwareDecoderRuntimeAvailable() noexcept {
     configureHardwareLoader(loader);
     mfxSession session = nullptr;
     const mfxStatus status = MFXCreateSession(loader, 0, &session);
-    const bool available = status >= MFX_ERR_NONE && session != nullptr;
+    // This decoder reads oneVPL 2.1+ surface FrameInterface::Map/Unmap.
+    // A legacy oneVPL/MediaSDK 1.x implementation cannot satisfy that API.
+    mfxVersion version{};
+    const bool available = status >= MFX_ERR_NONE && session != nullptr &&
+        MFXQueryVersion(session, &version) >= MFX_ERR_NONE &&
+        (version.Major > 2 || (version.Major == 2 && version.Minor >= 1));
     if (session) MFXClose(session);
     MFXUnload(loader);
     return available;
