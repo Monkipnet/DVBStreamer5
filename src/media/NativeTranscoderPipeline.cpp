@@ -482,6 +482,10 @@ void NativeTranscoderPipeline::reset() {
     muxDroppedAudio_.store(0, std::memory_order_release);
     lastMuxVideoClock90k_.store(0, std::memory_order_release);
     lastMuxAudioClock90k_.store(0, std::memory_order_release);
+    lastInputVideoPts90k_.store(0, std::memory_order_release);
+    lastInputAudioPts90k_.store(0, std::memory_order_release);
+    lastDecodedVideoPts90k_.store(0, std::memory_order_release);
+    lastEncodedAudioPts90k_.store(0, std::memory_order_release);
     videoDropUntilRandomAccess_ = false;
     videoResetRequested_.store(false, std::memory_order_release);
     externalVideoInput_.store(false, std::memory_order_release);
@@ -596,6 +600,9 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             if (!sample.randomAccess) return;
             videoDropUntilRandomAccess_ = false;
         }
+        if (sample.hasPts)
+            lastInputVideoPts90k_.store(sample.pts90k & ((1ULL << 33U) - 1ULL),
+                                       std::memory_order_relaxed);
         videoQueue_.push_back(std::move(sample));
         videoQueueCv_.notify_one();
         return;
@@ -625,6 +632,9 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             audioQueue_.pop_front();
             ++droppedAudioSamples_;
         }
+        if (sample.hasPts)
+            lastInputAudioPts90k_.store(sample.pts90k & ((1ULL << 33U) - 1ULL),
+                                       std::memory_order_relaxed);
         audioQueue_.push_back(std::move(sample));
     }
     audioQueueCv_.notify_one();
@@ -1496,8 +1506,13 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         if (selectedAvcDecoder_ == "ffmpeg" && raw.interlaced &&
             raw.hasPts && config_.fps >= 24.99 && config_.fps <= 25.01) {
             const auto pal = ffmpegPalPtsClock_.apply(raw.pts90k);
-            if (pal.discontinuity) {
+            if (pal.discontinuity || pal.locked) {
+                // The accepted PTS lock now inherits the *current* source
+                // timestamp. Reset the gate's old first-frame anchor so the
+                // new source-aligned cadence cannot cause a burst of drops.
                 videoRateClockValid_ = false;
+            }
+            if (pal.discontinuity) {
                 std::cerr << "NATIVE AVC FFMPEG PTS discontinuity"
                           << " stream_id=" << config_.streamId
                           << " source_pts=" << raw.pts90k
@@ -1553,6 +1568,10 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                     (videoRateNextPts90k_ + interval) & kPtsMask;
             } while (atOrAfter(pts, videoRateNextPts90k_));
         }
+
+        if (raw.hasPts)
+            lastDecodedVideoPts90k_.store(raw.pts90k & ((1ULL << 33U) - 1ULL),
+                                         std::memory_order_relaxed);
 
         if (config_.deinterlace) codec::deinterlaceBlendI420(raw);
 
@@ -1780,6 +1799,9 @@ bool NativeTranscoderPipeline::emitAudio(const codec::EncodedAudioFrame& frame,
         observer(audioCodecFromName(config_.audioCodec), frame, duration90k);
     }
 
+    if (frame.hasPts)
+        lastEncodedAudioPts90k_.store(frame.pts90k & ((1ULL << 33U) - 1ULL),
+                                     std::memory_order_relaxed);
     MuxQueuedSample sample;
     sample.kind = mpegts::ElementaryKind::Audio;
     sample.data = frame.data;
@@ -1822,6 +1844,9 @@ bool NativeTranscoderPipeline::emitCopy(mpegts::DemuxSample&& sample, std::strin
         }
     }
 
+    if (sample.stream.kind == mpegts::ElementaryKind::Audio && sample.hasPts)
+        lastEncodedAudioPts90k_.store(sample.pts90k & ((1ULL << 33U) - 1ULL),
+                                     std::memory_order_relaxed);
     MuxQueuedSample queued;
     queued.kind = sample.stream.kind;
     queued.data = std::move(sample.data);
