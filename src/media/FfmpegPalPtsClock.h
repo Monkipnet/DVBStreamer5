@@ -42,7 +42,7 @@ public:
             return {sourcePts90k, false, false, false, 0};
         }
 
-        const std::uint64_t expected =
+        std::uint64_t expected =
             (anchor_ + frameNumber_ * kFrameTicks) & kMask;
         const std::int64_t delta = signedDelta(sourcePts90k, expected);
 
@@ -60,9 +60,18 @@ public:
             // 25 consecutive display frames span 960 ms at PAL cadence.
             // At 30 fps the source runs >120 ms ahead; keep normal FPS
             // downsampling instead of locking this clock.
-            if (delta >= -10800LL && delta <= 10800LL)
+            if (delta >= -10800LL && delta <= 10800LL) {
                 locked_ = true;
-            else if (frameNumber_ >= 100) {
+                // The first frame of a live GOP can carry a 1-3 field/frame
+                // PTS bias. Anchoring the whole outgoing video to that first
+                // timestamp manufactures a permanent A/V lead (120 ms in
+                // the channel-8 trace). Lock to the current *source* PTS,
+                // then advance in exact display-order 25-fps steps.
+                const std::uint64_t index = frameNumber_ - 1U;
+                anchor_ = (sourcePts90k -
+                    ((index * kFrameTicks) & kMask)) & kMask;
+                expected = sourcePts90k;
+            } else if (frameNumber_ >= 100) {
                 // Re-evaluate at a fresh anchor after a slow/fast source.
                 anchor_ = sourcePts90k;
                 frameNumber_ = 1;
