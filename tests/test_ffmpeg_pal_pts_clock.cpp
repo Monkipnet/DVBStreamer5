@@ -32,6 +32,27 @@ int main() {
     }
     assert(everLocked);
 
+    // A live GOP can start with an anomalous first PTS. The original V252
+    // first-frame anchor left outgoing video 10800 ticks (120 ms) ahead
+    // of the broadcast clock forever. Lock must preserve the current
+    // measured source PTS, not the biased initial sample.
+    FfmpegPalPtsClock startupBias;
+    bool sawBiasLock = false;
+    for (std::uint64_t i = 0; i < 100; ++i) {
+        const std::uint64_t input = (base + i * step -
+            (i == 0 ? 0ULL : 10800ULL)) & mask;
+        auto r = startupBias.apply(input);
+        if (r.locked) {
+            sawBiasLock = true;
+            assert(r.corrected);
+            assert(r.pts90k == input);
+            assert(r.sourceDelta90k == -10800LL);
+        }
+        if (r.corrected && i >= 25)
+            assert(r.pts90k == input);
+    }
+    assert(sawBiasLock);
+
     // True 30 fps must NOT be transformed to 25 fps: the regular output
     // FPS gate still needs to handle this case.
     FfmpegPalPtsClock ntsc;
