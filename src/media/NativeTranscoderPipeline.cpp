@@ -929,8 +929,18 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // Payload Out fell to zero and viewers saw a freeze.
                         const bool withinLead =
                             clock <= otherClock + kMaxAvLead90k;
-                        const bool withinHardLead =
-                            clock <= otherClock + kMaxAvHardLead90k;
+                        // V10.8.254: the FFmpeg interlaced PAL path is able
+                    // to buffer decoded video while delayed broadcast audio
+                    // arrives. Do not let its MPEG-TS output run near the
+                    // legacy 500-ms hard A/V lead. Restrict ONLY explicitly
+                    // selected FFmpeg AVC to the existing 150-ms preferred
+                    // lead; preserve the former 500-ms escape hatch for all
+                    // other decoders, GPU zero-copy and output protocols.
+                    const std::uint64_t hardLead90k =
+                        selectedAvcDecoder_ == "ffmpeg"
+                            ? kMaxAvLead90k : kMaxAvHardLead90k;
+                    const bool withinHardLead =
+                        clock <= otherClock + hardLead90k;
                         const bool holdExpired =
                             waited >= kMuxSingleStreamMaxHold;
                         // Never let bounded-hold recovery accumulate seconds
@@ -952,7 +962,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // instead of periodically waking every 120 ms.
                         const bool peerCanCatchUpOnly =
                             otherClock != 0 &&
-                            clock > otherClock + kMaxAvHardLead90k;
+                            clock > otherClock +
+                                (selectedAvcDecoder_ == "ffmpeg"
+                                    ? kMaxAvLead90k : kMaxAvHardLead90k);
                         if (peerCanCatchUpOnly) {
                             muxQueueCv_.wait(lock);
                         } else {
@@ -1026,6 +1038,7 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                       << " video=" << muxedVideo
                       << " audio=" << muxedAudio
                       << " av_delta_ms=" << avDeltaMs
+                      << " hard_lead_ms=" << (selectedAvcDecoder_ == "ffmpeg" ? 150 : 500)
                       << " late_video=" << muxLateVideo_.load(std::memory_order_acquire)
                       << " late_audio=" << muxLateAudio_.load(std::memory_order_acquire)
                       << " drop_video=" << muxDroppedVideo_.load(std::memory_order_acquire)
