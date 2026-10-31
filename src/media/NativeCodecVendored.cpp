@@ -1461,28 +1461,14 @@ std::unique_ptr<VideoDecoder> createOpenH264VideoDecoder(
     error.clear();
     auto decoder = std::make_unique<OpenH264Decoder>();
     if (!decoder->valid()) {
-        // The baseline Ittiam decoder worked on this input before the test.
-        // Do not fail the selected tile solely because the optional diagnostic
-        // decoder cannot initialize; report the actual backend in the journal.
-        std::string fallbackError;
-        auto fallback = createIttiamAvcDecoder(fallbackError);
-        if (!fallback) {
-            error = "OpenH264 init failed; Ittiam fallback failed: " + fallbackError;
-            return {};
-        }
-        std::cerr << "NATIVE AVC DECODER diagnostic fallback=ittiam-libavc"
-                  << " stream_id=" << streamId
-                  << " cause=openh264_init_failed" << std::endl;
-        return fallback;
+        error = "OpenH264 decoder unavailable (explicit selection; no fallback)";
+        std::cerr << "NATIVE AVC DECODER unavailable selected=openh264"
+                  << " stream_id=" << streamId << " reason=" << error << std::endl;
+        return {};
     }
-    std::cerr << "NATIVE AVC DECODER selected=openh264 reason=diagnostic-ab"
-              << " stream_id=" << streamId << std::endl;
-    return std::make_unique<DiagnosticAvcFallbackDecoder>(
-        std::move(decoder),
-        [](std::string& fallbackError) {
-            return createIttiamAvcDecoder(fallbackError);
-        },
-        streamId);
+    std::cerr << "NATIVE AVC DECODER selected=openh264"
+              << " stream_id=" << streamId << " fallback=disabled" << std::endl;
+    return decoder;
 }
 std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){std::string ittiamError;auto p=createIttiamAvcDecoder(ittiamError);if(p){std::cerr<<"NATIVE AVC DECODER selected=ittiam-libavc\n";return p;}std::cerr<<"NATIVE AVC DECODER Ittiam unavailable reason="<<ittiamError<<" fallback=openh264\n";auto fallback=std::make_unique<OpenH264Decoder>();if(fallback->valid())return fallback;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<De265Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::Mpeg2Video){auto p=std::make_unique<IttiamMpeg2Decoder>();if(p->valid())return p;}error="built-in decoder does not support/initialize requested codec";return{};}
 static std::unique_ptr<VideoEncoder> createCpuVideoEncoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Encoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<KvazaarEncoder>();if(p->valid())return p;}error="built-in CPU encoder does not support/initialize requested codec";return{};}
