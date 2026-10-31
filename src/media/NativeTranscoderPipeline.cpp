@@ -6,6 +6,7 @@
 #include "media/AvcDecoderSelection.h"
 #include "media/NativeIttiamAvc.h"
 #include "media/NativeIntelHardwareDecoder.h"
+#include "media/NativeFfmpegAvcDecoder.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1069,6 +1070,13 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
             std::cerr << "NATIVE AVC DECODER preference selected=ittiam"
                       << " stream_id=" << config_.streamId << std::endl;
     } else if (codecType == mpegts::ElementaryCodec::H264 &&
+               selectedAvcDecoder_ == "ffmpeg") {
+        videoDecoder_ = codec::createFfmpegAvcDecoder(error);
+        if (videoDecoder_)
+            std::cerr << "NATIVE AVC DECODER preference selected=ffmpeg"
+                      << " stream_id=" << config_.streamId
+                      << " encoder=unchanged" << std::endl;
+    } else if (codecType == mpegts::ElementaryCodec::H264 &&
                selectedAvcDecoder_ == "intel_hw") {
         videoDecoder_ = codec::createIntelHardwareVideoDecoder(codecType, error);
         if (videoDecoder_)
@@ -1239,6 +1247,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         (selectedAvcDecoder_ == "openh264" ||
          selectedAvcDecoder_ == "ittiam" ||
+         selectedAvcDecoder_ == "ffmpeg" ||
          selectedAvcDecoder_ == "intel_hw");
     const bool forceNvidiaHardwareAvc =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
