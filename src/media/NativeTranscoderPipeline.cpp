@@ -83,18 +83,18 @@ std::uint64_t videoDuration90k(double fps) {
     return static_cast<std::uint64_t>(std::llround(90000.0 / fps));
 }
 
-// V10.8.232: diagnostic-only capture of the exact Annex-B H.264 samples
-// handed to the chosen decoder. A single global output file is unsafe when
-// two or more channel pipelines run concurrently: their access units get
-// interleaved into an invalid stream. Keep one file, index and 64 MiB budget
-// per streamId/PID pair; never truncate an AU at the size limit.
-// No additional work is performed unless the environment variable is set.
+// V10.8.249: capture byte-exact Annex-B AVC access units for ONE explicitly
+// selected stream only. The output path is a prefix and each stream/PID pair
+// gets a separate file and CSV index; 64 MiB cap per file, no AU truncation.
+// Never dump all configured TV channels when diagnostics are enabled.
 void dumpH264ElementarySample(const mpegts::DemuxSample& sample,
                               const std::string& streamId) {
     if (sample.stream.codec != mpegts::ElementaryCodec::H264 ||
         sample.data.empty()) return;
     const char* env = std::getenv("DVBSTREAMER5_DUMP_H264_ES");
     if (!env || !*env) return;
+    const char* target = std::getenv("DVBSTREAMER5_DUMP_H264_ES_STREAM_ID");
+    if (!target || !*target || streamId.empty() || streamId != target) return;
 
     struct FileState {
         std::string path;
