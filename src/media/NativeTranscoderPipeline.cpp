@@ -1133,7 +1133,7 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
         if (videoDecoder_)
             std::cerr << "NATIVE AVC DECODER preference selected=openh264"
                       << " stream_id=" << config_.streamId
-                      << " fallback=ittiam-on-failure" << std::endl;
+                      << " fallback=disabled" << std::endl;
     } else if (codecType == mpegts::ElementaryCodec::H264 &&
                selectedAvcDecoder_ == "ittiam") {
         videoDecoder_ = codec::createIttiamAvcDecoder(error);
@@ -1159,6 +1159,37 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
                selectedAvcDecoder_ == "nvidia_hw") {
         error = "NVIDIA HW AVC decoder must use the NVDEC/CUDA/NVENC zero-copy path";
         return false;
+    } else if (codecType == mpegts::ElementaryCodec::H264 &&
+               selectedAvcDecoder_ == "auto") {
+        // NVIDIA and Intel zero-copy are probed earlier in processVideo().
+        // If no compatible zero-copy path started, try an independent Intel
+        // decoder first, then known software backends in a defined order.
+        std::string candidateError;
+        videoDecoder_ = codec::createIntelHardwareVideoDecoder(codecType, candidateError);
+        if (videoDecoder_) {
+            selectedAvcDecoder_ = "intel_hw";
+            std::cerr << "NATIVE AVC DECODER auto selected=intel_hw"
+                      << " stream_id=" << config_.streamId
+                      << " reason=hardware-available" << std::endl;
+        } else {
+            videoDecoder_ = codec::createFfmpegAvcDecoder(candidateError);
+            if (videoDecoder_) {
+                selectedAvcDecoder_ = "ffmpeg";
+                ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
+            } else {
+                videoDecoder_ = codec::createIttiamAvcDecoder(candidateError);
+                if (videoDecoder_) selectedAvcDecoder_ = "ittiam";
+                else {
+                    videoDecoder_ = codec::createOpenH264VideoDecoder(candidateError, config_.streamId);
+                    if (videoDecoder_) selectedAvcDecoder_ = "openh264";
+                }
+            }
+            if (videoDecoder_)
+                std::cerr << "NATIVE AVC DECODER auto selected=" << selectedAvcDecoder_
+                          << " stream_id=" << config_.streamId
+                          << " reason=hardware-unavailable" << std::endl;
+        }
+        if (!videoDecoder_) error = "Auto AVC decoder selection failed: " + candidateError;
     } else {
         videoDecoder_ = codec::createVideoDecoder(codecType, error);
     }
@@ -1298,6 +1329,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.h264FieldCoded &&
         (selectedAvcDecoder_ == "openh264" ||
          selectedAvcDecoder_ == "ittiam") &&
+        config_.videoDecoder == "auto" &&
         !softwareAvcFallbackUnavailable_) {
         std::string probeError;
         auto recovered = codec::createFfmpegAvcDecoder(probeError);
@@ -1584,6 +1616,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             ++softwareAvcSilentSamples_;
         }
         if ((!decodedOk || softwareAvcSilentSamples_ >= 150U) &&
+            config_.videoDecoder == "auto" &&
             !softwareAvcFallbackUnavailable_) {
             const std::string original = selectedAvcDecoder_;
             const std::string nativeError = error;
