@@ -1,5 +1,6 @@
 #include "TranscoderModule.h"
 #include "media/NativeCodecRuntime.h"
+#include "media/NativeIntelHardwareDecoder.h"
 #include "media/Mp3Encoder.h"
 
 #include <algorithm>
@@ -14,6 +15,8 @@ TranscoderCapabilities TranscoderModule::inspectCapabilities() {
     result.nvencAvailable = native.nvencH264Encoder;
     result.nvencHevcAvailable = native.nvencHevcEncoder;
     result.intelAvailable = native.qsvH264Encoder;
+    result.intelHwDecoderAvailable =
+        dvbstreamer5::media::codec::intelHardwareDecoderRuntimeAvailable();
     result.intelHevcAvailable = native.qsvHevcEncoder;
     result.intelEncoder = native.intelHardwareLibrary;
     result.intelHevcEncoder = native.intelHardwareLibrary;
