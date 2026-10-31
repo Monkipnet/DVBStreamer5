@@ -1,3 +1,11 @@
+### V10.8.260 — исправлены тесты HTTP live reconnect (media_core)
+
+- После прохождения CBR/UDP/RTP частей тестов V259 `media_core_tests` упал в `testNativeHttpCbrRelay(): assert(!relay.isRunning())`. По серверному журналу `NATIVE HTTP INPUT ... status=200 ok=1 bytes=1504` и следующая `attempt=2`: исходная функция `NativeUdpRelay::runHttpInput()` намеренно повторяет подключение после EOF обычного конечного HTTP ответа; live relay НЕ обязан завершаться сам.
+- Исправлены тесты HTTP CBR, HTTP query access key и HTTP VBR/RTP fanout: после получения полезных пакетов проверяем, что соединение/live relay остаётся работающим, затем явно выполняем `relay.stop()` и ожидаем корректное завершение одноразового тестового HTTP-сервера. Устаревшая проверка пустого `lastError()` после transient EOF удалена, так как состояние `reconnecting` является нормальным.
+- Проверки HTTP 404 и HTTP 302 с авторизационным ключом теперь ожидают соответствующие сообщения ошибки **при работающем relay**, затем `stop()`. Продолжаем проверять, что секретный заголовок присутствовал только в первоначальном запросе и перенаправление не было выполнено. Никакие дополнительные подключения от имени тестового пользователя не выполняются.
+- Изменён исключительно `tests/test_media_core.cpp`; production `NativeUdpRelay.cpp`, WISI CBR pacing, remapper, mux, видеодекодеры и выходные протоколы **не изменялись**. PCR preroll 500 мс из V256 оставлен без изменений.
+- Запуск в Ubuntu: `git pull --ff-only origin main && cmake -S tests/media_core -B build-test-media && cmake --build build-test-media --parallel 2 && ctest --test-dir build-test-media --output-on-failure`. Полный тестовый набор на рабочем сервере ещё не подтверждён.
+
 ### V10.8.259 — обновлены тесты CBR пейсера и UDP/RTP/HTTP/File CBR
 
 - После исправлений тестов remapper на V258 `media_core_tests` на Ubuntu остановился в `testCbrTsPacer(): assert(datagram[0] == mediaPacket)`. Это **устаревшее предположение**: текущий WISI CBR pacer использует токены полезного потока (первоначально 75% от TS bitrate) и распределяет NULL-пакеты между полезными слотами, а не только после них.
