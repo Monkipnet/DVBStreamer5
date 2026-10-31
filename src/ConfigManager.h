@@ -92,7 +92,7 @@ struct StreamConfig {
     std::string transcodeResolution = "1920x1080";
     std::string transcodeVideoCodec = "h264"; // h264 | hevc | copy
     std::string transcodeVideoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
-    std::string transcodeVideoDecoder = "auto"; // auto | ittiam | openh264 (H.264 input only)
+    std::string transcodeVideoDecoder = "auto"; // auto | nvidia_hw | intel_hw | ittiam | openh264 (H.264 input only)
     uint64_t transcodeVideoBitrate = 6000000;
     double transcodeFps = 25.0;
     bool transcodeDeinterlace = true;
