@@ -1,3 +1,11 @@
+### V10.8.242 — ручной выбор аппаратного H.264 decoder на базе V241
+
+- База V241 сохранена: Intel GPU process Video/Render metrics, автоматические transcode-настройки V240 и остальные изменения ветки `intel-gpu-metrics-v10.8.241` не откатывались.
+- В редактор транскодирования добавлены режимы `NVIDIA HW / NVDEC` и `Intel HW / oneVPL` рядом с `Auto`, `Ittiam libavc` и `OpenH264`.
+- `NVIDIA HW / NVDEC` принудительно использует существующий NVDEC → CUDA → NVENC zero-copy путь и требует encoder `NVENC` или `Auto`.
+- `Intel HW / oneVPL` принудительно использует существующий Intel oneVPL decode/VPP/encode zero-copy путь и требует encoder `QSV` или `Auto`.
+- При недоступном hardware runtime ручной режим завершается явной ошибкой вместо скрытого fallback на software decoder. Реализации NVENC/NVDEC и Intel encoder не переписывались.
+
 ### V10.8.241 — Intel GPU utilization in the header (QSV / VAAPI)
 
 **Test branch:** `intel-gpu-metrics-v10.8.241`, based on `transcode-auto-v10.8.240`. `main` remains untouched.
