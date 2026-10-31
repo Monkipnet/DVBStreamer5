@@ -1,4 +1,5 @@
 #include "media/NativeIttiamAvc.h"
+#include "media/FfmpegPalPtsClock.h"
 
 #include <cstdint>
 #include <iostream>
@@ -69,41 +70,33 @@ public:
         if (!inner_ || !inner_->decode(data, size, pts90k, hasPts, decoded, error))
             return false;
 
-        constexpr std::uint64_t kPtsMask = (1ULL << 33U) - 1ULL;
-        constexpr std::uint64_t kPalFrameInterval90k = 90000ULL / 25ULL;
-
+        // Do NOT synthesize a 25-fps timeline from the first decoded field
+        // for every interlaced AVC stream. It may be 29.97/30 or contain an
+        // incomplete field pair. The verified cadence clock only locks when
+        // the source actually delivers approximately 25 full frames/s.
+        // This avoids sending intentionally wrong PTS to the FPS gate/mux.
         for (auto& frame : decoded) {
             if (frame.interlaced && frame.hasPts) {
-                const std::uint64_t incomingPts = frame.pts90k & kPtsMask;
-                if (!clockValid_) {
-                    clockValid_ = true;
-                    nextPts90k_ = incomingPts;
-                    displayFrames_ = 0;
-                    std::cerr << "NATIVE INTERLACED DISPLAY CLOCK start pts="
-                              << incomingPts
-                              << " interval=" << kPalFrameInterval90k
-                              << " fps=25" << std::endl;
+                const auto pal = palClock_.apply(frame.pts90k);
+                if (pal.discontinuity) {
+                    std::cerr << "NATIVE AVC ITTIAM PTS discontinuity"
+                              << " source_pts=" << frame.pts90k
+                              << " action=reanchor" << std::endl;
                 }
-
-                frame.pts90k = nextPts90k_;
-                frame.dts90k = frame.pts90k;
-                frame.hasDts = true;
-                nextPts90k_ =
-                    (nextPts90k_ + kPalFrameInterval90k) & kPtsMask;
-
-                ++displayFrames_;
-                if (displayFrames_ == 1U || (displayFrames_ % 250U) == 0U) {
-                    std::cerr << "NATIVE INTERLACED DISPLAY CLOCK frames="
-                              << displayFrames_
-                              << " pts=" << frame.pts90k
-                              << " next=" << nextPts90k_
-                              << std::endl;
+                if (pal.corrected) {
+                    frame.pts90k = pal.pts90k;
+                    frame.dts90k = pal.pts90k;
+                    frame.hasDts = true;
+                    ++correctedFrames_;
+                    if (pal.locked || (correctedFrames_ % 500U) == 0U)
+                        std::cerr << "NATIVE AVC ITTIAM PAL cadence"
+                                  << " locked=1 corrected=" << correctedFrames_
+                                  << " source_delta90k=" << pal.sourceDelta90k
+                                  << std::endl;
                 }
             } else if (!frame.interlaced) {
-                // A later switch back to field-coded AVC must re-anchor to the
-                // new source timeline rather than continuing an old clock.
-                clockValid_ = false;
-                displayFrames_ = 0;
+                palClock_.reset();
+                correctedFrames_ = 0;
             }
             output.push_back(std::move(frame));
         }
@@ -112,16 +105,14 @@ public:
 
     void reset() override {
         if (inner_) inner_->reset();
-        clockValid_ = false;
-        nextPts90k_ = 0;
-        displayFrames_ = 0;
+        palClock_.reset();
+        correctedFrames_ = 0;
     }
 
 private:
     std::unique_ptr<VideoDecoder> inner_;
-    bool clockValid_ = false;
-    std::uint64_t nextPts90k_ = 0;
-    std::uint64_t displayFrames_ = 0;
+    FfmpegPalPtsClock palClock_;
+    std::uint64_t correctedFrames_ = 0;
 };
 
 } // namespace
