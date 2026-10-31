@@ -1,3 +1,10 @@
+### V10.8.265 — OpenH264 removed from H.264 decoder selection
+
+- Removed the OpenH264 **video decoder** class and factory, the manual dropdown choice, and the Auto video-decoder fallback. Legacy saved `openh264` selections are remapped to `auto` at runtime and shown as Auto in the editor.
+- The OpenH264 **CPU video encoder** remains available; do not remove codec libraries or the existing CPU H.264 encoding path.
+- Auto software decoding now tries FFmpeg then Ittiam (after compatible hardware decoding); manually selected Ittiam and FFmpeg retain strict selection.
+- The 150-ms software AVC mux envelope from experimental V10.8.263 remains in this branch. Build and regression-test before merging to main.
+
 ### V10.8.264 — OpenH264 Annex B recovery (experimental)
 
 - Stop feeding SPS/PPS via a separate failing `DecodeFrame2` prime before IDR. Supply cached Annex B SPS/PPS together with the IDR access unit when missing from that unit.
