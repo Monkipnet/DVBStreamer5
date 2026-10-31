@@ -1,3 +1,44 @@
+### V10.8.241 — Intel GPU utilization in the header (QSV / VAAPI)
+
+**Test branch:** `intel-gpu-metrics-v10.8.241`, based on `transcode-auto-v10.8.240`. `main` remains untouched.
+
+- **Root cause:** NVIDIA NVML supplies a card-wide `utilization_percent`, while Intel i915/Xe DRM GPU cards often expose no compatible global `gpu_busy_percent`; the old header therefore displayed "N/A" despite ongoing Intel hardware transcoding.
+- **Intel live fix:** when card-wide GPU percentage is unavailable, calculate DVBStreamer5 **process-owned** utilization from DRM per-engine counters and display `GPU 45% · Intel (app)` in the header, with an explicit app-only scope and engine name in the tooltip. This is a percentage of the busiest measured GPU engine and is **not** whole-card utilization. Do not invent 0% when counters are unavailable.
+- **Hardware compatibility:** Intel `i915` uses `/proc/self/fdinfo` `drm-engine-video/render` nanoseconds; Intel `xe` uses `drm-cycles-*` divided by `drm-total-cycles-*` over the sample interval. Both use device PCI ID matching. The 3-second header sampler and 30-second history sampler have separate baselines. No external `intel_gpu_top`, `nvidia-smi`, root privileges or shell commands are required for the sampling itself.
+- **NVIDIA unchanged:** NVML card-wide utilization keeps priority when present; mixed Intel/NVIDIA systems choose the largest available figure and identify Intel's process-specific fallback.
+- **System load panel:** the per-device percentage also falls back to app DRM GPU busy with clear source labeling; existing GPU graphs and separate per-process engine histories remain available.
+- **No transcoder changes:** CPU, NVENC, NVDEC, QSV, VAAPI, mux, OSCam and DVB source/CA pipelines are unchanged. All automatic transcoding configuration from V10.8.240 is retained.
+- **Tests:** `node tests/web/test_intel_gpu_header.js`, plus `bash scripts/test_auto_transcode_policy.sh`. The CI performs a CPU-only CMake compile. Intel hardware/transcode output must still be verified on the actual server.
+
+Ubuntu 22.04 / 24.04 source update from a separate test checkout:
+
+```bash
+git fetch origin
+git switch intel-gpu-metrics-v10.8.241 || git switch -c intel-gpu-metrics-v10.8.241 --track origin/intel-gpu-metrics-v10.8.241
+git pull --ff-only
+node tests/web/test_intel_gpu_header.js
+bash scripts/test_auto_transcode_policy.sh
+bash scripts/vendor_srt_source.sh
+bash scripts/vendor_native_codecs.sh
+DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
+cmake -S . -B build-v241 -DCMAKE_BUILD_TYPE=Release \
+  -DDVBSTREAMER5_ENABLE_NVENC=ON \
+  -DDVBSTREAMER5_ENABLE_INTEL_QSV=ON \
+  -DDVBSTREAMER5_ENABLE_VAAPI=ON
+cmake --build build-v241 --parallel 2
+bash scripts/make_portable_linux_bundle.sh --build-dir build-v241 --binary build-v241/DVBStreamer5 --output-dir dist/DVBStreamer5-linux-x86_64 --with-oscam --archive
+```
+
+While an Intel QSV/VAAPI channel is transcoding, examine API metrics without changing the running daemon:
+
+```bash
+curl -fsS http://127.0.0.1:9000/api/system-metrics | jq '{gpus,process_gpus}'
+```
+
+If the API requires session authentication, use your normal authenticated browser/network route and inspect the JSON response. Wait for at least two live metrics polls; the first has no previous DRM counter baseline. Unsupported kernel DRM statistics legitimately display N/A rather than a fabricated percentage.
+
+---
+
 ### V10.8.240 — automatic video-transcoding controls (CPU / NVIDIA / Intel)
 
 **Test branch:** `transcode-auto-v10.8.240`, based on `dvb-vbr-null-v10.8.239`; `main` is not modified.
