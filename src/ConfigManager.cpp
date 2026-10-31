@@ -441,7 +441,9 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.transcodeVideoDecoder = toLower(root.get("transcode_video_decoder", "auto").asString());
     if (config.transcodeVideoDecoder != "auto" &&
         config.transcodeVideoDecoder != "ittiam" &&
-        config.transcodeVideoDecoder != "openh264")
+        config.transcodeVideoDecoder != "openh264" &&
+        config.transcodeVideoDecoder != "intel_hw" &&
+        config.transcodeVideoDecoder != "nvidia_hw")
         config.transcodeVideoDecoder = "auto";
     config.transcodeVideoBitrate = root.get("transcode_video_bitrate", Json::UInt64(6000000)).asUInt64();
     config.transcodeFps = root.get("transcode_fps", 25.0).asDouble();
