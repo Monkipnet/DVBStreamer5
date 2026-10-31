@@ -1,4 +1,4 @@
-name: DVBStreamer5 Irdeto diagnostics and DVB selected-service build
+name: DVBStreamer5 regression tests and native CPU build
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - ca-irdeto-v10.8.236
       - ca-irdeto-v10.8.238
       - dvb-vbr-null-v10.8.239
+      - transcode-auto-v10.8.240
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,7 @@ jobs:
         run: |
           bash scripts/test_irdeto_cw_policy.sh
           bash scripts/test_ts_integrity_monitor.sh
+          bash scripts/test_auto_transcode_policy.sh
 
   build:
     runs-on: ubuntu-24.04
