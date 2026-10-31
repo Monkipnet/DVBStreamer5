@@ -1,3 +1,11 @@
+### V10.8.259 — обновлены тесты CBR пейсера и UDP/RTP/HTTP/File CBR
+
+- После исправлений тестов remapper на V258 `media_core_tests` на Ubuntu остановился в `testCbrTsPacer(): assert(datagram[0] == mediaPacket)`. Это **устаревшее предположение**: текущий WISI CBR pacer использует токены полезного потока (первоначально 75% от TS bitrate) и распределяет NULL-пакеты между полезными слотами, а не только после них.
+- В `tests/test_media_core.cpp` тест прямого pacer проверяет точное присутствие **одного медиа-пакета в любом слоте 7×188**, валидность всех пакетов и последовательный NULL continuity. Лимит FIFO теперь берётся из `CbrTsPacer::maximumQueuedBytes()` (8 MiB), а не устаревшей константы 2 MiB.
+- Исправлены связанные интеграционные тесты UDP CBR, UDP+RTP+CBR fanout, File CBR, HTTP CBR, HTTP query key + CBR. Помощник `collectCbrMedia` проверяет размер каждой полученной датаграммы 7×188, синхробайт TS, NULL continuity, состав и порядок **всех полезных пакетов** независимо от смещения среди NULL-пакетов. Тестовые короткие потоки теперь используют `CbrTsPacer::kNoStartupBufferMarker` (+699), чтобы не ждать штатный 3-секундный накопительный буфер WISI; реальный transport target остается 512 kbps.
+- Производственный `CbrTsPacer`, `WisiCbrOutputWorker`, `MpegTsRemapper`, `NativeMpegTsMux` и все декодеры/энкодеры **не менялись**. PCR preroll 500ms V256 сохранён для последующей проверки lip-sync на настоящем VLC.
+- Проверка: `git pull --ff-only origin main && cmake -S tests/media_core -B build-test-media && cmake --build build-test-media --parallel 2 && ctest --test-dir build-test-media --output-on-failure`. Эти обновлённые тесты ещё должны быть запущены на Linux — локально полный набор нативных зависимости/ввода не тестировался.
+
 ### V10.8.258 — тест восстановления после фрагментированного PAT
 
 - На Ubuntu `ctest` V257 завершался в `testMpegTsRemapper()` на старом ожидании `!remapper.process(fragmentedPat,...)`: оно не соответствует текущему `collectSections()`, где неполная PAT секция буферизуется между TS пакетами вместо немедленного завершения канала.
