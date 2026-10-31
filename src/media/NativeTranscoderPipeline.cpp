@@ -1062,6 +1062,14 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
         if (videoDecoder_)
             std::cerr << "NATIVE AVC DECODER preference selected=ittiam"
                       << " stream_id=" << config_.streamId << std::endl;
+    } else if (codecType == mpegts::ElementaryCodec::H264 &&
+               selectedAvcDecoder_ == "intel_hw") {
+        error = "Intel HW AVC decoder must use the oneVPL zero-copy path";
+        return false;
+    } else if (codecType == mpegts::ElementaryCodec::H264 &&
+               selectedAvcDecoder_ == "nvidia_hw") {
+        error = "NVIDIA HW AVC decoder must use the NVDEC/CUDA/NVENC zero-copy path";
+        return false;
     } else {
         videoDecoder_ = codec::createVideoDecoder(codecType, error);
     }
@@ -1215,20 +1223,31 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                   << std::endl;
     }
 
-    // Explicit per-tile software decoder selection must stay authoritative.
-    // It is the safe fallback when a driver cannot handle interlaced NVDEC
-    // zero-copy output; the encoder may still use ordinary NVENC.
-    // Only decoder=auto may opt in to NVIDIA/Intel hardware decode.
+    // Explicit per-tile software decoder selection stays authoritative.
+    // Hardware decoder modes are routed explicitly to their existing
+    // zero-copy pipelines without changing the encoder implementations.
     const bool softwareAvcOverride =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
-        selectedAvcDecoder_ != "auto";
+        (selectedAvcDecoder_ == "openh264" ||
+         selectedAvcDecoder_ == "ittiam");
+    const bool forceIntelHardwareAvc =
+        sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        selectedAvcDecoder_ == "intel_hw";
+    const bool forceNvidiaHardwareAvc =
+        sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        selectedAvcDecoder_ == "nvidia_hw";
     const bool zeroCopyCodec =
         sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video ||
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
         sample.stream.codec == mpegts::ElementaryCodec::H265;
     const bool zeroCopyBackend =
         config_.videoEncoder == "nvenc" || config_.videoEncoder == "auto";
-    if (!softwareAvcOverride && !abrRawFanout &&
+    if (forceNvidiaHardwareAvc && !zeroCopyBackend) {
+        error = "NVIDIA HW decoder requires video encoder=nvenc or auto because "
+                "the current NVIDIA decoder is the NVDEC/CUDA/NVENC zero-copy path";
+        return false;
+    }
+    if (!softwareAvcOverride && !forceIntelHardwareAvc && !abrRawFanout &&
         zeroCopyCodec && zeroCopyBackend) {
         if (!nvidiaZeroCopyAttempted_) {
             nvidiaZeroCopyAttempted_ = true;
@@ -1323,9 +1342,19 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.stream.codec == mpegts::ElementaryCodec::H264 ||
         sample.stream.codec == mpegts::ElementaryCodec::H265 ||
         sample.stream.codec == mpegts::ElementaryCodec::Mpeg2Video;
+    if (forceNvidiaHardwareAvc && !nvidiaZeroCopy_) {
+        error = "NVIDIA HW decoder requested but NVDEC/CUDA/NVENC zero-copy is unavailable";
+        return false;
+    }
+
     const bool intelZeroCopyBackend =
         config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
-    if (!softwareAvcOverride && !abrRawFanout && !nvidiaZeroCopy_ &&
+    if (forceIntelHardwareAvc && !intelZeroCopyBackend) {
+        error = "Intel HW decoder requires video encoder=qsv or auto because "
+                "the current Intel decoder is the oneVPL zero-copy decode/VPP/encode path";
+        return false;
+    }
+    if (!softwareAvcOverride && !forceNvidiaHardwareAvc && !abrRawFanout && !nvidiaZeroCopy_ &&
         intelZeroCopyCodec && intelZeroCopyBackend) {
         if (!intelZeroCopyAttempted_) {
             intelZeroCopyAttempted_ = true;
@@ -1411,6 +1440,19 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 return true;
             }
         }
+        if (forceIntelHardwareAvc && !intelZeroCopy_) {
+            error = "Intel HW decoder requested but oneVPL zero-copy decoder is unavailable";
+            return false;
+        }
+    }
+
+    if (forceNvidiaHardwareAvc) {
+        error = "NVIDIA HW decoder requested but no NVIDIA hardware decode path was selected";
+        return false;
+    }
+    if (forceIntelHardwareAvc) {
+        error = "Intel HW decoder requested but no Intel hardware decode path was selected";
+        return false;
     }
 
     if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
