@@ -240,6 +240,9 @@ private:
             }
 
             if (decoded) {
+                // oneVPL 2.x surfaces are internally allocated. Even with
+                // OUT_SYSTEM_MEMORY, Data.Y/Data.UV are not guaranteed valid
+                // until the surface has been mapped for CPU reading.
                 if (sync) {
                     const mfxStatus synced =
                         MFXVideoCORE_SyncOperation(session_, sync, 60000);
@@ -250,11 +253,33 @@ private:
                         return false;
                     }
                 }
-                if (!copySurface(*decoded, output, error)) {
+                if (!decoded->FrameInterface ||
+                    !decoded->FrameInterface->Map ||
+                    !decoded->FrameInterface->Unmap) {
+                    error = "Intel HW decoder oneVPL surface has no Map/Unmap interface";
                     releaseSurface(decoded);
                     return false;
                 }
+
+                const mfxStatus mapped =
+                    decoded->FrameInterface->Map(decoded, MFX_MAP_READ);
+                if (mapped < MFX_ERR_NONE) {
+                    error = "Intel HW decoder surface Map(MFX_MAP_READ) failed: " +
+                            std::to_string(mapped);
+                    releaseSurface(decoded);
+                    return false;
+                }
+
+                const bool copied = copySurface(*decoded, output, error);
+                const mfxStatus unmapped =
+                    decoded->FrameInterface->Unmap(decoded);
                 releaseSurface(decoded);
+                if (!copied) return false;
+                if (unmapped < MFX_ERR_NONE) {
+                    error = "Intel HW decoder surface Unmap failed: " +
+                            std::to_string(unmapped);
+                    return false;
+                }
             }
 
             if (!decoded && beforeOffset == bitstream.DataOffset &&
@@ -274,10 +299,25 @@ private:
         const int height = info.CropH ? info.CropH : info.Height;
         const int pitch = surface.Data.Pitch;
 
+        if (info.FourCC != MFX_FOURCC_NV12) {
+            error = "Intel HW decoder output FourCC is not 8-bit NV12: " +
+                    std::to_string(info.FourCC);
+            return false;
+        }
         if (width <= 0 || height <= 0 || (width & 1) || (height & 1) ||
-            cropX < 0 || cropY < 0 || pitch < cropX + width ||
+            (cropX & 1) || (cropY & 1) ||
+            cropX < 0 || cropY < 0 ||
+            cropX + width > info.Width || cropY + height > info.Height ||
+            pitch < cropX + width ||
             !surface.Data.Y || !surface.Data.UV) {
-            error = "Intel HW decoder returned invalid NV12 system-memory surface";
+            error = "Intel HW decoder invalid mapped NV12 surface: coded=" +
+                    std::to_string(info.Width) + "x" + std::to_string(info.Height) +
+                    " crop=" + std::to_string(cropX) + "," +
+                    std::to_string(cropY) + "+" +
+                    std::to_string(width) + "x" + std::to_string(height) +
+                    " pitch=" + std::to_string(pitch) +
+                    " Y=" + (surface.Data.Y ? "set" : "null") +
+                    " UV=" + (surface.Data.UV ? "set" : "null");
             return false;
         }
 
