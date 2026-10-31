@@ -225,6 +225,8 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     selectedAvcDecoder_ = codec::chooseAvcDecoder(
         config_.videoDecoder, config_.streamId,
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
+    softwareAvcSilentSamples_ = 0;
+    softwareAvcFallbackUnavailable_ = false;
     diagnosticI420Frames_ = 0;
     if (selectedAvcDecoder_ != "auto") {
         std::cerr << "NATIVE AVC DECODER preference=" << selectedAvcDecoder_
@@ -523,6 +525,8 @@ void NativeTranscoderPipeline::onProgram(const std::vector<mpegts::DemuxStreamIn
             intelZeroCopy_.reset();
             nvidiaZeroCopy_.reset();
             videoDecoder_.reset();
+            softwareAvcSilentSamples_ = 0;
+            softwareAvcFallbackUnavailable_ = false;
             intelZeroCopyAttempted_ = false;
             intelZeroCopyFallbackLogged_ = false;
             intelZeroCopyActive_.store(false, std::memory_order_release);
@@ -1283,6 +1287,37 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     }
     if (config_.videoCodec == "copy") return emitCopy(std::move(sample), error);
 
+    // OpenH264 is not a dependable decoder for broadcast field-coded AVC.
+    // NativeTsDemux already parsed SPS/PPS and confirmed field_pic_flag;
+    // route only the affected software tile to the validated FFmpeg path.
+    // Never change video encoder, audio timing, or GPU zero-copy selection.
+    if (sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        sample.h264FieldCoded &&
+        (selectedAvcDecoder_ == "openh264" ||
+         selectedAvcDecoder_ == "ittiam") &&
+        !softwareAvcFallbackUnavailable_) {
+        std::string probeError;
+        auto recovered = codec::createFfmpegAvcDecoder(probeError);
+        if (recovered) {
+            const std::string original = selectedAvcDecoder_;
+            videoDecoder_ = std::move(recovered);
+            selectedAvcDecoder_ = "ffmpeg";
+            softwareAvcSilentSamples_ = 0;
+            ffmpegPalPtsClock_.reset();
+            videoRateClockValid_ = false;
+            std::cerr << "NATIVE AVC SOFTWARE FALLBACK"
+                      << " stream_id=" << config_.streamId
+                      << " from=" << original << " to=ffmpeg"
+                      << " reason=verified_h264_field_coding"
+                      << " encoder=unchanged av_sync=unchanged" << std::endl;
+        } else {
+            softwareAvcFallbackUnavailable_ = true;
+            std::cerr << "NATIVE AVC SOFTWARE FALLBACK unavailable"
+                      << " stream_id=" << config_.streamId
+                      << " reason=" << probeError << std::endl;
+        }
+    }
+
     bool abrRawFanout = false;
     {
         std::lock_guard<std::mutex> observerLock(decodedVideoObserverMutex_);
@@ -1524,10 +1559,60 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     if (!ensureVideoDecoder(sample.stream.codec, error)) return false;
 
     std::vector<codec::RawVideoFrame> decoded;
-    if (!videoDecoder_->decode(
-            sample.data.data(), sample.data.size(),
-            sample.pts90k, sample.hasPts, decoded, error))
-        return false;
+    bool decodedOk = videoDecoder_->decode(
+        sample.data.data(), sample.data.size(),
+        sample.pts90k, sample.hasPts, decoded, error);
+
+    // A decoder can report success while continuously returning zero frames
+    // for an unsupported AVC bitstream. Try FFmpeg once after sustained
+    // silence; for a fatal native error try it immediately. This is a
+    // per-tile recovery only, and never touches an already-working FFmpeg
+    // decoder, HEVC, MPEG-2 or hardware zero-copy.
+    const bool nativeSoftwareAvc =
+        sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        (selectedAvcDecoder_ == "ittiam" ||
+         selectedAvcDecoder_ == "openh264" ||
+         selectedAvcDecoder_ == "auto");
+    if (nativeSoftwareAvc) {
+        if (decodedOk && !decoded.empty()) {
+            softwareAvcSilentSamples_ = 0;
+        } else if (decodedOk) {
+            ++softwareAvcSilentSamples_;
+        }
+        if ((!decodedOk || softwareAvcSilentSamples_ >= 150U) &&
+            !softwareAvcFallbackUnavailable_) {
+            const std::string original = selectedAvcDecoder_;
+            const std::string nativeError = error;
+            std::string fallbackError;
+            auto recovered = codec::createFfmpegAvcDecoder(fallbackError);
+            if (recovered) {
+                videoDecoder_ = std::move(recovered);
+                selectedAvcDecoder_ = "ffmpeg";
+                softwareAvcSilentSamples_ = 0;
+                ffmpegPalPtsClock_.reset();
+                videoRateClockValid_ = false;
+                decoded.clear();
+                error.clear();
+                decodedOk = videoDecoder_->decode(
+                    sample.data.data(), sample.data.size(),
+                    sample.pts90k, sample.hasPts, decoded, error);
+                std::cerr << "NATIVE AVC SOFTWARE FALLBACK"
+                          << " stream_id=" << config_.streamId
+                          << " from=" << original << " to=ffmpeg"
+                          << " reason=" << (nativeError.empty()
+                                ? "no_decoded_frames" : "decoder_error")
+                          << " encoder=unchanged av_sync=unchanged"
+                          << std::endl;
+            } else {
+                softwareAvcFallbackUnavailable_ = true;
+                if (!nativeError.empty()) error = nativeError;
+                std::cerr << "NATIVE AVC SOFTWARE FALLBACK unavailable"
+                          << " stream_id=" << config_.streamId
+                          << " reason=" << fallbackError << std::endl;
+            }
+        }
+    }
+    if (!decodedOk) return false;
 
     decodedVideoFrames_ += decoded.size();
     for (auto& raw : decoded) {
