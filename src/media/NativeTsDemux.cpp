@@ -740,6 +740,8 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
             const bool firstMbZero = h264FirstMbInSliceZero(nal, nalSize);
             H264SliceState currentPicture;
             const bool parsed = parseSlice(nal, nalSize, currentPicture);
+            if (parsed && currentPicture.fieldPic)
+                state.h264FieldCoded = true;
             seenVcl = true;
             if (!firstMbZero) continue;
 
@@ -803,6 +805,7 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         ready.dts90k = state.dts90k;
         ready.hasPts = state.hasPts;
         ready.hasDts = state.hasDts;
+        ready.h264FieldCoded = state.h264FieldCoded;
         ready.randomAccess = state.randomAccess ||
             containsRandomAccessNal(state.stream.codec, ready.data.data(), ready.data.size());
 
@@ -856,6 +859,7 @@ void NativeTsDemux::flushVideoAu(std::uint16_t pid) {
     sample.dts90k = state.dts90k;
     sample.hasPts = state.hasPts;
     sample.hasDts = state.hasDts;
+    sample.h264FieldCoded = state.h264FieldCoded;
     sample.randomAccess = state.randomAccess ||
         containsRandomAccessNal(state.stream.codec, sample.data.data(), sample.data.size());
     state = {};
