@@ -1,3 +1,10 @@
+### V10.8.243 — software scaler corruption fix и QSV startup fix
+
+- Исправлен общий путь software-decoded I420 кадров: автоматический VAAPI VPP scaler больше не используется по умолчанию. OpenH264/Ittiam/обычный software decode теперь масштабируются встроенным CPU I420 scaler-ом перед CPU/NVENC/QSV encode. Это изолирует наблюдавшиеся блочные/полосовые артефакты от Intel VAAPI VPP. Для A/B VAAPI software scaling можно вернуть только явно: `DVBSTREAMER5_ENABLE_VAAPI_SOFTWARE_SCALE=1`.
+- Dedicated hardware paths не отключены: `NVIDIA HW / NVDEC` по-прежнему использует NVDEC → CUDA → NVENC, `Intel HW / oneVPL` — Intel oneVPL decode/VPP/encode zero-copy.
+- Исправлен startup gate QSV/oneVPL: готовность видео теперь определяется по фактическим H.264/H.265 random-access NAL и накопленным parameter sets, а не требует encoder `FrameType` и SPS/PPS/IDR одновременно в одном AU. Добавлены логи `NATIVE VIDEO STARTUP waiting/ready`.
+- База V241 и Intel GPU header metrics сохранены.
+
 ### V10.8.242 — ручной выбор аппаратного H.264 decoder на базе V241
 
 - База V241 сохранена: Intel GPU process Video/Render metrics, автоматические transcode-настройки V240 и остальные изменения ветки `intel-gpu-metrics-v10.8.241` не откатывались.
