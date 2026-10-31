@@ -7,6 +7,7 @@
 #include "media/NativeIttiamAvc.h"
 #include "media/NativeIntelHardwareDecoder.h"
 #include "media/NativeFfmpegAvcDecoder.h"
+#include "media/AudioPtsOffset.h"
 
 #include <algorithm>
 #include <cmath>
@@ -224,6 +225,14 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     selectedAvcDecoder_ = codec::chooseAvcDecoder(
         config_.videoDecoder, config_.streamId,
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
+    config_.audioSyncOffsetMs = std::clamp(config_.audioSyncOffsetMs, -500, 500);
+    if (config_.audioSyncOffsetMs != 0)
+        std::cerr << "NATIVE AV SYNC TRIM stream_id=" << config_.streamId
+                  << " audio_offset_ms=" << config_.audioSyncOffsetMs
+                  << " positive=delay_audio"
+                  << " negative=advance_audio"
+                  << " stage=before_mux"
+                  << std::endl;
     diagnosticI420Frames_ = 0;
     if (selectedAvcDecoder_ != "auto") {
         std::cerr << "NATIVE AVC DECODER preference=" << selectedAvcDecoder_
@@ -1841,18 +1850,34 @@ bool NativeTranscoderPipeline::emitAudio(const codec::EncodedAudioFrame& frame,
         std::lock_guard<std::mutex> lock(encodedAudioObserverMutex_);
         observer = encodedAudioObserver_;
     }
+    // V10.8.255: trim the audio presentation timeline at the *output*
+    // boundary, without touching PCM samples, source clocks, or video PTS.
+    // Shared ABR audio is adjusted once in the primary pipeline and passed
+    // downstream with the already-adjusted PTS (never shift twice).
+    const int syncOffsetMs = externalAudioInput_.load(std::memory_order_acquire)
+        ? 0 : config_.audioSyncOffsetMs;
+    const std::uint64_t adjustedPts = frame.hasPts && syncOffsetMs != 0
+        ? codec::shiftAudioPts90k(frame.pts90k, syncOffsetMs)
+        : frame.pts90k;
+
     if (observer) {
-        observer(audioCodecFromName(config_.audioCodec), frame, duration90k);
+        if (frame.hasPts && syncOffsetMs != 0) {
+            codec::EncodedAudioFrame adjusted = frame;
+            adjusted.pts90k = adjustedPts;
+            observer(audioCodecFromName(config_.audioCodec), adjusted, duration90k);
+        } else {
+            observer(audioCodecFromName(config_.audioCodec), frame, duration90k);
+        }
     }
 
     if (frame.hasPts)
-        lastEncodedAudioPts90k_.store(frame.pts90k & ((1ULL << 33U) - 1ULL),
+        lastEncodedAudioPts90k_.store(adjustedPts & ((1ULL << 33U) - 1ULL),
                                      std::memory_order_relaxed);
     MuxQueuedSample sample;
     sample.kind = mpegts::ElementaryKind::Audio;
     sample.data = frame.data;
-    sample.pts90k = frame.pts90k;
-    sample.dts90k = frame.pts90k;
+    sample.pts90k = adjustedPts;
+    sample.dts90k = adjustedPts;
     sample.duration90k = duration90k;
     sample.hasPts = frame.hasPts;
     sample.hasDts = frame.hasPts;
@@ -1868,6 +1893,18 @@ bool NativeTranscoderPipeline::emitCopy(mpegts::DemuxSample&& sample, std::strin
     {
         std::lock_guard<std::mutex> lock(muxMutex_);
         if (!mux_.setCodec(sample.stream.kind, sample.stream.codec, error)) return false;
+    }
+
+    // Apply the same single adjustment to Audio Copy and encoded audio.
+    // This changes only PTS/DTS, not compressed audio bytes. The observer
+    // and primary MPEG-TS mux both receive the same presentation timeline.
+    if (sample.stream.kind == mpegts::ElementaryKind::Audio &&
+        sample.hasPts && config_.audioSyncOffsetMs != 0 &&
+        !externalAudioInput_.load(std::memory_order_acquire)) {
+        sample.pts90k = codec::shiftAudioPts90k(
+            sample.pts90k, config_.audioSyncOffsetMs);
+        sample.dts90k = sample.pts90k;
+        sample.hasDts = true;
     }
 
     // V10.8.101: emitAudio() used to be the only source for the ABR shared
