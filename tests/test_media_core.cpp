@@ -5,6 +5,7 @@
 #include "media/LinuxDvbInput.h"
 #include "media/MpegTsRemapper.h"
 #include "media/NativeMpegTsMux.h"
+#include "media/PtsClock33.h"
 #include "media/UdpSocket.h"
 
 #ifdef NDEBUG
@@ -521,6 +522,30 @@ void write32(std::uint8_t* data, std::uint32_t value) {
     data[1] = static_cast<std::uint8_t>(value >> 16);
     data[2] = static_cast<std::uint8_t>(value >> 8);
     data[3] = static_cast<std::uint8_t>(value);
+}
+
+// V261: a wrapped audio PTS must be ordered against an unwrapped video
+// PTS in the same epoch. This exact case previously held the audio mux
+// queue at 512/512 and dropped tens of thousands of samples.
+void testPtsClock33() {
+    using dvbstreamer5::media::mpegts::ptsDelta90k;
+    using dvbstreamer5::media::mpegts::ptsAheadOf90k;
+    using dvbstreamer5::media::mpegts::ptsBefore90k;
+    constexpr std::uint64_t modulus = 1ULL << 33U;
+
+    assert(ptsDelta90k(modulus + 9000, 9000) == 0);
+    assert(ptsDelta90k(18000, modulus - 9000) == 27000);
+    assert(ptsDelta90k(modulus - 9000, 18000) == -27000);
+    assert(ptsBefore90k(modulus - 9000, 18000));
+    assert(!ptsAheadOf90k(modulus - 9000, 18000, 45000));
+    assert(ptsAheadOf90k(18000, modulus - 9000, 13500));
+    assert(!ptsAheadOf90k(18000, modulus - 9000, 45000));
+    // The actual old-mux failure pattern: video already beyond wrap,
+    // audio raw clock wrapped into the first few seconds.
+    const std::uint64_t video = modulus + 60000;
+    const std::uint64_t audio = 55000;
+    assert(ptsDelta90k(video, audio) == 5000);
+    assert(!ptsAheadOf90k(video, audio, 13500));
 }
 
 void testPacketInspectionAndPidRewrite() {
@@ -1461,6 +1486,7 @@ void testNativePreviewHubFanout() {
 int main() {
     testLinuxDvbPidListParsing();
     testNativeMpegTsMux();
+    testPtsClock33();
     testMpegTsRemapper();
     testPacketInspectionAndPidRewrite();
     testFraming();
