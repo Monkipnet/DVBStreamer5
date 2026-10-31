@@ -150,6 +150,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeIttiamAvc.cpp
     src/media/NativeAc3Decoder.cpp
     src/media/NativeHardwareCodec.cpp
+    src/media/NativeIntelHardwareDecoder.cpp
     src/media/NativeIntelZeroCopy.cpp
     src/media/NativeNvidiaZeroCopy.cpp
     src/media/NativeVideoProcessing.cpp
