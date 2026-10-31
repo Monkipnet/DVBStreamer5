@@ -96,9 +96,6 @@ struct StreamConfig {
     uint64_t transcodeVideoBitrate = 6000000;
     double transcodeFps = 25.0;
     bool transcodeDeinterlace = true;
-    // Signed A/V lip-sync trim for this stream. Positive delays audio,
-    // negative advances it; default zero keeps all old configurations.
-    int transcodeAudioSyncOffsetMs = 0;
     // Common video encoder controls. Backends apply the supported subset and
     // log any safety clamp/unsupported option instead of silently failing.
     std::string transcodePreset = "balanced"; // fastest | fast | balanced | quality | best
