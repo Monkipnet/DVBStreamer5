@@ -1060,8 +1060,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                           << " mux_av_ms=" << wrapDeltaMs(lastVideoClock, lastAudioClock)
                           << " mux_video_vs_input_ms=" << wrapDeltaMs(lastVideoClock, inputVideo)
                           << " mux_audio_vs_input_ms=" << wrapDeltaMs(lastAudioClock, inputAudio)
-                          << " fps_gate_dropped=" << videoRateDroppedFrames_
-                          << " ffmpeg_pal_corrected=" << ffmpegPalPtsCorrectedFrames_
+                          // FPS-gate and PAL correction counters are owned by
+                          // the video worker, so do not read them on the mux
+                          // thread without an atomic snapshot.
                           << " mux_video_queue=" << vqAfter
                           << " mux_audio_queue=" << aqAfter
                           << std::endl;
