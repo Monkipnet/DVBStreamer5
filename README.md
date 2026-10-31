@@ -1,3 +1,9 @@
+### V10.8.264 — OpenH264 Annex B recovery (experimental)
+
+- Stop feeding SPS/PPS via a separate failing `DecodeFrame2` prime before IDR. Supply cached Annex B SPS/PPS together with the IDR access unit when missing from that unit.
+- When OpenH264 has not produced any video, log bounded sync-pending diagnostics; explicit OpenH264 remains strict, with no fallback to other decoders.
+- This is a hypothesis-driven recovery for repeated `dsNoParamSets`/`dsBitstreamError`; an unsupported interlaced stream may still produce zero frames. Live test with `NATIVE AVC SAMPLE DIAG` and `NATIVE AVC OUTPUT` before merging into main.
+
 ### V10.8.263 — экспериментальный AV-mux hard lead 150 мс для software H.264
 
 - Для вручную выбранных Ittiam/OpenH264 и программного AVC в Auto включена такая же ограничивающая политика 150 мс, какая ранее работала для FFmpeg. Цель: устранить подтверждённые ~480 мс опережения видео и непрерывный рост late_audio на Ittiam.
