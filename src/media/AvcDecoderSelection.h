@@ -9,7 +9,7 @@ namespace dvbstreamer5::media::codec {
 inline std::string chooseAvcDecoder(const std::string& requested,
                                     const std::string& streamId,
                                     const char* diagnosticStream) {
-    if (requested == "openh264" || requested == "ittiam" || requested == "intel_hw" || requested == "nvidia_hw") return requested;
+    if (requested == "openh264" || requested == "ittiam" || requested == "ffmpeg" || requested == "intel_hw" || requested == "nvidia_hw") return requested;
     return forceOpenH264ForStream(diagnosticStream, streamId)
         ? "openh264" : "auto";
 }
