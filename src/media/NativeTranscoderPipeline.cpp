@@ -929,24 +929,21 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // Payload Out fell to zero and viewers saw a freeze.
                         const bool withinLead =
                             clock <= otherClock + kMaxAvLead90k;
-                        // V10.8.254: the FFmpeg interlaced PAL path is able
-                    // to buffer decoded video while delayed broadcast audio
-                    // arrives. Do not let its MPEG-TS output run near the
-                    // legacy 500-ms hard A/V lead. Restrict ONLY explicitly
-                    // selected FFmpeg AVC to the existing 150-ms preferred
-                    // lead; preserve the former 500-ms escape hatch for all
-                    // other decoders, GPU zero-copy and output protocols.
-                    const std::uint64_t hardLead90k =
-                        selectedAvcDecoder_ == "ffmpeg"
-                            ? kMaxAvLead90k : kMaxAvHardLead90k;
-                    const bool withinHardLead =
-                        clock <= otherClock + hardLead90k;
+                        // V10.8.254: for explicitly selected FFmpeg AVC
+                        // hold video to the preferred 150-ms A/V lead.
+                        // Preserve the 500-ms escape hatch for all other
+                        // decoders, including GPU zero-copy.
+                        const std::uint64_t hardLead90k =
+                            selectedAvcDecoder_ == "ffmpeg"
+                                ? kMaxAvLead90k : kMaxAvHardLead90k;
+                        const bool withinHardLead =
+                            clock <= otherClock + hardLead90k;
                         const bool holdExpired =
                             waited >= kMuxSingleStreamMaxHold;
                         // Never let bounded-hold recovery accumulate seconds
                         // (or minutes) of A/V skew. The 350 ms escape hatch may
-                        // advance the healthy stream only within a 500 ms hard
-                        // envelope; the lagging stream then catches up.
+                        // advance the healthy stream only within the selected
+                        // hard-lead envelope; the lagging stream catches up.
                         ready = withinLead || (holdExpired && withinHardLead);
                     }
                     chooseVideo = haveVideo;
