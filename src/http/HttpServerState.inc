@@ -132,7 +132,11 @@ std::uint64_t dvbStreamerResidentKb() {
 // Only DRM drivers exporting fdinfo counters can provide these measurements.
 // Values are cumulative nanoseconds and must be differentiated between polls.
 struct ProcessGpuFdinfo {
+    // i915: drm-engine-<name>: <ns> ns
     std::map<std::string, std::uint64_t> engineNanoseconds;
+    // Intel xe: drm-cycles-<name> and drm-total-cycles-<name>.
+    std::map<std::string, std::uint64_t> engineBusyCycles;
+    std::map<std::string, std::uint64_t> engineTotalCycles;
     std::map<std::string, std::uint64_t> memoryBytes;
 };
 ProcessGpuFdinfo collectDvbStreamerDrmFdinfo() {
@@ -147,6 +151,8 @@ ProcessGpuFdinfo collectDvbStreamerDrmFdinfo() {
         if (!file) continue;
         std::string line, device, clientId;
         std::map<std::string,std::uint64_t> engines;
+        std::map<std::string,std::uint64_t> busyCycles;
+        std::map<std::string,std::uint64_t> totalCycles;
         std::uint64_t totalMemory=0;
         while (std::getline(file,line)) {
             if (line.size()>512U) continue;
@@ -161,6 +167,14 @@ ProcessGpuFdinfo collectDvbStreamerDrmFdinfo() {
                 std::string unit;
                 if (value>>ns>>unit && unit=="ns" && engines.size()<32U)
                     engines[key.substr(11)]=ns;
+            } else if (key.compare(0,17,"drm-total-cycles-")==0) {
+                std::uint64_t cycles=0;
+                if (value >> cycles && totalCycles.size()<32U)
+                    totalCycles[key.substr(17)]=cycles;
+            } else if (key.compare(0,11,"drm-cycles-")==0) {
+                std::uint64_t cycles=0;
+                if (value >> cycles && busyCycles.size()<32U)
+                    busyCycles[key.substr(11)]=cycles;
             } else if (key=="drm-memory-vram" || key=="drm-memory-system") {
                 std::uint64_t count=0;
                 std::string unit;
@@ -175,6 +189,14 @@ ProcessGpuFdinfo collectDvbStreamerDrmFdinfo() {
             continue;
         for (const auto& [engine,ns]:engines)
             result.engineNanoseconds[device+":"+engine]+=ns;
+        // Use only matching Xe cycle pairs. A raw busy-cycle counter has no
+        // meaningful percentage without a corresponding total-cycle clock.
+        for (const auto& [engine,busy]:busyCycles) {
+            const auto total=totalCycles.find(engine);
+            if (total==totalCycles.end()) continue;
+            result.engineBusyCycles[device+":"+engine]+=busy;
+            result.engineTotalCycles[device+":"+engine]+=total->second;
+        }
         result.memoryBytes[device]+=totalMemory;
     }
     return result;
@@ -183,6 +205,8 @@ ProcessGpuFdinfo collectDvbStreamerDrmFdinfo() {
 Json::Value buildDvbStreamerDrmMetrics(
     const ProcessGpuFdinfo& sample,
     std::map<std::string,std::uint64_t>& previous,
+    std::map<std::string,std::uint64_t>& previousBusyCycles,
+    std::map<std::string,std::uint64_t>& previousTotalCycles,
     double elapsedSeconds) {
     Json::Value gpus(Json::arrayValue);
     std::map<std::string,Json::Value> grouped;
@@ -200,7 +224,31 @@ Json::Value buildDvbStreamerDrmMetrics(
             grouped[device]["engines"][engine]=percent;
         }
     }
+    // Intel Xe reports busy/total GPU cycles rather than nanoseconds. Avoid
+    // double-reporting engines that already have a valid nanosecond reading.
+    for (const auto& [key,busyNow]:sample.engineBusyCycles) {
+        if (sample.engineNanoseconds.count(key)) continue;
+        const auto totalNow=sample.engineTotalCycles.find(key);
+        const auto busyBefore=previousBusyCycles.find(key);
+        const auto totalBefore=previousTotalCycles.find(key);
+        if (totalNow==sample.engineTotalCycles.end() ||
+            busyBefore==previousBusyCycles.end() ||
+            totalBefore==previousTotalCycles.end() ||
+            busyNow<busyBefore->second ||
+            totalNow->second<=totalBefore->second) continue;
+        const std::uint64_t deltaTotal=totalNow->second-totalBefore->second;
+        const std::uint64_t deltaBusy=busyNow-busyBefore->second;
+        const auto separator=key.rfind(':');
+        if (separator==std::string::npos) continue;
+        const auto device=key.substr(0,separator);
+        const auto engine=key.substr(separator+1U);
+        grouped[device]["engines"][engine]=std::clamp(
+            100.0*static_cast<double>(deltaBusy)/static_cast<double>(deltaTotal),
+            0.0,100.0);
+    }
     previous=sample.engineNanoseconds;
+    previousBusyCycles=sample.engineBusyCycles;
+    previousTotalCycles=sample.engineTotalCycles;
     for (const auto& [device,bytes]:sample.memoryBytes)
         grouped[device]["memory_used_mb"]=static_cast<double>(bytes)/1048576.0;
     for (auto& [device,gpu]:grouped) {
@@ -576,7 +624,8 @@ void HttpServer::recordSystemLoadHistorySample() {
     row["gpus"] = std::move(cards);
     const auto drm=collectDvbStreamerDrmFdinfo();
     const auto processGpu=buildDvbStreamerDrmMetrics(drm,
-        previousHistoryDrmEngineNs_,30.0);
+        previousHistoryDrmEngineNs_,
+        previousHistoryDrmBusyCycles_,previousHistoryDrmTotalCycles_,30.0);
     row["app_gpus"]=processGpu;
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -783,7 +832,8 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
     root["gpus"] = collectGpuMetrics();
     const auto processDrm=collectDvbStreamerDrmFdinfo();
     root["process_gpus"]=buildDvbStreamerDrmMetrics(processDrm,
-        previousUiDrmEngineNs_,elapsedSeconds);
+        previousUiDrmEngineNs_,
+        previousUiDrmBusyCycles_,previousUiDrmTotalCycles_,elapsedSeconds);
     if (memoryTotal) root["process_ram_percent"]=
         std::clamp(100.0*static_cast<double>(processRssKb)/memoryTotal,0.0,100.0);
     root["system_load_epoch"] = Json::Int64(systemLoadHistoryStartEpoch_);
