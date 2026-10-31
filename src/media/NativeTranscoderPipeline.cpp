@@ -1031,6 +1031,41 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                       << " drop_video=" << muxDroppedVideo_.load(std::memory_order_acquire)
                       << " drop_audio=" << muxDroppedAudio_.load(std::memory_order_acquire)
                       << std::endl;
+
+            // Source-vs-mux A/V clock telemetry is deliberately limited to
+            // streams explicitly using the optional FFmpeg H.264 decoder.
+            // The latest-source timestamps are producer watermarks, NOT a
+            // measured playback offset; compare repeated stable samples.
+            if (selectedAvcDecoder_ == "ffmpeg") {
+                constexpr std::uint64_t mask = (1ULL << 33U) - 1ULL;
+                constexpr std::uint64_t half = 1ULL << 32U;
+                const auto wrapDeltaMs = [](std::uint64_t a, std::uint64_t b) {
+                    if (a == 0 || b == 0) return 999999LL;
+                    const auto delta = (a - b) & mask;
+                    const auto signedDelta = delta < half
+                        ? static_cast<long long>(delta)
+                        : static_cast<long long>(delta) -
+                              static_cast<long long>(mask + 1ULL);
+                    return signedDelta / 90LL;
+                };
+                const auto inputVideo = lastInputVideoPts90k_.load(std::memory_order_relaxed);
+                const auto inputAudio = lastInputAudioPts90k_.load(std::memory_order_relaxed);
+                const auto decodedVideo = lastDecodedVideoPts90k_.load(std::memory_order_relaxed);
+                const auto encodedAudio = lastEncodedAudioPts90k_.load(std::memory_order_relaxed);
+                std::cerr << "NATIVE AV CLOCK TRACE"
+                          << " stream_id=" << config_.streamId
+                          << " input_av_ms=" << wrapDeltaMs(inputVideo, inputAudio)
+                          << " decoded_video_vs_input_ms=" << wrapDeltaMs(decodedVideo, inputVideo)
+                          << " encoded_audio_vs_input_ms=" << wrapDeltaMs(encodedAudio, inputAudio)
+                          << " mux_av_ms=" << wrapDeltaMs(lastVideoClock, lastAudioClock)
+                          << " mux_video_vs_input_ms=" << wrapDeltaMs(lastVideoClock, inputVideo)
+                          << " mux_audio_vs_input_ms=" << wrapDeltaMs(lastAudioClock, inputAudio)
+                          << " fps_gate_dropped=" << videoRateDroppedFrames_
+                          << " ffmpeg_pal_corrected=" << ffmpegPalPtsCorrectedFrames_
+                          << " mux_video_queue=" << vqAfter
+                          << " mux_audio_queue=" << aqAfter
+                          << std::endl;
+            }
         }
 
         muxWorkerActive_.store(false, std::memory_order_release);
