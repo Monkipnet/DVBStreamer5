@@ -7,6 +7,7 @@
 #include "media/NativeIttiamAvc.h"
 #include "media/NativeIntelHardwareDecoder.h"
 #include "media/NativeFfmpegAvcDecoder.h"
+#include "media/PtsClock33.h"
 
 #include <algorithm>
 #include <cmath>
@@ -822,7 +823,8 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
                     : lastMuxVideoClock90k_.load(std::memory_order_acquire);
             const std::uint64_t headClock = muxClockOf(queue.front());
             const bool headAheadOfPeer =
-                peerClock != 0 && headClock > peerClock + kMaxAvHardLead90k;
+                peerClock != 0 && mpegts::ptsAheadOf90k(
+                    headClock, peerClock, kMaxAvHardLead90k);
 
             if (headAheadOfPeer) {
                 dropIncoming = true;
@@ -904,7 +906,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                 bool chooseVideo = false;
                 bool ready = false;
                 if (haveVideo && haveAudio) {
-                    chooseVideo = muxClockOf(muxVideoQueue_.front()) <= muxClockOf(muxAudioQueue_.front());
+                    chooseVideo = !mpegts::ptsAheadOf90k(
+                        muxClockOf(muxVideoQueue_.front()),
+                        muxClockOf(muxAudioQueue_.front()), 0);
                     ready = true;
                 } else {
                     const auto& only = haveVideo ? muxVideoQueue_.front() : muxAudioQueue_.front();
@@ -928,7 +932,7 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // that produced only NULL packets: CBR Out stayed alive while
                         // Payload Out fell to zero and viewers saw a freeze.
                         const bool withinLead =
-                            clock <= otherClock + kMaxAvLead90k;
+                            !mpegts::ptsAheadOf90k(clock, otherClock, kMaxAvLead90k);
                         // V10.8.254: for explicitly selected FFmpeg AVC
                         // hold video to the preferred 150-ms A/V lead.
                         // Preserve the 500-ms escape hatch for all other
@@ -937,7 +941,7 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                             selectedAvcDecoder_ == "ffmpeg"
                                 ? kMaxAvLead90k : kMaxAvHardLead90k;
                         const bool withinHardLead =
-                            clock <= otherClock + hardLead90k;
+                            !mpegts::ptsAheadOf90k(clock, otherClock, hardLead90k);
                         const bool holdExpired =
                             waited >= kMuxSingleStreamMaxHold;
                         // Never let bounded-hold recovery accumulate seconds
@@ -959,8 +963,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // instead of periodically waking every 120 ms.
                         const bool peerCanCatchUpOnly =
                             otherClock != 0 &&
-                            clock > otherClock +
-                                (selectedAvcDecoder_ == "ffmpeg"
+                            mpegts::ptsAheadOf90k(
+                                clock, otherClock,
+                                selectedAvcDecoder_ == "ffmpeg"
                                     ? kMaxAvLead90k : kMaxAvHardLead90k);
                         if (peerCanCatchUpOnly) {
                             muxQueueCv_.wait(lock);
@@ -1001,13 +1006,15 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
         const std::uint64_t clock = muxClockOf(sample);
         if (sample.kind == mpegts::ElementaryKind::Video) {
             const std::uint64_t audioClock = lastMuxAudioClock90k_.load(std::memory_order_acquire);
-            if (audioClock != 0 && clock + kMaxAvLead90k < audioClock)
+            if (audioClock != 0 &&
+                mpegts::ptsAheadOf90k(audioClock, clock, kMaxAvLead90k))
                 muxLateVideo_.fetch_add(1, std::memory_order_relaxed);
             lastMuxVideoClock90k_.store(clock, std::memory_order_release);
             muxedVideoSamples_.fetch_add(1, std::memory_order_relaxed);
         } else {
             const std::uint64_t videoClock = lastMuxVideoClock90k_.load(std::memory_order_acquire);
-            if (videoClock != 0 && clock + kMaxAvLead90k < videoClock)
+            if (videoClock != 0 &&
+                mpegts::ptsAheadOf90k(videoClock, clock, kMaxAvLead90k))
                 muxLateAudio_.fetch_add(1, std::memory_order_relaxed);
             lastMuxAudioClock90k_.store(clock, std::memory_order_release);
             muxedAudioSamples_.fetch_add(1, std::memory_order_relaxed);
@@ -1024,9 +1031,8 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
             const std::uint64_t lastVideoClock = lastMuxVideoClock90k_.load(std::memory_order_acquire);
             const std::uint64_t lastAudioClock = lastMuxAudioClock90k_.load(std::memory_order_acquire);
             if (lastVideoClock != 0 && lastAudioClock != 0) {
-                avDeltaMs = static_cast<long long>(lastVideoClock) -
-                            static_cast<long long>(lastAudioClock);
-                avDeltaMs /= 90;
+                avDeltaMs = mpegts::ptsDelta90k(
+                    lastVideoClock, lastAudioClock) / 90LL;
             }
             std::cerr << "NATIVE AV MUX"
                       << " stream_id=" << config_.streamId
