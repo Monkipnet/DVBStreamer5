@@ -329,10 +329,12 @@ bool hasH264NalType(
 
 class VaapiH264Encoder final : public VideoEncoder {
 public:
-    // Diagnostic mode: route the decoded I420 frame through CPU scaling
-    // before the VAAPI encoder, bypassing VAAPI VPP without changing encode.
+    // Legacy i965 VAAPI encode is usable even when its VPP produces corrupt
+    // frames. Software-decoded I420 uses the CPU scaler by default, then this
+    // class still performs hardware H.264 encoding. VAAPI VPP remains an
+    // explicit opt-in for testing on known-good driver stacks.
     bool supportsNativeScaling() const noexcept override {
-        return !forceCpuVideoScaling();
+        return enableVaapiSoftwareScaling();
     }
     explicit VaapiH264Encoder(mpegts::ElementaryCodec codec) : codec_(codec) {}
     ~VaapiH264Encoder() override { close(); }
