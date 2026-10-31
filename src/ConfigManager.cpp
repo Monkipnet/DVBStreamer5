@@ -442,6 +442,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     if (config.transcodeVideoDecoder != "auto" &&
         config.transcodeVideoDecoder != "ittiam" &&
         config.transcodeVideoDecoder != "openh264" &&
+        config.transcodeVideoDecoder != "ffmpeg" &&
         config.transcodeVideoDecoder != "intel_hw" &&
         config.transcodeVideoDecoder != "nvidia_hw")
         config.transcodeVideoDecoder = "auto";
