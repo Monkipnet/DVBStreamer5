@@ -4,6 +4,7 @@
 #include "CaBackend.h"
 #include "DvbSatellite.h"
 #include "TranscoderModule.h"
+#include "AutoTranscodePolicy.h"
 #include "mpts/MptsOutputManager.h"
 #include "protocols/SrtVpsProfile.h"
 #include "protocols/stream/inputs/StreamVdrInputProtocol.h"
@@ -693,14 +694,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.videoBitrate = streamConfig.transcodeVideoBitrate;
         tc.fps = streamConfig.transcodeFps;
         tc.deinterlace = streamConfig.transcodeDeinterlace;
-        tc.preset = streamConfig.transcodePreset;
-        tc.profile = streamConfig.transcodeProfile;
-        tc.level = streamConfig.transcodeLevel;
-        tc.gopFrames = streamConfig.transcodeGopFrames;
-        tc.bFrames = streamConfig.transcodeBFrames;
-        tc.refFrames = streamConfig.transcodeRefFrames;
-        tc.openGop = streamConfig.transcodeOpenGop;
-        tc.aqStrength = streamConfig.transcodeAqStrength;
+        // Auto tuning is applied after effective CBR video budget is known.
+        // Never load legacy manual profile/level/preset settings at runtime.
         // A CBR transport cannot sustainably carry an elementary-video target
         // equal to the complete TS target: audio, PES/TS headers, PSI/SI and
         // encoder overshoot also consume bitrate.  When transcoding to CBR,
@@ -726,6 +721,31 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                           << std::endl;
             }
             tc.videoBitrate = effectiveVideo;
+        }
+        // V10.8.240: consistent policy for CPU/NVIDIA/Intel, based on the
+        // *effective* bitrate after CBR mux headroom and the requested FPS.
+        const auto autoTc = dvbstreamer5::app::automaticTranscodeSettings(
+            tc.fps, tc.videoBitrate,
+            static_cast<std::uint32_t>(tc.width),
+            static_cast<std::uint32_t>(tc.height), tc.videoEncoder);
+        tc.preset = autoTc.preset;
+        tc.profile = autoTc.profile;
+        tc.level = autoTc.level;
+        tc.gopFrames = autoTc.gopFrames;
+        tc.bFrames = autoTc.bFrames;
+        tc.refFrames = autoTc.refFrames;
+        tc.openGop = autoTc.openGop;
+        tc.aqStrength = autoTc.aqStrength;
+        if (tc.videoCodec != "copy") {
+            std::cerr << "NATIVE TRANSCODE AUTO stream=" << streamConfig.id
+                      << " encoder=" << tc.videoEncoder
+                      << " fps=" << tc.fps
+                      << " effective_video_kbps=" << (tc.videoBitrate / 1000ULL)
+                      << " preset=" << tc.preset
+                      << " profile=" << tc.profile
+                      << " level=" << tc.level
+                      << " gop_frames=" << tc.gopFrames
+                      << " aq_strength=" << tc.aqStrength << std::endl;
         }
         effectivePrimaryVideoBitrate = tc.videoBitrate;
         tc.serviceId = static_cast<std::uint16_t>(streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff ? streamConfig.serviceId : 1);
@@ -778,6 +798,18 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 abrTc.height = variant->height;
                 abrTc.videoBitrate = variant->videoBitrate;
                 abrTc.muxBitrate = variant->muxBitrate;
+                const auto abrAuto = dvbstreamer5::app::automaticTranscodeSettings(
+                    abrTc.fps, abrTc.videoBitrate,
+                    static_cast<std::uint32_t>(abrTc.width),
+                    static_cast<std::uint32_t>(abrTc.height), abrTc.videoEncoder);
+                abrTc.preset = abrAuto.preset;
+                abrTc.profile = abrAuto.profile;
+                abrTc.level = abrAuto.level;
+                abrTc.gopFrames = abrAuto.gopFrames;
+                abrTc.bFrames = abrAuto.bFrames;
+                abrTc.refFrames = abrAuto.refFrames;
+                abrTc.openGop = abrAuto.openGop;
+                abrTc.aqStrength = abrAuto.aqStrength;
                 std::string abrError;
                 if (!variant->transcoder->initialize(abrTc, abrError)) {
                     CardManager::instance().releaseService(streamConfig.id);
