@@ -1,3 +1,43 @@
+### V10.8.240 — automatic video-transcoding controls (CPU / NVIDIA / Intel)
+
+**Test branch:** `transcode-auto-v10.8.240`, based on `dvb-vbr-null-v10.8.239`; `main` is not modified.
+
+- **Simplified stream editor:** Video codec (including Copy), encoder (Auto/CPU/NVIDIA NVENC/Intel QSV/Intel VAAPI), H.264 decoder, output resolution, video bitrate, FPS, deinterlace, audio controls and HLS ABR remain user-selectable.
+- **Advanced controls removed:** no manual Preset, Profile, Level, GOP, reference frames, AQ strength, B-frames or Open GOP. `Profile=auto` and `Level=auto` are enforced for all backends; the encoder negotiates the effective hardware-supported profile/level.
+- **Automatic policy:** output bitrate in bits per coded pixel per frame and output FPS determine a supported real-time speed/quality preset and adaptive quantization; GOP is approximately 2 seconds (`round(fps * 2)`). Live video uses B-frames 0, refs auto, Open GOP off. On high-throughput 1080p50/60 use a faster preset, and CPU 4K50/60 uses fastest. This does **not** change the user-specified bitrate, frame rate, resolution, audio or encoder choice.
+- **CBR-safe:** the runtime policy is evaluated after the existing video-to-TS CBR headroom limiter, using the effective video bitrate. Each lower HLS ABR rendition is automatically tuned for its own size/bitrate.
+- **Migrates older configs:** legacy manually saved advanced properties are ignored by config load and stream API save; the new automatic values are stored for consistent UI/API state. Existing transcoding copy/paste transfers only user-visible controls. Original copy/pass-through and non-transcoded streams are unaffected.
+- **Tests:** `bash scripts/test_auto_transcode_policy.sh`; also part of the experimental branch's CI. A successful CI build, actual NVIDIA/Intel encoding and hardware playback must be verified independently.
+
+Ubuntu 22.04 / 24.04 — new source checkout, CPU and any detected GPU backends:
+
+```bash
+git clone --recurse-submodules -b transcode-auto-v10.8.240 https://github.com/Monkipnet/DVBStreamer5.git DVBStreamer5-v240
+cd DVBStreamer5-v240
+bash scripts/vendor_srt_source.sh
+bash scripts/vendor_native_codecs.sh
+DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
+bash scripts/test_auto_transcode_policy.sh
+cmake -S . -B build-v240 -DCMAKE_BUILD_TYPE=Release \
+  -DDVBSTREAMER5_ENABLE_NVENC=ON \
+  -DDVBSTREAMER5_ENABLE_INTEL_QSV=ON \
+  -DDVBSTREAMER5_ENABLE_VAAPI=ON
+cmake --build build-v240 --parallel 2
+bash scripts/make_portable_linux_bundle.sh --build-dir build-v240 --binary build-v240/DVBStreamer5 --output-dir dist/DVBStreamer5-linux-x86_64 --with-oscam --archive
+```
+
+If the build host has Intel QSV or VAAPI headers/drivers, install `libvpl-dev` and `libva-dev` beforehand. GPU backends require their respective runtime drivers and hardware. To update a **separate test clone**:
+
+```bash
+git fetch origin
+git switch transcode-auto-v10.8.240 || git switch -c transcode-auto-v10.8.240 --track origin/transcode-auto-v10.8.240
+git pull --ff-only
+```
+
+Inspect startup logs for `NATIVE TRANSCODE AUTO stream=...` to confirm actual selected FPS, bitrate, GOP and automatic profile. Do not replace a working production binary or restart its service until compiling and testing this branch.
+
+---
+
 ### V10.8.239 (ISOLATED DVB VBR NULL-PACKET FIX)
 
 **Branch:** `dvb-vbr-null-v10.8.239`, directly based on experimental `ca-irdeto-v10.8.238`; stable `main` is unchanged.
