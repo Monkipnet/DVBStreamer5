@@ -1,8 +1,10 @@
 #include "ConfigManager.h"
+#include "AutoTranscodePolicy.h"
 #include "UdpInputFirewall.h"
 #include "utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -443,35 +445,23 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.transcodeVideoDecoder = "auto";
     config.transcodeVideoBitrate = root.get("transcode_video_bitrate", Json::UInt64(6000000)).asUInt64();
     config.transcodeFps = root.get("transcode_fps", 25.0).asDouble();
-    if (config.transcodeFps < 1.0 || config.transcodeFps > 60.0) config.transcodeFps = 25.0;
+    if (!std::isfinite(config.transcodeFps) || config.transcodeFps < 1.0 ||
+        config.transcodeFps > 60.0) config.transcodeFps = 25.0;
     config.transcodeDeinterlace = root.get("transcode_deinterlace", true).asBool();
-    std::string legacyPreset = toLower(root.get("transcode_nvenc_preset", "p5").asString());
-    std::string legacyPresetMapped = "balanced";
-    if (legacyPreset == "p1") legacyPresetMapped = "fastest";
-    else if (legacyPreset == "p2" || legacyPreset == "p3") legacyPresetMapped = "fast";
-    else if (legacyPreset == "p6") legacyPresetMapped = "quality";
-    else if (legacyPreset == "p7") legacyPresetMapped = "best";
-    config.transcodePreset = toLower(root.get("transcode_preset", legacyPresetMapped).asString());
-    if (config.transcodePreset != "fastest" && config.transcodePreset != "fast" &&
-        config.transcodePreset != "balanced" && config.transcodePreset != "quality" &&
-        config.transcodePreset != "best") config.transcodePreset = "balanced";
-    config.transcodeProfile = toLower(root.get(
-        "transcode_profile", root.get("transcode_nvenc_profile", "auto")).asString());
-    if (config.transcodeProfile != "auto" && config.transcodeProfile != "main" &&
-        config.transcodeProfile != "high") config.transcodeProfile = "auto";
-    config.transcodeLevel = toLower(root.get("transcode_level", "auto").asString());
-    if (config.transcodeLevel != "auto" && config.transcodeLevel != "3.1" &&
-        config.transcodeLevel != "4.0" && config.transcodeLevel != "4.1" &&
-        config.transcodeLevel != "5.0" && config.transcodeLevel != "5.1") {
-        config.transcodeLevel = "auto";
-    }
-    config.transcodeGopFrames = std::clamp(root.get("transcode_gop_frames", 50).asUInt(), 1u, 1000u);
-    config.transcodeBFrames = std::clamp(root.get("transcode_bframes", 0).asUInt(), 0u, 3u);
-    config.transcodeRefFrames = std::clamp(root.get("transcode_ref_frames", 0).asUInt(), 0u, 4u);
-    config.transcodeOpenGop = root.get("transcode_open_gop", false).asBool();
-    config.transcodeAqStrength = std::clamp(
-        root.get("transcode_aq_strength",
-            root.get("transcode_nvenc_aq_strength", 8)).asUInt(), 1u, 15u);
+    // V10.8.240: manual legacy knobs are ignored on config load and API save.
+    // The output FPS, selected resolution and video bitrate are authoritative.
+    // This also migrates previously saved CPU/NVENC/Intel manual profiles.
+    const auto automatic = dvbstreamer5::app::automaticTranscodeSettings(
+        config.transcodeFps, config.transcodeVideoBitrate,
+        config.transcodeResolution, config.transcodeVideoEncoder);
+    config.transcodePreset = automatic.preset;
+    config.transcodeProfile = automatic.profile;
+    config.transcodeLevel = automatic.level;
+    config.transcodeGopFrames = automatic.gopFrames;
+    config.transcodeBFrames = automatic.bFrames;
+    config.transcodeRefFrames = automatic.refFrames;
+    config.transcodeOpenGop = automatic.openGop;
+    config.transcodeAqStrength = automatic.aqStrength;
     config.transcodeMultibitrateEnabled = root.get("transcode_multibitrate_enabled", false).asBool();
     config.hlsArchiveEnabled = root.get("hls_archive_enabled", false).asBool();
     config.hlsArchiveHours = std::clamp(root.get("hls_archive_hours", 24).asUInt(), 1u, 168u);
