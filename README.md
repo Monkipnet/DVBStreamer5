@@ -1,3 +1,10 @@
+### V10.8.244 — настоящий encoder-independent Intel HW decoder
+
+- Ручной режим `Intel HW / oneVPL` больше не требует encoder `QSV/Auto`. Добавлен отдельный oneVPL hardware decoder, который синхронизирует decoded surface, учитывает реальный NV12 pitch и crop, преобразует видимую область в I420 и передаёт кадр выбранному encoder-у.
+- Поддерживаются комбинации Intel HW decode → CPU, QSV, VAAPI или NVENC encode. Это устраняет прежний OFFLINE с сообщением `Intel HW decoder...` при несовместимой жёсткой привязке к zero-copy transcoder.
+- Автоматические Intel/NVIDIA zero-copy пути сохранены как отдельные оптимизации. Ручной NVIDIA HW пока остаётся связан с NVDEC → CUDA → NVENC.
+- Сохранены исправления V243: CPU scaler по умолчанию для software-decoded I420 и startup gate по реальным random-access NAL.
+
 ### V10.8.243 — software scaler corruption fix и QSV startup fix
 
 - Исправлен общий путь software-decoded I420 кадров: автоматический VAAPI VPP scaler больше не используется по умолчанию. OpenH264/Ittiam/обычный software decode теперь масштабируются встроенным CPU I420 scaler-ом перед CPU/NVENC/QSV encode. Это изолирует наблюдавшиеся блочные/полосовые артефакты от Intel VAAPI VPP. Для A/B VAAPI software scaling можно вернуть только явно: `DVBSTREAMER5_ENABLE_VAAPI_SOFTWARE_SCALE=1`.
