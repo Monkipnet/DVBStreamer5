@@ -52,6 +52,12 @@ struct ElementarySample {
 
 class NativeMpegTsMux {
 public:
+    // MPEG-TS needs decoder buffering time between the PCR clock and the
+    // decode timestamps. Previously PCR == video DTS, leaving zero decode
+    // lead for every encoder, so playback could show audio before picture.
+    // Keep the A/V PTS relationship unchanged: this shifts ONLY PCR.
+    static constexpr std::uint64_t kPcrDecodePreroll90k = 45000ULL; // 500 ms
+
     bool initialize(const NativeMuxConfig& config, std::string& error);
     bool setCodec(ElementaryKind kind, ElementaryCodec codec, std::string& error);
     bool write(
