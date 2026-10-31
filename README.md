@@ -1,3 +1,10 @@
+### V10.8.247 — исправлен обход CPU scaler в legacy VAAPI encoder
+
+- При использовании Intel `VAAPI direct` c программным H.264 decoder прежний `supportsNativeScaling()` ошибочно включал встроенный VAAPI VPP при изменении разрешения, обходя исправление V243. Теперь по умолчанию CPU I420 scaler выполняется до VAAPI encoder, а H.264 кодируется аппаратно.
+- Для сравнения допускается явное включение старого GPU VPP: `DVBSTREAMER5_ENABLE_VAAPI_SOFTWARE_SCALE=1`. На Haswell/i965 с наблюдаемыми артефактами включать его не рекомендуется.
+- Сохранена диагностика V246: Intel oneVPL HW decoder отключается в UI, если нет аппаратной реализации API 2.1+. Для Haswell/i965 отдельный VAAPI VLD decoder пока не реализован. Доступность Intel VAAPI encode не зависит от oneVPL decode.
+- NVIDIA NVDEC/NVENC код не менялся; база V241 и Intel GPU metrics сохранены.
+
 ### V10.8.246 — исправлена диагностика возможностей Intel HW decoder
 
 - `Intel HW / oneVPL` доступен в UI только при подтверждённой аппаратной реализации oneVPL API 2.1+ (обязательной для `FrameInterface::Map/Unmap`). Наличие отдельного Intel VAAPI encoder больше не выдаётся за доступность oneVPL decoder.
