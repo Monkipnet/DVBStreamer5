@@ -3,6 +3,7 @@
 #include "media/Mp2Encoder.h"
 #include "media/Mp3Encoder.h"
 #include "media/NativeCodecRuntime.h"
+#include "media/FfmpegPalPtsClock.h"
 #include "media/NativeIntelZeroCopy.h"
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeMpegTsMux.h"
@@ -30,7 +31,7 @@ struct NativeTranscoderConfig {
     std::string streamId; // diagnostic-only targeting; never serialized into media
     std::string videoCodec = "h264"; // h264 | hevc | copy
     std::string videoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
-    std::string videoDecoder = "auto"; // auto | ittiam | openh264
+    std::string videoDecoder = "auto"; // auto | ittiam | openh264 | ffmpeg | intel_hw | nvidia_hw
     std::string audioCodec = "aac";  // aac | mp2 | mp3 | copy
     int width = 0;
     int height = 0;
@@ -457,6 +458,8 @@ private:
     bool videoRateClockValid_ = false;
     std::uint64_t videoRateNextPts90k_ = 0;
     std::uint64_t videoRateDroppedFrames_ = 0;
+    codec::FfmpegPalPtsClock ffmpegPalPtsClock_;
+    std::uint64_t ffmpegPalPtsCorrectedFrames_ = 0;
     bool sourceGeometryResolved_ = false;
     int sourceWidth_ = 0;
     int sourceHeight_ = 0;
