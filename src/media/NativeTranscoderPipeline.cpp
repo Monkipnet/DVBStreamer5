@@ -225,7 +225,9 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     selectedAvcDecoder_ = codec::chooseAvcDecoder(
         config_.videoDecoder, config_.streamId,
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
-    ffmpegAvcMuxPolicy_.store(selectedAvcDecoder_ == "ffmpeg",
+    ffmpegAvcMuxPolicy_.store(selectedAvcDecoder_ == "ffmpeg" ||
+                              selectedAvcDecoder_ == "ittiam" ||
+                              selectedAvcDecoder_ == "openh264",
                               std::memory_order_release);
     softwareAvcSilentSamples_ = 0;
     softwareAvcFallbackUnavailable_ = false;
@@ -939,10 +941,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // Payload Out fell to zero and viewers saw a freeze.
                         const bool withinLead =
                             !mpegts::ptsAheadOf90k(clock, otherClock, kMaxAvLead90k);
-                        // V10.8.254: for explicitly selected FFmpeg AVC
-                        // hold video to the preferred 150-ms A/V lead.
-                        // Preserve the 500-ms escape hatch for all other
-                        // decoders, including GPU zero-copy.
+                        // V10.8.263 experimental: software AVC decoders use
+                        // the same 150-ms envelope. GPU zero-copy retains
+                        // the established 500-ms escape hatch.
                         const std::uint64_t hardLead90k =
                             ffmpegAvcMuxPolicy_.load(std::memory_order_acquire)
                                 ? kMaxAvLead90k : kMaxAvHardLead90k;
@@ -1184,6 +1185,8 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
                     if (videoDecoder_) selectedAvcDecoder_ = "openh264";
                 }
             }
+            if (videoDecoder_)
+                ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
             if (videoDecoder_)
                 std::cerr << "NATIVE AVC DECODER auto selected=" << selectedAvcDecoder_
                           << " stream_id=" << config_.streamId
