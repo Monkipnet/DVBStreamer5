@@ -148,6 +148,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeMpegTsMux.cpp
     ${DVBSTREAMER5_CODEC_SOURCE}
     src/media/NativeIttiamAvc.cpp
+    src/media/NativeFfmpegAvcDecoder.cpp
     src/media/NativeAc3Decoder.cpp
     src/media/NativeHardwareCodec.cpp
     src/media/NativeIntelHardwareDecoder.cpp
@@ -193,6 +194,26 @@ target_link_libraries(dvbstreamer5_media_core PRIVATE
     ${CMAKE_DL_LIBS}
     m
 )
+# Optional FFmpeg/libavcodec H.264 *decoder* for interlaced broadcast
+# AVC. This is a per-tile opt-in, and does not touch native encoders or
+# NVIDIA/Intel hardware backends. Builds without FFmpeg headers remain valid.
+option(DVBSTREAMER5_ENABLE_FFMPEG_AVC "Enable optional libavcodec H.264 software decoder" ON)
+if(DVBSTREAMER5_ENABLE_FFMPEG_AVC)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(DVBSTREAMER5_FFMPEG QUIET IMPORTED_TARGET
+            libavcodec libavutil)
+    endif()
+endif()
+if(DVBSTREAMER5_ENABLE_FFMPEG_AVC AND DVBSTREAMER5_FFMPEG_FOUND)
+    target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_FFMPEG_AVC=1)
+    target_link_libraries(dvbstreamer5_media_core PRIVATE
+        PkgConfig::DVBSTREAMER5_FFMPEG)
+    message(STATUS "Optional H.264 software decoder: FFmpeg/libavcodec enabled")
+else()
+    message(STATUS "Optional H.264 software decoder: FFmpeg unavailable (install libavcodec-dev libavutil-dev)")
+endif()
+
 # Optional direct LAME MPEG-1 Layer III encoder (not a media framework).
 # Keep AAC/MP2-only builds possible if the development package is absent.
 find_path(DVBSTREAMER5_MP3LAME_INCLUDE_DIR NAMES lame/lame.h)
