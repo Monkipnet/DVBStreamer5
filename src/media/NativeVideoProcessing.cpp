@@ -414,7 +414,7 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
     const std::size_t expected = static_cast<std::size_t>(input.width) * input.height * 3U / 2U;
     if (input.i420.size() < expected) { error = "native I420 input frame is truncated"; return false; }
 #if defined(DVBSTREAMER5_HAVE_VAAPI)
-    if (!forceCpuVideoScaling() &&
+    if (enableVaapiSoftwareScaling() &&
         (input.width != width || input.height != height)) {
         thread_local VaapiVppScaler vppScaler;
         if (vppScaler.scale(input, width, height, output))
@@ -422,16 +422,15 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
     }
 #endif
 
-    if (forceCpuVideoScaling()) {
-        static const bool diagnosticLogged = [] {
-            std::cerr << "NATIVE VIDEO SCALE diagnostic=force-cpu"
-                      << " vaapi-vpp-bypass=1"
-                      << " env=DVBSTREAMER5_FORCE_CPU_SCALE"
-                      << std::endl;
-            return true;
-        }();
-        (void)diagnosticLogged;
-    }
+    static const bool scalerPolicyLogged = [] {
+        std::cerr << "NATIVE VIDEO SCALE software-frame backend=cpu"
+                  << " vaapi_vpp_opt_in="
+                  << (enableVaapiSoftwareScaling() ? 1 : 0)
+                  << " env=DVBSTREAMER5_ENABLE_VAAPI_SOFTWARE_SCALE"
+                  << std::endl;
+        return true;
+    }();
+    (void)scalerPolicyLogged;
 
     output = {};
     output.width = width; output.height = height;
