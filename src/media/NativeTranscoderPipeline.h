@@ -496,6 +496,10 @@ private:
     bool diagnosticI420Enabled_ = false;
     bool diagnosticColorI420Enabled_ = false;
     std::string selectedAvcDecoder_ = "auto";
+    // Runtime-only software AVC recovery, independent for every tile.
+    // No setting or persistent A/V offset is added to the config.
+    std::uint64_t softwareAvcSilentSamples_ = 0;
+    bool softwareAvcFallbackUnavailable_ = false;
     std::uint64_t diagnosticI420Frames_ = 0;
     std::uint64_t diagnosticColorI420Frames_ = 0;
     mpegts::NativeTsDemux demux_;
