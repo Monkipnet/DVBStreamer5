@@ -1,3 +1,11 @@
+### V10.8.248 — VAAPI VPP bypass guard и диагностика PAL upscaling
+
+- По runtime-логу 720×576 → 1920×1080 обнаружено, что выбранный OpenH264 не выдаёт кадры и автоматически переключается на Ittiam после 150 samples; это не чистое сравнение двух software decoders.
+- Добавлена дополнительная защита прямо в `VaapiH264Encoder::encode`: когда входной размер отличается от выходного, по умолчанию выполняется CPU I420 scaling и только потом аппаратное VAAPI H.264 encode, даже если вызывающий код не выполнил scaler negotiation. Внутренний VAAPI VPP для I420 применяется только с явным `DVBSTREAMER5_ENABLE_VAAPI_SOFTWARE_SCALE=1`.
+- Добавлен обязательный startup-лог `NATIVE VAAPI ENCODER scale-policy` с реальным source/output и выбранным CPU/VPP режимом, чтобы отличить обновлённый бинарник от старого.
+- Существующие Intel hardware decode и NVIDIA NVDEC/NVENC реализации не изменены. Настройку `OpenH264` пока сохраняем с fallback для обратной совместимости, но реальный decoder надо проверять по `NATIVE AVC DECODER`.
+- Само исчезновение артефактов пока не подтверждено тестом на сервере. Для диагностики есть уже существующая per-stream подмена raw-I420 кадра через `DVBSTREAMER5_DIAG_COLOR_STREAM_ID`.
+
 ### V10.8.247 — исправлен обход CPU scaler в legacy VAAPI encoder
 
 - При использовании Intel `VAAPI direct` c программным H.264 decoder прежний `supportsNativeScaling()` ошибочно включал встроенный VAAPI VPP при изменении разрешения, обходя исправление V243. Теперь по умолчанию CPU I420 scaler выполняется до VAAPI encoder, а H.264 кодируется аппаратно.
