@@ -1,3 +1,11 @@
+### V10.8.249 — адресный дамп H.264 для диагностики артефактов Ittiam
+
+- Исходный interlaced AVC 720×576 продолжает содержать артефакты даже без deinterlace и масштабирования; цветной тестовый I420-кадр проходит CPU scaler → Intel VAAPI encoder без повреждений. Поэтому нельзя считать причиной Intel encoder до проверки входных AVC байтов.
+- Ittiam error `0x00000091` соответствует `ERROR_START_CODE_NOT_FOUND`; одного этого кода недостаточно, чтобы объявить входное видео повреждённым.
+- Ранее `DVBSTREAMER5_DUMP_H264_ES=/tmp/dvb-8.h264` писал до 64 MiB для каждого AVC потока. Для безопасности теперь требуется ещё `DVBSTREAMER5_DUMP_H264_ES_STREAM_ID=stream-1793338874706`. Без точного stream_id дамп не выполняется. Файлы включают stream_id, PID, индекс с PTS/DTS и не обрезают access unit на границе лимита.
+- Пример systemd drop-in: `Environment=DVBSTREAMER5_DUMP_H264_ES=/var/tmp/dvb8.h264` и `Environment=DVBSTREAMER5_DUMP_H264_ES_STREAM_ID=stream-1793338874706`. После перезапуска службы файл `/var/tmp/dvb8.<stream-id>.<hash>.pid-*.h264` можно проверить независимым декодером ffmpeg/VLC.
+- **Это инструмент диагностики, а не исправление артефактов.** Потоковый путь Ittiam, Intel VAAPI, NVIDIA NVENC/NVDEC и база V241 остались неизменными.
+
 ### V10.8.248 — VAAPI VPP bypass guard и диагностика PAL upscaling
 
 - По runtime-логу 720×576 → 1920×1080 обнаружено, что выбранный OpenH264 не выдаёт кадры и автоматически переключается на Ittiam после 150 samples; это не чистое сравнение двух software decoders.
