@@ -1,3 +1,10 @@
+### V10.8.245 — oneVPL Intel HW decoder: корректное отображение поверхности
+
+- Исправлен ручной Intel oneVPL hardware decoder: после `DecodeFrameAsync` decoded surface синхронизируется и обязательно отображается через `FrameInterface->Map(MFX_MAP_READ)` перед чтением `Data.Y/Data.UV`. После копирования I420 выполняются `Unmap` и `Release`.
+- Проверяются формат NV12, coded/visible geometry, чётность crop, Y/UV pointers и pitch. При ошибке выводится подробная диагностика вместо общего сообщения.
+- Это исправляет чтение неотображённой oneVPL поверхности в V244. Не устраняет отсутствующий Intel hardware runtime/driver: для такого случая нужен полный журнал `Intel HW decoder...`.
+- NVIDIA NVDEC/NVENC и штатный Intel zero-copy pipeline не изменены.
+
 ### V10.8.244 — настоящий encoder-independent Intel HW decoder
 
 - Ручной режим `Intel HW / oneVPL` больше не требует encoder `QSV/Auto`. Добавлен отдельный oneVPL hardware decoder, который синхронизирует decoded surface, учитывает реальный NV12 pitch и crop, преобразует видимую область в I420 и передаёт кадр выбранному encoder-у.
