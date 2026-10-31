@@ -130,10 +130,6 @@ public:
 };
 
 std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec codec, std::string& error);
-// Diagnostic-only OpenH264 selection. Returns an error if unavailable rather
-// than silently selecting Ittiam and invalidating the comparison.
-std::unique_ptr<VideoDecoder> createOpenH264VideoDecoder(std::string& error,
-                                                         const std::string& streamId);
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec codec, std::string& error);
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec codec, const std::string& backend, std::string& error);
 std::unique_ptr<AudioDecoder> createAudioDecoder(mpegts::ElementaryCodec codec, std::string& error);
