@@ -1,3 +1,11 @@
+### V10.8.258 — тест восстановления после фрагментированного PAT
+
+- На Ubuntu `ctest` V257 завершался в `testMpegTsRemapper()` на старом ожидании `!remapper.process(fragmentedPat,...)`: оно не соответствует текущему `collectSections()`, где неполная PAT секция буферизуется между TS пакетами вместо немедленного завершения канала.
+- Обновлён только `tests/test_media_core.cpp`: неполный PAT при continuity=4 должен быть принят без ошибки, следующий корректный PAT при continuity=5 должен восстановить PSI сборщик, а сервис SID=42 и ремаппинг video PID=0x0200 остаться действующими. Тест не зависит от случайного момента фоновой генерации PAT/PMT/SDT.
+- Производственные `MpegTsRemapper.cpp` и `NativeMpegTsMux.cpp` не менялись; PCR decode preroll 500ms из V256 сохранён. Исправление только регрессионного теста, не новая проверка реальной синхронизации VLC.
+- Команды: `git pull --ff-only origin main`, `cmake -S tests/media_core -B build-test-media`, `cmake --build build-test-media --parallel 2`, `ctest --test-dir build-test-media --output-on-failure`. Если тест проходит, собрать основное приложение и portable архив V258.
+- `__int128` -Wpedantic и предупреждение об unused-function не вызвали предыдущего падения теста.
+
 ### V10.8.257 — исправление устаревшего теста MPEG-TS Remapper
 
 - В V256 `media_core_tests` собирался, но `testMpegTsRemapper()` останавливался на `output.size() == 2`. Это был **не провал нового PCR теста**: прежняя проверка ожидала выдачу PAT/PMT сразу при получении PMT, хотя актуальный remapper делает `remapReady_=true` и выдаёт PAT/PMT/SDT на следующем периодическом `tick()` / входном TS-пакете.
