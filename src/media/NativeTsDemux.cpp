@@ -655,14 +655,12 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         return true;
     };
 
-    // V10.8.51: keep complementary H.264 field pictures in one decoder AU.
-    // The LVM Main-profile PAL service carries interlaced top/bottom field
-    // pictures. V10.8.45 cut on every second first_mb_in_slice==0, which made
-    // each field look like a 40 ms frame. Ittiam correctly emitted one frame
-    // only after both fields, so output timestamps advanced at 12.5 fps and
-    // audio ran seconds ahead. Parse the minimal SPS/PPS/slice syntax needed
-    // for field_pic_flag/bottom_field_flag and only cut after a complete field
-    // pair. Progressive/frame-coded AVC keeps the previous picture boundary.
+    // V10.8.250: keep complementary H.264 field pictures in one decoder AU,
+    // even when each field is preceded by a fresh AUD/PPS prefix. The old
+    // unconditional "seenVcl || repeated PPS" split prevented the existing
+    // field-pair logic below from ever observing the second field on live
+    // 50-fields/s PAL AVC. Preserve 25-frames/s timestamps and all NAL bytes.
+    // Progressive/frame-coded AVC keeps the previous picture boundary.
     for (;;) {
         auto starts = annexBStarts(state.bytes);
         if (starts.empty()) return;
@@ -687,6 +685,11 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         bool complementaryPairComplete = false;
         H264SliceState firstPicture;
         std::size_t boundary = 0;
+        // Broadcast AVC can repeat AUD/PPS (and sometimes SPS) between
+        // complementary top/bottom field pictures. Such prefixes are only
+        // PROVISIONAL picture boundaries: defer splitting until the next
+        // VCL header tells us whether it is the other field of this frame.
+        std::size_t pendingPicturePrefix = 0;
 
         // Only NAL units with a following start code are known complete.
         for (std::size_t i = 0; i + 1 < starts.size(); ++i) {
@@ -699,7 +702,10 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
 
             if (type == 7) {
                 ++spsCount;
-                if (seenVcl || spsCount >= 2U) {
+                if (seenVcl) {
+                    if (pendingPicturePrefix == 0)
+                        pendingPicturePrefix = cur.startCode;
+                } else if (spsCount >= 2U) {
                     boundary = cur.startCode;
                     break;
                 }
@@ -708,7 +714,10 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
             }
             if (type == 8) {
                 ++ppsCount;
-                if (seenVcl || ppsCount >= 2U) {
+                if (seenVcl) {
+                    if (pendingPicturePrefix == 0)
+                        pendingPicturePrefix = cur.startCode;
+                } else if (ppsCount >= 2U) {
                     boundary = cur.startCode;
                     break;
                 }
@@ -717,7 +726,10 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
             }
             if (type == 9) {
                 ++audCount;
-                if (audCount >= 2U) {
+                if (seenVcl) {
+                    if (pendingPicturePrefix == 0)
+                        pendingPicturePrefix = cur.startCode;
+                } else if (audCount >= 2U) {
                     boundary = cur.startCode;
                     break;
                 }
@@ -754,6 +766,9 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
 
             if (complementaryField) {
                 complementaryPairComplete = true;
+                // The intervening AUD/PPS belong to the second field of
+                // the same frame, not a new frame. Keep every NAL byte.
+                pendingPicturePrefix = 0;
                 ++state.h264FieldPairs;
                 if (state.h264FieldPairs <= 4U ||
                     (state.h264FieldPairs % 250U) == 0U) {
@@ -767,7 +782,11 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
                 continue;
             }
 
-            boundary = cur.startCode;
+            // If the next picture started with AUD/SPS/PPS, keep its
+            // prefix with its own VCL instead of attaching it to the
+            // just-completed frame.
+            boundary = pendingPicturePrefix != 0
+                ? pendingPicturePrefix : cur.startCode;
             break;
         }
 
