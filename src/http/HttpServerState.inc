@@ -1174,6 +1174,8 @@ std::string HttpServer::currentState() {
     transcoder["intel_available"] = transcoderCapabilities.intelAvailable;
     transcoder["intel_hw_decoder_available"] =
         transcoderCapabilities.intelHwDecoderAvailable;
+    transcoder["ffmpeg_avc_decoder_available"] =
+        transcoderCapabilities.ffmpegAvcDecoderAvailable;
     transcoder["intel_encoder"] = transcoderCapabilities.intelEncoder;
     transcoder["hevc_video_encoder"] = transcoderCapabilities.hevcVideoEncoder;
     transcoder["x265_available"] = transcoderCapabilities.x265Available;
