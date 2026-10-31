@@ -757,9 +757,12 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
                 firstPicture.fieldPic && currentPicture.fieldPic &&
                 firstPicture.ppsId == currentPicture.ppsId &&
                 firstPicture.frameNum == currentPicture.frameNum &&
-                firstPicture.idr == currentPicture.idr &&
                 firstPicture.bottomField != currentPicture.bottomField &&
-                (!firstPicture.idr ||
+                // Interlaced broadcast GOPs may encode the first field as
+                // IDR (NAL 5) and the complementary second as non-IDR
+                // (NAL 1), despite the same frame_num/PPS. Requiring the
+                // IDR flags to match falsely split every GOP boundary.
+                (!(firstPicture.idr && currentPicture.idr) ||
                  firstPicture.idrPicId == currentPicture.idrPicId)) {
                 complementaryField = true;
             }
