@@ -225,9 +225,14 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     selectedAvcDecoder_ = codec::chooseAvcDecoder(
         config_.videoDecoder, config_.streamId,
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
+    if (selectedAvcDecoder_ == "openh264") {
+        std::cerr << "NATIVE AVC DECODER removed=openh264 remap=auto"
+                  << " stream_id=" << config_.streamId << std::endl;
+        selectedAvcDecoder_ = "auto";
+        config_.videoDecoder = "auto";
+    }
     ffmpegAvcMuxPolicy_.store(selectedAvcDecoder_ == "ffmpeg" ||
-                              selectedAvcDecoder_ == "ittiam" ||
-                              selectedAvcDecoder_ == "openh264",
+                              selectedAvcDecoder_ == "ittiam",
                               std::memory_order_release);
     softwareAvcSilentSamples_ = 0;
     softwareAvcFallbackUnavailable_ = false;
@@ -1129,14 +1134,7 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
     videoDecoder_.reset();
     inputVideoCodec_ = codecType;
     if (codecType == mpegts::ElementaryCodec::H264 &&
-        selectedAvcDecoder_ == "openh264") {
-        videoDecoder_ = codec::createOpenH264VideoDecoder(error, config_.streamId);
-        if (videoDecoder_)
-            std::cerr << "NATIVE AVC DECODER preference selected=openh264"
-                      << " stream_id=" << config_.streamId
-                      << " fallback=disabled" << std::endl;
-    } else if (codecType == mpegts::ElementaryCodec::H264 &&
-               selectedAvcDecoder_ == "ittiam") {
+        selectedAvcDecoder_ == "ittiam") {
         videoDecoder_ = codec::createIttiamAvcDecoder(error);
         if (videoDecoder_)
             std::cerr << "NATIVE AVC DECODER preference selected=ittiam"
@@ -1180,10 +1178,7 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
             } else {
                 videoDecoder_ = codec::createIttiamAvcDecoder(candidateError);
                 if (videoDecoder_) selectedAvcDecoder_ = "ittiam";
-                else {
-                    videoDecoder_ = codec::createOpenH264VideoDecoder(candidateError, config_.streamId);
-                    if (videoDecoder_) selectedAvcDecoder_ = "openh264";
-                }
+                // No OpenH264 video decoder: FFmpeg and Ittiam are the CPU choices.
             }
             if (videoDecoder_)
                 ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
@@ -1330,8 +1325,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     // Never change video encoder, audio timing, or GPU zero-copy selection.
     if (sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         sample.h264FieldCoded &&
-        (selectedAvcDecoder_ == "openh264" ||
-         selectedAvcDecoder_ == "ittiam") &&
+        (selectedAvcDecoder_ == "ittiam") &&
         config_.videoDecoder == "auto" &&
         !softwareAvcFallbackUnavailable_) {
         std::string probeError;
@@ -1383,8 +1377,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     // Intel HW is now an encoder-independent oneVPL decoder that returns I420.
     const bool explicitFrameDecoder =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
-        (selectedAvcDecoder_ == "openh264" ||
-         selectedAvcDecoder_ == "ittiam" ||
+        (selectedAvcDecoder_ == "ittiam" ||
          selectedAvcDecoder_ == "ffmpeg" ||
          selectedAvcDecoder_ == "intel_hw");
     const bool forceNvidiaHardwareAvc =
@@ -1610,7 +1603,6 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     const bool nativeSoftwareAvc =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         (selectedAvcDecoder_ == "ittiam" ||
-         selectedAvcDecoder_ == "openh264" ||
          selectedAvcDecoder_ == "auto");
     if (nativeSoftwareAvc) {
         if (decodedOk && !decoded.empty()) {
