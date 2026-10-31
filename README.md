@@ -1,3 +1,10 @@
+### V10.8.257 — исправление устаревшего теста MPEG-TS Remapper
+
+- В V256 `media_core_tests` собирался, но `testMpegTsRemapper()` останавливался на `output.size() == 2`. Это был **не провал нового PCR теста**: прежняя проверка ожидала выдачу PAT/PMT сразу при получении PMT, хотя актуальный remapper делает `remapReady_=true` и выдаёт PAT/PMT/SDT на следующем периодическом `tick()` / входном TS-пакете.
+- Обновлён только регрессионный `tests/test_media_core.cpp`: после PMT ожидается пустой вывод; `tick()` выдаёт PAT, PMT, SDT; проверяются PID, SID, remapped audio/video PID и CRC; также CAT, EMM, video PID и очередная PAT после 120 мс. Исходный PSI-continuity принадлежит remapper, а не входному TS.
+- `src/media/MpegTsRemapper.cpp` **не изменён**. Исправление PCR=video DTS−500 мс из V256 в `NativeMpegTsMux` сохранено. Не менялись Nvenc/Nvdec, VAAPI/QSV, FFmpeg/Ittiam, потоковые выходы и интерфейс.
+- Проверка на сервере: `cmake -S tests/media_core -B build-test-media && cmake --build build-test-media --parallel 2 && ctest --test-dir build-test-media --output-on-failure`. Если CTest проходит, пересобрать основное приложение с версией V257 и переносимый архив. Сборка теста после GitHub-фикса локально пока не подтверждена, нужна проверка на Ubuntu.
+
 ### V10.8.256 — MPEG-TS PCR decode preroll для всех декодеров (A/V sync)
 
 - Пользователь подтвердил, что звук звучит раньше картинки при **любом доступном видеодекодере**, а не только FFmpeg. Поэтому настройка ручного аудио-офсета V255 **полностью отменена** из кода, UI, JSON конфигурации, clipboard и тестов: она не требуется, пользователь хочет автоматическую синхронизацию.
