@@ -694,8 +694,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.videoBitrate = streamConfig.transcodeVideoBitrate;
         tc.fps = streamConfig.transcodeFps;
         tc.deinterlace = streamConfig.transcodeDeinterlace;
-        // Auto tuning is applied after effective CBR video budget is known.
-        // Never load legacy manual profile/level/preset settings at runtime.
+        // The requested transcoding video bitrate (NOT MPEG-TS transport
+        // CBR target) and chosen FPS/resolution drive automatic encoder tuning.
+        // Preserve that input even when downstream CBR headroom limits the
+        // effective encoder bitrate. Legacy advanced settings are ignored.
+        const std::uint64_t requestedTranscodeVideoBitrate = tc.videoBitrate;
         // A CBR transport cannot sustainably carry an elementary-video target
         // equal to the complete TS target: audio, PES/TS headers, PSI/SI and
         // encoder overshoot also consume bitrate.  When transcoding to CBR,
@@ -722,10 +725,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
             tc.videoBitrate = effectiveVideo;
         }
-        // V10.8.240: consistent policy for CPU/NVIDIA/Intel, based on the
-        // *effective* bitrate after CBR mux headroom and the requested FPS.
+        // V10.8.240: encoder tuning follows the user-selected TRANSCODING
+        // video bitrate, independent of the separate transport CBR setting.
         const auto autoTc = dvbstreamer5::app::automaticTranscodeSettings(
-            tc.fps, tc.videoBitrate,
+            tc.fps, requestedTranscodeVideoBitrate,
             static_cast<std::uint32_t>(tc.width),
             static_cast<std::uint32_t>(tc.height), tc.videoEncoder);
         tc.preset = autoTc.preset;
@@ -740,6 +743,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             std::cerr << "NATIVE TRANSCODE AUTO stream=" << streamConfig.id
                       << " encoder=" << tc.videoEncoder
                       << " fps=" << tc.fps
+                      << " configured_video_kbps=" << (requestedTranscodeVideoBitrate / 1000ULL)
                       << " effective_video_kbps=" << (tc.videoBitrate / 1000ULL)
                       << " preset=" << tc.preset
                       << " profile=" << tc.profile
