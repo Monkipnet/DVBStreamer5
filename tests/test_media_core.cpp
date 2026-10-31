@@ -189,7 +189,14 @@ void testNativeMpegTsMux() {
         PacketInfo info;
         assert(inspectPacket(ts.data(), ts.size(), info));
         if (info.pid != 0x0200) continue;
-        sawPcr = sawPcr || info.hasPcr;
+        if (info.hasPcr) {
+            sawPcr = true;
+            // The decoder must receive this AU with future DTS, otherwise
+            // video presentation lags immediately-decodable audio.
+            constexpr std::uint64_t mask = (1ULL << 33U) - 1ULL;
+            assert(((videoSample.dts90k - info.pcrBase90k) & mask) ==
+                   NativeMpegTsMux::kPcrDecodePreroll90k);
+        }
         if (!info.payloadUnitStart || !info.hasPayload) continue;
         const std::size_t offset = info.payloadOffset;
         assert(offset + 9 < ts.size());
@@ -229,6 +236,30 @@ void testNativeMpegTsMux() {
         return pidOf(ts) == kNullPid;
     });
     assert(nullCount > 0);
+
+    // An incoming 33-bit clock near 0 must not underflow into a huge
+    // signed or non-compliant PCR; timestamp separation remains 500 ms.
+    NativeMpegTsMux wrapMux;
+    NativeMuxConfig wrapConfig = config;
+    wrapConfig.targetBitrate = 0;
+    assert(wrapMux.initialize(wrapConfig, error));
+    assert(wrapMux.setCodec(ElementaryKind::Video, ElementaryCodec::H264, error));
+    videoSample.pts90k = 9000;
+    videoSample.dts90k = 9000;
+    output.clear();
+    assert(wrapMux.write(ElementaryKind::Video, videoSample, output, error));
+    bool sawWrapPcr = false;
+    for (const auto& ts : output) {
+        PacketInfo info;
+        assert(inspectPacket(ts.data(), ts.size(), info));
+        if (info.pid == wrapConfig.videoPid && info.hasPcr) {
+            constexpr std::uint64_t mask = (1ULL << 33U) - 1ULL;
+            assert(((videoSample.dts90k - info.pcrBase90k) & mask) ==
+                   NativeMpegTsMux::kPcrDecodePreroll90k);
+            sawWrapPcr = true;
+        }
+    }
+    assert(sawWrapPcr);
 }
 
 void testMpegTsRemapper() {
