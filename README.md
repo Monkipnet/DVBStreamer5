@@ -1,3 +1,12 @@
+### V10.8.251 — независимый FFmpeg H.264 decoder для interlaced IPTV
+
+- По скриншоту V250 видны сохраняющиеся вертикальные блочные артефакты на вещательном AVC 720×576 25 fps. Дамп того же канала успешно декодируется независимым FFmpeg, а NativeTsDemux уже правильно собирает пары полей. Поэтому добавлен отдельный selectable software H.264 decoder на libavcodec без замены Ittiam/OpenH264 или аппаратных энкодеров.
+- В редакторе плитки: **Декодер H.264 → FFmpeg libavcodec** (также в английском UI). Новый декодер использует один worker для стабильной обработки PAFF/MBAFF, принимает H.264 Annex-B access units через FFmpeg send/receive API, копирует stride Y/U/V planes в I420, сохраняет frame PTS и interlaced-флаг, передаёт обычному CPU/VAAPI/QSV/NVENC encoder.
+- Опциональные зависимости: `sudo apt-get install -y libavcodec-dev libavutil-dev pkg-config` и чистая переконфигурация CMake. При отсутствии dev-файлов старая сборка остаётся доступна, FFmpeg-пункт disabled. Проверить строку `Optional H.264 software decoder: FFmpeg/libavcodec enabled`.
+- Portable bundle `scripts/make_portable_linux_bundle.sh` рекурсивно собирает ELF-библиотеки; в архиве также проверить libavcodec и libavutil.
+- Устранение артефактов нужно подтвердить в VLC на канале 8 после установки: `FFmpeg libavcodec` decoder + `Intel VAAPI direct` encoder, 720×576, 25 fps без deinterlace. Ожидаются логи `NATIVE AVC DECODER backend=ffmpeg-libavcodec`, `NATIVE AVC FFMPEG OUTPUT`.
+- NVENC/NVDEC, Intel zero-copy, VAAPI encoder, Ittiam, OpenH264, MPEG-TS output и остальные каналы не менялись. Режим явно выбирается пользователем и не становится глобальным.
+
 ### V10.8.250 — исправлена сборка interlaced AVC field pairs из IPTV MPEG-TS
 
 - Диагностика канала 8 (`stream-1793338874706`) по дампу из V249 выявила, что поток выдаёт 50 отдельных top/bottom field NAL в секунду, причём каждый field предваряется собственными AUD/PPS. FFmpeg независимо декодировал видео с нормальными кадрами. Старый `NativeTsDemux::queueVideoSample()` немедленно резал AU по повторному AUD/PPS, до уже существующей проверки `complementaryField`; поэтому Ittiam получал отдельные field-AU вместо пары.
