@@ -1267,17 +1267,13 @@ void testNativeHttpCbrRelay() {
     const auto useful = collectCbrMedia(receiver, sourcePackets.size(), 3000);
     assert(useful == sourcePackets);
 
-    const auto stopDeadline = std::chrono::steady_clock::now() +
-        std::chrono::seconds(2);
-    while (relay.isRunning() &&
-        std::chrono::steady_clock::now() < stopDeadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    assert(!relay.isRunning());
+    // HTTP inputs are live and intentionally reconnect after EOF. The
+    // one-shot test server ends its response, but the relay must remain
+    // active until its owner explicitly requests stop().
+    assert(relay.isRunning());
     relay.stop();
     httpServer.join();
-    assert(relay.lastError().empty());
-    assert(relay.inputBytes() == 8 * 188);
+    assert(relay.inputBytes() >= 8 * 188);
     assert(relay.outputBytes() >= 2 * 7 * 188);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: test-secret") != std::string::npos);
@@ -1312,16 +1308,12 @@ void testNativeHttpQueryAccessKey() {
     const auto useful = collectCbrMedia(receiver, 1, 3000);
     assert(useful.front() == sourcePacket);
 
-    const auto stopDeadline = std::chrono::steady_clock::now() +
-        std::chrono::seconds(2);
-    while (relay.isRunning() &&
-        std::chrono::steady_clock::now() < stopDeadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    assert(!relay.isRunning());
+    // HTTP inputs are live and intentionally reconnect after EOF. The
+    // one-shot test server ends its response, but the relay must remain
+    // active until its owner explicitly requests stop().
+    assert(relay.isRunning());
     relay.stop();
     httpServer.join();
-    assert(relay.lastError().empty());
     const std::string request = httpServer.request();
     assert(request.find("GET /live.ts?stream%20key=a%26b HTTP/1.1") !=
         std::string::npos);
@@ -1361,18 +1353,14 @@ void testNativeHttpVbrAndRtpFanout() {
     assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(view, decoded));
     assert(decoded.size() == 1 && decoded.front() == sourcePacket);
 
-    const auto stopDeadline = std::chrono::steady_clock::now() +
-        std::chrono::seconds(2);
-    while (relay.isRunning() &&
-        std::chrono::steady_clock::now() < stopDeadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    assert(!relay.isRunning());
+    // HTTP inputs are live and intentionally reconnect after EOF. The
+    // one-shot test server ends its response, but the relay must remain
+    // active until its owner explicitly requests stop().
+    assert(relay.isRunning());
     relay.stop();
     httpServer.join();
-    assert(relay.lastError().empty());
-    assert(relay.inputBytes() == sourcePacket.size());
-    assert(relay.outputBytes() == 2 * sourcePacket.size());
+    assert(relay.inputBytes() >= sourcePacket.size());
+    assert(relay.outputBytes() >= 2 * sourcePacket.size());
 }
 
 void testNativeHttpFailureIsReported() {
@@ -1391,16 +1379,18 @@ void testNativeHttpFailureIsReported() {
     };
     assert(relay.start(config, error));
 
-    const auto stopDeadline = std::chrono::steady_clock::now() +
+    // A transient HTTP 404 must be reported while the live relay continues
+    // trying the source. It is not a permanent stop condition.
+    const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(2);
-    while (relay.isRunning() &&
-        std::chrono::steady_clock::now() < stopDeadline) {
+    while (relay.lastError().find("HTTP 404") == std::string::npos &&
+           std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    assert(!relay.isRunning());
+    assert(relay.isRunning());
+    assert(relay.lastError().find("HTTP 404") != std::string::npos);
     relay.stop();
     httpServer.join();
-    assert(relay.lastError().find("HTTP 404") != std::string::npos);
 }
 
 void testNativeHttpDoesNotRedirectAccessKeys() {
@@ -1423,16 +1413,18 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
     };
     assert(relay.start(config, error));
 
-    const auto stopDeadline = std::chrono::steady_clock::now() +
+    // Do not follow redirects with credentials. A 302 is reported as an
+    // input failure, but a live relay stays up for possible recovery.
+    const auto deadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(2);
-    while (relay.isRunning() &&
-        std::chrono::steady_clock::now() < stopDeadline) {
+    while (relay.lastError().find("HTTP 302") == std::string::npos &&
+           std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    assert(!relay.isRunning());
+    assert(relay.isRunning());
+    assert(relay.lastError().find("HTTP 302") != std::string::npos);
     relay.stop();
     httpServer.join();
-    assert(relay.lastError().find("HTTP 302") != std::string::npos);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: must-not-leak") != std::string::npos);
 }
