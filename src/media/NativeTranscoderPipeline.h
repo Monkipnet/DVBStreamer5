@@ -39,6 +39,7 @@ struct NativeTranscoderConfig {
     std::uint64_t videoBitrate = 6000000;
     std::uint64_t audioBitrate = 192000;
     bool deinterlace = true;
+    int audioSyncOffsetMs = 0; // -500..+500; + delays audio relative to video
     std::string preset = "balanced";
     std::string profile = "auto";
     std::string level = "auto";
