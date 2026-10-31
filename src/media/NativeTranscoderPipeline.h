@@ -474,6 +474,12 @@ private:
     std::atomic<std::uint64_t> muxDroppedAudio_{0};
     std::atomic<std::uint64_t> lastMuxVideoClock90k_{0};
     std::atomic<std::uint64_t> lastMuxAudioClock90k_{0};
+    // Telemetry only: latest PTS accepted at each stage, without changing
+    // the original A/V timestamps or the mux scheduler.
+    std::atomic<std::uint64_t> lastInputVideoPts90k_{0};
+    std::atomic<std::uint64_t> lastInputAudioPts90k_{0};
+    std::atomic<std::uint64_t> lastDecodedVideoPts90k_{0};
+    std::atomic<std::uint64_t> lastEncodedAudioPts90k_{0};
     static constexpr std::size_t kMaxVideoQueue = 128;
     static constexpr std::size_t kMaxExternalVideoQueue = 12;
     static constexpr std::size_t kMaxAudioQueue = 512;
