@@ -1018,8 +1018,12 @@ void testCbrTsPacer() {
         pacer.nextDeadline() - firstDeadline).count();
     assert(static_cast<std::uint64_t>(actualNanoseconds) == expectedNanoseconds);
 
+    // The production pacer minimum is now 100 kbps, not the historical
+    // 512-kbps floor. Verify both the exact minimum and a below-min clamp.
     CbrTsPacer clamped(100000);
-    assert(clamped.targetBitrate() == 512000);
+    assert(clamped.targetBitrate() == 100000);
+    CbrTsPacer belowMinimum(50000);
+    assert(belowMinimum.targetBitrate() == 100000);
     bool rejectedZero = false;
     try {
         CbrTsPacer invalid(0);
