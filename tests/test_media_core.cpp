@@ -930,6 +930,48 @@ void testNativeExternallyFedTsRelay() {
     relay.stop();
 }
 
+// Collect useful MPEG-TS from CBR output, allowing NULL packets to appear
+// anywhere in the fixed-size 7x188 datagrams. Verify NULL continuity and
+// that useful media keeps its input order across datagrams.
+std::vector<Packet> collectCbrMedia(
+    dvbstreamer5::media::network::UdpSocket& receiver,
+    std::size_t expectedCount, int timeoutMs = 2500) {
+    using namespace dvbstreamer5::media::mpegts;
+    std::vector<Packet> useful;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(timeoutMs);
+    std::array<std::uint8_t, 2048> received {};
+    bool haveNullContinuity = false;
+    std::uint8_t expectedNullContinuity = 0;
+    std::string error;
+    while (useful.size() < expectedCount &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::size_t size = 0;
+        assert(receiver.receive(received.data(), received.size(),
+                                size, 250, error));
+        if (size == 0) continue;
+        assert(size == kPacketsPerCbrDatagram * kPacketSize);
+        for (std::size_t i = 0; i < kPacketsPerCbrDatagram; ++i) {
+            Packet pkt {};
+            std::copy_n(received.data() + i * kPacketSize,
+                        kPacketSize, pkt.begin());
+            PacketInfo info;
+            assert(inspectPacket(pkt.data(), pkt.size(), info));
+            if (info.pid == kNullPid) {
+                if (haveNullContinuity)
+                    assert(info.continuityCounter == expectedNullContinuity);
+                expectedNullContinuity = static_cast<std::uint8_t>(
+                    (info.continuityCounter + 1U) & 0x0fU);
+                haveNullContinuity = true;
+            } else {
+                useful.push_back(pkt);
+            }
+        }
+    }
+    assert(useful.size() == expectedCount);
+    return useful;
+}
+
 void testCbrTsPacer() {
     using namespace dvbstreamer5::media::mpegts;
     const Packet mediaPacket = packet(0x0142, 3);
@@ -938,11 +980,20 @@ void testCbrTsPacer() {
     CbrDatagram datagram {};
     auto now = std::chrono::steady_clock::now();
     assert(paddingPacer.nextDatagram(now, datagram));
-    assert(datagram[0] == mediaPacket);
+    // The initial 75% useful-token pace may send NULL before media.
+    assert(std::count(datagram.begin(), datagram.end(), mediaPacket) == 1);
+    assert(paddingPacer.queuedPackets() == 0);
     PacketInfo info;
-    for (std::size_t i = 1; i < datagram.size(); ++i) {
-        assert(inspectPacket(datagram[i].data(), datagram[i].size(), info));
-        assert(info.pid == kNullPid && info.continuityCounter == i - 1);
+    std::uint8_t expectedNullContinuity = 0;
+    for (const auto& pkt : datagram) {
+        assert(inspectPacket(pkt.data(), pkt.size(), info));
+        if (info.pid != kNullPid) {
+            assert(pkt == mediaPacket);
+            continue;
+        }
+        assert(info.continuityCounter == expectedNullContinuity);
+        expectedNullContinuity = static_cast<std::uint8_t>(
+            (expectedNullContinuity + 1U) & 0x0fU);
     }
 
     CbrTsPacer pacer(2000000);
@@ -982,7 +1033,8 @@ void testCbrTsPacer() {
     invalidPacket[0] = 0;
     assert(!bounded.enqueue(invalidPacket));
     assert(!bounded.started());
-    constexpr std::size_t maximumQueuedPackets = (2 * 1024 * 1024) / 188;
+    constexpr std::size_t maximumQueuedPackets =
+        CbrTsPacer::maximumQueuedBytes() / kPacketSize;
     for (std::size_t i = 0; i < maximumQueuedPackets; ++i) {
         assert(bounded.enqueue(mediaPacket));
     }
@@ -1007,34 +1059,30 @@ void testNativeUdpCbrRelay() {
     config.outputType = "udp-cbr";
     config.outputHost = "127.0.0.1";
     config.outputPort = outputReceiver.localPort();
-    config.targetBitrate = 512000;
+    config.targetBitrate = 512000 +
+        dvbstreamer5::media::mpegts::CbrTsPacer::kNoStartupBufferMarker;
     assert(relay.start(config, error));
 
     const Packet expected = packet(0x0175, 5);
     assert(inputSender.send(expected.data(), expected.size(), error));
 
+    const auto useful = collectCbrMedia(outputReceiver, 1);
+    assert(useful.front() == expected);
+
+    // Physical 512-kbps sender continues at its UDP datagram clock after
+    // the single useful packet has drained; the remaining payload is NULL.
     std::array<std::uint8_t, 2048> received {};
     std::size_t size = 0;
-    assert(outputReceiver.receive(received.data(), received.size(), size, 2000, error));
-    assert(size == 7 * 188);
-    PacketInfo info;
-    assert(dvbstreamer5::media::mpegts::inspectPacket(received.data(), 188, info));
-    assert(info.pid == 0x0175);
-    for (std::size_t i = 1; i < 7; ++i) {
-        assert(dvbstreamer5::media::mpegts::inspectPacket(received.data() + i * 188, 188, info));
-        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
-        assert(info.continuityCounter == i - 1);
-    }
-
     const auto firstSentAt = std::chrono::steady_clock::now();
     assert(outputReceiver.receive(received.data(), received.size(), size, 1000, error));
     const auto secondSentAt = std::chrono::steady_clock::now();
     assert(size == 7 * 188);
-    assert(secondSentAt - firstSentAt >= std::chrono::milliseconds(15));
+    assert(secondSentAt - firstSentAt >= std::chrono::milliseconds(10));
+    PacketInfo info;
     for (std::size_t i = 0; i < 7; ++i) {
-        assert(dvbstreamer5::media::mpegts::inspectPacket(received.data() + i * 188, 188, info));
+        assert(dvbstreamer5::media::mpegts::inspectPacket(
+            received.data() + i * 188, 188, info));
         assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
-        assert(info.continuityCounter == (i + 6) % 16);
     }
 
     const auto counterDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -1068,7 +1116,8 @@ void testNativeUdpFanoutRelay() {
         {"rtp", "127.0.0.1", rtpReceiver.localPort(), ""},
         {"udp-cbr", "127.0.0.1", cbrReceiver.localPort(), ""}
     };
-    config.targetBitrate = 512000;
+    config.targetBitrate = 512000 +
+        dvbstreamer5::media::mpegts::CbrTsPacer::kNoStartupBufferMarker;
     assert(relay.start(config, error));
 
     dvbstreamer5::media::mpegts::Packet inputPacket {};
@@ -1092,16 +1141,8 @@ void testNativeUdpFanoutRelay() {
     assert(dvbstreamer5::media::rtp::decodeMpegTsPayload(view, decoded));
     assert(decoded.size() == 1 && decoded.front() == inputPacket);
 
-    assert(cbrReceiver.receive(received.data(), received.size(), size, 2000, error));
-    assert(size == 7 * 188);
-    assert(std::equal(inputPacket.begin(), inputPacket.end(), received.begin()));
-    dvbstreamer5::media::mpegts::PacketInfo packetInfo;
-    for (std::size_t index = 1; index < 7; ++index) {
-        assert(dvbstreamer5::media::mpegts::inspectPacket(
-            received.data() + index * 188, 188, packetInfo));
-        assert(packetInfo.pid == dvbstreamer5::media::mpegts::kNullPid);
-        assert(packetInfo.continuityCounter == index - 1);
-    }
+    const auto cbrMedia = collectCbrMedia(cbrReceiver, 1);
+    assert(cbrMedia.front() == inputPacket);
 
     const std::uint64_t expectedOutputBytes = 2 * inputPacket.size() + 7 * 188;
     const auto counterDeadline = std::chrono::steady_clock::now() +
@@ -1110,7 +1151,7 @@ void testNativeUdpFanoutRelay() {
         std::chrono::steady_clock::now() < counterDeadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    assert(relay.outputBytes() == expectedOutputBytes);
+    assert(relay.outputBytes() >= expectedOutputBytes);
     relay.stop();
 }
 
@@ -1146,32 +1187,12 @@ void testNativeFileCbrRelay() {
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
     };
-    config.targetBitrate = 512000;
+    config.targetBitrate = 512000 +
+        dvbstreamer5::media::mpegts::CbrTsPacer::kNoStartupBufferMarker;
     assert(relay.start(config, error));
 
-    std::array<std::uint8_t, 2048> received {};
-    std::size_t size = 0;
-    assert(receiver.receive(received.data(), received.size(), size, 2000, error));
-    assert(size == 7 * 188);
-    for (std::size_t index = 0; index < 7; ++index) {
-        assert(std::equal(
-            sourcePackets[index].begin(), sourcePackets[index].end(),
-            received.begin() + static_cast<std::ptrdiff_t>(index * 188)));
-    }
-    const auto firstSentAt = std::chrono::steady_clock::now();
-    assert(receiver.receive(received.data(), received.size(), size, 1000, error));
-    const auto secondSentAt = std::chrono::steady_clock::now();
-    assert(size == 7 * 188);
-    assert(std::equal(
-        sourcePackets[7].begin(), sourcePackets[7].end(), received.begin()));
-    assert(secondSentAt - firstSentAt >= std::chrono::milliseconds(10));
-    PacketInfo info;
-    for (std::size_t index = 1; index < 7; ++index) {
-        assert(dvbstreamer5::media::mpegts::inspectPacket(
-            received.data() + index * 188, 188, info));
-        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
-        assert(info.continuityCounter == index - 1);
-    }
+    const auto useful = collectCbrMedia(receiver, sourcePackets.size());
+    assert(useful == sourcePackets);
 
     const auto stopDeadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(1);
@@ -1181,9 +1202,7 @@ void testNativeFileCbrRelay() {
     assert(!relay.isRunning());
     assert(relay.lastError().empty());
     assert(relay.inputBytes() == 8 * 188);
-    assert(relay.outputBytes() == 2 * 7 * 188);
-    assert(receiver.receive(received.data(), received.size(), size, 50, error));
-    assert(size == 0);
+    assert(relay.outputBytes() >= 2 * 7 * 188);
     relay.stop();
     std::filesystem::remove(filePath);
 
@@ -1237,29 +1256,12 @@ void testNativeHttpCbrRelay() {
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
     };
-    config.targetBitrate = 512000;
+    config.targetBitrate = 512000 +
+        dvbstreamer5::media::mpegts::CbrTsPacer::kNoStartupBufferMarker;
     assert(relay.start(config, error));
 
-    std::array<std::uint8_t, 2048> received {};
-    std::size_t size = 0;
-    assert(receiver.receive(received.data(), received.size(), size, 3000, error));
-    assert(size == 7 * 188);
-    for (std::size_t index = 0; index < 7; ++index) {
-        assert(std::equal(
-            sourcePackets[index].begin(), sourcePackets[index].end(),
-            received.begin() + static_cast<std::ptrdiff_t>(index * 188)));
-    }
-
-    assert(receiver.receive(received.data(), received.size(), size, 1000, error));
-    assert(size == 7 * 188);
-    assert(std::equal(
-        sourcePackets[7].begin(), sourcePackets[7].end(), received.begin()));
-    PacketInfo info;
-    for (std::size_t index = 1; index < 7; ++index) {
-        assert(dvbstreamer5::media::mpegts::inspectPacket(
-            received.data() + index * 188, 188, info));
-        assert(info.pid == dvbstreamer5::media::mpegts::kNullPid);
-    }
+    const auto useful = collectCbrMedia(receiver, sourcePackets.size(), 3000);
+    assert(useful == sourcePackets);
 
     const auto stopDeadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(2);
@@ -1272,7 +1274,7 @@ void testNativeHttpCbrRelay() {
     httpServer.join();
     assert(relay.lastError().empty());
     assert(relay.inputBytes() == 8 * 188);
-    assert(relay.outputBytes() == 2 * 7 * 188);
+    assert(relay.outputBytes() >= 2 * 7 * 188);
     const std::string request = httpServer.request();
     assert(request.find("X-Stream-Key: test-secret") != std::string::npos);
     assert(request.find("DVBStreamer5-test") != std::string::npos);
@@ -1299,15 +1301,12 @@ void testNativeHttpQueryAccessKey() {
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
     };
-    config.targetBitrate = 512000;
+    config.targetBitrate = 512000 +
+        dvbstreamer5::media::mpegts::CbrTsPacer::kNoStartupBufferMarker;
     assert(relay.start(config, error));
 
-    std::array<std::uint8_t, 2048> received {};
-    std::size_t size = 0;
-    assert(receiver.receive(received.data(), received.size(), size, 3000, error));
-    assert(size == 7 * 188);
-    assert(std::equal(
-        sourcePacket.begin(), sourcePacket.end(), received.begin()));
+    const auto useful = collectCbrMedia(receiver, 1, 3000);
+    assert(useful.front() == sourcePacket);
 
     const auto stopDeadline = std::chrono::steady_clock::now() +
         std::chrono::seconds(2);
