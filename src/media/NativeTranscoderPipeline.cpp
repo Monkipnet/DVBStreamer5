@@ -468,6 +468,8 @@ void NativeTranscoderPipeline::reset() {
     videoRateClockValid_ = false;
     videoRateNextPts90k_ = 0;
     videoRateDroppedFrames_ = 0;
+    ffmpegPalPtsClock_.reset();
+    ffmpegPalPtsCorrectedFrames_ = 0;
     sourceGeometryResolved_ = false;
     sourceWidth_ = 0;
     sourceHeight_ = 0;
@@ -1484,6 +1486,38 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                       << raw.width << "x" << raw.height
                       << " output=" << config_.width << "x" << config_.height
                       << std::endl;
+        }
+
+        // FFmpeg delivers decoded H.264 in display order, but interlaced
+        // broadcast PTS may wobble through the field-pair reorder delay.
+        // For a VERIFIED 25-fps PAL cadence only, reconstruct its steady
+        // display clock before the generic FPS gate. No change for Ittiam,
+        // OpenH264, NVDEC, progressive or 30/50-fps sources.
+        if (selectedAvcDecoder_ == "ffmpeg" && raw.interlaced &&
+            raw.hasPts && config_.fps >= 24.99 && config_.fps <= 25.01) {
+            const auto pal = ffmpegPalPtsClock_.apply(raw.pts90k);
+            if (pal.discontinuity) {
+                videoRateClockValid_ = false;
+                std::cerr << "NATIVE AVC FFMPEG PTS discontinuity"
+                          << " stream_id=" << config_.streamId
+                          << " source_pts=" << raw.pts90k
+                          << " action=reanchor" << std::endl;
+            }
+            if (pal.corrected) {
+                raw.pts90k = pal.pts90k;
+                raw.dts90k = pal.pts90k;
+                raw.hasDts = true;
+                ++ffmpegPalPtsCorrectedFrames_;
+                if (pal.locked || ffmpegPalPtsCorrectedFrames_ % 500U == 0U) {
+                    std::cerr << "NATIVE AVC FFMPEG PTS cadence"
+                              << " stream_id=" << config_.streamId
+                              << " fps=25 locked=1 corrected="
+                              << ffmpegPalPtsCorrectedFrames_
+                              << " source_delta90k=" << pal.sourceDelta90k
+                              << " output_pts=" << raw.pts90k
+                              << std::endl;
+                }
+            }
         }
 
         // All ABR renditions share this post-decode frame. Gate once here so
