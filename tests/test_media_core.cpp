@@ -328,14 +328,36 @@ void testMpegTsRemapper() {
     assert(((*outPat)[3] & 0x0f) == 1); // Independent output continuity 0->1.
     output.clear();
 
+    // Truncated PAT is an ordinary live-TS event: the remapper accumulates
+    // incomplete PSI across packets instead of rejecting it or terminating
+    // the channel. A fresh PUSI discards the partial table and recovers.
     auto fragmentedPat = packet(0, 4);
     fragmentedPat[1] |= 0x40;
     fragmentedPat[4] = 0;
     fragmentedPat[5] = 0x00;
     fragmentedPat[6] = 0xb0;
-    fragmentedPat[7] = 0xc0;
-    assert(!remapper.process(fragmentedPat, output, error));
-    assert(error.find("one TS packet") != std::string::npos);
+    fragmentedPat[7] = 0xc0; // section_length=192; fewer bytes remain
+    assert(remapper.process(fragmentedPat, output, error));
+    assert(error.empty());
+    // The next valid PAT starts at counter 5, following counter 4.
+    // It must restore the PSI assembler without losing the mapped service.
+    const auto recoveryPat = sectionPacket(0, 5, makePatSection(10, 0x1000));
+    assert(remapper.process(recoveryPat, output, error));
+    assert(error.empty());
+    for (const auto& ts : output) {
+        if (pidOf(ts) == 0) {
+            assert(ts[13] == 0 && ts[14] == 42);
+            assert(sectionCrc(ts.data() + 5, 16) == 0);
+        }
+    }
+    output.clear();
+    // The known video PID is still remapped after the partial PAT and
+    // recovery; only PSI assembly state was discarded.
+    assert(remapper.process(packet(0x100, 2), output, error));
+    assert(error.empty());
+    const auto mappedVideo = std::find_if(output.begin(), output.end(),
+        [](const Packet& ts) { return pidOf(ts) == 0x0200; });
+    assert(mappedVideo != output.end());
 }
 
 class HttpTsTestServer {
