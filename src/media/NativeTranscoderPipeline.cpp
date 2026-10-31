@@ -225,6 +225,8 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     selectedAvcDecoder_ = codec::chooseAvcDecoder(
         config_.videoDecoder, config_.streamId,
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
+    ffmpegAvcMuxPolicy_.store(selectedAvcDecoder_ == "ffmpeg",
+                              std::memory_order_release);
     softwareAvcSilentSamples_ = 0;
     softwareAvcFallbackUnavailable_ = false;
     diagnosticI420Frames_ = 0;
@@ -942,7 +944,7 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // Preserve the 500-ms escape hatch for all other
                         // decoders, including GPU zero-copy.
                         const std::uint64_t hardLead90k =
-                            selectedAvcDecoder_ == "ffmpeg"
+                            ffmpegAvcMuxPolicy_.load(std::memory_order_acquire)
                                 ? kMaxAvLead90k : kMaxAvHardLead90k;
                         const bool withinHardLead =
                             !mpegts::ptsAheadOf90k(clock, otherClock, hardLead90k);
@@ -969,7 +971,7 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                             otherClock != 0 &&
                             mpegts::ptsAheadOf90k(
                                 clock, otherClock,
-                                selectedAvcDecoder_ == "ffmpeg"
+                                ffmpegAvcMuxPolicy_.load(std::memory_order_acquire)
                                     ? kMaxAvLead90k : kMaxAvHardLead90k);
                         if (peerCanCatchUpOnly) {
                             muxQueueCv_.wait(lock);
@@ -1045,7 +1047,8 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                       << " video=" << muxedVideo
                       << " audio=" << muxedAudio
                       << " av_delta_ms=" << avDeltaMs
-                      << " hard_lead_ms=" << (selectedAvcDecoder_ == "ffmpeg" ? 150 : 500)
+                      << " hard_lead_ms=" <<
+                          (ffmpegAvcMuxPolicy_.load(std::memory_order_acquire) ? 150 : 500)
                       << " late_video=" << muxLateVideo_.load(std::memory_order_acquire)
                       << " late_audio=" << muxLateAudio_.load(std::memory_order_acquire)
                       << " drop_video=" << muxDroppedVideo_.load(std::memory_order_acquire)
@@ -1056,7 +1059,7 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
             // streams explicitly using the optional FFmpeg H.264 decoder.
             // The latest-source timestamps are producer watermarks, NOT a
             // measured playback offset; compare repeated stable samples.
-            if (selectedAvcDecoder_ == "ffmpeg") {
+            if (ffmpegAvcMuxPolicy_.load(std::memory_order_acquire)) {
                 constexpr std::uint64_t mask = (1ULL << 33U) - 1ULL;
                 constexpr std::uint64_t half = 1ULL << 32U;
                 const auto wrapDeltaMs = [](std::uint64_t a, std::uint64_t b) {
@@ -1302,6 +1305,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             const std::string original = selectedAvcDecoder_;
             videoDecoder_ = std::move(recovered);
             selectedAvcDecoder_ = "ffmpeg";
+            ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
             softwareAvcSilentSamples_ = 0;
             ffmpegPalPtsClock_.reset();
             videoRateClockValid_ = false;
@@ -1588,6 +1592,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             if (recovered) {
                 videoDecoder_ = std::move(recovered);
                 selectedAvcDecoder_ = "ffmpeg";
+                ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
                 softwareAvcSilentSamples_ = 0;
                 ffmpegPalPtsClock_.reset();
                 videoRateClockValid_ = false;
