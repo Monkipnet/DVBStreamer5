@@ -3391,8 +3391,24 @@ function appendLoadChips(container, heading, entries) {
 }
 function loadProcessGpuForCard(metrics, gpu) {
   const all=Array.isArray(metrics.process_gpus)?metrics.process_gpus:[];
-  const id=String(gpu.pci_bus_id||'');
-  return id ? all.find(x=>x.pci_bus_id===id) || null : null;
+  const id=String(gpu.pci_bus_id||'').toLowerCase();
+  // Exact PCI-BDF match: do not attribute an unrelated Intel/NVIDIA device to
+  // the first card when the driver does not expose a DRM process identifier.
+  return id ? all.find(x=>String(x.pci_bus_id||'').toLowerCase()===id) || null : null;
+}
+// V10.8.241: Intel i915/xe generally lacks a card-wide gpu_busy_percent.
+// The process GPU engine delta still measures real Video/Render work done by
+// DVBStreamer5. Make its scope explicit; NEVER label it host-wide GPU load.
+function gpuDisplayLoad(metrics, gpu) {
+  const host=Number(gpu?.utilization_percent);
+  if (typeof gpu?.utilization_percent==='number' && Number.isFinite(host))
+    return {percent:Math.max(0,Math.min(100,host)),scope:'host',engine:''};
+  const app=loadProcessGpuForCard(metrics,gpu);
+  const engines=loadEngineValues(app?.engines);
+  if (!engines.length) return {percent:null,scope:'unavailable',engine:''};
+  const peak=engines.reduce((a,b)=>b.percent>a.percent?b:a);
+  return {percent:Math.max(0,Math.min(100,peak.percent)),
+          scope:'app',engine:peak.name};
 }
 function loadEngineValues(engines) {
   if(!engines || typeof engines!=='object' || Array.isArray(engines)) return [];
@@ -3597,15 +3613,28 @@ function updateSystemLoad(metrics) {
   document.getElementById('cpuLoad').textContent = `${Number(metrics.cpu_percent || 0).toFixed(1)}%`;
   document.getElementById('ramLoad').textContent = `${Number(metrics.ram_percent || 0).toFixed(1)}%`;
   const gpus = Array.isArray(metrics.gpus) ? metrics.gpus : [];
-  const supported = gpus.filter(g => typeof g.utilization_percent === 'number' &&
-    Number.isFinite(g.utilization_percent));
+  const gpuRows=gpus.map(g=>({gpu:g,reading:gpuDisplayLoad(metrics,g)}));
+  const supported=gpuRows.filter(row=>row.reading.percent!==null);
   const gpuLoad = document.getElementById('gpuLoad');
   if (gpuLoad) {
-    gpuLoad.textContent = !gpus.length ? '—' : supported.length
-      ? Math.max(...supported.map(g => g.utilization_percent)).toFixed(0) + '%' +
-        (gpus.length > 1 ? ' (' + gpus.length + ')' : '')
+    const peak=supported.length?supported.reduce((a,b)=>
+      b.reading.percent>a.reading.percent?b:a):null;
+    const appWord=subtitleUiTriText('прил.','app','aplik.');
+    gpuLoad.textContent = !gpus.length ? '—' : peak
+      ? peak.reading.percent.toFixed(0)+'%'+
+        (peak.reading.scope==='app' ? ' · '+String(peak.gpu.vendor||'GPU')+
+          ' ('+appWord+')' : '')+
+        (gpus.length>1 ? ' ('+gpus.length+')' : '')
       : t('unavailable');
-    gpuLoad.title = gpus.map(g => String(g.name || g.vendor || 'GPU')).join(' · ');
+    gpuLoad.title=gpuRows.map(({gpu,reading})=>
+      String(gpu.name||gpu.vendor||'GPU')+': '+
+      (reading.percent===null?t('unavailable'):
+        reading.percent.toFixed(1)+'% '+
+        (reading.scope==='app'
+          ? '('+subtitleUiTriText('только DVBStreamer5','DVBStreamer5 only','samo DVBStreamer5')+
+            (reading.engine ? ', '+reading.engine : '')+')'
+          : '('+subtitleUiTriText('весь GPU','whole GPU','cijeli GPU')+')')))
+      .join(' · ');
   }
   recordSystemLoadChartSamples(metrics);
   refreshSystemLoadPanel(metrics);
@@ -3760,9 +3789,13 @@ function refreshSystemLoadPanel(metrics) {
         key:chartKey+':engine:'+engine.name,
         name:engine.name,color:loadSeriesColor(ei)
       }));
+      const displayLoad=gpuDisplayLoad(metrics,gpu);
       line(String(gpu.name || gpu.vendor || 'GPU'),
-        typeof gpu.utilization_percent === 'number' ? gpu.utilization_percent : null,
-        memory + ' · ' + String(gpu.source || 'DRM'), chartKey,
+        displayLoad.percent,
+        memory + ' · ' + String(gpu.source || 'DRM') +
+          (displayLoad.scope==='app'
+            ? ' · '+subtitleUiTriText('нагрузка DVBStreamer5','DVBStreamer5 load','opterećenje DVBStreamer5')
+            : ''), chartKey,
         Number.isFinite(total) && total > 0 ? 'vram:' + chartKey : null,
         appChartKey,{
           heading:t('gpuEngines'),chips:engines,appChips:appEngines,
