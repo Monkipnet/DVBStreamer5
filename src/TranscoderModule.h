@@ -10,6 +10,7 @@ struct TranscoderCapabilities {
     bool x264Available = false;
     bool nvencAvailable = false;
     bool intelAvailable = false;
+    bool intelHwDecoderAvailable = false;
     std::string intelEncoder;
     std::string hevcVideoEncoder;
     bool x265Available = false;
