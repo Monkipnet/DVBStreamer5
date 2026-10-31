@@ -1,5 +1,6 @@
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeScaleMode.h"
+#include "media/NativeVideoProcessing.h"
 
 #include <algorithm>
 #include <array>
@@ -515,6 +516,30 @@ public:
         const bool needsScale =
             input.width != width_ || input.height != height_;
 
+        // Belt-and-suspenders guard: even if a caller bypasses the pipeline's
+        // CPU scale negotiation, legacy VAAPI must not silently turn VPP back
+        // on. For software-decoded frames CPU I420 scaling is the default.
+        const bool allowHardwareVpp = enableVaapiSoftwareScaling();
+        const RawVideoFrame* uploadSource = &input;
+        RawVideoFrame cpuScaled;
+        if (needsScale && !allowHardwareVpp) {
+            if (!scaleI420(input, width_, height_, cpuScaled, error))
+                return false;
+            uploadSource = &cpuScaled;
+        }
+        if (!scalePolicyLogged_) {
+            scalePolicyLogged_ = true;
+            std::cerr << "NATIVE VAAPI ENCODER scale-policy"
+                      << " default=cpu-i420"
+                      << " vpp_opt_in=" << (allowHardwareVpp ? 1 : 0)
+                      << " incoming=" << input.width << "x" << input.height
+                      << " output=" << width_ << "x" << height_
+                      << " selected=" << (needsScale
+                             ? (allowHardwareVpp ? "vaapi-vpp" : "cpu-i420")
+                             : "none")
+                      << std::endl;
+        }
+
         const bool idr = frameIndex_ == 0 || (frameIndex_ % gop_) == 0;
         const int currentIndex = static_cast<int>(frameIndex_ & 1U);
         const int referenceIndex = currentIndex ^ 1;
@@ -522,11 +547,11 @@ public:
         const VASurfaceID reference =
             frameIndex_ == 0 ? VA_INVALID_SURFACE : surfaces_[referenceIndex];
 
-        if (needsScale) {
+        if (needsScale && allowHardwareVpp) {
             if (!scaleToEncodeSurface(current, input, error))
                 return false;
         } else {
-            if (!uploadNv12(current, input, error))
+            if (!uploadNv12(current, *uploadSource, error))
                 return false;
         }
 
@@ -1001,6 +1026,7 @@ private:
         drmFd_ = -1;
         frameIndex_ = 0;
         startupLogged_ = false;
+        scalePolicyLogged_ = false;
         spsAnnexB_.clear();
         ppsAnnexB_.clear();
     }
@@ -1028,6 +1054,7 @@ private:
     int gop_ = 50;
     std::uint64_t frameIndex_ = 0;
     bool startupLogged_ = false;
+    bool scalePolicyLogged_ = false;
     std::vector<std::uint8_t> spsAnnexB_;
     std::vector<std::uint8_t> ppsAnnexB_;
     VAConfigID vppConfig_ = VA_INVALID_ID;
