@@ -131,6 +131,12 @@ private:
     // Cumulative DRM fdinfo engine runtime (nanoseconds), per GPU and engine.
     std::map<std::string, std::uint64_t> previousUiDrmEngineNs_;
     std::map<std::string, std::uint64_t> previousHistoryDrmEngineNs_;
+    // Intel Xe reports GPU busy/total cycles instead of i915 nanoseconds.
+    // Keep UI (3s) and history (30s) deltas strictly independent.
+    std::map<std::string, std::uint64_t> previousUiDrmBusyCycles_;
+    std::map<std::string, std::uint64_t> previousUiDrmTotalCycles_;
+    std::map<std::string, std::uint64_t> previousHistoryDrmBusyCycles_;
+    std::map<std::string, std::uint64_t> previousHistoryDrmTotalCycles_;
     uint64_t previousHistoryCpuTotal_ = 0;
     uint64_t previousHistoryCpuIdle_ = 0;
     uint64_t previousCpuTotal = 0;
