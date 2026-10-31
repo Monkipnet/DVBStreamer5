@@ -382,7 +382,16 @@ void NativeMpegTsMux::packetizePes(
                 packet[5] = static_cast<std::uint8_t>((writePcr ? 0x10U : 0x00U) |
                     ((first && sample.randomAccess) ? 0x40U : 0x00U));
                 if (writePcr) {
-                    const std::uint64_t pcr = dts & ((1ULL << 33) - 1ULL);
+                    // MPEG-TS PCR is the receiver system clock, NOT
+                    // the presentation/decode time of this access unit.
+                    // PCR == DTS gave the decoder no time to process video,
+                    // causing audio to be heard before the picture on every
+                    // video-decoder backend. Keep video/audio PTS/DTS intact
+                    // and provide the same 500-ms decode preroll to both.
+                    // Wrap subtraction in the 33-bit MPEG-TS clock domain.
+                    const std::uint64_t pcr =
+                        (dts - kPcrDecodePreroll90k) &
+                        ((1ULL << 33U) - 1ULL);
                     packet[6] = static_cast<std::uint8_t>(pcr >> 25);
                     packet[7] = static_cast<std::uint8_t>(pcr >> 17);
                     packet[8] = static_cast<std::uint8_t>(pcr >> 9);
