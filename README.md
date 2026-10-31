@@ -1,3 +1,10 @@
+### V10.8.246 — исправлена диагностика возможностей Intel HW decoder
+
+- `Intel HW / oneVPL` доступен в UI только при подтверждённой аппаратной реализации oneVPL API 2.1+ (обязательной для `FrameInterface::Map/Unmap`). Наличие отдельного Intel VAAPI encoder больше не выдаётся за доступность oneVPL decoder.
+- На legacy Intel Haswell с рабочим `i965` аппаратное кодирование `VAAPI direct` остаётся доступно. Ручной oneVPL decoder отключён, поскольку для старого i965 нужен отдельный native VAAPI VLD decoder, который здесь ещё не реализован.
+- Если oneVPL недоступен, вручную выбранный `intel_hw` выдаёт понятную ошибку вместо неясного `OFFLINE`; сохранённые конфигурации автоматически не переписываются.
+- Режимы NVIDIA/NVDEC/NVENC не менялись. Исправление Map/Unmap из V245 сохранено для поддерживаемых oneVPL 2.1+ GPU.
+
 ### V10.8.245 — oneVPL Intel HW decoder: корректное отображение поверхности
 
 - Исправлен ручной Intel oneVPL hardware decoder: после `DecodeFrameAsync` decoded surface синхронизируется и обязательно отображается через `FrameInterface->Map(MFX_MAP_READ)` перед чтением `Data.Y/Data.UV`. После копирования I420 выполняются `Unmap` и `Release`.
