@@ -976,7 +976,24 @@ void NativeUdpRelay::run() {
     std::array<std::uint8_t, 65536> datagram {};
     std::string error;
 
+    const char* relayDiagnosticId =
+        std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+    const bool diagnosticHttpRelay =
+        httpInputSource_ && relayDiagnosticId && *relayDiagnosticId &&
+        config_.streamId == relayDiagnosticId;
+    auto diagRelayLastChunkAt = std::chrono::steady_clock::time_point{};
+    std::uint64_t diagRelayChunks = 0;
+    std::uint64_t diagRelayBytes = 0;
+    std::uint64_t diagRelayGapMaxMs = 0;
+    std::uint64_t diagRelayGapsOver200Ms = 0;
+    std::uint64_t diagRelayTransformMaxMs = 0;
+    std::uint64_t diagRelayLoopMaxMs = 0;
+    std::uint64_t diagRelayLoopsOver100Ms = 0;
+    std::size_t diagRelayQueuePeakBytes = 0;
+
     while (running_.load(std::memory_order_acquire)) {
+        bool diagRelayDidChunk = false;
+        auto diagRelayChunkStart = std::chrono::steady_clock::time_point{};
         std::size_t received = 0;
         packets.clear();
         if (fileInputSource_) {
@@ -1055,6 +1072,21 @@ void NativeUdpRelay::run() {
             if (!httpQueue_.empty()) {
                 auto chunk = std::move(httpQueue_.front());
                 httpQueue_.pop_front();
+                if (diagnosticHttpRelay && !chunk.empty()) {
+                    diagRelayQueuePeakBytes = std::max(
+                        diagRelayQueuePeakBytes, httpQueuedBytes_);
+                    diagRelayChunkStart = std::chrono::steady_clock::now();
+                    if (diagRelayLastChunkAt.time_since_epoch().count() != 0) {
+                        const auto gapMs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                diagRelayChunkStart - diagRelayLastChunkAt).count());
+                        diagRelayGapMaxMs = std::max(diagRelayGapMaxMs, gapMs);
+                        if (gapMs > 200) ++diagRelayGapsOver200Ms;
+                    }
+                    diagRelayLastChunkAt = diagRelayChunkStart;
+                    diagRelayDidChunk = true;
+                    diagRelayBytes += chunk.size();
+                }
                 httpQueuedBytes_ -= chunk.size();
                 // V10.8.139: most dequeues happen while the 2 MiB queue has
                 // ample space. Avoid a futex wake unless enqueueHttpData()
@@ -1244,7 +1276,19 @@ void NativeUdpRelay::run() {
             // observedTransport was already materialized above so that ABR taps and
             // the primary transcoder consume byte-identical post-remap/post-CA TS.
             std::vector<std::uint8_t> transformed;
-            if (!config_.transformTransport(observedTransport.data(), observedTransport.size(), transformed, error)) {
+            const auto diagTransformStart =
+                diagnosticHttpRelay ? std::chrono::steady_clock::now()
+                                    : std::chrono::steady_clock::time_point{};
+            const bool transformOk = config_.transformTransport(
+                observedTransport.data(), observedTransport.size(), transformed, error);
+            if (diagnosticHttpRelay) {
+                const auto transformMs = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - diagTransformStart).count());
+                diagRelayTransformMaxMs =
+                    std::max(diagRelayTransformMaxMs, transformMs);
+            }
+            if (!transformOk) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = error.empty() ? "native transport transform failed" : error;
                 running_.store(false, std::memory_order_release);
@@ -1328,6 +1372,35 @@ void NativeUdpRelay::run() {
         // UDP-CBR is drained by WisiCbrOutputWorker on its own absolute
         // CLOCK_MONOTONIC sender thread. Never send CBR datagrams here.
 
+        if (diagnosticHttpRelay && diagRelayDidChunk) {
+            const auto loopMs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - diagRelayChunkStart).count());
+            diagRelayLoopMaxMs = std::max(diagRelayLoopMaxMs, loopMs);
+            if (loopMs > 100) ++diagRelayLoopsOver100Ms;
+            if (++diagRelayChunks >= 125) {
+                std::cerr << "NATIVE HTTP RELAY CADENCE"
+                          << " stream_id=" << config_.streamId
+                          << " chunks=" << diagRelayChunks
+                          << " bytes=" << diagRelayBytes
+                          << " relay_gap_max_ms=" << diagRelayGapMaxMs
+                          << " relay_gaps_over_200ms="
+                          << diagRelayGapsOver200Ms
+                          << " transform_max_ms=" << diagRelayTransformMaxMs
+                          << " loop_max_ms=" << diagRelayLoopMaxMs
+                          << " loops_over_100ms=" << diagRelayLoopsOver100Ms
+                          << " queue_peak_bytes=" << diagRelayQueuePeakBytes
+                          << std::endl;
+                diagRelayChunks = 0;
+                diagRelayBytes = 0;
+                diagRelayGapMaxMs = 0;
+                diagRelayGapsOver200Ms = 0;
+                diagRelayTransformMaxMs = 0;
+                diagRelayLoopMaxMs = 0;
+                diagRelayLoopsOver100Ms = 0;
+                diagRelayQueuePeakBytes = 0;
+            }
+        }
     }
 
     {
