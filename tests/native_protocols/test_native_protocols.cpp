@@ -4,6 +4,7 @@
 #include "media/NativeRtmpTransport.h"
 #include "media/NativeSampleAes.h"
 #include "media/NativeTsDemux.h"
+#include "media/NativeUdpRelay.h"
 
 #include <algorithm>
 #include <array>
@@ -292,6 +293,20 @@ static bool testRtsp(const std::vector<std::uint8_t>& ts) {
 }
 
 int main() {
+    // Bounded continuous queue-depth feedback protects a bursty HTTP TS
+    // source without creating a raw-frame burst or starving the decoder.
+    using dvbstreamer5::media::network::detail::
+        httpTsJitterCorrectionPercent;
+    constexpr std::uint64_t target = 530000;
+    if (httpTsJitterCorrectionPercent(target, target) != 0 ||
+        httpTsJitterCorrectionPercent(660000, target) <= 0 ||
+        httpTsJitterCorrectionPercent(400000, target) >= 0 ||
+        httpTsJitterCorrectionPercent(2097152, target) != 30 ||
+        httpTsJitterCorrectionPercent(0, target) != -15 ||
+        httpTsJitterCorrectionPercent(500000, 0) != 0) {
+        std::cerr << "native protocols failed at: HTTP TS jitter feedback\n";
+        return 8;
+    }
     std::vector<std::uint8_t> ts;
     if (!makeTs(ts)) {
         std::cerr << "native protocols failed at: makeTs\n";
