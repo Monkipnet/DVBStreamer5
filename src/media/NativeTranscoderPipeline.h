@@ -446,6 +446,8 @@ private:
     std::deque<MuxQueuedSample> muxAudioQueue_;
     std::atomic<bool> workersStop_{false};
     std::atomic<bool> muxStop_{false};
+    // End-of-input drain: release mux peer waits only during flush().
+    std::atomic<bool> muxDrainRequested_{false};
     std::atomic<bool> videoWorkerActive_{false};
     std::atomic<bool> videoEncodeWorkerActive_{false};
     std::atomic<bool> audioWorkerActive_{false};
