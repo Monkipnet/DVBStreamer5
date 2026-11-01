@@ -337,7 +337,8 @@ struct SharedDvbInputPool::Impl {
             std::size_t received = 0;
             const auto readBegin = std::chrono::steady_clock::now();
             if (!bus->input.read(
-                    buffer.data(), buffer.size(), received, 250, error)) {
+                    buffer.data(), buffer.size(), received,
+                    bus->jitterMs.load(std::memory_order_relaxed) > 0 ? 20 : 250, error)) {
                 if (bus->stop.load(std::memory_order_acquire)) break;
                 if (error.empty()) error = "shared DVB input read failed";
                 bus->running.store(false, std::memory_order_release);
