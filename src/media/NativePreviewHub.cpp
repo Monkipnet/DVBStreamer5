@@ -78,6 +78,8 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
          subscriber != subscribers_.end();) {
         auto& client = subscriber->second;
         bool remove = false;
+        int sendFailureErrno = 0;
+        const char* disconnectReason = "unknown";
 
         // Every SO(K)_SEQPACKET send is a complete, TS-aligned datagram.
         // A full nonblocking socket must not silently discard the rest of a
@@ -89,6 +91,8 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
             if (sent == static_cast<ssize_t>(count)) return 0;
             if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
                              errno == ENOBUFS)) return 1;
+            sendFailureErrno = sent < 0 ? errno : 0;
+            disconnectReason = sent < 0 ? "socket_send_error" : "short_seqpacket_send";
             return -1;
         };
 
@@ -122,6 +126,7 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
                           << " fd=" << subscriber->first
                           << " pending_bytes=" << client.pendingBytes
                           << " action=disconnect" << std::endl;
+                disconnectReason = "pending_limit";
                 remove = true;
                 break;
             }
@@ -131,6 +136,12 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
         }
 
         if (remove) {
+            std::cerr << "NATIVE HTTP TS HUB detach"
+                      << " hub_fd=" << subscriber->first
+                      << " reason=" << disconnectReason
+                      << " errno=" << sendFailureErrno
+                      << " pending_bytes=" << client.pendingBytes
+                      << std::endl;
             ::close(client.sendFd);
             subscriber = subscribers_.erase(subscriber);
         } else {
