@@ -217,37 +217,70 @@ static bool testEncryptedCmaf(const std::vector<std::uint8_t>& ts) {
     if (!seg.start(cfg,e)) { std::cerr << "cmaf cbcs start: " << e << "\n"; return false; }
     if (!seg.push(ts.data(), ts.size())) { std::cerr << "cmaf cbcs push: " << seg.lastError() << "\n"; return false; }
     seg.stop();
-    std::filesystem::path fragment;
-    for (auto& x : std::filesystem::directory_iterator(dir)) if (x.path().extension()==".m4s") { fragment=x.path(); break; }
-    if (fragment.empty()) { std::cerr << "encrypted m4s missing\n"; return false; }
-    auto load=[](const std::filesystem::path&p){std::ifstream f(p,std::ios::binary);return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(f)),{});};
-    auto init=load(dir/"init.mp4"), m4s=load(fragment);
-    const auto encryptedCopy = m4s;
-    if (!cmaf::decryptSampleAesFragment(m4s, cfg.key, e)) { std::cerr << "cmaf cbcs decrypt: " << e << "\n"; return false; }
-    if (m4s == encryptedCopy) {
-        const auto containsMarker = [&](const char* marker) {
-            return std::search(encryptedCopy.begin(), encryptedCopy.end(),
-                               marker, marker + 4) != encryptedCopy.end();
-        };
-        std::cerr << "cmaf cbcs did not transform fragment"
-                  << " fragment_bytes=" << encryptedCopy.size()
-                  << " has_moof=" << containsMarker("moof")
-                  << " has_traf=" << containsMarker("traf")
-                  << " has_senc=" << containsMarker("senc")
-                  << " has_mdat=" << containsMarker("mdat")
+    // The first fragment returned by directory_iterator may be a short
+    // audio-only or startup fragment with no full AES block. Scan every
+    // fragment and require an actual ciphertext change in at least one.
+    std::vector<std::filesystem::path> fragments;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() == ".m4s")
+            fragments.push_back(entry.path());
+    }
+    std::sort(fragments.begin(), fragments.end());
+    if (fragments.empty()) {
+        std::cerr << "encrypted m4s missing\n";
+        return false;
+    }
+    auto load=[](const std::filesystem::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::vector<std::uint8_t>(
+            (std::istreambuf_iterator<char>(f)), {});
+    };
+    const auto init = load(dir / "init.mp4");
+    std::vector<std::uint8_t> round;
+    cmaf::Fmp4ToMpegTs in;
+    if (!in.initialize(init, [&](const std::uint8_t* d, std::size_t n) {
+            round.insert(round.end(), d, d+n);
+            return true;
+        }, e)) {
+        std::cerr << "cmaf cbcs init: " << e << "\n";
+        return false;
+    }
+
+    std::size_t transformed = 0;
+    std::size_t maxFragmentBytes = 0;
+    for (const auto& path : fragments) {
+        auto m4s = load(path);
+        maxFragmentBytes = std::max(maxFragmentBytes, m4s.size());
+        const auto ciphertext = m4s;
+        if (!cmaf::decryptSampleAesFragment(m4s, cfg.key, e)) {
+            std::cerr << "cmaf cbcs decrypt fragment=" << path.filename().string()
+                      << " error=" << e << "\n";
+            return false;
+        }
+        if (m4s != ciphertext) ++transformed;
+        if (!in.pushFragment(m4s, e)) {
+            std::cerr << "cmaf cbcs fragment=" << path.filename().string()
+                      << " error=" << e << "\n";
+            return false;
+        }
+    }
+    if (transformed == 0) {
+        std::cerr << "cmaf cbcs did not transform any fragment"
+                  << " fragment_count=" << fragments.size()
+                  << " largest_fragment_bytes=" << maxFragmentBytes
                   << " init_bytes=" << init.size()
-                  << " decryption_status=success_no_changed_bytes"
+                  << " source_ts_bytes=" << ts.size()
+                  << " output_ts_bytes=" << round.size()
                   << "\n";
         return false;
     }
-    std::vector<std::uint8_t> round;
-    cmaf::Fmp4ToMpegTs in;
-    if (!in.initialize(init,[&](const std::uint8_t*d,std::size_t n){round.insert(round.end(),d,d+n);return true;},e)) { std::cerr << "cmaf cbcs init: " << e << "\n"; return false; }
-    if (!in.pushFragment(m4s,e)) { std::cerr << "cmaf cbcs frag: " << e << "\n"; return false; }
-    std::ifstream pf(dir/"video.m3u8"); std::string playlist((std::istreambuf_iterator<char>(pf)),{});
+    std::ifstream pf(dir/"video.m3u8");
+    std::string playlist((std::istreambuf_iterator<char>(pf)),{});
     std::filesystem::remove_all(dir,ec);
-    if (playlist.find("METHOD=SAMPLE-AES") == std::string::npos || playlist.find("#EXT-X-MAP") == std::string::npos) {
-        std::cerr << "CMAF encrypted playlist tags missing\n"; return false;
+    if (playlist.find("METHOD=SAMPLE-AES") == std::string::npos ||
+        playlist.find("#EXT-X-MAP") == std::string::npos) {
+        std::cerr << "CMAF encrypted playlist tags missing\n";
+        return false;
     }
     return !round.empty();
 }
