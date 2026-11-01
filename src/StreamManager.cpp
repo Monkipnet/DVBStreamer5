@@ -2306,6 +2306,26 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         }
     }
 
+    // Public HTTP MPEG-TS can see TCP scheduling stalls even with Nagle off.
+    // Give the kernel sufficient socket buffering for short delivery bursts,
+    // while leaving browser preview and the producer pipeline unchanged.
+    if (previewSession.empty()) {
+        const int desiredTcpSendBytes = 2 * 1024 * 1024;
+        if (::setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
+                         &desiredTcpSendBytes, sizeof(desiredTcpSendBytes)) != 0) {
+            std::cerr << "NATIVE HTTP TS TCP SEND BUFFER"
+                      << " stream_id=" << id
+                      << " error=" << std::strerror(errno) << std::endl;
+        }
+        int actualBytes = 0;
+        socklen_t len = sizeof(actualBytes);
+        if (::getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &actualBytes, &len) == 0) {
+            std::cerr << "NATIVE HTTP TS TCP SEND BUFFER"
+                      << " stream_id=" << id
+                      << " bytes=" << actualBytes << std::endl;
+        }
+    }
+
     std::string subscribeError;
     const int upstreamFd = hub->subscribe(subscribeError);
     if (upstreamFd < 0) {
