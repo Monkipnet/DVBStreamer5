@@ -80,6 +80,7 @@ struct StreamConfig {
     std::string hlsAccessKeyName = "Authorization";
     std::string hlsAccessKeyValue;
     std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
+    bool httpTsInputJitterEnabled = false;
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.
