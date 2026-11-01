@@ -1738,6 +1738,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
     }
 
+    state->startedAt = std::chrono::steady_clock::now();
     state->active.store(true);
     state->running.store(true);
     state->statusMessage = testInput ? "running (native test pattern)" : (hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : (rtspInput ? "running (native RTSP input)" : (rtmpInput ? "running (native RTMP input)" : "running (native media engine)"))));
