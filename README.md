@@ -1,3 +1,10 @@
+## V10.8.269 — video encode / raw queue diagnostic test branch
+
+- Tags all `NATIVE PRIMARY RAW DROP` and `NATIVE ABR RAW DROP` messages with the stream ID.
+- Adds one `NATIVE VIDEO ENCODE PERF` diagnostic per 125 encoded frames (about 5 s at 25 fps) with effective throughput, average/peak scale+encode time, current/peak raw queue depth and total primary drops.
+- No queue-size, timestamp, codec-selection or transport changes: diagnose whether HTTP MPEG-TS and SRT freezes originate before both outputs.
+- Inherits V268 HTTP/SRT TS integrity fixes and V267 MP2 cursor repair. Build and live tests pending; keep outside main.
+
 ## V10.8.268 — HTTP MPEG-TS / SRT packet integrity (test branch)
 
 - HTTP production MPEG-TS now retains TS-aligned packets in an ordered, bounded per-subscriber backlog when the nonblocking socket reports EAGAIN. It no longer silently discards the remainder of each transport batch. Clients that fall over 4 MiB behind are disconnected rather than receiving silently corrupted TS. Increased HTTP socket send buffer to absorb short bursts.
