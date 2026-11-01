@@ -453,6 +453,9 @@ private:
     std::atomic<bool> audioWorkerActive_{false};
     std::atomic<bool> muxWorkerActive_{false};
     std::atomic<bool> videoResetRequested_{false};
+    // Producer-side count of compressed video PES admitted into the decode
+    // queue. Read atomically by the decoder worker for cadence telemetry.
+    std::atomic<std::uint64_t> videoPesQueuedTotal_{0};
     std::atomic<bool> externalVideoInput_{false};
     std::atomic<bool> externalAudioInput_{false};
     bool videoDropUntilRandomAccess_ = false;
@@ -542,6 +545,8 @@ private:
     std::uint64_t inputVideoSamples_ = 0;
     std::uint64_t inputAudioSamples_ = 0;
     std::uint64_t decodedVideoFrames_ = 0;
+    // Decoder-worker-only count, distinct from frames decoded before FPS gate.
+    std::uint64_t videoRawPublishedTotal_ = 0;
     std::uint64_t decodedAudioFrames_ = 0;
     std::uint64_t ignoredVideoSamples_ = 0;
     std::uint64_t ignoredAudioSamples_ = 0;
