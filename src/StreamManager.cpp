@@ -2180,7 +2180,7 @@ void StreamManager::monitorOnDemandStreams() {
     // HLS clients fetch short-lived playlist/segment resources rather than keeping
     // a persistent socket open. Ten seconds was too aggressive and could stop an
     // actively watched channel between requests, producing visible HLS stalls.
-    constexpr auto kIdleGrace = std::chrono::seconds(10);
+    constexpr auto kIdleGrace = std::chrono::seconds(30);
     while (!onDemandMonitorStop.load(std::memory_order_acquire)) {
         for (int i = 0; i < 4 && !onDemandMonitorStop.load(std::memory_order_acquire); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -2227,7 +2227,7 @@ void StreamManager::monitorOnDemandStreams() {
             onDemandLastActivity.erase(id);
             if (isStreamActive(id)) {
                 std::cerr << "ONDEMAND DEACTIVATE stream=" << id
-                          << " reason=no-clients idle_s=10" << std::endl;
+                          << " reason=no-clients idle_s=30" << std::endl;
                 stopStream(id);
             }
         }
@@ -2282,8 +2282,11 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
     // preserve their existing socket options.
     const char* noDelayId =
         std::getenv("DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID");
-    const bool enableNoDelay =
-        previewSession.empty() && noDelayId && *noDelayId && id == noDelayId;
+    // Default to low-latency TCP for public MPEG-TS. An explicitly supplied
+    // stream ID still scopes the option to one stream for A/B testing; set
+    // the value to "off" to disable it for every stream.
+    const bool enableNoDelay = previewSession.empty() &&
+        (!noDelayId || !*noDelayId || id == noDelayId);
     bool noDelayActive = false;
     if (enableNoDelay) {
         int value = 1;
