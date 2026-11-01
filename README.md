@@ -1,3 +1,9 @@
+## V10.8.266 — MP2 decoder buffer safety (test branch)
+
+- Limits individual MPEG Layer II audio input packets and unread PL_MPEG streaming-buffer backlog.
+- Recreates the MP2 decoder after a stalled backlog, and guards decoded sample count and failed writes.
+- Intended to address the SIGSEGV in `plm_buffer_write` seen when two IPTV tiles were active. Root cause still requires runtime validation; no changes to H.264 decoder choice or Intel VAAPI encoding.
+
 ### V10.8.265 — OpenH264 removed from H.264 decoder selection
 
 - Removed the OpenH264 **video decoder** class and factory, the manual dropdown choice, and the Auto video-decoder fallback. Legacy saved `openh264` selections are remapped to `auto` at runtime and shown as Auto in the editor.
