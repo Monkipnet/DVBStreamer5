@@ -135,6 +135,10 @@ bool testOutput() {
     dvbstreamer5::media::hls::NativeHlsSegmenterConfig cfg;
     cfg.directory = directory;
     cfg.targetDurationSeconds = 1.0;
+    // start() defaults to a 4-second live HLS target unless explicitly
+    // configured. The synthetic PCR fixture advances only one second per
+    // packet, so this test must request its intended one-second cadence.
+    cfg.durationExplicit = true;
     cfg.liveWindowSegments = 4;
     // The fixture contains synthetic video PES, PCR and random-access flags,
     // but no PAT/PMT. Use the independent-segment path, which is designed
