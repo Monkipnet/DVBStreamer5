@@ -461,7 +461,9 @@ void NativeTranscoderPipeline::reset() {
     videoStartupDropped_ = 0;
     inputVideoSamples_ = 0;
     inputAudioSamples_ = 0;
+    videoPesQueuedTotal_.store(0, std::memory_order_release);
     decodedVideoFrames_ = 0;
+    videoRawPublishedTotal_ = 0;
     decodedAudioFrames_ = 0;
     ignoredVideoSamples_ = 0;
     ignoredAudioSamples_ = 0;
@@ -619,6 +621,7 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             lastInputVideoPts90k_.store(sample.pts90k & ((1ULL << 33U) - 1ULL),
                                        std::memory_order_relaxed);
         videoQueue_.push_back(std::move(sample));
+        videoPesQueuedTotal_.fetch_add(1, std::memory_order_relaxed);
         videoQueueCv_.notify_one();
         return;
     }
@@ -704,10 +707,28 @@ void NativeTranscoderPipeline::setFailure(std::string error) {
 }
 
 void NativeTranscoderPipeline::videoWorkerLoop() {
+    // Distinguish source PES stalls, decoder processing time and PTS/FPS
+    // gating from downstream RAW queue/encoder stalls. Observes state only;
+    // it never changes queue limits, timestamps or the decoding algorithm.
+    std::uint64_t windowPesProcessed = 0;
+    std::uint64_t windowProcessTotalUs = 0;
+    std::uint64_t windowProcessMaxUs = 0;
+    std::uint64_t windowIdleWaitTotalUs = 0;
+    std::uint64_t windowIdleWaitMaxUs = 0;
+    std::uint64_t windowIdleWaitEvents = 0;
+    std::size_t windowPeakPesQueue = 0;
+    std::uint64_t lastPesQueuedTotal = 0;
+    std::uint64_t lastDecodedFrames = 0;
+    std::uint64_t lastPublishedFrames = 0;
+    std::uint64_t lastFpsGateDrops = 0;
+    auto windowBegin = std::chrono::steady_clock::now();
     for (;;) {
         mpegts::DemuxSample sample;
+        const auto beforeDequeue = std::chrono::steady_clock::now();
+        bool queueWasEmpty = false;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
+            queueWasEmpty = videoQueue_.empty();
             videoQueueCv_.wait(lock, [this] {
                 return workersStop_.load(std::memory_order_acquire) ||
                        !videoQueue_.empty();
@@ -718,7 +739,18 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
 
             sample = std::move(videoQueue_.front());
             videoQueue_.pop_front();
+            windowPeakPesQueue = std::max(windowPeakPesQueue,
+                                          videoQueue_.size());
             videoWorkerActive_.store(true, std::memory_order_release);
+        }
+        const auto processBegin = std::chrono::steady_clock::now();
+        if (queueWasEmpty) {
+            const auto idleUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    processBegin - beforeDequeue).count());
+            windowIdleWaitTotalUs += idleUs;
+            windowIdleWaitMaxUs = std::max(windowIdleWaitMaxUs, idleUs);
+            ++windowIdleWaitEvents;
         }
 
         std::string error;
@@ -738,6 +770,76 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
             }
             if (!handleVideo(std::move(sample), error))
                 setFailure(error);
+        }
+
+        const auto processEnd = std::chrono::steady_clock::now();
+        const auto processUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                processEnd - processBegin).count());
+        windowProcessTotalUs += processUs;
+        windowProcessMaxUs = std::max(windowProcessMaxUs, processUs);
+        ++windowPesProcessed;
+        if (windowPesProcessed >= 125) {
+            std::size_t pesQueueNow = 0;
+            std::uint64_t sourceQueueDrops = 0;
+            std::uint64_t pesQueuedTotal = 0;
+            {
+                std::lock_guard<std::mutex> lock(videoQueueMutex_);
+                pesQueueNow = videoQueue_.size();
+                sourceQueueDrops = droppedVideoSamples_;
+                pesQueuedTotal = videoPesQueuedTotal_.load(
+                    std::memory_order_relaxed);
+            }
+            const auto elapsedMs = std::max<std::int64_t>(
+                1, std::chrono::duration_cast<std::chrono::milliseconds>(
+                    processEnd - windowBegin).count());
+            const auto queuedWindow = pesQueuedTotal >= lastPesQueuedTotal
+                ? pesQueuedTotal - lastPesQueuedTotal : 0ULL;
+            const auto decodedWindow = decodedVideoFrames_ >= lastDecodedFrames
+                ? decodedVideoFrames_ - lastDecodedFrames : 0ULL;
+            const auto publishedWindow =
+                videoRawPublishedTotal_ >= lastPublishedFrames
+                    ? videoRawPublishedTotal_ - lastPublishedFrames : 0ULL;
+            const auto gateWindow = videoRateDroppedFrames_ >= lastFpsGateDrops
+                ? videoRateDroppedFrames_ - lastFpsGateDrops : 0ULL;
+            const auto fps = [&](std::uint64_t frames) {
+                return frames * 1000ULL /
+                    static_cast<std::uint64_t>(elapsedMs);
+            };
+            std::cerr << "NATIVE VIDEO DECODE PERF"
+                      << " stream_id=" << config_.streamId
+                      << " pes_processed=" << windowPesProcessed
+                      << " pes_in_fps=" << fps(queuedWindow)
+                      << " pes_processed_fps=" << fps(windowPesProcessed)
+                      << " decoded_fps=" << fps(decodedWindow)
+                      << " raw_published_fps=" << fps(publishedWindow)
+                      << " decoded_frames=" << decodedWindow
+                      << " raw_published_frames=" << publishedWindow
+                      << " fps_gate_drop_window=" << gateWindow
+                      << " decode_avg_ms=" <<
+                          (windowProcessTotalUs / windowPesProcessed / 1000ULL)
+                      << " decode_max_ms=" << (windowProcessMaxUs / 1000ULL)
+                      << " decode_empty_wait_ms=" <<
+                          (windowIdleWaitTotalUs / 1000ULL)
+                      << " decode_empty_wait_max_ms=" <<
+                          (windowIdleWaitMaxUs / 1000ULL)
+                      << " decode_empty_wait_events=" << windowIdleWaitEvents
+                      << " pes_queue_now=" << pesQueueNow
+                      << " pes_queue_peak=" << windowPeakPesQueue
+                      << " pes_queue_drop_total=" << sourceQueueDrops
+                      << std::endl;
+            lastPesQueuedTotal = pesQueuedTotal;
+            lastDecodedFrames = decodedVideoFrames_;
+            lastPublishedFrames = videoRawPublishedTotal_;
+            lastFpsGateDrops = videoRateDroppedFrames_;
+            windowBegin = processEnd;
+            windowPesProcessed = 0;
+            windowProcessTotalUs = 0;
+            windowProcessMaxUs = 0;
+            windowIdleWaitTotalUs = 0;
+            windowIdleWaitMaxUs = 0;
+            windowIdleWaitEvents = 0;
+            windowPeakPesQueue = 0;
         }
 
         videoWorkerActive_.store(false, std::memory_order_release);
@@ -1912,6 +2014,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             }
             externalVideoQueue_.push_back(std::move(sharedRaw));
         }
+        ++videoRawPublishedTotal_;
         videoEncodeQueueCv_.notify_one();
     }
     return true;
