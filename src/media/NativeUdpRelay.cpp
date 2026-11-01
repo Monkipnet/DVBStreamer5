@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <regex>
@@ -578,6 +579,19 @@ void NativeUdpRelay::runHttpInput() {
             config_.accessKeyMode == "query");
     options.maxRedirects = hasAccessKey ? 0 : 8;
 
+    const char* inputDiagnosticId =
+        std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+    const bool diagnosticHttp =
+        inputDiagnosticId && *inputDiagnosticId &&
+        config_.streamId == inputDiagnosticId;
+    std::uint64_t diagHttpChunks = 0;
+    std::uint64_t diagHttpBytes = 0;
+    std::uint64_t diagHttpGapMaxMs = 0;
+    std::uint64_t diagHttpGapsOver200Ms = 0;
+    std::uint64_t diagHttpBurstsUnder5Ms = 0;
+    std::uint64_t diagHttpEnqueueMaxMs = 0;
+    std::uint64_t diagHttpEnqueueOver50Ms = 0;
+    auto diagHttpLastChunkAt = std::chrono::steady_clock::time_point{};
     int reconnectDelaySeconds = 1;
     std::uint64_t attempt = 0;
     while (running_.load(std::memory_order_acquire) &&
@@ -592,7 +606,11 @@ void NativeUdpRelay::runHttpInput() {
 
         const bool ok = dvbstreamer5::http::get(
             location, options, response, requestError,
-            [this, &receivedAny, &receivedBytes, attempt](const std::uint8_t* data, std::size_t size) {
+            [this, &receivedAny, &receivedBytes, attempt, diagnosticHttp,
+             &diagHttpChunks, &diagHttpBytes, &diagHttpGapMaxMs,
+             &diagHttpGapsOver200Ms, &diagHttpBurstsUnder5Ms,
+             &diagHttpEnqueueMaxMs, &diagHttpEnqueueOver50Ms,
+             &diagHttpLastChunkAt](const std::uint8_t* data, std::size_t size) {
                 if (size != 0 && !receivedAny) {
                     receivedAny = true;
                     std::cerr << "NATIVE HTTP INPUT connected attempt=" << attempt
@@ -602,7 +620,55 @@ void NativeUdpRelay::runHttpInput() {
                 }
                 receivedBytes += size;
                 httpReceivedBytes_.fetch_add(size, std::memory_order_relaxed);
-                return enqueueHttpData(data, size);
+                const auto arrivedAt = std::chrono::steady_clock::now();
+                if (diagnosticHttp && size != 0 &&
+                    diagHttpLastChunkAt.time_since_epoch().count() != 0) {
+                    const auto gapMs = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            arrivedAt - diagHttpLastChunkAt).count());
+                    diagHttpGapMaxMs = std::max(diagHttpGapMaxMs, gapMs);
+                    if (gapMs > 200) ++diagHttpGapsOver200Ms;
+                    if (gapMs < 5) ++diagHttpBurstsUnder5Ms;
+                }
+                if (diagnosticHttp && size != 0)
+                    diagHttpLastChunkAt = arrivedAt;
+                // The HTTP library invokes this callback synchronously on
+                // the reader thread. Time spent enqueuing includes waiting
+                // for the bounded 2 MiB queue, not network receive time.
+                const bool accepted = enqueueHttpData(data, size);
+                if (diagnosticHttp && size != 0) {
+                    const auto queuedAt = std::chrono::steady_clock::now();
+                    const auto enqueueMs = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            queuedAt - arrivedAt).count());
+                    diagHttpEnqueueMaxMs =
+                        std::max(diagHttpEnqueueMaxMs, enqueueMs);
+                    if (enqueueMs > 50) ++diagHttpEnqueueOver50Ms;
+                    diagHttpBytes += size;
+                    if (++diagHttpChunks >= 125) {
+                        std::cerr << "NATIVE HTTP SOURCE CADENCE"
+                                  << " stream_id=" << config_.streamId
+                                  << " chunks=" << diagHttpChunks
+                                  << " bytes=" << diagHttpBytes
+                                  << " network_gap_max_ms=" << diagHttpGapMaxMs
+                                  << " network_gaps_over_200ms="
+                                  << diagHttpGapsOver200Ms
+                                  << " network_burst_under_5ms="
+                                  << diagHttpBurstsUnder5Ms
+                                  << " enqueue_max_ms=" << diagHttpEnqueueMaxMs
+                                  << " enqueue_over_50ms="
+                                  << diagHttpEnqueueOver50Ms
+                                  << std::endl;
+                        diagHttpChunks = 0;
+                        diagHttpBytes = 0;
+                        diagHttpGapMaxMs = 0;
+                        diagHttpGapsOver200Ms = 0;
+                        diagHttpBurstsUnder5Ms = 0;
+                        diagHttpEnqueueMaxMs = 0;
+                        diagHttpEnqueueOver50Ms = 0;
+                    }
+                }
+                return accepted;
             });
 
         if (!running_.load(std::memory_order_acquire) ||
