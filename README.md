@@ -1,3 +1,10 @@
+## V10.8.277 — RAW producer cadence versus encoding throughput diagnostics (test branch)
+
+- V276 full CTest passed 5/5 and a production observation found CPU bilinear scaling as low as 5ms/frame (versus V275 16–17ms), while the software scaler output remains byte-identical in the regression test. Despite a combined ~21–30ms scale+encoder time, the 1920x1080 live pipeline still intermittently achieves only ~21–24fps and accumulates pre-encoder RAW queue drops.
+- Added per-stream, 125-frame `NATIVE VIDEO ENCODE PERF` fields: `raw_in_fps` (estimated frames enqueued by decoder), `raw_in_frames`, `raw_drop_window` (pre-encoder RAW frames dropped in this interval), `raw_empty_wait_ms` (total time the encoder worker observed an empty RAW queue before dequeuing), `raw_empty_wait_max_ms`, and `raw_empty_wait_events`.
+- `raw_in_frames` uses queue conservation: 125 processed frames + drop delta + ending queue depth - starting queue depth. Estimates vary slightly across telemetry boundaries due to concurrent producers, but isolate bursts/stalls without extra per-frame producer logging or synchronization.
+- **No changes to frame dropping, queue capacities, live A/V synchronization, FPS gate, codec settings, CPU scaling mathematics, Intel/NVENC paths, and HTTP/SRT transport.** This branch is instrumentation only and needs CTest and real 25fps streaming logs before a permanent scheduler or queue fix.
+
 ## V10.8.276 — exact CPU I420 upscaling performance optimization (test branch)
 
 - A profiling run on the actual Intel transcoder (`stream-1793481485131`, 1920x1080) showed 16–17 ms per frame spent in CPU I420 scaling versus 15–16 ms in VAAPI H.264 encode/mux submission. The 12-frame raw-video queue repeatedly filled and accumulated hundreds of pre-encoder drops even when AV mux late/drop counters remained zero.
