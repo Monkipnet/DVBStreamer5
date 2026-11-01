@@ -1194,13 +1194,9 @@ void NativeUdpRelay::run() {
                     const auto targetBytes = std::clamp<std::uint64_t>(
                         jitterRateBps * 1200ULL / 8000ULL,
                         16384ULL, 1258291ULL);
-                    const auto backlogBytes = static_cast<std::int64_t>(
-                        httpQueuedBytes_);
-                    const auto targetSigned = static_cast<std::int64_t>(
-                        targetBytes);
-                    const auto errorBytes = backlogBytes - targetSigned;
-                    const auto correctionPct = std::clamp<std::int64_t>(
-                        errorBytes * 40LL / targetSigned, -15LL, 30LL);
+                    const auto correctionPct =
+                        detail::httpTsJitterCorrectionPercent(
+                            httpQueuedBytes_, targetBytes);
                     const auto effectiveBps = std::max<std::uint64_t>(
                         1ULL, jitterRateBps *
                             static_cast<std::uint64_t>(100LL + correctionPct) /
