@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <iostream>
 
 #if !defined(_WIN32)
 #include <fcntl.h>
@@ -37,7 +38,7 @@ int NativePreviewHub::subscribe(std::string& error) {
         ::close(sockets[1]);
         return -1;
     }
-    const int queueBytes = 64 * 1024;
+    const int queueBytes = 512 * 1024;
     ::setsockopt(sockets[1], SOL_SOCKET, SO_SNDBUF, &queueBytes, sizeof(queueBytes));
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -47,7 +48,7 @@ int NativePreviewHub::subscribe(std::string& error) {
         ::close(sockets[1]);
         return -1;
     }
-    subscribers_.emplace(sockets[0], sockets[1]);
+    subscribers_.emplace(sockets[0], Subscriber{sockets[1], {}, 0});
     return sockets[0];
 #endif
 }
@@ -57,7 +58,7 @@ void NativePreviewHub::unsubscribe(int readFd) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto found = subscribers_.find(readFd);
     if (found == subscribers_.end()) return;
-    ::close(found->second);
+    ::close(found->second.sendFd);
     subscribers_.erase(found);
 #else
     (void)readFd;
@@ -73,27 +74,64 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
         size - (size % dvbstreamer5::media::mpegts::kPacketSize);
 
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto subscriber = subscribers_.begin(); subscriber != subscribers_.end();) {
+    for (auto subscriber = subscribers_.begin();
+         subscriber != subscribers_.end();) {
+        auto& client = subscriber->second;
         bool remove = false;
-        for (std::size_t offset = 0; offset < alignedSize;) {
+
+        // Every SO(K)_SEQPACKET send is a complete, TS-aligned datagram.
+        // A full nonblocking socket must not silently discard the rest of a
+        // transport chunk: that loses PES/IDR data and freezes HTTP MPEG-TS.
+        const auto sendChunk = [&](const std::uint8_t* bytes,
+                                   std::size_t count) -> int {
+            const ssize_t sent = ::send(client.sendFd, bytes, count,
+                                        MSG_DONTWAIT | MSG_NOSIGNAL);
+            if (sent == static_cast<ssize_t>(count)) return 0;
+            if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
+                             errno == ENOBUFS)) return 1;
+            return -1;
+        };
+
+        // Drain queued data first to preserve MPEG-TS packet order.
+        for (; !client.pending.empty();) {
+            const auto& packet = client.pending.front();
+            const int result = sendChunk(packet.data(), packet.size());
+            if (result == 1) break;
+            if (result < 0) { remove = true; break; }
+            client.pendingBytes -= packet.size();
+            client.pending.pop_front();
+        }
+
+        for (std::size_t offset = 0; !remove && offset < alignedSize;) {
             const std::size_t chunk =
                 std::min(kPreviewDatagramBytes, alignedSize - offset);
-            const ssize_t sent = ::send(
-                subscriber->second, data + offset, chunk,
-                MSG_DONTWAIT | MSG_NOSIGNAL);
-            if (sent == static_cast<ssize_t>(chunk)) {
-                offset += chunk;
-                continue;
+            if (client.pending.empty()) {
+                const int result = sendChunk(data + offset, chunk);
+                if (result == 0) {
+                    offset += chunk;
+                    continue;
+                }
+                if (result < 0) { remove = true; break; }
             }
-            if (sent < 0 &&
-                (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
+            // The consumer is temporarily behind. Buffer in order rather
+            // than silently skipping payload bytes. On sustained overflow,
+            // close only that subscriber so it can reconnect at a new IDR;
+            // do not disrupt other clients or the production transcoder.
+            if (client.pendingBytes + chunk > kMaxPendingBytes) {
+                std::cerr << "NATIVE HTTP TS subscriber backlog limit"
+                          << " fd=" << subscriber->first
+                          << " pending_bytes=" << client.pendingBytes
+                          << " action=disconnect" << std::endl;
+                remove = true;
                 break;
             }
-            remove = true;
-            break;
+            client.pending.emplace_back(data + offset, data + offset + chunk);
+            client.pendingBytes += chunk;
+            offset += chunk;
         }
+
         if (remove) {
-            ::close(subscriber->second);
+            ::close(client.sendFd);
             subscriber = subscribers_.erase(subscriber);
         } else {
             ++subscriber;
@@ -116,7 +154,7 @@ void NativePreviewHub::close() {
     if (closed_) return;
     closed_ = true;
     for (const auto& subscriber : subscribers_) {
-        ::close(subscriber.second);
+        ::close(subscriber.second.sendFd);
     }
     subscribers_.clear();
 #endif
