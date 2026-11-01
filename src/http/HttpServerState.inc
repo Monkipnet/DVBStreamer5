@@ -1394,6 +1394,15 @@ std::string HttpServer::currentState() {
             // creates a new StreamState and starts a new lifetime.
             const auto tileNow = std::chrono::steady_clock::now();
             const auto tileStart = streamState->startedAt;
+            // Stable generation key for the browser: polling must not reset
+            // the local second-by-second clock unless the tile was restarted.
+            item["running_started_mono_ms"] = Json::UInt64(
+                tileRunning && tileStart !=
+                    std::chrono::steady_clock::time_point{}
+                    ? static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            tileStart.time_since_epoch()).count())
+                    : 0ULL);
             item["running_seconds"] = Json::UInt64(
                 tileRunning && tileStart !=
                     std::chrono::steady_clock::time_point{} &&
@@ -1449,6 +1458,7 @@ std::string HttpServer::currentState() {
         } else {
             item["active"] = false;
             item["running_seconds"] = Json::UInt64(0);
+            item["running_started_mono_ms"] = Json::UInt64(0);
             item["status"] = "stopped";
             item["using_backup"] = false;
             item["active_input_uri"] = cfg.testPattern ? "test://bars" : cfg.inputUri;
