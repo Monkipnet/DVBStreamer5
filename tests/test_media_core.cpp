@@ -33,6 +33,8 @@
 #include <ws2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <cerrno>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -1454,6 +1456,54 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
     assert(request.find("X-Stream-Key: must-not-leak") != std::string::npos);
 }
 
+// Reproduce an HTTP client that momentarily stops reading. The producer
+// must retain complete TS packets in order instead of silently skipping
+// payload after EAGAIN on the nonblocking socket.
+void testNativePreviewHubBackpressureIntegrity() {
+#if !defined(_WIN32)
+    using dvbstreamer5::media::network::NativePreviewHub;
+    NativePreviewHub hub;
+    std::string error;
+    const int fd = hub.subscribe(error);
+    assert(fd >= 0);
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    assert(flags >= 0);
+    assert(::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
+
+    constexpr int kPackets = 4096;
+    for (int i = 0; i < kPackets; ++i) {
+        Packet source = packet(0x0123, static_cast<std::uint8_t>(i & 15));
+        source[4] = static_cast<std::uint8_t>(i & 0xff);
+        source[5] = static_cast<std::uint8_t>((i >> 8) & 0xff);
+        hub.publish(source.data(), source.size());
+    }
+
+    std::array<std::uint8_t, 188> received {};
+    Packet heartbeat = packet(0x1fff, 0);
+    int consumed = 0;
+    int flushes = 0;
+    while (consumed < kPackets && flushes < 1000) {
+        const ssize_t size = ::read(fd, received.data(), received.size());
+        if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // Each publish attempts to drain pending packets before sending
+            // this extra tail packet. It must never overtake original data.
+            hub.publish(heartbeat.data(), heartbeat.size());
+            ++flushes;
+            continue;
+        }
+        assert(size == static_cast<ssize_t>(received.size()));
+        assert(received[0] == 0x47);
+        assert(received[4] == static_cast<std::uint8_t>(consumed & 0xff));
+        assert(received[5] ==
+               static_cast<std::uint8_t>((consumed >> 8) & 0xff));
+        ++consumed;
+    }
+    assert(consumed == kPackets);
+    hub.unsubscribe(fd);
+    ::close(fd);
+#endif
+}
+
 void testNativePreviewHubFanout() {
 #if !defined(_WIN32)
     using dvbstreamer5::media::network::NativePreviewHub;
@@ -1506,6 +1556,7 @@ int main() {
     testNativeHttpVbrAndRtpFanout();
     testNativeHttpFailureIsReported();
     testNativeHttpDoesNotRedirectAccessKeys();
+    testNativePreviewHubBackpressureIntegrity();
     testNativePreviewHubFanout();
     std::cout << "PASS: native MPEG-TS/RTP and CBR output relay over UDP\n";
 }
