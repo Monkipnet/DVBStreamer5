@@ -1,3 +1,10 @@
+## V10.8.274 — silent Ittiam AVC startup recovery / HLS and CBCS test fixtures (experimental)
+
+- When the explicit Ittiam AVC decoder consumes six initial access units without a single output frame, it now attempts a **one-time**, bounded (max 4 MiB) replay through the optional FFmpeg AVC decoder. The switch happens only if FFmpeg actually decodes pictures. Normal Ittiam output is not decoded twice, and VAAPI/NVENC/mux/PTS scheduling settings remain unchanged.
+- Corrects synthetic HLS rotation test packets to begin with a video PES header and sequence header; previous PCR-only packets were rightly rejected by the clean-PES-start safeguard, resulting in zero segments even in independent mode.
+- CMAF SAMPLE-AES/CBCS protocol test now uses a separate fixture with longer H.264 video access units so the CBCS encrypted subsample region contains full 16-byte AES blocks. CBCS correctness assertion remains enabled; the production encryption and decryption algorithms are unchanged.
+- Inherits V272 end-of-input mux drain behavior and previous HTTP/SRT/MP2 improvements. Requires compilation and full 5-test CTest plus live broadcast validation before deployment or merge into main.
+
 ## V10.8.273 — HLS fixture update and codec/CMAF test diagnostics (experimental)
 
 - HLS output CTest uses the independent-segment path for its deliberately synthetic PCR/random-access-only packet stream. Unlike the normal passthrough HLS path, this scenario does not require PAT/PMT and valid elementary PES. Reports actual segment count, target duration and endlist flags on failure.
