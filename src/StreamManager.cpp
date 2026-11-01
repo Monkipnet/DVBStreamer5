@@ -1830,6 +1830,27 @@ void StreamManager::monitorNativeStream(StreamState* state) {
                       << " cc_delta=" << (cc - lastCc)
                       << std::endl;
         }
+        // Diagnose transport-only SRT freezes separately from AV encoding
+        // stalls. The old droppedBytes counter included harmless offline
+        // listener bytes and could show hundreds of MiB of fake queue loss.
+        if (!state->nativeSrtOutputs.empty() && (monitorTicks % 10U) == 0U) {
+            for (std::size_t index = 0; index < state->nativeSrtOutputs.size();
+                 ++index) {
+                const auto& output = state->nativeSrtOutputs[index];
+                if (!output) continue;
+                std::cerr << "NATIVE SRT OUTPUT HEALTH"
+                          << " stream_id=" << state->config.id
+                          << " output_index=" << index
+                          << " connected=" << (output->connected() ? 1 : 0)
+                          << " queued_bytes=" << output->queuedBytes()
+                          << " sent_bytes=" << output->sentBytes()
+                          << " queue_overrun_bytes=" << output->queueOverrunBytes()
+                          << " no_peer_discard_bytes=" << output->noPeerDiscardBytes()
+                          << " total_dropped_bytes=" << output->droppedBytes()
+                          << " reconnects=" << output->reconnects()
+                          << std::endl;
+            }
+        }
 
         // Runtime input-health notification must use packet progress, not the
         // absolute cumulative byte counter.  A UDP/SRT/HTTP relay can stay alive
