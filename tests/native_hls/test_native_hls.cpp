@@ -124,6 +124,10 @@ bool testOutput() {
     cfg.directory = directory;
     cfg.targetDurationSeconds = 1.0;
     cfg.liveWindowSegments = 4;
+    // This synthetic fixture has PCR/random-access packets but no PAT/PMT
+    // or PES. Exercise the independent-segment path instead of the normal
+    // passthrough clean-start gate, which correctly requires PAT + PMT.
+    cfg.independentSegments = true;
     std::string error;
     if (!segmenter.start(cfg, error)) return false;
     for (std::uint64_t second = 0; second <= 4; ++second) {
@@ -132,10 +136,18 @@ bool testOutput() {
     }
     segmenter.stop();
     const std::string playlist = readAll(directory / "video.m3u8");
-    const bool ok = segmenter.segmentCount() >= 4 &&
-        playlist.find("#EXT-X-TARGETDURATION:1") != std::string::npos &&
-        playlist.find("#EXT-X-ENDLIST") != std::string::npos &&
-        playlist.find("segment") != std::string::npos;
+    const auto count = segmenter.segmentCount();
+    const bool target = playlist.find("#EXT-X-TARGETDURATION:1") != std::string::npos;
+    const bool endlist = playlist.find("#EXT-X-ENDLIST") != std::string::npos;
+    const bool segments = playlist.find("segment") != std::string::npos;
+    const bool ok = count >= 4 && target && endlist && segments;
+    if (!ok) {
+        std::cerr << "native HLS output diagnostics: segments=" << count
+                  << " targetduration=" << target << " endlist=" << endlist
+                  << " segment_names=" << segments
+                  << " last_error=" << segmenter.lastError()
+                  << " playlist=" << playlist << "\n";
+    }
     std::filesystem::remove_all(directory, ec);
     return ok;
 }
