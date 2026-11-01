@@ -1183,18 +1183,28 @@ void NativeUdpRelay::run() {
                 auto chunk = std::move(httpQueue_.front());
                 httpQueue_.pop_front();
                 if (httpJitterEnabled_ && !chunk.empty() && jitterReady) {
-                    // Gently correct clock drift relative to the bounded
-                    // reservoir. Do not send a burst to catch up after a
-                    // source stall; always reanchor to current wall time.
-                    const auto targetBytes = std::max<std::uint64_t>(
-                        16384ULL, jitterRateBps * 1200ULL / 8000ULL);
-                    std::uint64_t effectiveBps = jitterRateBps;
-                    if (httpQueuedBytes_ > targetBytes * 3ULL / 2ULL)
-                        effectiveBps += jitterRateBps / 10ULL;
-                    else if (httpQueuedBytes_ < targetBytes / 2ULL)
-                        effectiveBps -= jitterRateBps / 10ULL;
-                    effectiveBps = std::max<std::uint64_t>(
-                        1ULL, effectiveBps);
+                    // V10.8.284: feedback control against the actual
+                    // reservoir depth. V283 corrected by only +/-10% after
+                    // half/full-target thresholds, allowing a gradual drift
+                    // from ~0.4 MiB to >0.8 MiB on a ~3.5 Mbit/s HTTP feed.
+                    // Correct continuously, but cap acceleration at +30%
+                    // and slowdown at -15% to avoid recreating RAW bursts.
+                    // This affects only the opt-in HTTP input byte clock:
+                    // media PCR/PTS/DTS, encoder and AV mux remain intact.
+                    const auto targetBytes = std::clamp<std::uint64_t>(
+                        jitterRateBps * 1200ULL / 8000ULL,
+                        16384ULL, 1258291ULL);
+                    const auto backlogBytes = static_cast<std::int64_t>(
+                        httpQueuedBytes_);
+                    const auto targetSigned = static_cast<std::int64_t>(
+                        targetBytes);
+                    const auto errorBytes = backlogBytes - targetSigned;
+                    const auto correctionPct = std::clamp<std::int64_t>(
+                        errorBytes * 40LL / targetSigned, -15LL, 30LL);
+                    const auto effectiveBps = std::max<std::uint64_t>(
+                        1ULL, jitterRateBps *
+                            static_cast<std::uint64_t>(100LL + correctionPct) /
+                            100ULL);
                     const auto now = std::chrono::steady_clock::now();
                     const auto advanceUs = std::max<std::uint64_t>(
                         1ULL, static_cast<std::uint64_t>(
@@ -1212,6 +1222,8 @@ void NativeUdpRelay::run() {
                                   << " bitrate_kbps=" << jitterRateBps / 1000ULL
                                   << " backlog_bytes=" << httpQueuedBytes_
                                   << " target_bytes=" << targetBytes
+                                  << " correction_pct=" << correctionPct
+                                  << " output_kbps=" << effectiveBps / 1000ULL
                                   << " mode=paced_input"
                                   << std::endl;
                         jitterOutputChunks = 0;
