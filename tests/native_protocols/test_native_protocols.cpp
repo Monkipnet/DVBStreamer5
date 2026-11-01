@@ -5,6 +5,7 @@
 #include "media/NativeSampleAes.h"
 #include "media/NativeTsDemux.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <arpa/inet.h>
