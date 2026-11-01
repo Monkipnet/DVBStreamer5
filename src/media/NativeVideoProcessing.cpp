@@ -2,6 +2,7 @@
 #include "media/NativeScaleMode.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -345,8 +346,14 @@ struct BilinearMap {
     }
 };
 
+// A two-row separable implementation of the original fixed-point bilinear
+// scaler. Horizontal contributions are kept at full 8-bit fractional
+// precision (0..255*256); vertical interpolation then uses the *same*
+// 32768 rounding and >>16 as the old four-tap expression. No color/quality
+// approximation or changes to I420 geometry are introduced.
 void scalePlane(const std::uint8_t* src, int sw, int sh, int sstride,
-                std::uint8_t* dst, int dw, int dh, int dstride) {
+                std::uint8_t* dst, int dw, int dh, int dstride,
+                bool chroma) {
     if (sw == dw && sh == dh) {
         for (int y = 0; y < sh; ++y)
             std::memcpy(dst + y * dstride, src + y * sstride,
@@ -354,37 +361,63 @@ void scalePlane(const std::uint8_t* src, int sw, int sh, int sstride,
         return;
     }
 
-    // Each transcoder worker keeps one geometry for long periods, so this
-    // thread-local map removes all coordinate divisions from the hot frame
-    // loop without requiring any global locks.
-    thread_local BilinearMap map;
+    // Luma and chroma use different coordinate maps. The old single
+    // thread-local map alternated Y -> U -> V -> Y, rebuilding hundreds
+    // of coordinate divisions on EVERY frame. Keep one map per geometry.
+    thread_local BilinearMap lumaMap;
+    thread_local BilinearMap chromaMap;
+    auto& map = chroma ? chromaMap : lumaMap;
     map.prepare(sw, sh, dw, dh);
 
-    for (int y = 0; y < dh; ++y) {
-        const int y0 = map.y0[static_cast<std::size_t>(y)];
-        const int y1 = map.y1[static_cast<std::size_t>(y)];
-        const unsigned fy = map.wy[static_cast<std::size_t>(y)];
-        const unsigned ify = 256U - fy;
-        const auto* row0 = src + static_cast<std::size_t>(y0) * sstride;
-        const auto* row1 = src + static_cast<std::size_t>(y1) * sstride;
-        auto* out = dst + static_cast<std::size_t>(y) * dstride;
+    // Temporary rows are retained per worker, but their content is never
+    // reused across separate frames or even different U/V planes.
+    thread_local std::array<std::vector<std::uint16_t>, 2> lumaRows;
+    thread_local std::array<std::vector<std::uint16_t>, 2> chromaRows;
+    auto& horizontal = chroma ? chromaRows : lumaRows;
+    for (auto& row : horizontal) row.resize(static_cast<std::size_t>(dw));
+    int cachedSrcRows[2] = {-1, -1};
 
+    // In 576->1080 upscaling, neighboring output rows repeatedly address
+    // the same source rows. Calculate each horizontal source row once, then
+    // reuse it across as many vertical output rows as need it.
+    const auto getHorizontal = [&](int sourceY, int preserveY)
+        -> const std::uint16_t* {
+        if (cachedSrcRows[0] == sourceY) return horizontal[0].data();
+        if (cachedSrcRows[1] == sourceY) return horizontal[1].data();
+
+        // Never evict the other source row needed by the current output row.
+        const int slot = cachedSrcRows[0] == preserveY ? 1 : 0;
+        const auto* inputRow = src + static_cast<std::size_t>(sourceY) *
+                                    static_cast<std::size_t>(sstride);
+        auto* out = horizontal[slot].data();
         for (int x = 0; x < dw; ++x) {
-            const std::size_t ix = static_cast<std::size_t>(x);
-            const int x0 = map.x0[ix];
-            const int x1 = map.x1[ix];
+            const auto ix = static_cast<std::size_t>(x);
             const unsigned fx = map.wx[ix];
             const unsigned ifx = 256U - fx;
-
             const unsigned top =
-                static_cast<unsigned>(row0[x0]) * ifx +
-                static_cast<unsigned>(row0[x1]) * fx;
-            const unsigned bottom =
-                static_cast<unsigned>(row1[x0]) * ifx +
-                static_cast<unsigned>(row1[x1]) * fx;
+                static_cast<unsigned>(inputRow[map.x0[ix]]) * ifx +
+                static_cast<unsigned>(inputRow[map.x1[ix]]) * fx;
+            out[ix] = static_cast<std::uint16_t>(top);
+        }
+        cachedSrcRows[slot] = sourceY;
+        return out;
+    };
 
-            out[x] = static_cast<std::uint8_t>(
-                (top * ify + bottom * fy + 32768U) >> 16U);
+    for (int y = 0; y < dh; ++y) {
+        const auto iy = static_cast<std::size_t>(y);
+        const int srcY0 = map.y0[iy];
+        const int srcY1 = map.y1[iy];
+        const unsigned fy = map.wy[iy];
+        const unsigned ify = 256U - fy;
+        const auto* top = getHorizontal(srcY0, srcY1);
+        const auto* bottom = getHorizontal(srcY1, srcY0);
+        auto* dstRow = dst + static_cast<std::size_t>(y) *
+                                 static_cast<std::size_t>(dstride);
+        for (int x = 0; x < dw; ++x) {
+            const auto ix = static_cast<std::size_t>(x);
+            dstRow[x] = static_cast<std::uint8_t>(
+                (static_cast<unsigned>(top[ix]) * ify +
+                 static_cast<unsigned>(bottom[ix]) * fy + 32768U) >> 16U);
         }
     }
 }
@@ -444,9 +477,9 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
     auto* dy = output.i420.data();
     auto* du = dy + static_cast<std::size_t>(width) * height;
     auto* dv = du + static_cast<std::size_t>(width / 2) * (height / 2);
-    scalePlane(sy, input.width, input.height, input.width, dy, width, height, width);
-    scalePlane(su, input.width / 2, input.height / 2, input.width / 2, du, width / 2, height / 2, width / 2);
-    scalePlane(sv, input.width / 2, input.height / 2, input.width / 2, dv, width / 2, height / 2, width / 2);
+    scalePlane(sy, input.width, input.height, input.width, dy, width, height, width, false);
+    scalePlane(su, input.width / 2, input.height / 2, input.width / 2, du, width / 2, height / 2, width / 2, true);
+    scalePlane(sv, input.width / 2, input.height / 2, input.width / 2, dv, width / 2, height / 2, width / 2, true);
     return true;
 }
 
