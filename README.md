@@ -1,3 +1,11 @@
+## V10.8.278 — per-stage source PES / AVC decode / frame-gate diagnostics (experimental)
+
+- V277 showed the hardware encoder spends only ~21ms processing a 1080p frame (5ms CPU upscale + 15ms Intel encode), but observed RAW-frame arrival was ~22fps and the encoder worker spent ~3068ms of its 125-frame window idle, including one 830ms gap, with zero RAW queue drops in that measurement.
+- New per-stream `NATIVE VIDEO DECODE PERF` emitted every 125 processed video PES: `pes_in_fps`, `pes_processed_fps`, `decoded_fps`, `raw_published_fps`, `decoded_frames`, `raw_published_frames`, `fps_gate_drop_window`, `decode_avg_ms`, `decode_max_ms`, `decode_empty_wait_ms`, `decode_empty_wait_max_ms`, `decode_empty_wait_events`, `pes_queue_now`, `pes_queue_peak` and `pes_queue_drop_total`.
+- PES input counts are atomically owned by the demux producer; decoded/RAW-published counts are updated only on the video decoder worker. The snapshot of compressed-PES queue/drop counters is taken under its existing mutex. No extra per-frame log lines or changes to decoding, video frame order, FPS gate, audio timing, hardware acceleration or backpressure policies.
+- Cross-check `NATIVE VIDEO DECODE PERF` and V277 `NATIVE VIDEO ENCODE PERF` for the **same stream_id after startup**. Input PES stalls vs. slow decoder vs. frame-gate drops can now be distinguished. Both logs aggregate over 125 samples but are not guaranteed to be exactly time-aligned.
+- This is a diagnostic test branch, not proof of a throughput fix. Run CTest 5/5 and real streaming before main merge.
+
 ## V10.8.277 — RAW producer cadence versus encoding throughput diagnostics (test branch)
 
 - V276 full CTest passed 5/5 and a production observation found CPU bilinear scaling as low as 5ms/frame (versus V275 16–17ms), while the software scaler output remains byte-identical in the regression test. Despite a combined ~21–30ms scale+encoder time, the 1920x1080 live pipeline still intermittently achieves only ~21–24fps and accumulates pre-encoder RAW queue drops.
