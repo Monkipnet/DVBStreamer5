@@ -1,3 +1,10 @@
+## V10.8.272 — finite-input mux drain fix (test branch)
+
+- Fixes the video-only `native_transcoder` CTest failure `flush: native transcoder async queues did not drain`: the live mux initially waits up to 2.5 s for a missing audio peer, while `waitForIdle()` times out after about 1 s. Explicit `flush()` now temporarily bypasses live peer-wait and A/V lead holds to drain a complete, finite input, then restores the live mux policy on all return paths.
+- Streaming A/V synchronization limits, FPS, bitrates, queues, Intel/NVENC selection and existing SRT/HTTP work remain unchanged.
+- Adds failure diagnostics for transcoder flush queue status, HLS fixture request/byte counts and the first failing RTSP/RTMP/CMAF protocol stage. HLS and protocol failures still require server-side CTest output to diagnose; not claimed fixed.
+- This branch has not been compiled or tested on the user's server. Do not merge into main without the 5-test suite and live validation.
+
 ## V10.8.271 — split software scaling and Intel encoding timing (test branch)
 
 - For each 125-frame video encode interval, `NATIVE VIDEO ENCODE PERF` additionally reports `scale_avg_ms`, `scale_max_ms`, `encode_avg_ms`, `encode_max_ms`, attributed per stream ID.
