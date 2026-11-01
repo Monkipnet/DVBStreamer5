@@ -165,6 +165,10 @@ private:
     std::ifstream fileInput_;
     bool fileInputSource_ = false;
     bool httpInputSource_ = false;
+    // Optional per-channel pacing of a bursty live HTTP MPEG-TS input.
+    // Enabled only when DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID exactly
+    // matches config_.streamId. All other input paths are unchanged.
+    bool httpJitterEnabled_ = false;
     bool externalInputSource_ = false;
     bool dvbInputSource_ = false;
     LinuxDvbInput dvbInput_;
