@@ -1002,7 +1002,13 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                     const auto waited = std::chrono::steady_clock::now() - only.queuedAt;
                     // At startup, give the peer stream time to produce its first encoded sample.
                     // Afterwards keep A/V close, but never let one slow encoder block forever.
-                    if (otherClock == 0) {
+                    if (muxDrainRequested_.load(std::memory_order_acquire)) {
+                        // At explicit end-of-input there can be no future
+                        // peer sample. Drain all remaining video/audio frames
+                        // immediately instead of applying live A/V lead holds.
+                        // The normal live path below remains unchanged.
+                        ready = true;
+                    } else if (otherClock == 0) {
                         // Before the peer stream has produced its first sample we may
                         // wait briefly, but do not use queue depth as permission to run
                         // one stream far ahead of the other.
@@ -2147,6 +2153,23 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
     std::lock_guard<std::mutex> lock(mutex_);
     error.clear(); output.clear();
     if (!initialized_) return true;
+
+    // flush() signals a finite, complete input. A video-only source cannot
+    // satisfy the normal 2.5-second "wait for first audio" policy, while
+    // waitForIdle() times out in approximately 1 second. The same issue can
+    // occur on the final few frames of any finite A/V source.
+    // Use an RAII guard so every early failure restores live-mode policy.
+    struct MuxDrainGuard {
+        std::atomic<bool>& requested;
+        std::condition_variable& cv;
+        ~MuxDrainGuard() {
+            requested.store(false, std::memory_order_release);
+            cv.notify_all();
+        }
+    } muxDrainGuard{muxDrainRequested_, muxQueueCv_};
+    muxDrainRequested_.store(true, std::memory_order_release);
+    muxQueueCv_.notify_all();
+
     demux_.flush();
     if (!waitForIdle()) {
         if (failed_.load(std::memory_order_acquire)) {
