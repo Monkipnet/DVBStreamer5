@@ -51,7 +51,7 @@ int NativePreviewHub::subscribe(std::string& error) {
         ::close(sockets[1]);
         return -1;
     }
-    subscribers_.emplace(sockets[0], Subscriber{sockets[1], {}, 0});
+    subscribers_.emplace(sockets[0], Subscriber{sockets[1], {}, 0, false});
     return sockets[0];
 #endif
 }
@@ -107,6 +107,17 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
             if (result < 0) { remove = true; break; }
             client.pendingBytes -= packet.size();
             client.pending.pop_front();
+        }
+
+        if (client.pendingBytes < (1U * 1024U * 1024U))
+            client.backlogWarningLogged = false;
+        if (client.pendingBytes >= (2U * 1024U * 1024U) &&
+            !client.backlogWarningLogged) {
+            std::cerr << "NATIVE HTTP TS HUB backlog"
+                      << " hub_fd=" << subscriber->first
+                      << " pending_bytes=" << client.pendingBytes
+                      << std::endl;
+            client.backlogWarningLogged = true;
         }
 
         for (std::size_t offset = 0; !remove && offset < alignedSize;) {
