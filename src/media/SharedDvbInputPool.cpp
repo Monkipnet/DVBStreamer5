@@ -71,6 +71,7 @@ struct SharedDvbInputPool::Impl {
         bool sourceFinished = false;
         std::string finishError;
         std::uint64_t droppedChunks = 0;
+        int jitterMs = 0;
         std::thread worker;
     };
 
@@ -85,6 +86,7 @@ struct SharedDvbInputPool::Impl {
         std::map<std::string, std::shared_ptr<Subscriber>> subscribers;
         std::atomic<bool> stop{false};
         std::atomic<bool> running{false};
+        std::atomic<int> jitterMs{0};
         bool keepWarmOnIdle = false;
         std::string sourceError;
         std::thread reader;
@@ -293,14 +295,9 @@ struct SharedDvbInputPool::Impl {
 
         // Opt-in shared DVB jitter smoothing; disabled by default.
         // One queue per physical frontend, before service fan-out.
-        const char* jitterEnv = std::getenv("DVBSTREAMER5_DVB_JITTER_MS");
-        int jitterMs = 0;
-        if (jitterEnv && *jitterEnv) {
-            char* end = nullptr;
-            const long parsed = std::strtol(jitterEnv, &end, 10);
-            if (end && *end == '\0' && parsed >= 20 && parsed <= 500)
-                jitterMs = static_cast<int>(parsed);
-        }
+        // The active delay follows the maximum requested by the DVB tiles
+        // sharing this physical transponder. No global environment override.
+
         struct TimedDvbChunk {
             std::chrono::steady_clock::time_point at;
             std::shared_ptr<const std::vector<std::uint8_t>> data;
@@ -324,7 +321,7 @@ struct SharedDvbInputPool::Impl {
             while (!jitterQueue.empty()) {
                 const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
                     now - jitterQueue.front().at).count();
-                if (!force && age < jitterMs && jitterBytes <= kJitterMaxBytes)
+                if (!force && age < bus->jitterMs.load(std::memory_order_relaxed) && jitterBytes <= kJitterMaxBytes)
                     break;
                 auto chunk = std::move(jitterQueue.front().data);
                 jitterBytes -= chunk->size();
@@ -357,7 +354,7 @@ struct SharedDvbInputPool::Impl {
             diagPollMaxMs = std::max(diagPollMaxMs, pollMs);
             if (received == 0) {
                 ++diagPollTimeouts;
-                if (jitterMs > 0) drainJitter(false);
+                if (!jitterQueue.empty()) drainJitter(false);
                 continue;
             }
             if (lastReadAt.time_since_epoch().count() != 0) {
@@ -429,7 +426,7 @@ struct SharedDvbInputPool::Impl {
             auto chunk = std::make_shared<std::vector<std::uint8_t>>(
                 buffer.begin(),
                 buffer.begin() + static_cast<std::ptrdiff_t>(received));
-            if (jitterMs > 0) {
+            if (bus->jitterMs.load(std::memory_order_relaxed) > 0 || !jitterQueue.empty()) {
                 jitterBytes += chunk->size();
                 jitterQueue.push_back({readEnd, chunk});
                 // Never drop packets here: when memory pressure is reached,
@@ -584,12 +581,17 @@ struct SharedDvbInputPool::Impl {
 
             auto subscriber = std::make_shared<Subscriber>();
             subscriber->streamId = streamId;
+            subscriber->jitterMs = requested.jitterMs;
             subscriber->onData = std::move(onData);
             subscriber->onFinish = std::move(onFinish);
 
             {
                 std::lock_guard<std::mutex> busLock(bus->mutex);
                 bus->subscribers[streamId] = subscriber;
+                int effectiveJitter = 0;
+                for (const auto& entry : bus->subscribers)
+                    effectiveJitter = std::max(effectiveJitter, entry.second->jitterMs);
+                bus->jitterMs.store(effectiveJitter, std::memory_order_release);
                 if (!bus->running.load(std::memory_order_acquire)) {
                     subscriber->sourceFinished = true;
                     subscriber->finishError = bus->sourceError.empty()
