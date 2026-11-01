@@ -8051,8 +8051,8 @@ function saveStream(id) {
   const savePayload = {
     login: state.login,
     server_name: state.server_name,
-    telegram_token: state.telegram_token,
-    telegram_chat_id: state.telegram_chat_id,
+    // Telegram credentials belong to server settings, not stream editing.
+    // Omit them entirely; the API retains the already configured values.
     http_port: state.http_port,
     language,
     streams: state.streams
