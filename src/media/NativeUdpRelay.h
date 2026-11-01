@@ -73,6 +73,7 @@ private:
 };
 
 struct NativeUdpRelayConfig {
+    std::string streamId;  // diagnostic identity; never included in transport
     std::string inputUri;
     bool externallyFedInput = false;
     // V10.8.137: set only when an external producer already emits contiguous,
