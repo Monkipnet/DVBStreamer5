@@ -6,6 +6,7 @@
 #include "media/NativePreviewHub.h"
 #include "media/UdpSocket.h"
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -19,6 +20,20 @@
 #include <vector>
 
 namespace dvbstreamer5::media::network {
+
+namespace detail {
+// V10.8.284: stable proportional correction for the opt-in HTTP TS jitter
+// reservoir. Avoid the V283 +/-10%-only-at-extremes dead zone.
+// This math does not inspect or modify source timestamps.
+inline std::int64_t httpTsJitterCorrectionPercent(
+    std::size_t backlogBytes,
+    std::uint64_t targetBytes) noexcept {
+    if (targetBytes == 0) return 0;
+    const auto target = static_cast<std::int64_t>(targetBytes);
+    const auto delta = static_cast<std::int64_t>(backlogBytes) - target;
+    return std::clamp<std::int64_t>(delta * 40LL / target, -15LL, 30LL);
+}
+} // namespace detail
 
 struct NativeUdpRelayOutputConfig {
     std::string outputType;
@@ -73,6 +88,7 @@ private:
 };
 
 struct NativeUdpRelayConfig {
+    std::string streamId;  // diagnostic identity; never included in transport
     std::string inputUri;
     bool externallyFedInput = false;
     // V10.8.137: set only when an external producer already emits contiguous,
@@ -164,6 +180,10 @@ private:
     std::ifstream fileInput_;
     bool fileInputSource_ = false;
     bool httpInputSource_ = false;
+    // Optional per-channel pacing of a bursty live HTTP MPEG-TS input.
+    // Enabled only when DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID exactly
+    // matches config_.streamId. All other input paths are unchanged.
+    bool httpJitterEnabled_ = false;
     bool externalInputSource_ = false;
     bool dvbInputSource_ = false;
     LinuxDvbInput dvbInput_;

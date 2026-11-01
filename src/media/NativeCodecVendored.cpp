@@ -3,6 +3,7 @@
 #include "media/DiagnosticAvcFallback.h"
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeIttiamAvc.h"
+#include "media/NativeFfmpegAvcDecoder.h"
 #include "media/NativeAc3Decoder.h"
 
 #include <wels/codec_api.h>
@@ -702,268 +703,6 @@ private:
     std::uint64_t outputFrames_ = 0;
 };
 
-class OpenH264Decoder final : public VideoDecoder {
-public:
-    OpenH264Decoder() {
-        if (WelsCreateDecoder(&decoder_) != 0 || !decoder_) return;
-        if (!initializeDecoder()) {
-            WelsDestroyDecoder(decoder_);
-            decoder_ = nullptr;
-        }
-    }
-    ~OpenH264Decoder() override {
-        if (decoder_) {
-            decoder_->Uninitialize();
-            WelsDestroyDecoder(decoder_);
-        }
-    }
-    bool valid() const noexcept { return decoder_ != nullptr; }
-
-    bool decode(const std::uint8_t* data, std::size_t size,
-                std::uint64_t pts90k, bool hasPts,
-                std::vector<RawVideoFrame>& output,
-                std::string& error) override {
-        error.clear();
-        if (!decoder_) { error = "OpenH264 decoder unavailable"; return false; }
-        if (!data || !size) return true;
-
-        // V10.8.43: the live demux sample cadence is one AVC picture per
-        // source frame (~25 fps for the LVM service). V10.8.42 incorrectly
-        // split a single already-framed sample into roughly four synthetic
-        // pictures. Keep each demux sample byte-exact. Broadcast AVC Main/CABAC
-        // is handled by the hardware zero-copy paths when available; this CPU
-        // OpenH264 path remains the compatible fallback.
-        ++decodeCalls_;
-        ++pictureCalls_;
-
-        std::vector<std::uint8_t> picture(data, data + size);
-        const bool ok = decodePicture(
-            std::move(picture), pts90k, hasPts, output, error);
-
-        if ((decodeCalls_ % 100U) == 0U) {
-            std::cerr << "NATIVE AVC SAMPLE DIAG decodeCalls=" << decodeCalls_
-                      << " samples=" << pictureCalls_
-                      << " sps=" << spsSeen_ << " pps=" << ppsSeen_
-                      << " idr=" << idrSeen_
-                      << " synced=" << (synchronized_ ? 1 : 0)
-                      << " refLost=" << refLostSeen_
-                      << " noParam=" << noParamSeen_
-                      << " bitErr=" << bitstreamErrorSeen_
-                      << " prime=" << parameterPrimeCalls_
-                      << " primeErr=" << parameterPrimeErrors_
-                      << " out=" << outputFrames_ << '\n';
-        }
-        return ok;
-    }
-
-    void reset() override {
-        sps_.clear();
-        pps_.clear();
-        clearPending();
-        synchronized_ = false;
-        decodeCalls_ = pictureCalls_ = spsSeen_ = ppsSeen_ = idrSeen_ = 0;
-        refLostSeen_ = noParamSeen_ = bitstreamErrorSeen_ = outputFrames_ = 0;
-        parameterPrimeCalls_ = parameterPrimeErrors_ = 0;
-        if (decoder_) {
-            decoder_->Uninitialize();
-            initializeDecoder();
-        }
-    }
-
-private:
-    struct PendingStamp {
-        std::size_t end = 0;
-        std::uint64_t pts90k = 0;
-        bool hasPts = false;
-    };
-
-    void appendPending(const std::uint8_t* data, std::size_t size,
-                       std::uint64_t pts90k, bool hasPts) {
-        pending_.insert(pending_.end(), data, data + size);
-        stamps_.push_back({pending_.size(), pts90k, hasPts});
-    }
-
-    void clearPending() {
-        pending_.clear();
-        stamps_.clear();
-    }
-
-    void consumePending(std::size_t count) {
-        if (count == 0) return;
-        if (count >= pending_.size()) {
-            clearPending();
-            return;
-        }
-        pending_.erase(
-            pending_.begin(),
-            pending_.begin() + static_cast<std::ptrdiff_t>(count));
-        std::deque<PendingStamp> next;
-        for (auto stamp : stamps_) {
-            if (stamp.end <= count) continue;
-            stamp.end -= count;
-            next.push_back(stamp);
-        }
-        stamps_.swap(next);
-    }
-
-    std::uint64_t pendingPts() const noexcept {
-        for (const auto& stamp : stamps_) if (stamp.hasPts) return stamp.pts90k;
-        return stamps_.empty() ? 0 : stamps_.front().pts90k;
-    }
-
-    bool pendingHasPts() const noexcept {
-        for (const auto& stamp : stamps_) if (stamp.hasPts) return true;
-        return false;
-    }
-
-    bool decodePicture(std::vector<std::uint8_t>&& picture,
-                       std::uint64_t pts90k, bool hasPts,
-                       std::vector<RawVideoFrame>& output,
-                       std::string& error) {
-        const auto h264 = inspectH264AnnexB(picture.data(), picture.size());
-        if (h264.hasSps && !h264.sps.empty()) { sps_ = h264.sps; ++spsSeen_; }
-        if (h264.hasPps && !h264.pps.empty()) { pps_ = h264.pps; ++ppsSeen_; }
-        if (h264.hasIdr) ++idrSeen_;
-
-        if (!synchronized_) {
-            if (!h264.hasIdr || sps_.empty() || pps_.empty()) return true;
-
-            // V10.8.46: keep the decoder instance continuous. The previous
-            // fallback uninitialized and initialized OpenH264 immediately
-            // before every recovery IDR. Prime the cached parameter sets
-            // first, matching OpenH264's GMP integration, then decode the
-            // complete picture through the normal no-delay path.
-            std::vector<std::uint8_t> parameterSets;
-            parameterSets.reserve(sps_.size() + pps_.size());
-            parameterSets.insert(parameterSets.end(), sps_.begin(), sps_.end());
-            parameterSets.insert(parameterSets.end(), pps_.begin(), pps_.end());
-
-            unsigned char* primePlanes[3]{};
-            SBufferInfo primeInfo{};
-            const DECODING_STATE primeRc = decoder_->DecodeFrame2(
-                parameterSets.data(), static_cast<int>(parameterSets.size()),
-                primePlanes, &primeInfo);
-            const int primeState = static_cast<int>(primeRc);
-            ++parameterPrimeCalls_;
-            if (primeState != 0) {
-                ++parameterPrimeErrors_;
-                if (parameterPrimeErrors_ <= 8U ||
-                    (parameterPrimeErrors_ % 100U) == 0U) {
-                    std::cerr << "NATIVE AVC PARAM PRIME state=" << primeState
-                              << " sps_bytes=" << sps_.size()
-                              << " pps_bytes=" << pps_.size()
-                              << " calls=" << parameterPrimeCalls_
-                              << " errors=" << parameterPrimeErrors_ << '\n';
-                }
-            }
-
-            synchronized_ = true;
-            return decodePictureBytes(
-                picture.data(), picture.size(), pts90k, hasPts, output, error);
-        }
-
-        return decodePictureBytes(
-            picture.data(), picture.size(), pts90k, hasPts, output, error);
-    }
-
-    bool decodePictureBytes(const std::uint8_t* data, std::size_t size,
-                            std::uint64_t pts90k, bool hasPts,
-                            std::vector<RawVideoFrame>& output,
-                            std::string& error) {
-        unsigned char* planes[3]{};
-        SBufferInfo info{};
-        info.uiInBsTimeStamp = hasPts ? pts90k : 0;
-        const DECODING_STATE rc = decoder_->DecodeFrameNoDelay(
-            data, static_cast<int>(size), planes, &info);
-        const int state = static_cast<int>(rc);
-        const int fatalMask = static_cast<int>(dsInvalidArgument) |
-                              static_cast<int>(dsInitialOptExpected) |
-                              static_cast<int>(dsOutOfMemory) |
-                              static_cast<int>(dsDstBufNeedExpan);
-        if ((state & fatalMask) != 0) {
-            error = "OpenH264 DecodeFrameNoDelay failed: " + std::to_string(state);
-            return false;
-        }
-        if ((state & static_cast<int>(dsRefLost)) != 0) ++refLostSeen_;
-        if ((state & static_cast<int>(dsNoParamSets)) != 0) ++noParamSeen_;
-        if ((state & static_cast<int>(dsBitstreamError)) != 0) ++bitstreamErrorSeen_;
-        if ((state & (static_cast<int>(dsNoParamSets) |
-                      static_cast<int>(dsDepLayerLost))) != 0) {
-            synchronized_ = false;
-        }
-
-        if (info.iBufferStatus != 1) return true;
-        const int w = info.UsrData.sSystemBuffer.iWidth;
-        const int h = info.UsrData.sSystemBuffer.iHeight;
-        const auto& video = info.UsrData.sSystemBuffer;
-        if (w <= 0 || h <= 0 || (w & 1) || (h & 1) ||
-            !planes[0] || !planes[1] || !planes[2]) {
-            error = "OpenH264 returned invalid I420 frame geometry";
-            return false;
-        }
-
-        RawVideoFrame frame;
-        frame.width = w;
-        frame.height = h;
-        frame.pts90k = info.uiOutYuvTimeStamp ? info.uiOutYuvTimeStamp : pts90k;
-        frame.dts90k = frame.pts90k;
-        frame.hasPts = hasPts || info.uiOutYuvTimeStamp != 0;
-        frame.hasDts = frame.hasPts;
-        // OpenH264 SSystemBuffer has iStride[2]: [0]=Y, [1]=U and V.
-        // Its third *plane* does NOT have an iStride[2] entry.
-        if (!copyOpenH264I420(planes[0], planes[1], planes[2],
-                              video.iStride, w, h, frame.i420)) {
-            error = "OpenH264 returned invalid I420 plane strides: y=" +
-                std::to_string(video.iStride[0]) +
-                " uv=" + std::to_string(video.iStride[1]) +
-                " width=" + std::to_string(w) +
-                " height=" + std::to_string(h);
-            return false;
-        }
-        output.push_back(std::move(frame));
-        ++outputFrames_;
-        if (outputFrames_ == 1U || (outputFrames_ % 100U) == 0U) {
-            std::cerr << "NATIVE AVC OUTPUT frames=" << outputFrames_
-                      << " size=" << w << "x" << h
-                      << " decodeCalls=" << decodeCalls_
-                      << " pictures=" << pictureCalls_ << '\n';
-        }
-        return true;
-    }
-
-    bool reinitializeDecoderState() {
-        if (!decoder_) return false;
-        decoder_->Uninitialize();
-        return initializeDecoder();
-    }
-
-    bool initializeDecoder() {
-        if (!decoder_) return false;
-        // Match OpenH264's console decoder setup as closely as possible for
-        // Main-profile broadcast AVC with B pictures.  Keep decode single-
-        // threaded; OpenH264 has historically had B-picture/thread ordering
-        // fixes and 720x576 does not need threaded slice reconstruction.
-        int threads = 0;
-        decoder_->SetOption(DECODER_OPTION_NUM_OF_THREADS, &threads);
-        SDecodingParam params{};
-        params.eEcActiveIdc = ERROR_CON_SLICE_MV_COPY_CROSS_IDR_FREEZE_RES_CHANGE;
-        params.uiTargetDqLayer = static_cast<std::uint8_t>(-1);
-        params.bParseOnly = false;
-        params.sVideoProperty.size = sizeof(params.sVideoProperty);
-        params.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
-        return decoder_->Initialize(&params) == 0;
-    }
-
-    ISVCDecoder* decoder_ = nullptr;
-    std::vector<std::uint8_t> sps_, pps_, pending_;
-    std::deque<PendingStamp> stamps_;
-    bool synchronized_ = false;
-    std::uint64_t decodeCalls_ = 0, pictureCalls_ = 0;
-    std::uint64_t spsSeen_ = 0, ppsSeen_ = 0, idrSeen_ = 0;
-    std::uint64_t refLostSeen_ = 0, noParamSeen_ = 0;
-    std::uint64_t bitstreamErrorSeen_ = 0, outputFrames_ = 0;
-    std::uint64_t parameterPrimeCalls_ = 0, parameterPrimeErrors_ = 0;
-};
 
 class OpenH264Encoder final : public VideoEncoder {
 public:
@@ -1443,48 +1182,162 @@ private:
     HANDLE_AACENCODER h_=nullptr;int rate_=0,channels_=0,frameLength_=1024;std::vector<std::int16_t>pending_;std::uint64_t nextPts_=0;bool havePts_=false;
 };
 
+// PL_MPEG's streaming buffer grows via realloc(). Never pass oversized or
+// unbounded input into plm_buffer_write; a stalled decoder otherwise grows
+// indefinitely, and an invalid/failed allocation can crash in memmove.
 class PlMpegMp2Decoder final : public AudioDecoder {
 public:
-    PlMpegMp2Decoder(){buffer_=plm_buffer_create_with_capacity(128*1024);if(buffer_)audio_=plm_audio_create_with_buffer(buffer_,0);}
-    ~PlMpegMp2Decoder()override{if(audio_)plm_audio_destroy(audio_);if(buffer_)plm_buffer_destroy(buffer_);}
-    bool valid()const noexcept{return buffer_&&audio_;}
-    bool decode(const std::uint8_t*d,std::size_t n,std::uint64_t pts,bool hasPts,std::vector<PcmAudioFrame>&out,std::string&error)override{error.clear();if(!valid()){error="PL_MPEG MP2 decoder unavailable";return false;}plm_buffer_write(buffer_,const_cast<std::uint8_t*>(d),n);std::uint64_t current=pts;for(int guard=0;guard<64;++guard){plm_samples_t*s=plm_audio_decode(audio_);if(!s)break;const int rate=plm_audio_get_samplerate(audio_);if(rate<=0){error="PL_MPEG invalid sample rate";return false;}PcmAudioFrame f;f.sampleRate=rate;f.channels=2;f.pts90k=current;f.hasPts=hasPts;f.samples.resize(static_cast<std::size_t>(s->count)*2);for(std::size_t i=0;i<static_cast<std::size_t>(s->count)*2;++i){float x=std::clamp(s->interleaved[i],-1.0f,1.0f);f.samples[i]=static_cast<std::int16_t>(std::lrint(x*32767.0f));}out.push_back(std::move(f));current+=static_cast<std::uint64_t>(s->count)*90000ULL/static_cast<unsigned>(rate);}return true;}
-    void reset()override{if(audio_)plm_audio_rewind(audio_);}
-private:plm_buffer_t*buffer_=nullptr;plm_audio_t*audio_=nullptr;
+    PlMpegMp2Decoder() { (void)initialize(); }
+    ~PlMpegMp2Decoder() override { release(); }
+    bool valid() const noexcept { return buffer_ != nullptr && audio_ != nullptr; }
+
+    bool decode(const std::uint8_t* data, std::size_t length,
+                std::uint64_t pts, bool hasPts,
+                std::vector<PcmAudioFrame>& out, std::string& error) override {
+        error.clear();
+        if (!valid()) {
+            error = "PL_MPEG MP2 decoder unavailable";
+            return false;
+        }
+        if (length == 0) return true;
+        if (!data || length > kMaximumInputBytes) {
+            error = "PL_MPEG MP2 invalid or oversized input packet";
+            return false;
+        }
+
+        // Live transport streams can start on a broken MP2 frame or lose
+        // synchronization. Rebuild both decoder and its buffer once the
+        // unread backlog exceeds our bound rather than growing without limit.
+        // The pinned PL_MPEG cursor can be byte-aligned just beyond the
+        // available input after a partial MP2 frame. Its unsigned
+        // get_remaining() then underflows to SIZE_MAX, and the next
+        // buffer_write() would use that invalid cursor in memmove().
+        // Normalize before querying remaining bytes or appending data.
+        if (!repairReadCursor()) return true;
+        const std::size_t remaining = plm_buffer_get_remaining(buffer_);
+        if (remaining > kMaximumBufferedBytes ||
+            length > kMaximumBufferedBytes - remaining) {
+            release();
+            if (!initialize()) {
+                error = "PL_MPEG MP2 decoder reinitialization failed";
+                return false;
+            }
+            std::cerr << "NATIVE MP2 DECODER recovered stale buffer"
+                      << " pending=" << remaining << std::endl;
+        }
+        if (plm_buffer_write(buffer_, const_cast<std::uint8_t*>(data), length)
+            != length) {
+            error = "PL_MPEG MP2 buffer write failed";
+            release();
+            (void)initialize();
+            return false;
+        }
+
+        std::uint64_t current = pts;
+        for (unsigned guard = 0; guard < 64; ++guard) {
+            plm_samples_t* samples = plm_audio_decode(audio_);
+            // plm_audio_decode may finish on an incomplete, byte-aligned
+            // header. Repair immediately, before another library call
+            // can mistake the unsigned underflow for available input.
+            if (!repairReadCursor()) return true;
+            if (!samples) break;
+            const int rate = plm_audio_get_samplerate(audio_);
+            if (rate <= 0 || samples->count > PLM_AUDIO_SAMPLES_PER_FRAME) {
+                error = "PL_MPEG MP2 invalid decoded audio frame";
+                release();
+                (void)initialize();
+                return false;
+            }
+            PcmAudioFrame frame;
+            frame.sampleRate = rate;
+            frame.channels = 2;
+            frame.pts90k = current;
+            frame.hasPts = hasPts;
+            const std::size_t sampleCount =
+                static_cast<std::size_t>(samples->count) * 2;
+            frame.samples.resize(sampleCount);
+            for (std::size_t k = 0; k < sampleCount; ++k) {
+                const float value = std::clamp(samples->interleaved[k], -1.0f, 1.0f);
+                frame.samples[k] =
+                    static_cast<std::int16_t>(std::lrint(value * 32767.0f));
+            }
+            out.push_back(std::move(frame));
+            current += static_cast<std::uint64_t>(samples->count) * 90000ULL /
+                       static_cast<unsigned>(rate);
+        }
+        return true;
+    }
+
+    void reset() override {
+        release();
+        (void)initialize();
+    }
+
+private:
+    static constexpr std::size_t kInitialCapacity = 128 * 1024;
+    static constexpr std::size_t kMaximumInputBytes = 256 * 1024;
+    static constexpr std::size_t kMaximumBufferedBytes = 512 * 1024;
+    static constexpr std::size_t kMaxRecoverableOverrunBits = 64;
+
+    // PL_MPEG is included with PL_MPEG_IMPLEMENTATION in this translation
+    // unit, so its pinned plm_buffer_t layout is available here. The
+    // upstream get_remaining()/discard_read_bytes() functions assume
+    // bit_index/8 <= length, but corrupted or incomplete live MP2 frames
+    // can leave the cursor beyond the end. Clamp small overruns rather
+    // than discarding the whole decoder and audible audio history.
+    bool repairReadCursor() {
+        if (!buffer_) return false;
+        if (buffer_->length > kMaximumBufferedBytes) {
+            std::cerr << "NATIVE MP2 DECODER excessive buffer length="
+                      << buffer_->length << " action=reset" << std::endl;
+            reset();
+            return false;
+        }
+        const std::size_t endBits = buffer_->length * 8;
+        if (buffer_->bit_index <= endBits) return true;
+        const std::size_t overrunBits = buffer_->bit_index - endBits;
+        if (overrunBits > kMaxRecoverableOverrunBits) {
+            std::cerr << "NATIVE MP2 DECODER invalid cursor overrun_bits="
+                      << overrunBits << " action=reset" << std::endl;
+            reset();
+            return false;
+        }
+        buffer_->bit_index = endBits;
+        ++cursorRepairs_;
+        if (cursorRepairs_ <= 4 || cursorRepairs_ % 500 == 0) {
+            std::cerr << "NATIVE MP2 DECODER cursor normalized overrun_bits="
+                      << overrunBits << " count=" << cursorRepairs_
+                      << std::endl;
+        }
+        return true;
+    }
+
+    bool initialize() {
+        buffer_ = plm_buffer_create_with_capacity(kInitialCapacity);
+        if (!buffer_) return false;
+        audio_ = plm_audio_create_with_buffer(buffer_, 0);
+        if (!audio_) {
+            plm_buffer_destroy(buffer_);
+            buffer_ = nullptr;
+            return false;
+        }
+        return true;
+    }
+    void release() noexcept {
+        if (audio_) plm_audio_destroy(audio_);
+        audio_ = nullptr;
+        if (buffer_) plm_buffer_destroy(buffer_);
+        buffer_ = nullptr;
+    }
+    plm_buffer_t* buffer_ = nullptr;
+    plm_audio_t* audio_ = nullptr;
+    std::uint64_t cursorRepairs_ = 0;
 };
 
 } // namespace
 
-RuntimeCapabilities inspectRuntimeCapabilities(){RuntimeCapabilities c;c.h264Decoder=c.h264Encoder=c.hevcDecoder=c.hevcEncoder=c.aacDecoder=c.aacEncoder=c.mpegAudioDecoder=true;c.h264Library="built-in Ittiam libavc static (OpenH264 fallback)";c.hevcDecoderLibrary="built-in libde265 1.1.3 static";c.hevcEncoderLibrary="built-in Kvazaar 2.3.2 static";c.aacDecoderLibrary=c.aacEncoderLibrary="built-in FDK-AAC 2.0.3 static";c.mpegAudioLibrary="built-in PL_MPEG static";const auto hw=inspectNativeHardwareCapabilities();c.vaapiRuntime=hw.vaapiRuntime;c.qsvEncoder=hw.qsvAvailable;c.qsvH264Encoder=hw.qsvH264;c.qsvHevcEncoder=hw.qsvHevc;c.nvencEncoder=hw.nvencAvailable;c.nvencH264Encoder=hw.nvencH264;c.nvencHevcEncoder=hw.nvencHevc;c.intelHardwareLibrary=hw.intelBackend;c.nvencHardwareLibrary=hw.nvencBackend;return c;}
-std::unique_ptr<VideoDecoder> createOpenH264VideoDecoder(
-    std::string& error, const std::string& streamId) {
-    error.clear();
-    auto decoder = std::make_unique<OpenH264Decoder>();
-    if (!decoder->valid()) {
-        // The baseline Ittiam decoder worked on this input before the test.
-        // Do not fail the selected tile solely because the optional diagnostic
-        // decoder cannot initialize; report the actual backend in the journal.
-        std::string fallbackError;
-        auto fallback = createIttiamAvcDecoder(fallbackError);
-        if (!fallback) {
-            error = "OpenH264 init failed; Ittiam fallback failed: " + fallbackError;
-            return {};
-        }
-        std::cerr << "NATIVE AVC DECODER diagnostic fallback=ittiam-libavc"
-                  << " stream_id=" << streamId
-                  << " cause=openh264_init_failed" << std::endl;
-        return fallback;
-    }
-    std::cerr << "NATIVE AVC DECODER selected=openh264 reason=diagnostic-ab"
-              << " stream_id=" << streamId << std::endl;
-    return std::make_unique<DiagnosticAvcFallbackDecoder>(
-        std::move(decoder),
-        [](std::string& fallbackError) {
-            return createIttiamAvcDecoder(fallbackError);
-        },
-        streamId);
-}
-std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){std::string ittiamError;auto p=createIttiamAvcDecoder(ittiamError);if(p){std::cerr<<"NATIVE AVC DECODER selected=ittiam-libavc\n";return p;}std::cerr<<"NATIVE AVC DECODER Ittiam unavailable reason="<<ittiamError<<" fallback=openh264\n";auto fallback=std::make_unique<OpenH264Decoder>();if(fallback->valid())return fallback;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<De265Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::Mpeg2Video){auto p=std::make_unique<IttiamMpeg2Decoder>();if(p->valid())return p;}error="built-in decoder does not support/initialize requested codec";return{};}
+RuntimeCapabilities inspectRuntimeCapabilities(){RuntimeCapabilities c;c.h264Decoder=c.h264Encoder=c.hevcDecoder=c.hevcEncoder=c.aacDecoder=c.aacEncoder=c.mpegAudioDecoder=true;c.h264Library="built-in Ittiam libavc + FFmpeg H.264";c.hevcDecoderLibrary="built-in libde265 1.1.3 static";c.hevcEncoderLibrary="built-in Kvazaar 2.3.2 static";c.aacDecoderLibrary=c.aacEncoderLibrary="built-in FDK-AAC 2.0.3 static";c.mpegAudioLibrary="built-in PL_MPEG static";const auto hw=inspectNativeHardwareCapabilities();c.vaapiRuntime=hw.vaapiRuntime;c.qsvEncoder=hw.qsvAvailable;c.qsvH264Encoder=hw.qsvH264;c.qsvHevcEncoder=hw.qsvHevc;c.nvencEncoder=hw.nvencAvailable;c.nvencH264Encoder=hw.nvencH264;c.nvencHevcEncoder=hw.nvencHevc;c.intelHardwareLibrary=hw.intelBackend;c.nvencHardwareLibrary=hw.nvencBackend;return c;}
+std::unique_ptr<VideoDecoder> createVideoDecoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){std::string ittiamError;auto p=createIttiamAvcDecoder(ittiamError);if(p){std::cerr<<"NATIVE AVC DECODER selected=ittiam-libavc\n";return p;}std::cerr<<"NATIVE AVC DECODER Ittiam unavailable reason="<<ittiamError<<" fallback=ffmpeg\n";auto fallback=createFfmpegAvcDecoder(error);if(fallback)return fallback;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<De265Decoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::Mpeg2Video){auto p=std::make_unique<IttiamMpeg2Decoder>();if(p->valid())return p;}error="built-in decoder does not support/initialize requested codec";return{};}
 static std::unique_ptr<VideoEncoder> createCpuVideoEncoder(mpegts::ElementaryCodec c,std::string&error){error.clear();if(c==mpegts::ElementaryCodec::H264){auto p=std::make_unique<OpenH264Encoder>();if(p->valid())return p;}else if(c==mpegts::ElementaryCodec::H265){auto p=std::make_unique<KvazaarEncoder>();if(p->valid())return p;}error="built-in CPU encoder does not support/initialize requested codec";return{};}
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec c,std::string&error){return createVideoEncoder(c,"auto",error);}
 std::unique_ptr<VideoEncoder> createVideoEncoder(mpegts::ElementaryCodec c,const std::string&backend,std::string&error){std::string b=backend;std::transform(b.begin(),b.end(),b.begin(),[](unsigned char x){return static_cast<char>(std::tolower(x));});if(b.empty())b="auto";if(b=="x264"||b=="x265"||b=="cpu")return createCpuVideoEncoder(c,error);if(b=="nvenc"||b=="intel"||b=="qsv"||b=="vaapi")return createNativeHardwareVideoEncoder(c,b,error);if(b=="auto"){const auto hw=inspectNativeHardwareCapabilities();std::string ignored;if(hw.nvencAvailable){auto p=createNativeHardwareVideoEncoder(c,"nvenc",ignored);if(p){std::cerr<<"NATIVE VIDEO ENCODER auto selected=nvenc\n";return p;}}if(hw.qsvAvailable){auto p=createNativeHardwareVideoEncoder(c,"qsv",ignored);if(p){std::cerr<<"NATIVE VIDEO ENCODER auto selected=qsv-vaapi\n";return p;}}auto p=createCpuVideoEncoder(c,error);if(p)std::cerr<<"NATIVE VIDEO ENCODER auto selected=cpu\n";return p;}error="unsupported native video encoder backend: "+backend;return{};}

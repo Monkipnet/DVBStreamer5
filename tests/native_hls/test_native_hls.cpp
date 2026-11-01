@@ -3,6 +3,8 @@
 
 #include <httplib.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -20,7 +22,9 @@ Packet pcrPacket(std::uint64_t pcr90k, bool randomAccess) {
     Packet packet{};
     packet.fill(0xff);
     packet[0] = 0x47;
-    packet[1] = 0x01;
+    // Mark this synthetic video PES as a payload-unit start. The HLS
+    // clean-start guard correctly drops packets that begin in mid-PES.
+    packet[1] = 0x41;
     packet[2] = 0x00;
     packet[3] = 0x30;
     packet[4] = 7;
@@ -31,6 +35,14 @@ Packet pcrPacket(std::uint64_t pcr90k, bool randomAccess) {
     packet[9] = static_cast<std::uint8_t>((pcr90k >> 1) & 0xffU);
     packet[10] = static_cast<std::uint8_t>((pcr90k & 1U) << 7);
     packet[11] = 0;
+    // Adaptation length 7 => MPEG-TS payload begins at offset 12.
+    // A tiny MPEG-2 video PES with sequence header is sufficient for the
+    // *segment-rotation* test; no decoder needs to parse this fixture.
+    const std::array<std::uint8_t, 15> pes = {
+        0x00, 0x00, 0x01, 0xe0, 0x00, 0x00, 0x80, 0x00, 0x00,
+        0x00, 0x00, 0x01, 0xb3, 0x2d, 0x02
+    };
+    std::copy(pes.begin(), pes.end(), packet.begin() + 12);
     return packet;
 }
 
@@ -104,7 +116,15 @@ bool testInput() {
     input.stop();
     server.stop();
     http.join();
-    return finishError.empty() && mediaGets == 3 && bytes == 3ULL * 188ULL * 7ULL;
+    const bool ok = finishError.empty() && mediaGets == 3 &&
+        bytes == 3ULL * 188ULL * 7ULL;
+    if (!ok) {
+        std::cerr << "native HLS input diagnostics: media_gets="
+                  << mediaGets.load() << " expected=3 bytes="
+                  << bytes.load() << " expected=" << (3ULL * 188ULL * 7ULL)
+                  << " finish_error=" << finishError << "\n";
+    }
+    return ok;
 }
 
 bool testOutput() {
@@ -115,7 +135,15 @@ bool testOutput() {
     dvbstreamer5::media::hls::NativeHlsSegmenterConfig cfg;
     cfg.directory = directory;
     cfg.targetDurationSeconds = 1.0;
+    // start() defaults to a 4-second live HLS target unless explicitly
+    // configured. The synthetic PCR fixture advances only one second per
+    // packet, so this test must request its intended one-second cadence.
+    cfg.durationExplicit = true;
     cfg.liveWindowSegments = 4;
+    // The fixture contains synthetic video PES, PCR and random-access flags,
+    // but no PAT/PMT. Use the independent-segment path, which is designed
+    // for already-muxed transcoder output.
+    cfg.independentSegments = true;
     std::string error;
     if (!segmenter.start(cfg, error)) return false;
     for (std::uint64_t second = 0; second <= 4; ++second) {
@@ -124,10 +152,18 @@ bool testOutput() {
     }
     segmenter.stop();
     const std::string playlist = readAll(directory / "video.m3u8");
-    const bool ok = segmenter.segmentCount() >= 4 &&
-        playlist.find("#EXT-X-TARGETDURATION:1") != std::string::npos &&
-        playlist.find("#EXT-X-ENDLIST") != std::string::npos &&
-        playlist.find("segment") != std::string::npos;
+    const auto count = segmenter.segmentCount();
+    const bool target = playlist.find("#EXT-X-TARGETDURATION:1") != std::string::npos;
+    const bool endlist = playlist.find("#EXT-X-ENDLIST") != std::string::npos;
+    const bool segments = playlist.find("segment") != std::string::npos;
+    const bool ok = count >= 4 && target && endlist && segments;
+    if (!ok) {
+        std::cerr << "native HLS output diagnostics: segments=" << count
+                  << " targetduration=" << target << " endlist=" << endlist
+                  << " segment_names=" << segments
+                  << " last_error=" << segmenter.lastError()
+                  << " playlist=" << playlist << "\n";
+    }
     std::filesystem::remove_all(directory, ec);
     return ok;
 }

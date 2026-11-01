@@ -126,6 +126,11 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .tile.error{border-color:#fb5f5f}
 .tile .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px;padding-right:64px;min-height:27px;min-width:0;overflow:hidden}
 .tile .top>div{min-width:0;max-width:100%;overflow:hidden}
+/* The local uptime clock stays centered in the tile's first row, while
+   the channel heading stays left and the output/delete actions stay right. */
+.tile .top>.tile-heading{max-width:calc(50% - 1px)}
+.tile .tile-uptime{position:absolute;top:9px;left:50%;transform:translateX(-50%);display:block;max-width:72px;font-size:9px;font-weight:700;line-height:13px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:center;color:#9fe7b3;pointer-events:none;z-index:1}
+.tile .tile-uptime.offline{color:#788697}
 .tile .tile-actions{position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:5px;z-index:2}
 .tile .delete-button{display:inline-flex;align-items:center;justify-content:center;position:static;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:#d9363e;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 3px 8px rgba(0,0,0,.24)}
 .tile .delete-button:hover{background:#f0444d;transform:scale(1.08)}
@@ -3163,6 +3168,8 @@ function markStreamStoppedInUi(id, message='stopped') {
   const stream = streamById(id);
   if (!stream) return;
   stream.active = false;
+  stream.running_seconds = 0;
+  stream.running_started_mono_ms = 0;
   stream.status = message;
   stream.using_backup = false;
   stream.bitrate_in_kbps = 0;
@@ -4884,6 +4891,38 @@ function updateStreamTile(tile, stream) {
     statusPill.className = `status-pill ${stream.active ? 'active' : 'stopped'}`;
     statusPill.textContent = stream.active ? (stream.using_backup ? 'Backup' : 'Online') : ((stream.activation_mode || 'online') === 'ondemand' ? 'OnDemand' : 'Offline');
   }
+  const tileClock = tile.querySelector('[data-role="tile-uptime"]');
+  if (tileClock) {
+    const started = Number(stream.running_started_mono_ms || 0);
+    const elapsed = Math.max(0, Number(stream.running_seconds || 0));
+    const active = stream.active === true && started > 0 &&
+      Number.isFinite(started) && Number.isFinite(elapsed);
+    if (!active) {
+      tileClock.classList.add('offline');
+      tileClock.textContent = '—';
+      tileClock.dataset.startedMonoMs = '';
+      delete tileClock.dataset.elapsedBase;
+      delete tileClock.dataset.elapsedSyncedAt;
+    } else {
+      tileClock.classList.remove('offline');
+      const now = Date.now();
+      const generation = String(started);
+      const base = Number(tileClock.dataset.elapsedBase);
+      const sample = Number(tileClock.dataset.elapsedSyncedAt);
+      const projected = base + Math.max(0, (now - sample) / 1000);
+      // Preserve a steady local clock between state polls. Re-anchor
+      // immediately after a real tile restart or if polling was delayed.
+      if (tileClock.dataset.startedMonoMs !== generation ||
+          !Number.isFinite(base) || !Number.isFinite(sample) ||
+          !tileClock.dataset.elapsedBase ||
+          Math.abs(projected - elapsed) > 2) {
+        tileClock.dataset.startedMonoMs = generation;
+        tileClock.dataset.elapsedBase = String(elapsed);
+        tileClock.dataset.elapsedSyncedAt = String(now);
+        tileClock.textContent = formatElapsedSeconds(elapsed);
+      }
+    }
+  }
   const runtimeStatus = tile.querySelector('[data-role="runtime-status"]');
   if (runtimeStatus) {
     const value = tileRuntimeStatus(stream.status);
@@ -5050,13 +5089,16 @@ function render(force=false) {
     }
     tile.innerHTML = `
       <div class="top">
-        <div>
-          <div class="title">${escapeHtmlValue(stream.name || stream.id)}</div>
+        <div class="tile-heading">
+          <div class="title" title="${escapeHtmlValue(stream.name || stream.id)}">${escapeHtmlValue(stream.name || stream.id)}</div>
           <div class="status-line">
             <div data-role="status-pill" class="status-pill ${stream.active ? 'active' : 'stopped'}">${stream.active ? (stream.using_backup ? 'Backup' : 'Online') : 'Offline'}</div>
             <span data-role="runtime-status" class="runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}" aria-label="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>
           </div>
         </div>
+        <span data-role="tile-uptime" class="tile-uptime elapsed-clock${stream.active ? '' : ' offline'}"
+              title="${subtitleUiTriText('Время с запуска канала', 'Time since channel start', 'Vrijeme od pokretanja kanala')}"
+              aria-label="${subtitleUiTriText('Время с запуска канала', 'Time since channel start', 'Vrijeme od pokretanja kanala')}">—</span>
       </div>
       <div class="tile-actions">
         <div class="badge">${outputs.length > 1 ? outputBadgeText(stream) : bitrateMode}</div>
@@ -7429,7 +7471,7 @@ function openStreamForm(stream) {
           <div class="stream-video-grid transcode-primary-grid">
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Видео кодек','Video codec')}>${uiBiText('Видео кодек','Video codec')}</div><small class="field-help" ${uiBiAttrs('Выходной кодек или прямой проброс оригинального видео.','Output codec or direct passthrough of the original video.')}>${uiBiText('Выходной кодек или прямой проброс оригинального видео.','Output codec or direct passthrough of the original video.')}</small><select id="streamTranscodeVideoCodec" onchange="updateTranscodeVideoControls()"><option value="h264" ${(stream.transcode_video_codec||'h264')==='h264'?'selected':''}>H.264</option><option value="hevc" ${stream.transcode_video_codec==='hevc'?'selected':''} ${transcoderInfo.hevc_video_encoder?'':'disabled'} ${uiBiAttrs('H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — недоступно'),'H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — unavailable'))}>${uiBiText('H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — недоступно'),'H.265 / HEVC' + (transcoderInfo.hevc_video_encoder?'':' — unavailable'))}</option><option value="copy" ${stream.transcode_video_codec==='copy'?'selected':''} ${uiBiAttrs('Copy / без перекодирования','Copy / no re-encode')}>${uiBiText('Copy / без перекодирования','Copy / no re-encode')}</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Кодировщик','Encoder')}>${uiBiText('Кодировщик','Encoder')}</div><small class="field-help" ${uiBiAttrs('Auto выбирает NVENC → QSV/VAAPI → CPU.','Auto selects NVENC → QSV/VAAPI → CPU.')}>${uiBiText('Auto выбирает NVENC → QSV/VAAPI → CPU.','Auto selects NVENC → QSV/VAAPI → CPU.')}</small><select id="streamTranscodeVideoEncoder" onchange="updateTranscodeVideoControls()"><option value="auto" ${(!stream.transcode_video_encoder||stream.transcode_video_encoder==='auto')?'selected':''}>Auto</option><option value="nvenc" ${stream.transcode_video_encoder==='nvenc'?'selected':''} ${transcoderInfo.nvenc_available?'':'disabled'} ${uiBiAttrs('NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — недоступен'),'NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — unavailable'))}>${uiBiText('NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — недоступен'),'NVIDIA NVENC' + (transcoderInfo.nvenc_available?'':' — unavailable'))}</option><option value="qsv" ${stream.transcode_video_encoder==='qsv'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Intel QSV / oneVPL</option><option value="vaapi" ${stream.transcode_video_encoder==='vaapi'?'selected':''} ${transcoderInfo.intel_available?'':'disabled'}>Intel VAAPI direct</option><option value="cpu" ${stream.transcode_video_encoder==='cpu'?'selected':''} ${transcoderInfo.x264_available?'':'disabled'}>CPU / OpenH264 / Kvazaar</option></select></div>
-            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Декодер H.264','H.264 decoder')}>${uiBiText('Декодер H.264','H.264 decoder')}</div><small class="field-help" ${uiBiAttrs('Декодирование H.264. Intel HW требует oneVPL 2.1+; для Haswell/i965 пока используйте software decoder с аппаратным VAAPI encoder.','H.264 decoding. Intel HW needs oneVPL 2.1+; Haswell/i965 currently needs software decode with VAAPI hardware encode.')}>${uiBiText('Декодирование H.264. Intel HW требует oneVPL 2.1+; для Haswell/i965 пока используйте software decoder с аппаратным VAAPI encoder.','H.264 decoding. Intel HW needs oneVPL 2.1+; Haswell/i965 currently needs software decode with VAAPI hardware encode.')}</small><select id="streamTranscodeVideoDecoder"><option value="auto" ${(!stream.transcode_video_decoder||stream.transcode_video_decoder==='auto')?'selected':''} ${uiBiAttrs('Авто (по умолчанию)','Auto (default)')}>${uiBiText('Авто (по умолчанию)','Auto (default)')}</option><option value="nvidia_hw" ${stream.transcode_video_decoder==='nvidia_hw'?'selected':''} ${transcoderInfo.nvenc_available?'':'disabled'} ${uiBiAttrs('NVIDIA HW / NVDEC (аппаратное декодирование)','NVIDIA HW / NVDEC (hardware decode)')}>${uiBiText('NVIDIA HW / NVDEC','NVIDIA HW / NVDEC')}</option><option value="intel_hw" ${stream.transcode_video_decoder==='intel_hw'?'selected':''} ${transcoderInfo.intel_hw_decoder_available?'':'disabled'} ${uiBiAttrs('Intel HW / oneVPL (аппаратное декодирование)','Intel HW / oneVPL (hardware decode)')}>${uiBiText('Intel HW / oneVPL','Intel HW / oneVPL')}</option><option value="ittiam" ${stream.transcode_video_decoder==='ittiam'?'selected':''}>Ittiam libavc</option><option value="openh264" ${stream.transcode_video_decoder==='openh264'?'selected':''}>OpenH264</option><option value="ffmpeg" ${stream.transcode_video_decoder==='ffmpeg'?'selected':''} ${transcoderInfo.ffmpeg_avc_decoder_available?'':'disabled'} ${uiBiAttrs('FFmpeg libavcodec (H.264, чересстрочный PAL)','FFmpeg libavcodec (H.264, interlaced PAL)')}>FFmpeg libavcodec</option></select></div>
+            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Декодер H.264','H.264 decoder')}>${uiBiText('Декодер H.264','H.264 decoder')}</div><small class="field-help" ${uiBiAttrs('Декодирование H.264. Intel HW требует oneVPL 2.1+; для Haswell/i965 пока используйте software decoder с аппаратным VAAPI encoder.','H.264 decoding. Intel HW needs oneVPL 2.1+; Haswell/i965 currently needs software decode with VAAPI hardware encode.')}>${uiBiText('Декодирование H.264. Intel HW требует oneVPL 2.1+; для Haswell/i965 пока используйте software decoder с аппаратным VAAPI encoder.','H.264 decoding. Intel HW needs oneVPL 2.1+; Haswell/i965 currently needs software decode with VAAPI hardware encode.')}</small><select id="streamTranscodeVideoDecoder"><option value="auto" ${(!stream.transcode_video_decoder||(stream.transcode_video_decoder==='auto'||stream.transcode_video_decoder==='openh264'))?'selected':''} ${uiBiAttrs('Авто (по умолчанию)','Auto (default)')}>${uiBiText('Авто (по умолчанию)','Auto (default)')}</option><option value="nvidia_hw" ${stream.transcode_video_decoder==='nvidia_hw'?'selected':''} ${transcoderInfo.nvenc_available?'':'disabled'} ${uiBiAttrs('NVIDIA HW / NVDEC (аппаратное декодирование)','NVIDIA HW / NVDEC (hardware decode)')}>${uiBiText('NVIDIA HW / NVDEC','NVIDIA HW / NVDEC')}</option><option value="intel_hw" ${stream.transcode_video_decoder==='intel_hw'?'selected':''} ${transcoderInfo.intel_hw_decoder_available?'':'disabled'} ${uiBiAttrs('Intel HW / oneVPL (аппаратное декодирование)','Intel HW / oneVPL (hardware decode)')}>${uiBiText('Intel HW / oneVPL','Intel HW / oneVPL')}</option><option value="ittiam" ${stream.transcode_video_decoder==='ittiam'?'selected':''}>Ittiam libavc</option><option value="ffmpeg" ${stream.transcode_video_decoder==='ffmpeg'?'selected':''} ${transcoderInfo.ffmpeg_avc_decoder_available?'':'disabled'} ${uiBiAttrs('FFmpeg libavcodec (H.264, чересстрочный PAL)','FFmpeg libavcodec (H.264, interlaced PAL)')}>FFmpeg libavcodec</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Разрешение','Resolution')}>${uiBiText('Разрешение','Resolution')}</div><small class="field-help" ${uiBiAttrs('Размер выходного видео после масштабирования.','Output video size after scaling.')}>${uiBiText('Размер выходного видео после масштабирования.','Output video size after scaling.')}</small><select id="streamTranscodeResolution" onchange="applyRecommendedTranscodeBitrate()"><option value="3840x2160" ${stream.transcode_resolution==='3840x2160'?'selected':''}>3840×2160 / 4K UHD</option><option value="3200x1800" ${stream.transcode_resolution==='3200x1800'?'selected':''}>3200×1800 / 3K</option><option value="2560x1440" ${stream.transcode_resolution==='2560x1440'?'selected':''}>2560×1440 / 2K QHD</option><option value="1920x1080" ${(!stream.transcode_resolution||stream.transcode_resolution==='1920x1080')?'selected':''}>1920×1080 / Full HD</option><option value="1280x720" ${stream.transcode_resolution==='1280x720'?'selected':''}>1280×720 / HD</option><option value="1024x576" ${stream.transcode_resolution==='1024x576'?'selected':''}>1024×576 / SD 16:9</option><option value="720x576_16_9" ${stream.transcode_resolution==='720x576_16_9'?'selected':''}>720×576 / anamorphic 16:9</option><option value="720x576" ${stream.transcode_resolution==='720x576'?'selected':''}>720×576 / PAL SD</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Видео bitrate, kbps','Video bitrate, kbps')}>${uiBiText('Видео bitrate, kbps','Video bitrate, kbps')}</div><small class="field-help" ${uiBiAttrs('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}>${uiBiText('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}</small><input id="streamTranscodeBitrate" type="number" min="500" max="100000" step="100" value="${Math.round((stream.transcode_video_bitrate||6000000)/1000)}" /></div>
           </div>

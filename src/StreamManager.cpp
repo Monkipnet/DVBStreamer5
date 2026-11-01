@@ -23,12 +23,17 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
 #include <poll.h>
+#include <netinet/in.h>
+#include <linux/tcp.h>
+#include <sys/ioctl.h>
+#include <linux/sockios.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -1036,6 +1041,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
+    relay.streamId = streamConfig.id;
     relay.inputUri = testInput ? "external://test" : (hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput))));
     relay.externallyFedInput = testInput || hlsInput || srtInput || rtspInput || rtmpInput;
     relay.outputs = nativeOutputs;
@@ -1734,6 +1740,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
     }
 
+    state->startedAt = std::chrono::steady_clock::now();
     state->active.store(true);
     state->running.store(true);
     state->statusMessage = testInput ? "running (native test pattern)" : (hlsInput ? "running (native HLS input)" : (srtInput ? "running (native SRT input)" : (rtspInput ? "running (native RTSP input)" : (rtmpInput ? "running (native RTMP input)" : "running (native media engine)"))));
@@ -1829,6 +1836,27 @@ void StreamManager::monitorNativeStream(StreamState* state) {
                       << " cbr_kbps=" << (state->outputBitrate.load() / 1000)
                       << " cc_delta=" << (cc - lastCc)
                       << std::endl;
+        }
+        // Diagnose transport-only SRT freezes separately from AV encoding
+        // stalls. The old droppedBytes counter included harmless offline
+        // listener bytes and could show hundreds of MiB of fake queue loss.
+        if (!state->nativeSrtOutputs.empty() && (monitorTicks % 10U) == 0U) {
+            for (std::size_t index = 0; index < state->nativeSrtOutputs.size();
+                 ++index) {
+                const auto& output = state->nativeSrtOutputs[index];
+                if (!output) continue;
+                std::cerr << "NATIVE SRT OUTPUT HEALTH"
+                          << " stream_id=" << state->config.id
+                          << " output_index=" << index
+                          << " connected=" << (output->connected() ? 1 : 0)
+                          << " queued_bytes=" << output->queuedBytes()
+                          << " sent_bytes=" << output->sentBytes()
+                          << " queue_overrun_bytes=" << output->queueOverrunBytes()
+                          << " no_peer_discard_bytes=" << output->noPeerDiscardBytes()
+                          << " total_dropped_bytes=" << output->droppedBytes()
+                          << " reconnects=" << output->reconnects()
+                          << std::endl;
+            }
         }
 
         // Runtime input-health notification must use packet progress, not the
@@ -2154,7 +2182,7 @@ void StreamManager::monitorOnDemandStreams() {
     // HLS clients fetch short-lived playlist/segment resources rather than keeping
     // a persistent socket open. Ten seconds was too aggressive and could stop an
     // actively watched channel between requests, producing visible HLS stalls.
-    constexpr auto kIdleGrace = std::chrono::seconds(10);
+    constexpr auto kIdleGrace = std::chrono::seconds(30);
     while (!onDemandMonitorStop.load(std::memory_order_acquire)) {
         for (int i = 0; i < 4 && !onDemandMonitorStop.load(std::memory_order_acquire); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -2201,7 +2229,7 @@ void StreamManager::monitorOnDemandStreams() {
             onDemandLastActivity.erase(id);
             if (isStreamActive(id)) {
                 std::cerr << "ONDEMAND DEACTIVATE stream=" << id
-                          << " reason=no-clients idle_s=10" << std::endl;
+                          << " reason=no-clients idle_s=30" << std::endl;
                 stopStream(id);
             }
         }
@@ -2229,6 +2257,10 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         std::lock_guard<std::mutex> lock(managerMutex);
         const auto it = streams.find(id);
         if (it == streams.end() || !it->second->active.load()) {
+            std::cerr << "NATIVE HTTP TS CLIENT rejected"
+                      << " stream_id=" << id
+                      << " reason=stream_inactive"
+                      << std::endl;
             ::close(fd);
             return false;
         }
@@ -2237,33 +2269,251 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         hub = previewSession.empty() ? it->second->nativeHttpHub
                                      : it->second->nativePreviewHub;
         if (!hub) {
+            std::cerr << "NATIVE HTTP TS CLIENT rejected"
+                      << " stream_id=" << id
+                      << " reason=hub_unavailable"
+                      << std::endl;
             ::close(fd);
             return false;
         }
     }
+    // V10.8.285: the HTTP MPEG-TS client is a TCP connection receiving
+    // many 1316-byte writes from a SOCK_SEQPACKET production hub. Unlike SRT,
+    // TCP may coalesce writes behind Nagle/delayed ACK. Explicitly opt in one
+    // affected *public* HTTP stream; browser preview and all other sessions
+    // preserve their existing socket options.
+    const char* noDelayId =
+        std::getenv("DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID");
+    // Default to low-latency TCP for public MPEG-TS. An explicitly supplied
+    // stream ID still scopes the option to one stream for A/B testing; set
+    // the value to "off" to disable it for every stream.
+    const bool enableNoDelay = previewSession.empty() &&
+        (!noDelayId || !*noDelayId || id == noDelayId);
+    bool noDelayActive = false;
+    if (enableNoDelay) {
+        int value = 1;
+        if (::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+                         &value, sizeof(value)) == 0) {
+            noDelayActive = true;
+            std::cerr << "NATIVE HTTP TS TCP_NODELAY"
+                      << " stream_id=" << id
+                      << " enabled=1"
+                      << std::endl;
+        } else {
+            std::cerr << "NATIVE HTTP TS TCP_NODELAY"
+                      << " stream_id=" << id
+                      << " enabled=0"
+                      << " error=" << std::strerror(errno)
+                      << std::endl;
+        }
+    }
+
+    // Public HTTP MPEG-TS can see TCP scheduling stalls even with Nagle off.
+    // Give the kernel sufficient socket buffering for short delivery bursts,
+    // while leaving browser preview and the producer pipeline unchanged.
+    if (previewSession.empty()) {
+        const int desiredTcpSendBytes = 2 * 1024 * 1024;
+        if (::setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
+                         &desiredTcpSendBytes, sizeof(desiredTcpSendBytes)) != 0) {
+            std::cerr << "NATIVE HTTP TS TCP SEND BUFFER"
+                      << " stream_id=" << id
+                      << " error=" << std::strerror(errno) << std::endl;
+        }
+        int actualBytes = 0;
+        socklen_t len = sizeof(actualBytes);
+        if (::getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &actualBytes, &len) == 0) {
+            std::cerr << "NATIVE HTTP TS TCP SEND BUFFER"
+                      << " stream_id=" << id
+                      << " bytes=" << actualBytes << std::endl;
+        }
+    }
+
     std::string subscribeError;
     const int upstreamFd = hub->subscribe(subscribeError);
     if (upstreamFd < 0) {
+        std::cerr << "NATIVE HTTP TS CLIENT rejected"
+                  << " stream_id=" << id
+                  << " reason=subscribe_failed"
+                  << " detail=" << subscribeError
+                  << std::endl;
         ::close(fd);
         return false;
     }
+    std::cerr << "NATIVE HTTP TS CLIENT attach"
+              << " stream_id=" << id
+              << " kind=" << (previewSession.empty() ? "public" : "preview")
+              << " fd=" << fd
+              << " hub_fd=" << upstreamFd
+              << " tcp_nodelay=" << (noDelayActive ? 1 : 0)
+              << std::endl;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         httpClients[fd] = {id, normalizeIpAddress(clientIp), "mpegts",
                            std::chrono::steady_clock::now(), upstreamFd, previewSession};
     }
     try {
-        std::thread([this, hub, fd, upstreamFd]() {
+        std::thread([this, hub, fd, upstreamFd, id, noDelayActive, previewSession]() {
             std::array<char, 64 * 1024> buffer{};
+            const char* diagnosticId =
+                std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+            const bool diagnostic = diagnosticId && *diagnosticId &&
+                                    diagnosticId == id;
+            auto lastRead = std::chrono::steady_clock::time_point{};
+            std::uint64_t chunks = 0;
+            std::uint64_t bytes = 0;
+            std::uint64_t receiveGapMaxMs = 0;
+            std::uint64_t sendMaxUs = 0;
+            std::uint64_t sendBlockedOver20Ms = 0;
+            std::uint64_t recvGapsOver80Ms = 0;
+            std::uint64_t totalSentBytes = 0;
+            std::uint64_t totalSentChunks = 0;
+            auto lastTransportReport = std::chrono::steady_clock::now();
+            std::uint64_t reportBytes = 0;
+            std::uint64_t reportMaxSendUs = 0;
+            std::uint64_t previousAcked = 0;
+            std::uint64_t previousRwndLimited = 0;
+            std::uint64_t previousSndbufLimited = 0;
+            bool havePreviousTcpSample = false;
+            std::string disconnectReason = "unknown";
+            int disconnectErrno = 0;
+            const auto sessionStart = std::chrono::steady_clock::now();
             for (;;) {
                 const ssize_t n = ::read(upstreamFd, buffer.data(), buffer.size());
                 if (n > 0) {
-                    if (!writeAll(fd, buffer.data(), static_cast<std::size_t>(n))) break;
+                    const auto readAt = std::chrono::steady_clock::now();
+                    if (diagnostic && lastRead !=
+                        std::chrono::steady_clock::time_point{}) {
+                        const auto gapMs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                readAt - lastRead).count());
+                        receiveGapMaxMs = std::max(receiveGapMaxMs, gapMs);
+                        if (gapMs > 80) ++recvGapsOver80Ms;
+                    }
+                    lastRead = readAt;
+                    // Writer remains dedicated to this client. No output
+                    // fan-out lock is held during a potentially slow TCP send.
+                    const bool sent = writeAll(
+                        fd, buffer.data(), static_cast<std::size_t>(n));
+                    if (sent) {
+                        totalSentBytes += static_cast<std::uint64_t>(n);
+                        ++totalSentChunks;
+                        reportBytes += static_cast<std::uint64_t>(n);
+                    } else {
+                        disconnectReason = "tcp_send_error";
+                        disconnectErrno = errno;
+                    }
+                    if (diagnostic) {
+                        const auto sendUs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - readAt).count());
+                        sendMaxUs = std::max(sendMaxUs, sendUs);
+                        if (sendUs > 20000) ++sendBlockedOver20Ms;
+                        bytes += static_cast<std::uint64_t>(n);
+                        if (++chunks >= 1024) {
+                            std::cerr << "NATIVE HTTP TS OUTPUT PERF"
+                                      << " stream_id=" << id
+                                      << " chunks=" << chunks
+                                      << " bytes=" << bytes
+                                      << " read_gap_max_ms=" << receiveGapMaxMs
+                                      << " read_gap_over_80ms=" << recvGapsOver80Ms
+                                      << " tcp_send_max_us=" << sendMaxUs
+                                      << " tcp_send_over_20ms="
+                                      << sendBlockedOver20Ms
+                                      << " tcp_nodelay=" << (noDelayActive ? 1 : 0)
+                                      << std::endl;
+                            chunks = 0;
+                            bytes = 0;
+                            receiveGapMaxMs = 0;
+                            recvGapsOver80Ms = 0;
+                            sendMaxUs = 0;
+                            sendBlockedOver20Ms = 0;
+                        }
+                    }
+                    if (previewSession.empty()) {
+                        const auto now = std::chrono::steady_clock::now();
+                        const auto sendUs = std::chrono::duration_cast<
+                            std::chrono::microseconds>(now - readAt).count();
+                        reportMaxSendUs = std::max(reportMaxSendUs,
+                            static_cast<std::uint64_t>(std::max<std::int64_t>(0, sendUs)));
+                        const auto elapsedMs = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(now - lastTransportReport).count();
+                        if (elapsedMs >= 5000) {
+                            int notSent = -1;
+                            int outQueue = -1;
+#ifdef SIOCOUTQNSD
+                            (void)::ioctl(fd, SIOCOUTQNSD, &notSent);
+#endif
+                            (void)::ioctl(fd, TIOCOUTQ, &outQueue);
+                            struct tcp_info info{};
+                            socklen_t infoLen = sizeof(info);
+                            const bool haveInfo = ::getsockopt(fd, IPPROTO_TCP,
+                                TCP_INFO, &info, &infoLen) == 0;
+                            const bool extended = haveInfo &&
+                                infoLen >= offsetof(struct tcp_info, tcpi_snd_wnd) +
+                                               sizeof(info.tcpi_snd_wnd);
+                            const bool comparable = extended && havePreviousTcpSample;
+                            const std::uint64_t acked = extended ? info.tcpi_bytes_acked : 0;
+                            const std::uint64_t ackedDelta =
+                                (comparable && acked >= previousAcked)
+                                    ? acked - previousAcked : 0;
+                            const std::uint64_t rwndDelta =
+                                (comparable && info.tcpi_rwnd_limited >= previousRwndLimited)
+                                    ? info.tcpi_rwnd_limited - previousRwndLimited : 0;
+                            const std::uint64_t sndbufDelta =
+                                (comparable && info.tcpi_sndbuf_limited >= previousSndbufLimited)
+                                    ? info.tcpi_sndbuf_limited - previousSndbufLimited : 0;
+                            if (extended) {
+                                previousAcked = acked;
+                                previousRwndLimited = info.tcpi_rwnd_limited;
+                                previousSndbufLimited = info.tcpi_sndbuf_limited;
+                                havePreviousTcpSample = true;
+                            }
+                            std::cerr << "NATIVE HTTP TS TCP STATUS"
+                                      << " stream_id=" << id
+                                      << " delivered_kbps="
+                                      << (reportBytes * 8ULL / static_cast<std::uint64_t>(elapsedMs))
+                                      << " acked_kbps=" << (comparable
+                                          ? ackedDelta * 8ULL / static_cast<std::uint64_t>(elapsedMs) : 0)
+                                      << " acked_sample_valid=" << (comparable ? 1 : 0)
+                                      << " acked_total_bytes=" << acked
+                                      << " rwnd_limited_delta_us=" << rwndDelta
+                                      << " sndbuf_limited_delta_us=" << sndbufDelta
+                                      << " snd_wnd_bytes=" << (extended ? info.tcpi_snd_wnd : 0)
+                                      << " send_max_us=" << reportMaxSendUs
+                                      << " sendq_bytes=" << outQueue
+                                      << " notsent_bytes=" << notSent
+                                      << " rtt_us=" << (haveInfo ? info.tcpi_rtt : 0)
+                                      << " retransmits=" << (haveInfo ? info.tcpi_retransmits : 0)
+                                      << " unacked=" << (haveInfo ? info.tcpi_unacked : 0)
+                                      << std::endl;
+                            lastTransportReport = now;
+                            reportBytes = 0;
+                            reportMaxSendUs = 0;
+                        }
+                    }
+                    if (!sent) break;
                     continue;
                 }
                 if (n < 0 && errno == EINTR) continue;
+                disconnectReason = n == 0 ? "hub_eof" : "hub_read_error";
+                if (n < 0) disconnectErrno = errno;
                 break;
             }
+            const auto sessionMs = std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - sessionStart).count();
+            std::ostringstream report;
+            report << "NATIVE HTTP TS CLIENT detach"
+                   << " stream_id=" << id
+                   << " fd=" << fd
+                   << " hub_fd=" << upstreamFd
+                   << " reason=" << disconnectReason
+                   << " errno=" << disconnectErrno
+                   << " tcp_nodelay=" << (noDelayActive ? 1 : 0)
+                   << " duration_ms=" << sessionMs
+                   << " bytes_sent=" << totalSentBytes
+                   << " chunks_sent=" << totalSentChunks;
+            std::cerr << report.str() << std::endl;
             std::lock_guard<std::mutex> lock(managerMutex);
             httpClients.erase(fd);
             hub->unsubscribe(upstreamFd);

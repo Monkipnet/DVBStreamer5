@@ -1,5 +1,6 @@
 #include "media/NativeIttiamAvc.h"
 #include "media/FfmpegPalPtsClock.h"
+#include "media/NativeFfmpegAvcDecoder.h"
 
 #include <cstdint>
 #include <iostream>
@@ -67,8 +68,73 @@ public:
                 std::vector<RawVideoFrame>& output,
                 std::string& error) override {
         std::vector<RawVideoFrame> decoded;
-        if (!inner_ || !inner_->decode(data, size, pts90k, hasPts, decoded, error))
+        if (!inner_) {
+            error = "Ittiam AVC decoder missing";
             return false;
+        }
+
+        // Ittiam sometimes consumes and accepts several initial VAAPI AVC
+        // access units without emitting even one frame. FFmpeg can decode
+        // those very same units. Keep a small, bounded cold-start replay so
+        // this backend never silently delivers a permanent black screen.
+        // No parallel decoding occurs during normal Ittiam operation.
+        if (!producedFrame_ && !fallbackAttempted_ &&
+            ffmpegAvcDecoderAvailable() && data && size) {
+            if (size > kMaxReplayBytes ||
+                replayBytes_ > kMaxReplayBytes - size) {
+                fallbackAttempted_ = true;
+                replay_.clear();
+                replayBytes_ = 0;
+            } else {
+                replay_.push_back({std::vector<std::uint8_t>(data, data + size),
+                                   pts90k, hasPts});
+                replayBytes_ += size;
+            }
+        }
+
+        if (!inner_->decode(data, size, pts90k, hasPts, decoded, error))
+            return false;
+
+        if (!decoded.empty()) {
+            producedFrame_ = true;
+            replay_.clear();
+            replayBytes_ = 0;
+        } else if (!fallbackAttempted_ && replay_.size() >= kReplayAuLimit) {
+            fallbackAttempted_ = true;
+            std::string ffError;
+            auto ffmpeg = createFfmpegAvcDecoder(ffError);
+            std::vector<RawVideoFrame> recovered;
+            bool ffSuccess = static_cast<bool>(ffmpeg);
+            if (ffmpeg) {
+                for (const auto& au : replay_) {
+                    std::vector<RawVideoFrame> frames;
+                    if (!ffmpeg->decode(au.bytes.data(), au.bytes.size(),
+                                        au.pts90k, au.hasPts, frames, ffError)) {
+                        ffSuccess = false;
+                        break;
+                    }
+                    for (auto& frame : frames)
+                        recovered.push_back(std::move(frame));
+                }
+            }
+            if (ffSuccess && !recovered.empty()) {
+                std::cerr << "NATIVE AVC ITTIAM cold-start stalled"
+                          << " access_units=" << replay_.size()
+                          << " fallback=ffmpeg"
+                          << " recovered_frames=" << recovered.size()
+                          << std::endl;
+                inner_ = std::move(ffmpeg);
+                producedFrame_ = true;
+                decoded = std::move(recovered);
+            } else {
+                std::cerr << "NATIVE AVC ITTIAM cold-start delayed"
+                          << " access_units=" << replay_.size()
+                          << " fallback_unavailable=" << ffError
+                          << std::endl;
+            }
+            replay_.clear();
+            replayBytes_ = 0;
+        }
 
         // Do NOT synthesize a 25-fps timeline from the first decoded field
         // for every interlaced AVC stream. It may be 29.97/30 or contain an
@@ -107,9 +173,24 @@ public:
         if (inner_) inner_->reset();
         palClock_.reset();
         correctedFrames_ = 0;
+        replay_.clear();
+        replayBytes_ = 0;
+        producedFrame_ = false;
+        fallbackAttempted_ = false;
     }
 
 private:
+    struct ReplayAu {
+        std::vector<std::uint8_t> bytes;
+        std::uint64_t pts90k = 0;
+        bool hasPts = false;
+    };
+    static constexpr std::size_t kReplayAuLimit = 6;
+    static constexpr std::size_t kMaxReplayBytes = 4U * 1024U * 1024U;
+    std::vector<ReplayAu> replay_;
+    std::size_t replayBytes_ = 0;
+    bool producedFrame_ = false;
+    bool fallbackAttempted_ = false;
     std::unique_ptr<VideoDecoder> inner_;
     FfmpegPalPtsClock palClock_;
     std::uint64_t correctedFrames_ = 0;

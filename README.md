@@ -1,3 +1,223 @@
+## V10.8.292 — compare MPEG-TS production and actual client capacity
+
+- Adds `NATIVE HTTP TS HUB PRODUCER` once every five seconds while at least one subscriber exists, with `output_kbps`, `publish_calls`, `subscriber_count`, and `max_pending_bytes`. This measures TS bytes entering the fan-out hub before TCP/socket backpressure; compare directly with V291 `acked_kbps` and `delivered_kbps`.
+- A client that cannot sustain the actual TS production bitrate will eventually overflow a bounded queue. Increasing buffers only postpones failure and raises latency. This branch **does not** discard arbitrary TS packets, lower bitrate silently, or claim a TCP-only remedy.
+- No changes to codecs, AV synchronization, SRT, HLS, PCI/CI, MPEG-TS timestamps, TCP transport behavior or the 4 MiB queue limit. This is a diagnostic stepping stone to a properly validated remedy (quality/bitrate match or client receive bottleneck), not an established fix.
+- After building and running CTest, compare 60–120 seconds of `NATIVE HTTP TS HUB PRODUCER`, `NATIVE HTTP TS TCP STATUS`, and `NATIVE HTTP TS HUB backlog` while VLC is playing the same stream. For HLS, separate segment/manifest checks are required.
+
+## V10.8.291 — TCP acknowledgements and receiver-window diagnosis
+
+- Public HTTP MPEG-TS clients now log `acked_kbps`, `acked_sample_valid`, `acked_total_bytes`, `snd_wnd_bytes`, `rwnd_limited_delta_us`, and `sndbuf_limited_delta_us` alongside existing five-second HTTP TCP metrics.
+- `delivered_kbps` is retained for backward compatibility but represents application writes into TCP, **not** confirmed delivery. `acked_kbps` measures change in acknowledged bytes; first sample is marked invalid.
+- Extended Linux TCP_INFO is guarded by returned structure length. No changes to MPEG-TS production rate, codec/mux, HLS segmentation, SRT or socket backpressure; the 4 MiB subscriber queue cap remains.
+- Build and live-test the diagnostic branch before changing the transport architecture. If production TS really exceeds network/client receive capacity, increasing queues cannot ensure both low latency and lossless delivery.
+
+## V10.8.290 — public HTTP TCP / hub queue diagnostics
+
+- On top of V289. Every ~5 seconds per public HTTP MPEG-TS client log `NATIVE HTTP TS TCP STATUS` with delivered_kbps, maximum blocking TCP send duration, Send-Q/notsent queue (when supported), RTT, retransmits and unacked packets. Private preview behavior unchanged.
+- Log `NATIVE HTTP TS HUB backlog` once when a subscriber's pending queue grows past 2 MiB; rearm below 1 MiB. The existing 4 MiB protective disconnect remains in place. This allows correlating queue growth with TCP status without excessive logs.
+- No changes to codecs, TS packet ordering, A/V mux, HLS segmentation, SRT, input jitter logic or subscriber queue limit.
+- This is diagnostic, not a claimed playback fix. Build and CTest on Linux before replacing the running binary, then compare loopback curl with remote VLC during freezes.
+
+## V10.8.288 — HTTP/HLS delivery stability trial (not yet server validated)
+
+- Based on V287, which already has a per-tile stream uptime clock. Playback disconnects may happen without tile restarts; do not use uptime as proof that the HTTP subscriber remains attached.
+- For **public HTTP MPEG-TS output**, enable TCP_NODELAY by default on each attached client socket to reduce avoidable delays in frequent 1316-byte TS writes. Private preview retains prior behavior. A nonempty DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID limits this to the matching stream; set to `off` to disable across public outputs for A/B diagnostics.
+- Extend HLS OnDemand idle grace from 10 to 30 seconds, so slower/irregular playlist polling is less likely to deactivate an otherwise watched channel. No change to TS pacing, HLS segment data or codecs.
+- Keep existing V286 attach/detach reason logs and V285 per-client throughput diagnostics. These measures improve robustness but do **not** yet prove the cause of occasional VLC closure; compare client disconnect logs and inspect hub subscriber backpressure.
+- Test on an isolated branch; do not merge into main without CTest and sustained HTTP+HLS playback.
+
+## V10.8.287 — live uptime counter centered in each tile header
+
+- Each channel's uppermost tile row now shows its own time elapsed since the streaming pipeline was successfully started. The compact `HH:MM:SS` clock (or `Nd HH:MM:SS` after a day) sits at the middle of the tile header, between the left-side stream title and existing right-side actions. The title retains a tooltip for full names; the timer has Russian, English and Croatian tooltips.
+- A new immutable `StreamState::startedAt` steady-clock timestamp is set only after successful pipeline activation. `/api/state` exposes `running_seconds` and `running_started_mono_ms` per stream, zeroing both while offline; the latter identifies a genuine tile restart without confusing it with an HTTP/SRT source reconnect.
+- The existing once-per-second in-browser elapsed clock updater drives tile timers without increasing the state polling rate. A fresh state snapshot only re-anchors the local timer when its startup generation changed or clock drift exceeds 2s. Stopped tiles show `—`; tile restarts immediately reset the elapsed counter when the new state is returned. The client's immediate Stop action also clears the current clock.
+- Does not change the backend stream scheduler, source, transcoding, SRT/HTTP output, CA, EPG, codecs, bitrate, AV synchronization or existing stream tile group/sorting behavior. Implemented on top of the isolated V286 HTTP output diagnostic branch; no changes to `main`.
+- Build/test with CTest, then confirm Start/Stop/Restart for two independent tiles and browser refresh (the clock must represent the server's true channel runtime rather than starting over on page reload).
+
+## V10.8.286 — diagnose HTTP MPEG-TS output stalls and VLC disconnects (test branch)
+
+- V285 is **not a confirmed solution** for the user's HTTP playback freezes and sporadic VLC closure. The supplied three-minute journal contains many `NATIVE VIDEO ENCODE PERF` entries for `stream-1793481485131` (usually 24–25 FPS, `raw_drop_total=0`, Intel encode ~15–20ms) but **no `NATIVE HTTP TS TCP_NODELAY`, `NATIVE HTTP TS OUTPUT PERF`, or `subscriber backlog limit`**. This does *not* establish that the observed VLC connection uses this server's HTTP MPEG-TS output path or that the V285 environment override is active.
+- The HTTP public endpoint routes through `HttpServer::handleHttpStream` -> `StreamManager::addHttpClient` -> `NativePreviewHub` local `SOCK_SEQPACKET` -> per-client blocking TCP writer. The client or local transport may close without recording a specific cause. Such disconnects are independent of the ongoing encoder and might explain the VLC behavior.
+- **Diagnostic only**: log every HTTP MPEG-TS client `NATIVE HTTP TS CLIENT attach` with stream ID, socket FD, hub FD, public/preview kind and effective TCP_NODELAY; `NATIVE HTTP TS CLIENT detach` with `reason=hub_eof|hub_read_error|tcp_send_error`, errno, session duration, bytes and chunks successfully sent. Log `rejected` for missing stream/hub or subscribe errors, and `NATIVE HTTP TS HUB detach` for a local subscriber socket failure or pending-queue saturation. Do not include stream URLs, authorization values or client IPs in diagnostic logs.
+- The existing V285 `NATIVE HTTP TS OUTPUT PERF` is still opt-in via `DVBSTREAMER5_DIAG_INPUT_STREAM_ID`. TCP_NODELAY remains opt-in via `DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID`. The actual TS byte path, 2MiB HTTP input jitter queue, native transcoder, SRT, CBR, PCR/PTS/DTS, socket timeouts and client buffer sizes remain unchanged.
+- To check whether the tested HTTP URL reaches this handler, make a controlled loopback request on the configured HTTP port (for example `/stream/stream-1793481485131.ts`), then inspect `NATIVE HTTP TS CLIENT attach/detach`. If loopback logs appear but the failing VLC playback does not, verify which server, port, reverse proxy or legacy URL the player actually uses before changing transport behavior.
+- V285's one-shot small TCP-send improvement is a hypothesis; do not merge either branch into main without reproducing/fixing actual VLC disconnect reason. Build and run all CTest cases and compare exact HTTP endpoint versus SRT playback.
+
+## V10.8.285 — targeted HTTP MPEG-TS TCP low-latency output experiment
+
+- On `svettranscoding`, source `stream-1793481485131` (Любимое кино) is **HTTP MPEG-TS input**, not DVB. V284's opt-in input jitter prebuffer remains stable and CTest is 5/5; recent log windows have 24–25 fps, zero RAW drops and zero AV mux late/drop counters. The user reports visible pauses on **HTTP MPEG-TS output** while receiving the same stream smoothly via **SRT output**, pointing to output-specific delivery rather than the input/codec path.
+- HTTP output currently uses a production `NativePreviewHub` SOCK_SEQPACKET fan-out (typically 1316-byte TS-aligned datagrams) and one TCP socket writer per HTTP client. Unlike SRT UDP transport, these small TCP writes were not configured with `TCP_NODELAY`, so Nagle/delayed ACK interaction may add HTTP-client delivery jitter. This is a hypothesis to test, not a proven source of stalls.
+- **Off by default.** For a single matching public HTTP MPEG-TS channel, set `DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID=stream-1793481485131` in systemd. On HTTP client connection, set `TCP_NODELAY=1` on the client's TCP socket, not on its input URL nor on SRT. A failure to set TCP_NODELAY is logged but does not disconnect an otherwise usable client. Log `NATIVE HTTP TS TCP_NODELAY stream_id=... enabled=1` on success.
+- If `DVBSTREAMER5_DIAG_INPUT_STREAM_ID=stream-1793481485131` is also set, emit `NATIVE HTTP TS OUTPUT PERF` every 1024 TS socket reads: `read_gap_max_ms`, `read_gap_over_80ms`, `tcp_send_max_us`, `tcp_send_over_20ms`, and `tcp_nodelay`. The diagnostic runs only for the matching HTTP client, outside the fan-out producer lock. Compare with V284 `NATIVE VIDEO INPUT CADENCE`, `NATIVE HTTP JITTER STATUS`, SRT output playback, and visible freezes; independent 15-second `curl --no-buffer` sampling on the HTTP output can distinguish receive timing.
+- No change to codec, HTTP input jitter buffer/feedback, MPEG-TS headers/PCR/PTS/DTS, CBR pacing, CA, subtitle/EPG, audio mux, SRT, UDP or HLS. Browser-private preview sockets are deliberately excluded. Do not merge into main before server CTest and real client comparison with the environment option toggled.
+
+## V10.8.284 — HTTP jitter reservoir drift correction (experimental)
+
+- V283 live testing on `svettranscoding` channel `stream-1793481485131` showed 24–25 FPS, `raw_drop_total=0`, `raw_vq_peak=1–3`, no AV mux video/audio drops or late events, and Intel encoding usually 15–18ms per frame. Thus the 1.2s prebuffer/paced-input design successfully eliminates the ~460ms TS feeding gaps for this channel.
+- A remaining long-run issue in V283: `NATIVE HTTP JITTER STATUS` showed the input backlog rising from roughly 400–540KiB toward 750–806KiB despite an approximately 520–537KiB target. V283 applied only 10% correction after crossing half/1.5x target, leaving a wide zero-correction region and allowing growing live latency.
+- Replace the two-threshold controller with continuous proportional reservoir feedback `correction_pct = clamp(40 * (backlog_bytes - target_bytes) / target_bytes, -15, +30)`. Effective byte-pacing bitrate is measured HTTP bitrate times `(100 + correction_pct)/100`. A full queue is drained gradually faster, a low queue is consumed more slowly; elapsed-wall-clock pacing continues to reanchor rather than sending a catch-up burst. Clamp target to 16KiB..1.2MiB so it is achievable with the existing 2MiB bounded receive queue.
+- Add `correction_pct` and `output_kbps` to `NATIVE HTTP JITTER STATUS` for diagnosing steady-state buffer drift. A regression check of the neutral, positive, negative, saturated and zero-target cases is added to the existing `native_protocols` CTest.
+- The `DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID` opt-in remains required and only acts on the exact HTTP MPEG-TS channel. No changes to DVB, UDP, SRT, remap, CA, TS packets, PCR, PTS, DTS, CBR output, audio, Intel/NVIDIA encode, FPS gate, or AV mux scheduling. Keep the main branch unchanged; build + CTest and live comparison required before considering merge.
+
+## V10.8.283 — opt-in HTTP MPEG-TS jitter smoothing for one stream (experimental)
+
+- Independent `curl --http1.1 --no-buffer` pipe read on `svettranscoding`, bypassing DVBStreamer5 entirely, captured 6.26 MiB in 15s with 480.9ms maximum receive gap, 31 intervals above 200ms, and 1017 of 1050 intervals below 5ms. V282 directly observed the same 451–467ms HTTP callback gaps, while relay enqueue waited only 0–2ms and the relay queue peaked below 100KiB. Source/delivery batching — not decoder or Intel GPU saturation — causes RAW bursts.
+- **Disabled by default**. To enable on precisely one live HTTP MPEG-TS channel, set systemd environment variable `DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID=stream-1793481485131` (and restart). Its matching stream must use direct `http://` or `https://` input and cannot be externally fed. Existing `DVBSTREAMER5_DIAG_INPUT_STREAM_ID` continues to enable only diagnostics.
+- Once opted in, the receiver keeps enqueuing into the existing bounded 2MiB ingress queue; producer chunk size is limited to 8192 bytes for finer downstream timing. The relay holds about 1200ms for a reservoir, estimates the input rate from received bytes, and releases one chunk at an interval proportional to chunk bytes / measured bitrate. Rate is gently updated every 3s to follow changing input bitrates, with a +/-10% correction based on queue occupancy to prevent sustained queue drift.
+- Input packets remain unchanged: **PCR, PTS, DTS, payload bytes, existing stream codecs, video FPS gate, Intel/NVENC options and AV mux synchronization are untouched**. This intentionally increases the targeted live channel latency by about 1.2s, and cannot restore packets missing at the source. It aims to avoid 460ms empty input gaps and bursts of decoded RAW frames that can exceed the existing 12-frame raw queue.
+- Logs `NATIVE HTTP JITTER enabled`, `NATIVE HTTP JITTER ready` and periodic `NATIVE HTTP JITTER STATUS` with bitrate and queue occupancy. On HTTP reconnect, reset the pacing anchor and start a fresh reservoir. Explicit opt-out: remove the env variable/drop-in and restart; no persisted config migration is needed.
+- **Not yet compiled on the server or live validated**. Run CTest 5/5 first; then compare `NATIVE VIDEO INPUT CADENCE`, `NATIVE VIDEO ENCODE PERF`, `NATIVE HTTP JITTER STATUS` before/after under the same source. Never merge into main without live proof.
+
+## V10.8.282 — native HTTP MPEG-TS input/relay cadence diagnostics (test branch)
+
+- The actual freeze test stream `stream-1793481485131` (Любимое кино) uses **`http-ts`** input on `svettranscoding`, which has **no DVB tuners**. V281 shared-DVB diagnostics are intentionally inactive for HTTP inputs; do not infer anything about tuner or LinuxDvbInput from missing V281 messages.
+- V280's live results show 10–12 approximately 460ms gaps in each 125-PES window, with most PES received in <5ms bursts, and nearly identical TS/PES gaps. Software decode is about 3–4ms/PES; RAW scaling and Intel encoding are fast enough for 25fps in normal windows. The outstanding issue is uneven delivery *before* decoding, but source/network vs internal queue/relay backpressure remains unproven.
+- Add a diagnostic stream identity to the native relay (set by StreamManager, does not modify transport headers). With `DVBSTREAMER5_DIAG_INPUT_STREAM_ID=stream-1793481485131`, an HTTP-only `NATIVE HTTP SOURCE CADENCE` line appears every 125 network receive callbacks: `network_gap_max_ms`, `network_gaps_over_200ms`, `network_burst_under_5ms`, `enqueue_max_ms`, `enqueue_over_50ms`, bytes and chunk count. Enqueue timings include optional waiting for the existing 2MiB queue.
+- A matching `NATIVE HTTP RELAY CADENCE` line appears every 125 HTTP input chunks consumed by the relay: `relay_gap_max_ms`, `relay_gaps_over_200ms`, `transform_max_ms`, `loop_max_ms`, `loops_over_100ms`, `queue_peak_bytes`, bytes and chunk count. `loop_max_ms` includes downstream packet handling/output, not just transcoder process().
+- Interpretation: sustained `network_gap_max_ms` about 450ms with small enqueue/transform/loop times suggests server-side batching or HTTP receive/network delays; short network gaps with large `enqueue_max_ms` or `queue_peak_bytes` approaching 2097152 suggests queue backpressure; short source gaps but large `loop_max_ms` or `relay_gap_max_ms` suggests processing/output stalls. The windows are independently grouped by 125 chunks and not time-aligned to the 125-PES decoder metrics.
+- Diagnostics are opt-in and do not change buffer sizes, HTTP timeouts, CBR output, MPEG-TS contents, decoder selection, frame pacing, audio/video PTS, Intel/NVIDIA transcoding or mux policy. Run full CTest and live measurements before a behavioral fix or main merge.
+
+## V10.8.281 — shared DVB source and subscriber cadence tracing (experimental)
+
+- V280 CTest passed all five tests. Live channel `stream-1793481485131` repeatedly exhibits 445–479 ms gaps at MPEG-TS ingestion matched by ~454–480 ms gaps at ready video PES (10–11 such gaps per 125 PES), followed by massive <5 ms PES bursts. Native decoding is ~3–4 ms/PES, queue drops are near zero after startup, and the Intel encoder is not the cause of these long upstream stalls.
+- The shared DVB source has a dedicated transport reader, per-service subscriber queues, a service prefilter, then the native relay input queue. To pinpoint the earliest pause, the shared DVB reader reports `SHARED DVB SOURCE CADENCE frontend=... read_gap_max_ms read_gaps_over_200ms poll_max_ms poll_empty` every 125 *successful* DVR reads only when the env-selected stream is subscribed to that frontend. Poll timeouts are counted but never treated as an error by this diagnostic.
+- Opt-in per-service `SHARED DVB SUBSCRIBER CADENCE stream_id=...` measures gaps between callback dispatches, callback wall time, callback delays >100 ms, and queue backlog peak. Only the service selected by the environment variable `DVBSTREAMER5_DIAG_INPUT_STREAM_ID` is logged, to prevent excess diagnostic logging across shared transponders.
+- Compare the two new messages to V280 `NATIVE VIDEO INPUT CADENCE`: source-reader gaps identify frontend/kernel feed stalls, subscriber-only gaps suggest scheduler/prefilter delays, and healthy source/subscriber with long transcoder input gaps implicates the relay input queue or downstream transform loop. Pauses are observations, not necessarily lost source packets; inspect packet continuity and playback before assuming a tuner fault.
+- No source timing correction, new buffering, CA algorithm, PCR/PTS changes, queue reconfiguration, decoder, mux or video encoder behavior. Run CTest 5/5 and a controlled live check before deployment/merge.
+
+## V10.8.280 — PTS diagnostic unsigned integer compile fix
+
+- Fixes GCC 13 compilation of the V279 input video PTS telemetry: `std::max()` requires matching argument types. Explicitly makes the computed PTS gap `std::uint64_t` instead of deducing `unsigned long long` from `/ 90ULL` on a system where `std::uint64_t` is `unsigned long`.
+- All V279 TS/PES cadence diagnostics remain enabled. No decoder, mux, scaling, PTS value, FPS gate, audio, queue or transport behavior changed. Server build/CTest not yet verified.
+
+## V10.8.279 — TS ingress versus demux PES arrival cadence (diagnostic branch)
+
+- On working stream `stream-1793481485131`, V278 reports decode `~2ms/PES`, stable windows with `125 decoded/125 PES` and no PES queue or FPS gate drops. But the decode worker waits up to 446–569ms between input PES and the encoder occasionally overflows a 12-frame RAW queue during catch-up bursts, even though Intel VAAPI encode itself is fast enough.
+- Adds `NATIVE VIDEO INPUT CADENCE` every 125 video PES: `pes_arrival_gap_max_ms`, `pes_gap_over_80ms`, `pes_gap_over_200ms`, `pes_burst_under_5ms`, `pes_pts_gap_max_ms`, `pes_pts_gap_over_80ms`, `ts_input_calls`, `ts_input_bytes`, `ts_input_gap_max_ms`, `ts_gap_over_80ms`, `ts_gap_over_200ms`.
+- Compares wall-clock gaps at `NativeTranscoderPipeline::process()` ingress against arrival gaps of completed video PES from `NativeTsDemux`. Long TS ingress gaps suggest the upstream input path or caller batching; continuous TS ingress with large PES gaps suggests PES assembly, missing/late video packets, or source timebase irregularity. PTS changes distinguish a media timestamp jump from transport timing gaps; they cannot by themselves prove the input transport is at fault.
+- All counters are per-pipeline and updated under the existing process mutex; compressed PES and TS payloads, mux PTS, deinterlacing, codec choice, FPS gate, queue capacities, drop policy and transport output are unchanged.
+- The first interval after a restart can be atypical. Compare several consecutive `INPUT CADENCE`, `DECODE PERF` and `ENCODE PERF` windows for the same stream. Test 5/5 before deployment; do not merge to main before live validation.
+
+## V10.8.278 — per-stage source PES / AVC decode / frame-gate diagnostics (experimental)
+
+- V277 showed the hardware encoder spends only ~21ms processing a 1080p frame (5ms CPU upscale + 15ms Intel encode), but observed RAW-frame arrival was ~22fps and the encoder worker spent ~3068ms of its 125-frame window idle, including one 830ms gap, with zero RAW queue drops in that measurement.
+- New per-stream `NATIVE VIDEO DECODE PERF` emitted every 125 processed video PES: `pes_in_fps`, `pes_processed_fps`, `decoded_fps`, `raw_published_fps`, `decoded_frames`, `raw_published_frames`, `fps_gate_drop_window`, `decode_avg_ms`, `decode_max_ms`, `decode_empty_wait_ms`, `decode_empty_wait_max_ms`, `decode_empty_wait_events`, `pes_queue_now`, `pes_queue_peak` and `pes_queue_drop_total`.
+- PES input counts are atomically owned by the demux producer; decoded/RAW-published counts are updated only on the video decoder worker. The snapshot of compressed-PES queue/drop counters is taken under its existing mutex. No extra per-frame log lines or changes to decoding, video frame order, FPS gate, audio timing, hardware acceleration or backpressure policies.
+- Cross-check `NATIVE VIDEO DECODE PERF` and V277 `NATIVE VIDEO ENCODE PERF` for the **same stream_id after startup**. Input PES stalls vs. slow decoder vs. frame-gate drops can now be distinguished. Both logs aggregate over 125 samples but are not guaranteed to be exactly time-aligned.
+- This is a diagnostic test branch, not proof of a throughput fix. Run CTest 5/5 and real streaming before main merge.
+
+## V10.8.277 — RAW producer cadence versus encoding throughput diagnostics (test branch)
+
+- V276 full CTest passed 5/5 and a production observation found CPU bilinear scaling as low as 5ms/frame (versus V275 16–17ms), while the software scaler output remains byte-identical in the regression test. Despite a combined ~21–30ms scale+encoder time, the 1920x1080 live pipeline still intermittently achieves only ~21–24fps and accumulates pre-encoder RAW queue drops.
+- Added per-stream, 125-frame `NATIVE VIDEO ENCODE PERF` fields: `raw_in_fps` (estimated frames enqueued by decoder), `raw_in_frames`, `raw_drop_window` (pre-encoder RAW frames dropped in this interval), `raw_empty_wait_ms` (total time the encoder worker observed an empty RAW queue before dequeuing), `raw_empty_wait_max_ms`, and `raw_empty_wait_events`.
+- `raw_in_frames` uses queue conservation: 125 processed frames + drop delta + ending queue depth - starting queue depth. Estimates vary slightly across telemetry boundaries due to concurrent producers, but isolate bursts/stalls without extra per-frame producer logging or synchronization.
+- **No changes to frame dropping, queue capacities, live A/V synchronization, FPS gate, codec settings, CPU scaling mathematics, Intel/NVENC paths, and HTTP/SRT transport.** This branch is instrumentation only and needs CTest and real 25fps streaming logs before a permanent scheduler or queue fix.
+
+## V10.8.276 — exact CPU I420 upscaling performance optimization (test branch)
+
+- A profiling run on the actual Intel transcoder (`stream-1793481485131`, 1920x1080) showed 16–17 ms per frame spent in CPU I420 scaling versus 15–16 ms in VAAPI H.264 encode/mux submission. The 12-frame raw-video queue repeatedly filled and accumulated hundreds of pre-encoder drops even when AV mux late/drop counters remained zero.
+- Optimizes the native bilinear I420 scaler with *separable fixed-point* interpolation, caching two horizontally interpolated source rows while output rows advance. The interpolation weights, 8-bit precision, 32768 rounding and >>16 final conversion match the original calculation exactly; no quality downgrade is intended.
+- Keeps **separate thread-local luma and chroma geometry maps**, avoiding the former Y->U->V->Y map rebuild every frame. Cached horizontal row values are invalidated on each plane call, so no pixels are reused across frames or chroma planes.
+- Adds a six-geometry regression in `native_transcoder` that compares the optimized output **byte-for-byte against the former four-tap formula** (including 720x576->1920x1080, downscale, identity, frame-to-frame changes), and checks preserved frame PTS/key metadata. The test stays active alongside native H264 encode/decode tests.
+- No changes to Intel/NVENC selection, CBR, frame pacing, timestamping, MP2, SRT/HTTP transport, queue lengths, or existing V275 live behavior. Build + 5/5 CTest + live FPS/raw-drop check required before production or main merge.
+
+## V10.8.275 — HLS duration and encrypted CMAF regression tests (experimental)
+
+- Fixes the synthetic HLS output test configuration: the `NativeHlsSegmenter` defaults to a 4-second segment target unless `durationExplicit=true`. The test's requested 1-second target is now explicit; no production segmenter behavior has changed.
+- Updates the CBCS encrypted CMAF fixture to include sufficiently long video and AAC access units with complete 16-byte protected blocks. Preserves the AES-CBCS encryption and decryption code unchanged.
+- CBCS test scans fragments in stable filename order, decrypts and remuxes them all, and **requires at least one fragment to change**; short/no-encrypted-block fragments alone do not cause false failures. On failure, reports fragment count, largest fragment, source TS bytes and output TS bytes.
+- Retains V274 tested automatic FFmpeg recovery after silent Ittiam AVC startup. All five CTest cases and live verification are required before deployment or main merge.
+
+## V10.8.274 — silent Ittiam AVC startup recovery / HLS and CBCS test fixtures (experimental)
+
+- When the explicit Ittiam AVC decoder consumes six initial access units without a single output frame, it now attempts a **one-time**, bounded (max 4 MiB) replay through the optional FFmpeg AVC decoder. The switch happens only if FFmpeg actually decodes pictures. Normal Ittiam output is not decoded twice, and VAAPI/NVENC/mux/PTS scheduling settings remain unchanged.
+- Corrects synthetic HLS rotation test packets to begin with a video PES header and sequence header; previous PCR-only packets were rightly rejected by the clean-PES-start safeguard, resulting in zero segments even in independent mode.
+- CMAF SAMPLE-AES/CBCS protocol test now uses a separate fixture with longer H.264 video access units so the CBCS encrypted subsample region contains full 16-byte AES blocks. CBCS correctness assertion remains enabled; the production encryption and decryption algorithms are unchanged.
+- Inherits V272 end-of-input mux drain behavior and previous HTTP/SRT/MP2 improvements. Requires compilation and full 5-test CTest plus live broadcast validation before deployment or merge into main.
+
+## V10.8.273 — HLS fixture update and codec/CMAF test diagnostics (experimental)
+
+- HLS output CTest uses the independent-segment path for its deliberately synthetic PCR/random-access-only packet stream. Unlike the normal passthrough HLS path, this scenario does not require PAT/PMT and valid elementary PES. Reports actual segment count, target duration and endlist flags on failure.
+- CMAF CBCS CTest now prints fragment size and presence of moof/traf/senc/mdat metadata if decryption reports success without altering data. This remains a failing test until the reason is confirmed and resolved; do not disable CBCS correctness checks.
+- Native H.264 transcoder CTest now reports actual output TS size, video PES count, decoder errors, and comparison frame counts from the explicit FFmpeg AVC decoder versus the factory decoder (Ittiam). It retains the decode success assertion and will not falsely pass on empty output.
+- Retains the V272 end-of-input AV mux drain fix and V267–271 live pipeline work. No production codec, mux, transport or synchronization logic was changed in this V273 branch. Server compile and tests pending, not for main.
+
+## V10.8.272 — finite-input mux drain fix (test branch)
+
+- Fixes the video-only `native_transcoder` CTest failure `flush: native transcoder async queues did not drain`: the live mux initially waits up to 2.5 s for a missing audio peer, while `waitForIdle()` times out after about 1 s. Explicit `flush()` now temporarily bypasses live peer-wait and A/V lead holds to drain a complete, finite input, then restores the live mux policy on all return paths.
+- Streaming A/V synchronization limits, FPS, bitrates, queues, Intel/NVENC selection and existing SRT/HTTP work remain unchanged.
+- Adds failure diagnostics for transcoder flush queue status, HLS fixture request/byte counts and the first failing RTSP/RTMP/CMAF protocol stage. HLS and protocol failures still require server-side CTest output to diagnose; not claimed fixed.
+- This branch has not been compiled or tested on the user's server. Do not merge into main without the 5-test suite and live validation.
+
+## V10.8.271 — split software scaling and Intel encoding timing (test branch)
+
+- For each 125-frame video encode interval, `NATIVE VIDEO ENCODE PERF` additionally reports `scale_avg_ms`, `scale_max_ms`, `encode_avg_ms`, `encode_max_ms`, attributed per stream ID.
+- Includes CPU I420 scaling (for 720x576 -> 1920x1080) separately from hardware encoding + mux submission. No modification to the video processing results, 25-FPS gate, queue depth, drop policy, bitrate or output timestamps.
+- Allows diagnosis of frame drops on a functioning stream without relying on a temporarily offline input source. Inherits V270 accurate SRT peer/queue metrics and V267–269 fixes.
+- Experimental: build, unit tests and live HTTP/SRT playback testing are required before any main merge.
+
+## V10.8.270 — SRT loss attribution and peer health (test branch)
+
+- Corrects misleading `NATIVE SRT TS queue overrun` messages: the former threshold used `droppedBytes`, which also increased when a listener had no connected SRT peer. The new warning reports **actual producer queue overflow only**.
+- Separately counts true SRT producer-queue overrun bytes and expected bytes discarded with no listener peer; retains the old aggregate dropped-byte count for compatibility.
+- Adds per-SRT-output `NATIVE SRT OUTPUT HEALTH` telemetry every 10 seconds: stream ID, connected state, queued/sent bytes, actual queue overflow, no-peer discard, total drops and reconnects.
+- Regression test covers a listening SRT output with no peer (offline drops are not queue overflow).
+- No changes to scaling, Intel VAAPI settings, 25 FPS cadence, mux timestamp logic, transport packet size or SRT latency. Existing V267–269 work retained. Build and live tests required before main merge.
+
+## V10.8.269 — video encode / raw queue diagnostic test branch
+
+- Tags all `NATIVE PRIMARY RAW DROP` and `NATIVE ABR RAW DROP` messages with the stream ID.
+- Adds one `NATIVE VIDEO ENCODE PERF` diagnostic per 125 encoded frames (about 5 s at 25 fps) with effective throughput, average/peak scale+encode time, current/peak raw queue depth and total primary drops.
+- No queue-size, timestamp, codec-selection or transport changes: diagnose whether HTTP MPEG-TS and SRT freezes originate before both outputs.
+- Inherits V268 HTTP/SRT TS integrity fixes and V267 MP2 cursor repair. Build and live tests pending; keep outside main.
+
+## V10.8.268 — HTTP MPEG-TS / SRT packet integrity (test branch)
+
+- HTTP production MPEG-TS now retains TS-aligned packets in an ordered, bounded per-subscriber backlog when the nonblocking socket reports EAGAIN. It no longer silently discards the remainder of each transport batch. Clients that fall over 4 MiB behind are disconnected rather than receiving silently corrupted TS. Increased HTTP socket send buffer to absorb short bursts.
+- SRT output's queued chunks are TS packet-aligned (multiples of 188 bytes), preventing partial-packet boundaries when dropping old queue data under congestion. Emits a throttled backlog-overflow diagnostic.
+- Added an HTTP backpressure regression test that verifies 4,096 TS packets arrive in order after the subscriber has temporarily stopped reading.
+- Inherits V267 MP2 cursor repair. This branch still needs server compilation and end-to-end HTTP/SRT playback tests before main merge.
+
+## V10.8.267 — PL_MPEG MP2 cursor underflow fix (test branch)
+
+- Normalizes the PL_MPEG bit cursor before reading its remaining byte count or appending input, preventing the unsigned underflow reported as `pending=18446744073709551615` and the resulting unsafe `memmove`.
+- Repairs small bit-cursor overruns immediately after an MP2 decode attempt, avoiding needless decoder resets and audio interruptions. Invalid large cursor overruns still reset safely.
+- Retains V266's bounded buffer, and leaves FFmpeg/Intel/NVENC video paths untouched. Server-side build, playback and multi-stream restart tests are required before merging.
+
+## V10.8.266 — MP2 decoder buffer safety (test branch)
+
+- Limits individual MPEG Layer II audio input packets and unread PL_MPEG streaming-buffer backlog.
+- Recreates the MP2 decoder after a stalled backlog, and guards decoded sample count and failed writes.
+- Intended to address the SIGSEGV in `plm_buffer_write` seen when two IPTV tiles were active. Root cause still requires runtime validation; no changes to H.264 decoder choice or Intel VAAPI encoding.
+
+### V10.8.265 — OpenH264 removed from H.264 decoder selection
+
+- Removed the OpenH264 **video decoder** class and factory, the manual dropdown choice, and the Auto video-decoder fallback. Legacy saved `openh264` selections are remapped to `auto` at runtime and shown as Auto in the editor.
+- The OpenH264 **CPU video encoder** remains available; do not remove codec libraries or the existing CPU H.264 encoding path.
+- Auto software decoding now tries FFmpeg then Ittiam (after compatible hardware decoding); manually selected Ittiam and FFmpeg retain strict selection.
+- The 150-ms software AVC mux envelope from experimental V10.8.263 remains in this branch. Build and regression-test before merging to main.
+
+### V10.8.264 — OpenH264 Annex B recovery (experimental)
+
+- Stop feeding SPS/PPS via a separate failing `DecodeFrame2` prime before IDR. Supply cached Annex B SPS/PPS together with the IDR access unit when missing from that unit.
+- When OpenH264 has not produced any video, log bounded sync-pending diagnostics; explicit OpenH264 remains strict, with no fallback to other decoders.
+- This is a hypothesis-driven recovery for repeated `dsNoParamSets`/`dsBitstreamError`; an unsupported interlaced stream may still produce zero frames. Live test with `NATIVE AVC SAMPLE DIAG` and `NATIVE AVC OUTPUT` before merging into main.
+
+### V10.8.263 — экспериментальный AV-mux hard lead 150 мс для software H.264
+
+- Для вручную выбранных Ittiam/OpenH264 и программного AVC в Auto включена такая же ограничивающая политика 150 мс, какая ранее работала для FFmpeg. Цель: устранить подтверждённые ~480 мс опережения видео и непрерывный рост late_audio на Ittiam.
+- Не изменены исходные PTS, PAL cadence, PCR, аудио, hardware zero-copy или fallback ручных декодеров. GPU zero-copy сохраняет 500 мс.
+- Это *тестовый* патч: на одном канале обязательно проверить зависания/недостаток пакетов, mux queue, late_audio и воспринимаемую синхронизацию; при ухудшении откатиться на V262. В main не сливать до проверки.
+
+### V10.8.262 — строгий ручной выбор AVC-декодера и аппаратный Auto
+
+- Ручной выбор OpenH264, Ittiam или FFmpeg не переключается на другой программный декодер при ошибке, паузе декодирования или H.264 field coding; вместо этого ошибка остаётся видимой в журнале.
+- Фабрика OpenH264 больше не подменяет выбранный OpenH264 на Ittiam скрытым диагностическим fallback.
+- AVC Auto: существующие NVIDIA/Intel zero-copy проверки выполняются раньше; если совместимый аппаратный zero-copy путь не запущен, пробуется независимый Intel HW decoder, затем FFmpeg → Ittiam → OpenH264.
+- Для выбранных вручную NVIDIA/Intel аппаратных декодеров не предусмотрена скрытая замена на программный.
+- PCR, общий mux, audio timing, видеоэнкодеры и FFmpeg PAL PTS не изменены. Проверить полную сборку и live-регрессию перед слиянием в main.
+
 ### V10.8.261 — программные H.264 декодеры и переход PTS через 33-битную границу
 
 - **База V260 сохранена:** успешная реальная синхронизация аудио/видео в VLC, PCR decode preroll 500 мс, аудио PTS, VAAPI/QSV и NVIDIA NVENC/NVDEC не менялись; ручного аудио-смещения нет.

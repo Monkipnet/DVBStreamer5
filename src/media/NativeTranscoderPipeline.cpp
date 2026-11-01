@@ -225,7 +225,14 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     selectedAvcDecoder_ = codec::chooseAvcDecoder(
         config_.videoDecoder, config_.streamId,
         std::getenv("DVBSTREAMER5_DIAG_OPENH264_STREAM_ID"));
-    ffmpegAvcMuxPolicy_.store(selectedAvcDecoder_ == "ffmpeg",
+    if (selectedAvcDecoder_ == "openh264") {
+        std::cerr << "NATIVE AVC DECODER removed=openh264 remap=auto"
+                  << " stream_id=" << config_.streamId << std::endl;
+        selectedAvcDecoder_ = "auto";
+        config_.videoDecoder = "auto";
+    }
+    ffmpegAvcMuxPolicy_.store(selectedAvcDecoder_ == "ffmpeg" ||
+                              selectedAvcDecoder_ == "ittiam",
                               std::memory_order_release);
     softwareAvcSilentSamples_ = 0;
     softwareAvcFallbackUnavailable_ = false;
@@ -311,7 +318,8 @@ bool NativeTranscoderPipeline::pushDecodedVideoFrame(
             ++droppedExternalVideoFrames_;
             if (droppedExternalVideoFrames_ <= 4 ||
                 (droppedExternalVideoFrames_ % 100U) == 0U) {
-                std::cerr << "NATIVE ABR RAW DROP dropped="
+                std::cerr << "NATIVE ABR RAW DROP stream_id="
+                          << config_.streamId << " dropped="
                           << droppedExternalVideoFrames_
                           << " queue=" << externalVideoQueue_.size()
                           << std::endl;
@@ -453,7 +461,25 @@ void NativeTranscoderPipeline::reset() {
     videoStartupDropped_ = 0;
     inputVideoSamples_ = 0;
     inputAudioSamples_ = 0;
+    videoPesQueuedTotal_.store(0, std::memory_order_release);
+    lastTsInputAt_ = {};
+    lastVideoPesArrivalAt_ = {};
+    tsInputCallsWindow_ = 0;
+    tsInputBytesWindow_ = 0;
+    tsInputGapMaxMsWindow_ = 0;
+    tsInputGapOver80MsWindow_ = 0;
+    tsInputGapOver200MsWindow_ = 0;
+    pesArrivalsWindow_ = 0;
+    pesArrivalGapMaxMsWindow_ = 0;
+    pesArrivalGapOver80MsWindow_ = 0;
+    pesArrivalGapOver200MsWindow_ = 0;
+    pesArrivalBurstUnder5MsWindow_ = 0;
+    lastVideoPesPts90kWindow_ = 0;
+    lastVideoPesHasPtsWindow_ = false;
+    videoPesPtsGapOver80MsWindow_ = 0;
+    videoPesPtsGapMaxMsWindow_ = 0;
     decodedVideoFrames_ = 0;
+    videoRawPublishedTotal_ = 0;
     decodedAudioFrames_ = 0;
     ignoredVideoSamples_ = 0;
     ignoredAudioSamples_ = 0;
@@ -588,6 +614,78 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             return;
         }
 
+        // These timestamps are recorded at the demux->PES boundary, not
+        // at decode completion. Compare them to TS process() ingress gaps
+        // to distinguish input transport stalls from PES assembly stalls.
+        // Both are serialized by the pipeline mutex_.
+        const auto pesArrivalNow = std::chrono::steady_clock::now();
+        if (lastVideoPesArrivalAt_.time_since_epoch().count() != 0) {
+            const auto gapMs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    pesArrivalNow - lastVideoPesArrivalAt_).count());
+            pesArrivalGapMaxMsWindow_ =
+                std::max(pesArrivalGapMaxMsWindow_, gapMs);
+            if (gapMs > 80) ++pesArrivalGapOver80MsWindow_;
+            if (gapMs > 200) ++pesArrivalGapOver200MsWindow_;
+            if (gapMs < 5) ++pesArrivalBurstUnder5MsWindow_;
+        }
+        lastVideoPesArrivalAt_ = pesArrivalNow;
+        if (sample.hasPts && lastVideoPesHasPtsWindow_) {
+            constexpr std::uint64_t mask = (1ULL << 33U) - 1ULL;
+            constexpr std::uint64_t half = (1ULL << 32U);
+            const auto ptsDelta =
+                (sample.pts90k - lastVideoPesPts90kWindow_) & mask;
+            // Ignore negative/reordered source PTS in this forward-gap
+            // metric. Normal 25fps video uses ~40ms forward increments.
+            if (ptsDelta < half) {
+                const std::uint64_t gapMs = ptsDelta / std::uint64_t{90};
+                videoPesPtsGapMaxMsWindow_ =
+                    std::max(videoPesPtsGapMaxMsWindow_, gapMs);
+                if (gapMs > 80) ++videoPesPtsGapOver80MsWindow_;
+            }
+        }
+        lastVideoPesHasPtsWindow_ = sample.hasPts;
+        if (sample.hasPts) lastVideoPesPts90kWindow_ = sample.pts90k;
+
+        if (++pesArrivalsWindow_ >= 125) {
+            std::cerr << "NATIVE VIDEO INPUT CADENCE"
+                      << " stream_id=" << config_.streamId
+                      << " pes_window=" << pesArrivalsWindow_
+                      << " pes_arrival_gap_max_ms="
+                      << pesArrivalGapMaxMsWindow_
+                      << " pes_gap_over_80ms="
+                      << pesArrivalGapOver80MsWindow_
+                      << " pes_gap_over_200ms="
+                      << pesArrivalGapOver200MsWindow_
+                      << " pes_burst_under_5ms="
+                      << pesArrivalBurstUnder5MsWindow_
+                      << " pes_pts_gap_max_ms="
+                      << videoPesPtsGapMaxMsWindow_
+                      << " pes_pts_gap_over_80ms="
+                      << videoPesPtsGapOver80MsWindow_
+                      << " ts_input_calls=" << tsInputCallsWindow_
+                      << " ts_input_bytes=" << tsInputBytesWindow_
+                      << " ts_input_gap_max_ms="
+                      << tsInputGapMaxMsWindow_
+                      << " ts_gap_over_80ms="
+                      << tsInputGapOver80MsWindow_
+                      << " ts_gap_over_200ms="
+                      << tsInputGapOver200MsWindow_
+                      << std::endl;
+            pesArrivalsWindow_ = 0;
+            pesArrivalGapMaxMsWindow_ = 0;
+            pesArrivalGapOver80MsWindow_ = 0;
+            pesArrivalGapOver200MsWindow_ = 0;
+            pesArrivalBurstUnder5MsWindow_ = 0;
+            videoPesPtsGapMaxMsWindow_ = 0;
+            videoPesPtsGapOver80MsWindow_ = 0;
+            tsInputCallsWindow_ = 0;
+            tsInputBytesWindow_ = 0;
+            tsInputGapMaxMsWindow_ = 0;
+            tsInputGapOver80MsWindow_ = 0;
+            tsInputGapOver200MsWindow_ = 0;
+        }
+
         std::lock_guard<std::mutex> qlock(videoQueueMutex_);
         if (videoDropUntilRandomAccess_) {
             if (!sample.randomAccess) {
@@ -611,6 +709,7 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             lastInputVideoPts90k_.store(sample.pts90k & ((1ULL << 33U) - 1ULL),
                                        std::memory_order_relaxed);
         videoQueue_.push_back(std::move(sample));
+        videoPesQueuedTotal_.fetch_add(1, std::memory_order_relaxed);
         videoQueueCv_.notify_one();
         return;
     }
@@ -696,10 +795,28 @@ void NativeTranscoderPipeline::setFailure(std::string error) {
 }
 
 void NativeTranscoderPipeline::videoWorkerLoop() {
+    // Distinguish source PES stalls, decoder processing time and PTS/FPS
+    // gating from downstream RAW queue/encoder stalls. Observes state only;
+    // it never changes queue limits, timestamps or the decoding algorithm.
+    std::uint64_t windowPesProcessed = 0;
+    std::uint64_t windowProcessTotalUs = 0;
+    std::uint64_t windowProcessMaxUs = 0;
+    std::uint64_t windowIdleWaitTotalUs = 0;
+    std::uint64_t windowIdleWaitMaxUs = 0;
+    std::uint64_t windowIdleWaitEvents = 0;
+    std::size_t windowPeakPesQueue = 0;
+    std::uint64_t lastPesQueuedTotal = 0;
+    std::uint64_t lastDecodedFrames = 0;
+    std::uint64_t lastPublishedFrames = 0;
+    std::uint64_t lastFpsGateDrops = 0;
+    auto windowBegin = std::chrono::steady_clock::now();
     for (;;) {
         mpegts::DemuxSample sample;
+        const auto beforeDequeue = std::chrono::steady_clock::now();
+        bool queueWasEmpty = false;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
+            queueWasEmpty = videoQueue_.empty();
             videoQueueCv_.wait(lock, [this] {
                 return workersStop_.load(std::memory_order_acquire) ||
                        !videoQueue_.empty();
@@ -710,7 +827,18 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
 
             sample = std::move(videoQueue_.front());
             videoQueue_.pop_front();
+            windowPeakPesQueue = std::max(windowPeakPesQueue,
+                                          videoQueue_.size());
             videoWorkerActive_.store(true, std::memory_order_release);
+        }
+        const auto processBegin = std::chrono::steady_clock::now();
+        if (queueWasEmpty) {
+            const auto idleUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    processBegin - beforeDequeue).count());
+            windowIdleWaitTotalUs += idleUs;
+            windowIdleWaitMaxUs = std::max(windowIdleWaitMaxUs, idleUs);
+            ++windowIdleWaitEvents;
         }
 
         std::string error;
@@ -732,6 +860,76 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                 setFailure(error);
         }
 
+        const auto processEnd = std::chrono::steady_clock::now();
+        const auto processUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                processEnd - processBegin).count());
+        windowProcessTotalUs += processUs;
+        windowProcessMaxUs = std::max(windowProcessMaxUs, processUs);
+        ++windowPesProcessed;
+        if (windowPesProcessed >= 125) {
+            std::size_t pesQueueNow = 0;
+            std::uint64_t sourceQueueDrops = 0;
+            std::uint64_t pesQueuedTotal = 0;
+            {
+                std::lock_guard<std::mutex> lock(videoQueueMutex_);
+                pesQueueNow = videoQueue_.size();
+                sourceQueueDrops = droppedVideoSamples_;
+                pesQueuedTotal = videoPesQueuedTotal_.load(
+                    std::memory_order_relaxed);
+            }
+            const auto elapsedMs = std::max<std::int64_t>(
+                1, std::chrono::duration_cast<std::chrono::milliseconds>(
+                    processEnd - windowBegin).count());
+            const auto queuedWindow = pesQueuedTotal >= lastPesQueuedTotal
+                ? pesQueuedTotal - lastPesQueuedTotal : 0ULL;
+            const auto decodedWindow = decodedVideoFrames_ >= lastDecodedFrames
+                ? decodedVideoFrames_ - lastDecodedFrames : 0ULL;
+            const auto publishedWindow =
+                videoRawPublishedTotal_ >= lastPublishedFrames
+                    ? videoRawPublishedTotal_ - lastPublishedFrames : 0ULL;
+            const auto gateWindow = videoRateDroppedFrames_ >= lastFpsGateDrops
+                ? videoRateDroppedFrames_ - lastFpsGateDrops : 0ULL;
+            const auto fps = [&](std::uint64_t frames) {
+                return frames * 1000ULL /
+                    static_cast<std::uint64_t>(elapsedMs);
+            };
+            std::cerr << "NATIVE VIDEO DECODE PERF"
+                      << " stream_id=" << config_.streamId
+                      << " pes_processed=" << windowPesProcessed
+                      << " pes_in_fps=" << fps(queuedWindow)
+                      << " pes_processed_fps=" << fps(windowPesProcessed)
+                      << " decoded_fps=" << fps(decodedWindow)
+                      << " raw_published_fps=" << fps(publishedWindow)
+                      << " decoded_frames=" << decodedWindow
+                      << " raw_published_frames=" << publishedWindow
+                      << " fps_gate_drop_window=" << gateWindow
+                      << " decode_avg_ms=" <<
+                          (windowProcessTotalUs / windowPesProcessed / 1000ULL)
+                      << " decode_max_ms=" << (windowProcessMaxUs / 1000ULL)
+                      << " decode_empty_wait_ms=" <<
+                          (windowIdleWaitTotalUs / 1000ULL)
+                      << " decode_empty_wait_max_ms=" <<
+                          (windowIdleWaitMaxUs / 1000ULL)
+                      << " decode_empty_wait_events=" << windowIdleWaitEvents
+                      << " pes_queue_now=" << pesQueueNow
+                      << " pes_queue_peak=" << windowPeakPesQueue
+                      << " pes_queue_drop_total=" << sourceQueueDrops
+                      << std::endl;
+            lastPesQueuedTotal = pesQueuedTotal;
+            lastDecodedFrames = decodedVideoFrames_;
+            lastPublishedFrames = videoRawPublishedTotal_;
+            lastFpsGateDrops = videoRateDroppedFrames_;
+            windowBegin = processEnd;
+            windowPesProcessed = 0;
+            windowProcessTotalUs = 0;
+            windowProcessMaxUs = 0;
+            windowIdleWaitTotalUs = 0;
+            windowIdleWaitMaxUs = 0;
+            windowIdleWaitEvents = 0;
+            windowPeakPesQueue = 0;
+        }
+
         videoWorkerActive_.store(false, std::memory_order_release);
         idleCv_.notify_all();
         if (failed_.load(std::memory_order_acquire)) break;
@@ -739,10 +937,31 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
 }
 
 void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
+    // Measure real encode/scaling throughput without changing scheduling,
+    // queue sizes, output PTS or video encoder settings.
+    std::uint64_t videoEncodeDiagFrames = 0;
+    std::uint64_t videoEncodeDiagTotalUs = 0;
+    std::uint64_t videoEncodeDiagMaxUs = 0;
+    std::uint64_t videoScaleDiagTotalUs = 0;
+    std::uint64_t videoScaleDiagMaxUs = 0;
+    std::uint64_t videoCodecDiagTotalUs = 0;
+    std::uint64_t videoCodecDiagMaxUs = 0;
+    std::size_t videoEncodeDiagPeakRawQueue = 0;
+    // Account for producer bursts and time actually blocked waiting for raw
+    // frames. A 21-FPS worker with 26ms/encode is NOT necessarily CPU-bound.
+    std::uint64_t rawEmptyWaitTotalUs = 0;
+    std::uint64_t rawEmptyWaitMaxUs = 0;
+    std::uint64_t rawEmptyWaitEvents = 0;
+    std::uint64_t lastRawDrops = 0;
+    std::size_t lastRawQueue = 0;
+    auto videoEncodeDiagWindowStart = std::chrono::steady_clock::now();
     for (;;) {
         std::shared_ptr<const codec::RawVideoFrame> frame;
+        const auto dequeueBegin = std::chrono::steady_clock::now();
+        bool queueWasEmpty = false;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
+            queueWasEmpty = externalVideoQueue_.empty();
             videoEncodeQueueCv_.wait(lock, [this] {
                 return workersStop_.load(std::memory_order_acquire) ||
                        !externalVideoQueue_.empty();
@@ -753,16 +972,105 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
 
             frame = std::move(externalVideoQueue_.front());
             externalVideoQueue_.pop_front();
+            videoEncodeDiagPeakRawQueue = std::max(
+                videoEncodeDiagPeakRawQueue, externalVideoQueue_.size());
             videoEncodeWorkerActive_.store(true, std::memory_order_release);
         }
 
+        const auto encodeBegin = std::chrono::steady_clock::now();
+        if (queueWasEmpty) {
+            const auto waitedUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    encodeBegin - dequeueBegin).count());
+            rawEmptyWaitTotalUs += waitedUs;
+            rawEmptyWaitMaxUs = std::max(rawEmptyWaitMaxUs, waitedUs);
+            ++rawEmptyWaitEvents;
+        }
+        std::uint64_t scaleUs = 0;
+        std::uint64_t codecUs = 0;
         std::string error;
         {
             std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
-            if (frame && !handleDecodedVideoFrame(*frame, error))
+            if (frame && !handleDecodedVideoFrame(*frame, error,
+                                                   &scaleUs, &codecUs))
                 setFailure(error);
         }
 
+        const auto encodeEnd = std::chrono::steady_clock::now();
+        const auto encodeUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                encodeEnd - encodeBegin).count());
+        videoEncodeDiagTotalUs += encodeUs;
+        videoEncodeDiagMaxUs = std::max(videoEncodeDiagMaxUs, encodeUs);
+        videoScaleDiagTotalUs += scaleUs;
+        videoScaleDiagMaxUs = std::max(videoScaleDiagMaxUs, scaleUs);
+        videoCodecDiagTotalUs += codecUs;
+        videoCodecDiagMaxUs = std::max(videoCodecDiagMaxUs, codecUs);
+        ++videoEncodeDiagFrames;
+        if (videoEncodeDiagFrames >= 125) {
+            std::size_t rawQueue = 0;
+            std::uint64_t rawDrops = 0;
+            {
+                std::lock_guard<std::mutex> lock(videoQueueMutex_);
+                rawQueue = externalVideoQueue_.size();
+                rawDrops = decodedVideoQueueDrops_;
+            }
+            const auto elapsedMs = std::max<std::int64_t>(
+                1, std::chrono::duration_cast<std::chrono::milliseconds>(
+                    encodeEnd - videoEncodeDiagWindowStart).count());
+            // Conservation: enqueued RAW = dequeued + dropped + change in
+            // queue depth. This measures source burstiness with no producer
+            // instrumentation or extra mutex operations in the hot path.
+            const auto windowDrops = rawDrops >= lastRawDrops
+                ? rawDrops - lastRawDrops : 0ULL;
+            const auto rawReceived = static_cast<std::int64_t>(
+                videoEncodeDiagFrames) + static_cast<std::int64_t>(windowDrops) +
+                static_cast<std::int64_t>(rawQueue) -
+                static_cast<std::int64_t>(lastRawQueue);
+            const auto rawReceivedSafe = static_cast<std::uint64_t>(
+                std::max<std::int64_t>(0, rawReceived));
+            std::cerr << "NATIVE VIDEO ENCODE PERF"
+                      << " stream_id=" << config_.streamId
+                      << " frames=" << videoEncodeDiagFrames
+                      << " fps=" << (videoEncodeDiagFrames * 1000ULL /
+                                     static_cast<std::uint64_t>(elapsedMs))
+                      << " avg_ms=" << (videoEncodeDiagTotalUs /
+                                        videoEncodeDiagFrames / 1000ULL)
+                      << " max_ms=" << (videoEncodeDiagMaxUs / 1000ULL)
+                      << " scale_avg_ms=" << (videoScaleDiagTotalUs /
+                                               videoEncodeDiagFrames / 1000ULL)
+                      << " scale_max_ms=" << (videoScaleDiagMaxUs / 1000ULL)
+                      << " encode_avg_ms=" << (videoCodecDiagTotalUs /
+                                                videoEncodeDiagFrames / 1000ULL)
+                      << " encode_max_ms=" << (videoCodecDiagMaxUs / 1000ULL)
+                      << " raw_vq=" << rawQueue
+                      << " raw_vq_peak=" << videoEncodeDiagPeakRawQueue
+                      << " raw_drop_total=" << rawDrops
+                      << " raw_in_fps=" << (rawReceivedSafe * 1000ULL /
+                                          static_cast<std::uint64_t>(elapsedMs))
+                      << " raw_in_frames=" << rawReceivedSafe
+                      << " raw_drop_window=" << windowDrops
+                      << " raw_empty_wait_ms=" << (rawEmptyWaitTotalUs / 1000ULL)
+                      << " raw_empty_wait_max_ms=" << (rawEmptyWaitMaxUs / 1000ULL)
+                      << " raw_empty_wait_events=" << rawEmptyWaitEvents
+                      << " video_size=" << config_.width
+                      << "x" << config_.height
+                      << std::endl;
+            videoEncodeDiagWindowStart = encodeEnd;
+            lastRawDrops = rawDrops;
+            lastRawQueue = rawQueue;
+            rawEmptyWaitTotalUs = 0;
+            rawEmptyWaitMaxUs = 0;
+            rawEmptyWaitEvents = 0;
+            videoEncodeDiagFrames = 0;
+            videoEncodeDiagTotalUs = 0;
+            videoEncodeDiagMaxUs = 0;
+            videoScaleDiagTotalUs = 0;
+            videoScaleDiagMaxUs = 0;
+            videoCodecDiagTotalUs = 0;
+            videoCodecDiagMaxUs = 0;
+            videoEncodeDiagPeakRawQueue = 0;
+        }
         videoEncodeWorkerActive_.store(false, std::memory_order_release);
         idleCv_.notify_all();
         if (failed_.load(std::memory_order_acquire)) break;
@@ -925,7 +1233,13 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                     const auto waited = std::chrono::steady_clock::now() - only.queuedAt;
                     // At startup, give the peer stream time to produce its first encoded sample.
                     // Afterwards keep A/V close, but never let one slow encoder block forever.
-                    if (otherClock == 0) {
+                    if (muxDrainRequested_.load(std::memory_order_acquire)) {
+                        // At explicit end-of-input there can be no future
+                        // peer sample. Drain all remaining video/audio frames
+                        // immediately instead of applying live A/V lead holds.
+                        // The normal live path below remains unchanged.
+                        ready = true;
+                    } else if (otherClock == 0) {
                         // Before the peer stream has produced its first sample we may
                         // wait briefly, but do not use queue depth as permission to run
                         // one stream far ahead of the other.
@@ -939,10 +1253,9 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         // Payload Out fell to zero and viewers saw a freeze.
                         const bool withinLead =
                             !mpegts::ptsAheadOf90k(clock, otherClock, kMaxAvLead90k);
-                        // V10.8.254: for explicitly selected FFmpeg AVC
-                        // hold video to the preferred 150-ms A/V lead.
-                        // Preserve the 500-ms escape hatch for all other
-                        // decoders, including GPU zero-copy.
+                        // V10.8.263 experimental: software AVC decoders use
+                        // the same 150-ms envelope. GPU zero-copy retains
+                        // the established 500-ms escape hatch.
                         const std::uint64_t hardLead90k =
                             ffmpegAvcMuxPolicy_.load(std::memory_order_acquire)
                                 ? kMaxAvLead90k : kMaxAvHardLead90k;
@@ -1128,14 +1441,7 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
     videoDecoder_.reset();
     inputVideoCodec_ = codecType;
     if (codecType == mpegts::ElementaryCodec::H264 &&
-        selectedAvcDecoder_ == "openh264") {
-        videoDecoder_ = codec::createOpenH264VideoDecoder(error, config_.streamId);
-        if (videoDecoder_)
-            std::cerr << "NATIVE AVC DECODER preference selected=openh264"
-                      << " stream_id=" << config_.streamId
-                      << " fallback=ittiam-on-failure" << std::endl;
-    } else if (codecType == mpegts::ElementaryCodec::H264 &&
-               selectedAvcDecoder_ == "ittiam") {
+        selectedAvcDecoder_ == "ittiam") {
         videoDecoder_ = codec::createIttiamAvcDecoder(error);
         if (videoDecoder_)
             std::cerr << "NATIVE AVC DECODER preference selected=ittiam"
@@ -1159,6 +1465,36 @@ bool NativeTranscoderPipeline::ensureVideoDecoder(mpegts::ElementaryCodec codecT
                selectedAvcDecoder_ == "nvidia_hw") {
         error = "NVIDIA HW AVC decoder must use the NVDEC/CUDA/NVENC zero-copy path";
         return false;
+    } else if (codecType == mpegts::ElementaryCodec::H264 &&
+               selectedAvcDecoder_ == "auto") {
+        // NVIDIA and Intel zero-copy are probed earlier in processVideo().
+        // If no compatible zero-copy path started, try an independent Intel
+        // decoder first, then known software backends in a defined order.
+        std::string candidateError;
+        videoDecoder_ = codec::createIntelHardwareVideoDecoder(codecType, candidateError);
+        if (videoDecoder_) {
+            selectedAvcDecoder_ = "intel_hw";
+            std::cerr << "NATIVE AVC DECODER auto selected=intel_hw"
+                      << " stream_id=" << config_.streamId
+                      << " reason=hardware-available" << std::endl;
+        } else {
+            videoDecoder_ = codec::createFfmpegAvcDecoder(candidateError);
+            if (videoDecoder_) {
+                selectedAvcDecoder_ = "ffmpeg";
+                ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
+            } else {
+                videoDecoder_ = codec::createIttiamAvcDecoder(candidateError);
+                if (videoDecoder_) selectedAvcDecoder_ = "ittiam";
+                // No OpenH264 video decoder: FFmpeg and Ittiam are the CPU choices.
+            }
+            if (videoDecoder_)
+                ffmpegAvcMuxPolicy_.store(true, std::memory_order_release);
+            if (videoDecoder_)
+                std::cerr << "NATIVE AVC DECODER auto selected=" << selectedAvcDecoder_
+                          << " stream_id=" << config_.streamId
+                          << " reason=hardware-unavailable" << std::endl;
+        }
+        if (!videoDecoder_) error = "Auto AVC decoder selection failed: " + candidateError;
     } else {
         videoDecoder_ = codec::createVideoDecoder(codecType, error);
     }
@@ -1296,8 +1632,8 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     // Never change video encoder, audio timing, or GPU zero-copy selection.
     if (sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         sample.h264FieldCoded &&
-        (selectedAvcDecoder_ == "openh264" ||
-         selectedAvcDecoder_ == "ittiam") &&
+        (selectedAvcDecoder_ == "ittiam") &&
+        config_.videoDecoder == "auto" &&
         !softwareAvcFallbackUnavailable_) {
         std::string probeError;
         auto recovered = codec::createFfmpegAvcDecoder(probeError);
@@ -1348,8 +1684,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     // Intel HW is now an encoder-independent oneVPL decoder that returns I420.
     const bool explicitFrameDecoder =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
-        (selectedAvcDecoder_ == "openh264" ||
-         selectedAvcDecoder_ == "ittiam" ||
+        (selectedAvcDecoder_ == "ittiam" ||
          selectedAvcDecoder_ == "ffmpeg" ||
          selectedAvcDecoder_ == "intel_hw");
     const bool forceNvidiaHardwareAvc =
@@ -1575,7 +1910,6 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     const bool nativeSoftwareAvc =
         sample.stream.codec == mpegts::ElementaryCodec::H264 &&
         (selectedAvcDecoder_ == "ittiam" ||
-         selectedAvcDecoder_ == "openh264" ||
          selectedAvcDecoder_ == "auto");
     if (nativeSoftwareAvc) {
         if (decodedOk && !decoded.empty()) {
@@ -1584,6 +1918,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             ++softwareAvcSilentSamples_;
         }
         if ((!decodedOk || softwareAvcSilentSamples_ >= 150U) &&
+            config_.videoDecoder == "auto" &&
             !softwareAvcFallbackUnavailable_) {
             const std::string original = selectedAvcDecoder_;
             const std::string nativeError = error;
@@ -1758,7 +2093,8 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 if (decodedVideoQueueDrops_ <= 4 ||
                     (decodedVideoQueueDrops_ % 100U) == 0U) {
                     std::cerr
-                        << "NATIVE PRIMARY RAW DROP dropped="
+                        << "NATIVE PRIMARY RAW DROP stream_id="
+                        << config_.streamId << " dropped="
                         << decodedVideoQueueDrops_
                         << " queue=" << externalVideoQueue_.size()
                         << std::endl;
@@ -1766,16 +2102,20 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             }
             externalVideoQueue_.push_back(std::move(sharedRaw));
         }
+        ++videoRawPublishedTotal_;
         videoEncodeQueueCv_.notify_one();
     }
     return true;
 }
 
 bool NativeTranscoderPipeline::handleDecodedVideoFrame(
-    const codec::RawVideoFrame& raw,
-    std::string& error) {
+    const codec::RawVideoFrame& raw, std::string& error,
+    std::uint64_t* scaleTimeUs, std::uint64_t* encodeTimeUs) {
+    if (scaleTimeUs) *scaleTimeUs = 0;
+    if (encodeTimeUs) *encodeTimeUs = 0;
     if (!ensureVideoEncoder(error)) return false;
 
+    const auto scaleBegin = std::chrono::steady_clock::now();
     codec::RawVideoFrame scaled;
     const codec::RawVideoFrame* source = &raw;
     if ((raw.width != config_.width || raw.height != config_.height) &&
@@ -1784,11 +2124,22 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
             return false;
         source = &scaled;
     }
+    const auto scaleEnd = std::chrono::steady_clock::now();
+    if (scaleTimeUs) {
+        *scaleTimeUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                scaleEnd - scaleBegin).count());
+    }
 
     std::vector<codec::EncodedVideoFrame> encoded;
     if (!videoEncoder_->encode(*source, encoded, error)) return false;
     for (const auto& frame : encoded)
         if (!emitVideo(frame, error)) return false;
+    if (encodeTimeUs) {
+        *encodeTimeUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - scaleEnd).count());
+    }
     return true;
 }
 
@@ -2019,6 +2370,20 @@ bool NativeTranscoderPipeline::process(const std::uint8_t* data, std::size_t siz
     std::lock_guard<std::mutex> lock(mutex_);
     error.clear(); output.clear();
     if (!initialized_) { error = "native transcoder is not initialized"; return false; }
+    // Observe actual caller-provided TS chunk cadence before the MPEG-TS
+    // framer/demux runs. These counters do not change scheduling or payload.
+    const auto tsInputNow = std::chrono::steady_clock::now();
+    if (lastTsInputAt_.time_since_epoch().count() != 0) {
+        const auto gapMs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                tsInputNow - lastTsInputAt_).count());
+        tsInputGapMaxMsWindow_ = std::max(tsInputGapMaxMsWindow_, gapMs);
+        if (gapMs > 80) ++tsInputGapOver80MsWindow_;
+        if (gapMs > 200) ++tsInputGapOver200MsWindow_;
+    }
+    lastTsInputAt_ = tsInputNow;
+    ++tsInputCallsWindow_;
+    tsInputBytesWindow_ += size;
     if (failed_.load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> failLock(failureMutex_); error = failure_; return false;
     }
@@ -2034,6 +2399,23 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
     std::lock_guard<std::mutex> lock(mutex_);
     error.clear(); output.clear();
     if (!initialized_) return true;
+
+    // flush() signals a finite, complete input. A video-only source cannot
+    // satisfy the normal 2.5-second "wait for first audio" policy, while
+    // waitForIdle() times out in approximately 1 second. The same issue can
+    // occur on the final few frames of any finite A/V source.
+    // Use an RAII guard so every early failure restores live-mode policy.
+    struct MuxDrainGuard {
+        std::atomic<bool>& requested;
+        std::condition_variable& cv;
+        ~MuxDrainGuard() {
+            requested.store(false, std::memory_order_release);
+            cv.notify_all();
+        }
+    } muxDrainGuard{muxDrainRequested_, muxQueueCv_};
+    muxDrainRequested_.store(true, std::memory_order_release);
+    muxQueueCv_.notify_all();
+
     demux_.flush();
     if (!waitForIdle()) {
         if (failed_.load(std::memory_order_acquire)) {

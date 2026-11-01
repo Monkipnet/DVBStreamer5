@@ -2,6 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
+#include <deque>
+#include <vector>
 #include <map>
 #include <mutex>
 #include <string>
@@ -27,8 +30,18 @@ public:
 
 private:
     std::mutex mutex_;
-    std::map<int, int> subscribers_;
+    struct Subscriber {
+        int sendFd = -1;
+        std::deque<std::vector<std::uint8_t>> pending;
+        std::size_t pendingBytes = 0;
+        bool backlogWarningLogged = false;
+    };
+    static constexpr std::size_t kMaxPendingBytes = 4U * 1024U * 1024U;
+    std::map<int, Subscriber> subscribers_;
     bool closed_ = false;
+    std::chrono::steady_clock::time_point lastRateSample_{};
+    std::uint64_t publishedBytes_ = 0;
+    std::uint64_t publishedCalls_ = 0;
 };
 
 } // namespace dvbstreamer5::media::network

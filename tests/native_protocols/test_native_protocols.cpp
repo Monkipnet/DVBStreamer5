@@ -4,7 +4,9 @@
 #include "media/NativeRtmpTransport.h"
 #include "media/NativeSampleAes.h"
 #include "media/NativeTsDemux.h"
+#include "media/NativeUdpRelay.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <arpa/inet.h>
@@ -158,14 +160,28 @@ bool testPlay() {
 
 } // namespace rtmp_test
 
-static bool makeTs(std::vector<std::uint8_t>& out) {
+static bool makeTs(std::vector<std::uint8_t>& out, int idrPadding = 256,
+                   int aacPayloadBytes = 13) {
     mpegts::NativeMpegTsMux mux; mpegts::NativeMuxConfig cfg; cfg.serviceId=100; cfg.videoPid=0x100; cfg.audioPid=0x101;
     std::string e; if(!mux.initialize(cfg,e)||!mux.setCodec(mpegts::ElementaryKind::Video,mpegts::ElementaryCodec::H264,e)||!mux.setCodec(mpegts::ElementaryKind::Audio,mpegts::ElementaryCodec::AacAdts,e)){std::cerr<<e<<"\n";return false;}
     // Baseline SPS/PPS + IDR. The native mux/demux treats them as opaque access units.
     std::vector<std::uint8_t> video={0,0,0,1,0x67,0x42,0x00,0x1e,0x95,0xa8,0x14,0x01,0x6e,0x9b,0x80,0x80,0x80,0xa0,0,0,0,1,0x68,0xce,0x3c,0x80,0,0,0,1,0x65,0x88,0x84,0x21,0xa0};
-    for (int i=0;i<256;++i) video.push_back(static_cast<std::uint8_t>(0x40+(i%47)));
-    // AAC-LC 48kHz stereo ADTS, tiny opaque payload.
-    const std::vector<std::uint8_t> audio={0xff,0xf1,0x4c,0x80,0x02,0x9f,0xfc,1,2,3,4,5,6,7,8,9,10,11,12,13};
+    for (int i=0;i<idrPadding;++i) video.push_back(static_cast<std::uint8_t>(0x40+(i%47)));
+    // AAC-LC 48kHz stereo ADTS. The CBCS fixture uses a larger payload:
+    // the normal 13-byte payload has no AES block after the 16 clear bytes.
+    if (aacPayloadBytes < 13 || aacPayloadBytes > 4096) return false;
+    std::vector<std::uint8_t> audio(7 + static_cast<std::size_t>(aacPayloadBytes));
+    const std::size_t adtsLength = audio.size();
+    audio[0] = 0xff;
+    audio[1] = 0xf1;
+    audio[2] = 0x4c;
+    audio[3] = static_cast<std::uint8_t>(0x80U | ((adtsLength >> 11) & 3U));
+    audio[4] = static_cast<std::uint8_t>(adtsLength >> 3);
+    audio[5] = static_cast<std::uint8_t>(((adtsLength & 7U) << 5U) | 0x1fU);
+    audio[6] = 0xfc;
+    for (int j = 0; j < aacPayloadBytes; ++j)
+        audio[7 + static_cast<std::size_t>(j)] =
+            static_cast<std::uint8_t>(1 + j % 251);
     for(int i=0;i<8;++i){
         mpegts::ElementarySample v{video.data(),video.size(),static_cast<std::uint64_t>(90000+i*3600),static_cast<std::uint64_t>(90000+i*3600),3600,true,true,i==0};
         std::vector<mpegts::Packet> p;if(!mux.write(mpegts::ElementaryKind::Video,v,p,e)){std::cerr<<e<<"\n";return false;}for(auto&x:p)out.insert(out.end(),x.begin(),x.end());
@@ -202,22 +218,70 @@ static bool testEncryptedCmaf(const std::vector<std::uint8_t>& ts) {
     if (!seg.start(cfg,e)) { std::cerr << "cmaf cbcs start: " << e << "\n"; return false; }
     if (!seg.push(ts.data(), ts.size())) { std::cerr << "cmaf cbcs push: " << seg.lastError() << "\n"; return false; }
     seg.stop();
-    std::filesystem::path fragment;
-    for (auto& x : std::filesystem::directory_iterator(dir)) if (x.path().extension()==".m4s") { fragment=x.path(); break; }
-    if (fragment.empty()) { std::cerr << "encrypted m4s missing\n"; return false; }
-    auto load=[](const std::filesystem::path&p){std::ifstream f(p,std::ios::binary);return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(f)),{});};
-    auto init=load(dir/"init.mp4"), m4s=load(fragment);
-    const auto encryptedCopy = m4s;
-    if (!cmaf::decryptSampleAesFragment(m4s, cfg.key, e)) { std::cerr << "cmaf cbcs decrypt: " << e << "\n"; return false; }
-    if (m4s == encryptedCopy) { std::cerr << "cmaf cbcs did not transform fragment\n"; return false; }
+    // The first fragment returned by directory_iterator may be a short
+    // audio-only or startup fragment with no full AES block. Scan every
+    // fragment and require an actual ciphertext change in at least one.
+    std::vector<std::filesystem::path> fragments;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() == ".m4s")
+            fragments.push_back(entry.path());
+    }
+    std::sort(fragments.begin(), fragments.end());
+    if (fragments.empty()) {
+        std::cerr << "encrypted m4s missing\n";
+        return false;
+    }
+    auto load=[](const std::filesystem::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::vector<std::uint8_t>(
+            (std::istreambuf_iterator<char>(f)), {});
+    };
+    const auto init = load(dir / "init.mp4");
     std::vector<std::uint8_t> round;
     cmaf::Fmp4ToMpegTs in;
-    if (!in.initialize(init,[&](const std::uint8_t*d,std::size_t n){round.insert(round.end(),d,d+n);return true;},e)) { std::cerr << "cmaf cbcs init: " << e << "\n"; return false; }
-    if (!in.pushFragment(m4s,e)) { std::cerr << "cmaf cbcs frag: " << e << "\n"; return false; }
-    std::ifstream pf(dir/"video.m3u8"); std::string playlist((std::istreambuf_iterator<char>(pf)),{});
+    if (!in.initialize(init, [&](const std::uint8_t* d, std::size_t n) {
+            round.insert(round.end(), d, d+n);
+            return true;
+        }, e)) {
+        std::cerr << "cmaf cbcs init: " << e << "\n";
+        return false;
+    }
+
+    std::size_t transformed = 0;
+    std::size_t maxFragmentBytes = 0;
+    for (const auto& path : fragments) {
+        auto m4s = load(path);
+        maxFragmentBytes = std::max(maxFragmentBytes, m4s.size());
+        const auto ciphertext = m4s;
+        if (!cmaf::decryptSampleAesFragment(m4s, cfg.key, e)) {
+            std::cerr << "cmaf cbcs decrypt fragment=" << path.filename().string()
+                      << " error=" << e << "\n";
+            return false;
+        }
+        if (m4s != ciphertext) ++transformed;
+        if (!in.pushFragment(m4s, e)) {
+            std::cerr << "cmaf cbcs fragment=" << path.filename().string()
+                      << " error=" << e << "\n";
+            return false;
+        }
+    }
+    if (transformed == 0) {
+        std::cerr << "cmaf cbcs did not transform any fragment"
+                  << " fragment_count=" << fragments.size()
+                  << " largest_fragment_bytes=" << maxFragmentBytes
+                  << " init_bytes=" << init.size()
+                  << " source_ts_bytes=" << ts.size()
+                  << " output_ts_bytes=" << round.size()
+                  << "\n";
+        return false;
+    }
+    std::ifstream pf(dir/"video.m3u8");
+    std::string playlist((std::istreambuf_iterator<char>(pf)),{});
     std::filesystem::remove_all(dir,ec);
-    if (playlist.find("METHOD=SAMPLE-AES") == std::string::npos || playlist.find("#EXT-X-MAP") == std::string::npos) {
-        std::cerr << "CMAF encrypted playlist tags missing\n"; return false;
+    if (playlist.find("METHOD=SAMPLE-AES") == std::string::npos ||
+        playlist.find("#EXT-X-MAP") == std::string::npos) {
+        std::cerr << "CMAF encrypted playlist tags missing\n";
+        return false;
     }
     return !round.empty();
 }
@@ -228,4 +292,58 @@ static bool testRtsp(const std::vector<std::uint8_t>& ts) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));for(int i=0;i<20&&got.empty();++i){server.push(ts.data(),ts.size());std::this_thread::sleep_for(std::chrono::milliseconds(50));}client.stop();server.stop();return !got.empty();
 }
 
-int main(){std::vector<std::uint8_t>ts;if(!makeTs(ts))return 1;if(!testSampleAes(ts))return 2;if(!testCmaf(ts))return 3;if(!testEncryptedCmaf(ts))return 4;if(!testRtsp(ts))return 5;if(!rtmp_test::testPublish(ts))return 6;if(!rtmp_test::testPlay())return 7;std::cout<<"PASS: native RTSP/RTMP/CMAF/cbcs/SAMPLE-AES protocols\n";return 0;}
+int main() {
+    // Bounded continuous queue-depth feedback protects a bursty HTTP TS
+    // source without creating a raw-frame burst or starving the decoder.
+    using dvbstreamer5::media::network::detail::
+        httpTsJitterCorrectionPercent;
+    constexpr std::uint64_t target = 530000;
+    if (httpTsJitterCorrectionPercent(target, target) != 0 ||
+        httpTsJitterCorrectionPercent(660000, target) <= 0 ||
+        httpTsJitterCorrectionPercent(400000, target) >= 0 ||
+        httpTsJitterCorrectionPercent(2097152, target) != 30 ||
+        httpTsJitterCorrectionPercent(0, target) != -15 ||
+        httpTsJitterCorrectionPercent(500000, 0) != 0) {
+        std::cerr << "native protocols failed at: HTTP TS jitter feedback\n";
+        return 8;
+    }
+    std::vector<std::uint8_t> ts;
+    if (!makeTs(ts)) {
+        std::cerr << "native protocols failed at: makeTs\n";
+        return 1;
+    }
+    if (!testSampleAes(ts)) {
+        std::cerr << "native protocols failed at: SAMPLE-AES\n";
+        return 2;
+    }
+    if (!testCmaf(ts)) {
+        std::cerr << "native protocols failed at: CMAF\n";
+        return 3;
+    }
+    // Encryption correctness must be tested with at least one full CBCS
+    // 16-byte block beyond the 32-byte clear AVC NAL prefix. A too-small
+    // synthetic access unit is legitimately left entirely unencrypted.
+    std::vector<std::uint8_t> encryptableTs;
+    if (!makeTs(encryptableTs, 4096, 512)) {
+        std::cerr << "native protocols failed at: make CBCS TS fixture\n";
+        return 4;
+    }
+    if (!testEncryptedCmaf(encryptableTs)) {
+        std::cerr << "native protocols failed at: CMAF CBCS\n";
+        return 4;
+    }
+    if (!testRtsp(ts)) {
+        std::cerr << "native protocols failed at: RTSP\n";
+        return 5;
+    }
+    if (!rtmp_test::testPublish(ts)) {
+        std::cerr << "native protocols failed at: RTMP publish\n";
+        return 6;
+    }
+    if (!rtmp_test::testPlay()) {
+        std::cerr << "native protocols failed at: RTMP play\n";
+        return 7;
+    }
+    std::cout << "PASS: native RTSP/RTMP/CMAF/cbcs/SAMPLE-AES protocols\n";
+    return 0;
+}

@@ -4,6 +4,8 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <deque>
 #include <exception>
@@ -94,10 +96,19 @@ struct SharedDvbInputPool::Impl {
     std::map<std::string, std::string> frontendOwner;
 
     static void runSubscriber(const std::shared_ptr<Subscriber>& subscriber) {
+        const char* diagnosticId = std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+        const bool diagnostic = diagnosticId && *diagnosticId &&
+                                subscriber->streamId == diagnosticId;
+        std::uint64_t diagChunks = 0, diagGapMaxMs = 0;
+        std::uint64_t diagGapsOver200Ms = 0, diagCallbackMaxMs = 0;
+        std::uint64_t diagCallbacksOver100Ms = 0, diagEmptyWaitMaxMs = 0;
+        std::size_t diagPendingPeakBytes = 0;
+        auto lastChunkAt = std::chrono::steady_clock::time_point{};
         for (;;) {
             std::shared_ptr<const std::vector<std::uint8_t>> chunk;
             bool finished = false;
             std::string finishError;
+            const auto waitBegin = std::chrono::steady_clock::now();
             {
                 std::unique_lock<std::mutex> lock(subscriber->mutex);
                 subscriber->condition.wait(lock, [&] {
@@ -112,6 +123,10 @@ struct SharedDvbInputPool::Impl {
                     chunk = std::move(subscriber->queue.front());
                     subscriber->queue.pop_front();
                     subscriber->queuedBytes -= chunk ? chunk->size() : 0;
+                    if (diagnostic) {
+                        diagPendingPeakBytes = std::max(
+                            diagPendingPeakBytes, subscriber->queuedBytes);
+                    }
                 } else if (subscriber->sourceFinished) {
                     finished = true;
                     finishError = subscriber->finishError;
@@ -119,6 +134,22 @@ struct SharedDvbInputPool::Impl {
             }
 
             if (chunk && !chunk->empty()) {
+                const auto callbackBegin = std::chrono::steady_clock::now();
+                if (diagnostic) {
+                    if (lastChunkAt.time_since_epoch().count() != 0) {
+                        const auto gapMs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                callbackBegin - lastChunkAt).count());
+                        diagGapMaxMs = std::max(diagGapMaxMs, gapMs);
+                        if (gapMs > 200) ++diagGapsOver200Ms;
+                    }
+                    const auto waitedMs = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            callbackBegin - waitBegin).count());
+                    diagEmptyWaitMaxMs = std::max(
+                        diagEmptyWaitMaxMs, waitedMs);
+                    lastChunkAt = callbackBegin;
+                }
                 bool accepted = false;
                 try {
                     accepted = subscriber->onData &&
@@ -131,6 +162,33 @@ struct SharedDvbInputPool::Impl {
                     std::cerr << "SHARED DVB subscriber callback failed stream="
                               << subscriber->streamId
                               << " error=unknown exception" << std::endl;
+                }
+                if (diagnostic) {
+                    const auto callbackEnd = std::chrono::steady_clock::now();
+                    const auto callbackMs = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                            callbackEnd - callbackBegin).count());
+                    diagCallbackMaxMs = std::max(diagCallbackMaxMs, callbackMs);
+                    if (callbackMs > 100) ++diagCallbacksOver100Ms;
+                    if (++diagChunks >= 125) {
+                        std::cerr << "SHARED DVB SUBSCRIBER CADENCE"
+                                  << " stream_id=" << subscriber->streamId
+                                  << " chunks=" << diagChunks
+                                  << " chunk_gap_max_ms=" << diagGapMaxMs
+                                  << " chunk_gaps_over_200ms=" << diagGapsOver200Ms
+                                  << " callback_max_ms=" << diagCallbackMaxMs
+                                  << " callback_over_100ms=" << diagCallbacksOver100Ms
+                                  << " queue_wait_max_ms=" << diagEmptyWaitMaxMs
+                                  << " pending_peak_bytes=" << diagPendingPeakBytes
+                                  << std::endl;
+                        diagChunks = 0;
+                        diagGapMaxMs = 0;
+                        diagGapsOver200Ms = 0;
+                        diagCallbackMaxMs = 0;
+                        diagCallbacksOver100Ms = 0;
+                        diagEmptyWaitMaxMs = 0;
+                        diagPendingPeakBytes = 0;
+                    }
                 }
                 if (!accepted) break;
                 continue;
@@ -228,12 +286,17 @@ struct SharedDvbInputPool::Impl {
     static void runBus(const std::shared_ptr<Bus>& bus) {
         std::array<std::uint8_t, kReadChunkBytes> buffer {};
         std::string error;
+        std::uint64_t diagReads = 0, diagReadBytes = 0;
+        std::uint64_t diagReadGapMaxMs = 0, diagReadGapsOver200Ms = 0;
+        std::uint64_t diagPollMaxMs = 0, diagPollTimeouts = 0;
+        auto lastReadAt = std::chrono::steady_clock::time_point{};
 
         std::cerr << "SHARED DVB SOURCE running frontend=" << bus->frontend
                   << " key=" << bus->key << std::endl;
 
         while (!bus->stop.load(std::memory_order_acquire)) {
             std::size_t received = 0;
+            const auto readBegin = std::chrono::steady_clock::now();
             if (!bus->input.read(
                     buffer.data(), buffer.size(), received, 250, error)) {
                 if (bus->stop.load(std::memory_order_acquire)) break;
@@ -245,7 +308,55 @@ struct SharedDvbInputPool::Impl {
                 finishSource(bus, error);
                 break;
             }
-            if (received == 0) continue;
+            const auto readEnd = std::chrono::steady_clock::now();
+            const auto pollMs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    readEnd - readBegin).count());
+            diagPollMaxMs = std::max(diagPollMaxMs, pollMs);
+            if (received == 0) {
+                ++diagPollTimeouts;
+                continue;
+            }
+            if (lastReadAt.time_since_epoch().count() != 0) {
+                const auto gapMs = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        readEnd - lastReadAt).count());
+                diagReadGapMaxMs = std::max(diagReadGapMaxMs, gapMs);
+                if (gapMs > 200) ++diagReadGapsOver200Ms;
+            }
+            lastReadAt = readEnd;
+            diagReadBytes += received;
+            if (++diagReads >= 125) {
+                // Only the explicitly selected diagnostic stream's physical
+                // transponder is logged, including when several buses share
+                // this process. Check membership at the sample boundary, not
+                // on every DVB read.
+                const char* diagnosticId =
+                    std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+                bool logBus = false;
+                if (diagnosticId && *diagnosticId) {
+                    std::lock_guard<std::mutex> lock(bus->mutex);
+                    logBus = bus->subscribers.find(diagnosticId) !=
+                             bus->subscribers.end();
+                }
+                if (logBus) {
+                std::cerr << "SHARED DVB SOURCE CADENCE"
+                          << " frontend=" << bus->frontend
+                          << " read_chunks=" << diagReads
+                          << " read_bytes=" << diagReadBytes
+                          << " read_gap_max_ms=" << diagReadGapMaxMs
+                          << " read_gaps_over_200ms=" << diagReadGapsOver200Ms
+                          << " poll_max_ms=" << diagPollMaxMs
+                          << " poll_empty=" << diagPollTimeouts
+                          << std::endl;
+                }
+                diagReads = 0;
+                diagReadBytes = 0;
+                diagReadGapMaxMs = 0;
+                diagReadGapsOver200Ms = 0;
+                diagPollMaxMs = 0;
+                diagPollTimeouts = 0;
+            }
 
             // Observe the full-MPTS before per-service filtering. One passive
             // PID 0x10 parser per physical frontend, even with many channels.

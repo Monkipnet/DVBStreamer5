@@ -393,7 +393,9 @@ private:
     bool ensureAudioDecoder(mpegts::ElementaryCodec codec, std::string& error);
     bool ensureAudioEncoder(const codec::PcmAudioFrame& input, std::string& error);
     bool handleVideo(mpegts::DemuxSample&& sample, std::string& error);
-    bool handleDecodedVideoFrame(const codec::RawVideoFrame& raw, std::string& error);
+    bool handleDecodedVideoFrame(const codec::RawVideoFrame& raw, std::string& error,
+                                 std::uint64_t* scaleTimeUs = nullptr,
+                                 std::uint64_t* encodeTimeUs = nullptr);
     bool handleAudio(mpegts::DemuxSample&& sample, std::string& error);
     bool emitVideo(const codec::EncodedVideoFrame& frame, std::string& error);
     bool emitAudio(const codec::EncodedAudioFrame& frame, std::uint64_t duration90k,
@@ -444,11 +446,34 @@ private:
     std::deque<MuxQueuedSample> muxAudioQueue_;
     std::atomic<bool> workersStop_{false};
     std::atomic<bool> muxStop_{false};
+    // End-of-input drain: release mux peer waits only during flush().
+    std::atomic<bool> muxDrainRequested_{false};
     std::atomic<bool> videoWorkerActive_{false};
     std::atomic<bool> videoEncodeWorkerActive_{false};
     std::atomic<bool> audioWorkerActive_{false};
     std::atomic<bool> muxWorkerActive_{false};
     std::atomic<bool> videoResetRequested_{false};
+    // Producer-side count of compressed video PES admitted into the decode
+    // queue. Read atomically by the decoder worker for cadence telemetry.
+    std::atomic<std::uint64_t> videoPesQueuedTotal_{0};
+    // Ingress and PES cadence telemetry are touched only under mutex_ by
+    // process()/demux callback; no cross-thread access or frame pacing change.
+    std::chrono::steady_clock::time_point lastTsInputAt_{};
+    std::chrono::steady_clock::time_point lastVideoPesArrivalAt_{};
+    std::uint64_t tsInputCallsWindow_ = 0;
+    std::uint64_t tsInputBytesWindow_ = 0;
+    std::uint64_t tsInputGapMaxMsWindow_ = 0;
+    std::uint64_t tsInputGapOver80MsWindow_ = 0;
+    std::uint64_t tsInputGapOver200MsWindow_ = 0;
+    std::uint64_t pesArrivalsWindow_ = 0;
+    std::uint64_t pesArrivalGapMaxMsWindow_ = 0;
+    std::uint64_t pesArrivalGapOver80MsWindow_ = 0;
+    std::uint64_t pesArrivalGapOver200MsWindow_ = 0;
+    std::uint64_t pesArrivalBurstUnder5MsWindow_ = 0;
+    std::uint64_t lastVideoPesPts90kWindow_ = 0;
+    bool lastVideoPesHasPtsWindow_ = false;
+    std::uint64_t videoPesPtsGapOver80MsWindow_ = 0;
+    std::uint64_t videoPesPtsGapMaxMsWindow_ = 0;
     std::atomic<bool> externalVideoInput_{false};
     std::atomic<bool> externalAudioInput_{false};
     bool videoDropUntilRandomAccess_ = false;
@@ -538,6 +563,8 @@ private:
     std::uint64_t inputVideoSamples_ = 0;
     std::uint64_t inputAudioSamples_ = 0;
     std::uint64_t decodedVideoFrames_ = 0;
+    // Decoder-worker-only count, distinct from frames decoded before FPS gate.
+    std::uint64_t videoRawPublishedTotal_ = 0;
     std::uint64_t decodedAudioFrames_ = 0;
     std::uint64_t ignoredVideoSamples_ = 0;
     std::uint64_t ignoredAudioSamples_ = 0;

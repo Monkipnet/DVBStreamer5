@@ -258,6 +258,10 @@ private:
 struct StreamState {
     std::atomic<bool> active{false};
     std::atomic<bool> running{false};
+    // Set once when this tile's native media pipeline becomes active.
+    // Never reset on input fallback/reconnect; a full tile restart creates
+    // a fresh StreamState with a fresh monotonic launch time.
+    std::chrono::steady_clock::time_point startedAt{};
     bool usingBackup = false;
     std::string statusMessage = "stopped";
     std::string activeInputUri;
