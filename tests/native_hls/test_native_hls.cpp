@@ -104,7 +104,15 @@ bool testInput() {
     input.stop();
     server.stop();
     http.join();
-    return finishError.empty() && mediaGets == 3 && bytes == 3ULL * 188ULL * 7ULL;
+    const bool ok = finishError.empty() && mediaGets == 3 &&
+        bytes == 3ULL * 188ULL * 7ULL;
+    if (!ok) {
+        std::cerr << "native HLS input diagnostics: media_gets="
+                  << mediaGets.load() << " expected=3 bytes="
+                  << bytes.load() << " expected=" << (3ULL * 188ULL * 7ULL)
+                  << " finish_error=" << finishError << "\n";
+    }
+    return ok;
 }
 
 bool testOutput() {
