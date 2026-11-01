@@ -1131,6 +1131,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.dvbTuneConfig.unicablePosition = dvbParams.unicablePosition;
         relay.dvbTuneConfig.unicablePin = dvbParams.unicablePin;
         relay.dvbTuneConfig.streamId = dvbParams.streamId;
+        relay.dvbTuneConfig.jitterMs = dvbParams.jitterMs;
         // The shared reader still owns one full-MPTS demux for the frontend.
         // V10.8.117 moves only per-service PAT/PMT filtering ahead of the relay
         // queue, so tuner ownership/tuning and the shared bus remain unchanged.
