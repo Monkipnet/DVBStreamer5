@@ -40,6 +40,7 @@ struct LinuxDvbTuneConfig {
     int streamId = -1;
     std::string pids = "8192";
     int lockTimeoutMs = 8000;
+    int jitterMs = 0;
 };
 
 class LinuxDvbInput {
