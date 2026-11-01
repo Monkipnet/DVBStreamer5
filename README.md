@@ -1,3 +1,10 @@
+## V10.8.293 — optional shared DVB input TS jitter smoother
+
+- Opt-in via `DVBSTREAMER5_DVB_JITTER_MS=100` (valid 20–500 ms). **Disabled by default**; unset or 0 preserves the V292 path.
+- Applies only to native shared DVB frontend reads in `SharedDvbInputPool`. One ordered timestamp queue per physical frontend; releases TS chunks after the configured age to all active service subscribers without changing PCR/PTS, remapping packets or changing downstream CBR pacing.
+- Bounded to 8 MiB of shared buffered input; when full, release oldest chunks early rather than drop them. Does not address sustained congestion on public HTTP TCP clients and does not replace output pacing.
+- Experimental first implementation: environment-controlled rather than tile UI, no dynamic adaptation or PCR-driven timing yet. Requires Linux build, CTest and cold-start DVB/CA checks before enabling in production. No merge to main until verified.
+
 ## V10.8.292 — compare MPEG-TS production and actual client capacity
 
 - Adds `NATIVE HTTP TS HUB PRODUCER` once every five seconds while at least one subscriber exists, with `output_kbps`, `publish_calls`, `subscriber_count`, and `max_pending_bytes`. This measures TS bytes entering the fan-out hub before TCP/socket backpressure; compare directly with V291 `acked_kbps` and `delivered_kbps`.
