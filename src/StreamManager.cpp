@@ -31,7 +31,7 @@
 #include <sstream>
 #include <poll.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
+#include <linux/tcp.h>
 #include <sys/ioctl.h>
 #include <linux/sockios.h>
 #include <sys/socket.h>
@@ -2370,6 +2370,10 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             auto lastTransportReport = std::chrono::steady_clock::now();
             std::uint64_t reportBytes = 0;
             std::uint64_t reportMaxSendUs = 0;
+            std::uint64_t previousAcked = 0;
+            std::uint64_t previousRwndLimited = 0;
+            std::uint64_t previousSndbufLimited = 0;
+            bool havePreviousTcpSample = false;
             std::string disconnectReason = "unknown";
             int disconnectErrno = 0;
             const auto sessionStart = std::chrono::steady_clock::now();
@@ -2444,10 +2448,37 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                             socklen_t infoLen = sizeof(info);
                             const bool haveInfo = ::getsockopt(fd, IPPROTO_TCP,
                                 TCP_INFO, &info, &infoLen) == 0;
+                            const bool extended = haveInfo &&
+                                infoLen >= offsetof(struct tcp_info, tcpi_snd_wnd) +
+                                               sizeof(info.tcpi_snd_wnd);
+                            const bool comparable = extended && havePreviousTcpSample;
+                            const std::uint64_t acked = extended ? info.tcpi_bytes_acked : 0;
+                            const std::uint64_t ackedDelta =
+                                (comparable && acked >= previousAcked)
+                                    ? acked - previousAcked : 0;
+                            const std::uint64_t rwndDelta =
+                                (comparable && info.tcpi_rwnd_limited >= previousRwndLimited)
+                                    ? info.tcpi_rwnd_limited - previousRwndLimited : 0;
+                            const std::uint64_t sndbufDelta =
+                                (comparable && info.tcpi_sndbuf_limited >= previousSndbufLimited)
+                                    ? info.tcpi_sndbuf_limited - previousSndbufLimited : 0;
+                            if (extended) {
+                                previousAcked = acked;
+                                previousRwndLimited = info.tcpi_rwnd_limited;
+                                previousSndbufLimited = info.tcpi_sndbuf_limited;
+                                havePreviousTcpSample = true;
+                            }
                             std::cerr << "NATIVE HTTP TS TCP STATUS"
                                       << " stream_id=" << id
                                       << " delivered_kbps="
                                       << (reportBytes * 8ULL / static_cast<std::uint64_t>(elapsedMs))
+                                      << " acked_kbps=" << (comparable
+                                          ? ackedDelta * 8ULL / static_cast<std::uint64_t>(elapsedMs) : 0)
+                                      << " acked_sample_valid=" << (comparable ? 1 : 0)
+                                      << " acked_total_bytes=" << acked
+                                      << " rwnd_limited_delta_us=" << rwndDelta
+                                      << " sndbuf_limited_delta_us=" << sndbufDelta
+                                      << " snd_wnd_bytes=" << (extended ? info.tcpi_snd_wnd : 0)
                                       << " send_max_us=" << reportMaxSendUs
                                       << " sendq_bytes=" << outQueue
                                       << " notsent_bytes=" << notSent
