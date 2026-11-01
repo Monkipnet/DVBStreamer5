@@ -757,11 +757,21 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
     std::uint64_t videoCodecDiagTotalUs = 0;
     std::uint64_t videoCodecDiagMaxUs = 0;
     std::size_t videoEncodeDiagPeakRawQueue = 0;
+    // Account for producer bursts and time actually blocked waiting for raw
+    // frames. A 21-FPS worker with 26ms/encode is NOT necessarily CPU-bound.
+    std::uint64_t rawEmptyWaitTotalUs = 0;
+    std::uint64_t rawEmptyWaitMaxUs = 0;
+    std::uint64_t rawEmptyWaitEvents = 0;
+    std::uint64_t lastRawDrops = 0;
+    std::size_t lastRawQueue = 0;
     auto videoEncodeDiagWindowStart = std::chrono::steady_clock::now();
     for (;;) {
         std::shared_ptr<const codec::RawVideoFrame> frame;
+        const auto dequeueBegin = std::chrono::steady_clock::now();
+        bool queueWasEmpty = false;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
+            queueWasEmpty = externalVideoQueue_.empty();
             videoEncodeQueueCv_.wait(lock, [this] {
                 return workersStop_.load(std::memory_order_acquire) ||
                        !externalVideoQueue_.empty();
@@ -778,6 +788,14 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
         }
 
         const auto encodeBegin = std::chrono::steady_clock::now();
+        if (queueWasEmpty) {
+            const auto waitedUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    encodeBegin - dequeueBegin).count());
+            rawEmptyWaitTotalUs += waitedUs;
+            rawEmptyWaitMaxUs = std::max(rawEmptyWaitMaxUs, waitedUs);
+            ++rawEmptyWaitEvents;
+        }
         std::uint64_t scaleUs = 0;
         std::uint64_t codecUs = 0;
         std::string error;
@@ -810,6 +828,17 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
             const auto elapsedMs = std::max<std::int64_t>(
                 1, std::chrono::duration_cast<std::chrono::milliseconds>(
                     encodeEnd - videoEncodeDiagWindowStart).count());
+            // Conservation: enqueued RAW = dequeued + dropped + change in
+            // queue depth. This measures source burstiness with no producer
+            // instrumentation or extra mutex operations in the hot path.
+            const auto windowDrops = rawDrops >= lastRawDrops
+                ? rawDrops - lastRawDrops : 0ULL;
+            const auto rawReceived = static_cast<std::int64_t>(
+                videoEncodeDiagFrames) + static_cast<std::int64_t>(windowDrops) +
+                static_cast<std::int64_t>(rawQueue) -
+                static_cast<std::int64_t>(lastRawQueue);
+            const auto rawReceivedSafe = static_cast<std::uint64_t>(
+                std::max<std::int64_t>(0, rawReceived));
             std::cerr << "NATIVE VIDEO ENCODE PERF"
                       << " stream_id=" << config_.streamId
                       << " frames=" << videoEncodeDiagFrames
@@ -827,10 +856,22 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
                       << " raw_vq=" << rawQueue
                       << " raw_vq_peak=" << videoEncodeDiagPeakRawQueue
                       << " raw_drop_total=" << rawDrops
+                      << " raw_in_fps=" << (rawReceivedSafe * 1000ULL /
+                                          static_cast<std::uint64_t>(elapsedMs))
+                      << " raw_in_frames=" << rawReceivedSafe
+                      << " raw_drop_window=" << windowDrops
+                      << " raw_empty_wait_ms=" << (rawEmptyWaitTotalUs / 1000ULL)
+                      << " raw_empty_wait_max_ms=" << (rawEmptyWaitMaxUs / 1000ULL)
+                      << " raw_empty_wait_events=" << rawEmptyWaitEvents
                       << " video_size=" << config_.width
                       << "x" << config_.height
                       << std::endl;
             videoEncodeDiagWindowStart = encodeEnd;
+            lastRawDrops = rawDrops;
+            lastRawQueue = rawQueue;
+            rawEmptyWaitTotalUs = 0;
+            rawEmptyWaitMaxUs = 0;
+            rawEmptyWaitEvents = 0;
             videoEncodeDiagFrames = 0;
             videoEncodeDiagTotalUs = 0;
             videoEncodeDiagMaxUs = 0;
