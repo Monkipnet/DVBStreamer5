@@ -1,10 +1,11 @@
-## V10.8.293 — per-tile DVB TS jitter switch (experimental)
+## V10.8.293 — migrate live systemd opt-ins into channel configuration
 
-- In the channel tile editor, **Satellite / DVB-S/S2 → DVB Jitter Buffer → Enable**. Switch saves `jitter_ms=100` in that channel's existing `dvb://` URL; disabling saves `jitter_ms=0`. No systemd override and no manual environment variable are required. The form has RU/EN/HR text.
-- On the shared physical DVB frontend, the buffer is one ordered, bounded queue. If multiple channels share the same transponder, the effective delay is the maximum requested by its active tiles; a per-tile switch therefore controls shared transport behavior and not an independent queue. Removing a subscriber recalculates the effective delay.
-- Buffer cap 8 MiB; on pressure old chunks release in order early rather than be dropped. When enabled, DVB read timeout 20ms improves release cadence. Input-only; output CBR pacing, codecs, PCR/PTS/DTS, SRT and HTTP are not changed.
-- **Experimental and disabled by default.** This is a fixed 100ms prebuffer, not yet PCR-driven or adaptive and not guaranteed to cure tuner jitter. Build/CTest and live test with a real DVB tuner before merging to main.
-- Existing opt-in service debug settings from V281/V283/V285 are not automatically migrated; their exact current systemd drop-in contents must be audited to avoid inadvertently enabling heavy diagnostics globally.
+- **DVB TS jitter**: Satellite / DVB-S/S2 tile switch, stored as `jitter_ms=100` in the DVB URI; no systemd variable.
+- **HTTP MPEG-TS input jitter**: channel editor switch, stored as `http_ts_input_jitter_enabled` in the normal JSON configuration. Reuses existing V283/V284 1200ms jitter reservoir with drift correction; defaults off for new channels. Remove the legacy `DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID` override only after enabling the switch on its intended channel and validating.
+- **HTTP output TCP_NODELAY**: already on for public HTTP MPEG-TS since V288; no per-channel environment override needed.
+- **V281 per-stream diagnostics**: `DVBSTREAMER5_DIAG_INPUT_STREAM_ID` was debug-only; not needed for normal production, should not become a global always-on setting.
+- **debug.conf**: `Restart=no` and `LimitCORE=infinity` are systemd operational debugging settings, not stream processing enhancements. After regression checks, remove only `debug.conf` to restore base unit `Restart=on-failure`; do not silently embed it in the program.
+- Experimental branch pending Linux compile, CTest and real DVB/HTTP playback verification. Existing active unit drop-ins are left untouched by GitHub edits.
 
 ## V10.8.292 — compare MPEG-TS production and actual client capacity
 
