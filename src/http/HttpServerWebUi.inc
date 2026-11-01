@@ -7117,7 +7117,7 @@ function parseDvbTunerUri(value='') {
     diseqc_source:-1, lnb_lof1_khz:9750000, lnb_lof2_khz:10600000,
     lnb_slof_khz:11700000, unicable_mode:'none', unicable_user_band:-1,
     unicable_frequency_khz:0, unicable_position:0, unicable_pin:-1, stream_id:-1,
-    satellite_name:''
+    satellite_name:'', jitter_ms:0
   };
   const input = String(value || '').trim();
   if (!input.toLowerCase().startsWith('dvb://')) return result;
@@ -7149,6 +7149,7 @@ function parseDvbTunerUri(value='') {
   result.unicable_position = num('unicable_position', result.unicable_position);
   result.unicable_pin = num('unicable_pin', result.unicable_pin);
   result.stream_id = num('stream_id', result.stream_id);
+  result.jitter_ms = num('jitter_ms', 0);
   return result;
 }
 function updateDvbTunerVisibility() {
@@ -7189,6 +7190,8 @@ function rebuildDvbInputUriFromFields() {
   set('unicable_position', Number(document.getElementById('streamDvbUnicablePosition')?.value || 0));
   set('unicable_pin', Number(document.getElementById('streamDvbUnicablePin')?.value ?? -1));
   set('stream_id', Number(document.getElementById('streamDvbStreamId')?.value ?? -1));
+  const jitterEnabled = document.getElementById('streamDvbJitterEnabled')?.checked === true;
+  params.set('jitter_ms', jitterEnabled ? '100' : '0');
   const satelliteName=String(document.getElementById('streamDvbSatelliteName')?.value || '').trim().slice(0,80);
   if (satelliteName) params.set('satellite_name',satelliteName);
   else params.delete('satellite_name');
@@ -7362,6 +7365,11 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title">UB MHz</div><small class="field-help" ${uiBiAttrs('Центральная частота User Band.','User Band center frequency.')}>${uiBiText('Центральная частота User Band.','User Band center frequency.')}</small><input id="streamDvbUbFrequency" type="number" step="0.001" value="${dvbTuner.unicable_frequency_khz/1000}" /></div>
             <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('LNB / спутник','LNB / satellite','LNB / satelit')}>${subtitleUiTriText('LNB / спутник','LNB / satellite','LNB / satelit')}</div><small class="field-help" ${subtitleUiTriAttrs('Выберите вход мультисвитча, LNB 1–4; зависит от настроек устройства.','Select multiswitch input LNB 1–4; mapping depends on hardware.','Odaberite ulaz multiswitcha LNB 1–4; raspored ovisi o uređaju.')}>${subtitleUiTriText('Выберите вход мультисвитча, LNB 1–4; зависит от настроек устройства.','Select multiswitch input LNB 1–4; mapping depends on hardware.','Odaberite ulaz multiswitcha LNB 1–4; raspored ovisi o uređaju.')}</small><select id="streamDvbUnicablePosition">${unicablePositionOptions(dvbTuner.unicable_mode,dvbTuner.unicable_position)}</select></div>
             <div class="edit-field"><div class="edit-field-title">PIN</div><small class="field-help" ${uiBiAttrs('-1 отключает PIN.','-1 disables the PIN.')}>${uiBiText('-1 отключает PIN.','-1 disables the PIN.')}</small><input id="streamDvbUnicablePin" type="number" min="-1" max="255" value="${dvbTuner.unicable_pin}" /></div>
+          </div>
+          <div class="edit-toggle">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('DVB Jitter Buffer','DVB Jitter Buffer','DVB Jitter Buffer')}>${subtitleUiTriText('DVB Jitter Buffer','DVB Jitter Buffer','DVB Jitter Buffer')}</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Сглаживание подачи TS: 100 мс на общем транспондере.','Smooth shared transponder TS input by 100 ms.','Izravnava ulaz TS-a za 100 ms po transponderu.')}>${subtitleUiTriText('Сглаживание подачи TS: 100 мс на общем транспондере.','Smooth shared transponder TS input by 100 ms.','Izravnava ulaz TS-a za 100 ms po transponderu.')}</small>
+            <label class="checkbox-inline"><input type="checkbox" id="streamDvbJitterEnabled" ${Number(dvbTuner.jitter_ms)>0?'checked':''} /><span ${subtitleUiTriAttrs('Включить','Enable','Uključi')}>${subtitleUiTriText('Включить','Enable','Uključi')}</span></label>
           </div>
           <div class="edit-inline-note" ${uiBiAttrs('PID/SID и параметры dvb:// URL сохраняются.','PID/SID and dvb:// URL parameters are preserved.')}>${uiBiText('PID/SID и неизвестные параметры исходного dvb:// URL сохраняются при редактировании.','PID/SID and unknown parameters from the original dvb:// URL are preserved when editing.')}</div>
           </div>
