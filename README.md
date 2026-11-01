@@ -1,3 +1,11 @@
+## V10.8.287 — live uptime counter centered in each tile header
+
+- Each channel's uppermost tile row now shows its own time elapsed since the streaming pipeline was successfully started. The compact `HH:MM:SS` clock (or `Nd HH:MM:SS` after a day) sits at the middle of the tile header, between the left-side stream title and existing right-side actions. The title retains a tooltip for full names; the timer has Russian, English and Croatian tooltips.
+- A new immutable `StreamState::startedAt` steady-clock timestamp is set only after successful pipeline activation. `/api/state` exposes `running_seconds` and `running_started_mono_ms` per stream, zeroing both while offline; the latter identifies a genuine tile restart without confusing it with an HTTP/SRT source reconnect.
+- The existing once-per-second in-browser elapsed clock updater drives tile timers without increasing the state polling rate. A fresh state snapshot only re-anchors the local timer when its startup generation changed or clock drift exceeds 2s. Stopped tiles show `—`; tile restarts immediately reset the elapsed counter when the new state is returned. The client's immediate Stop action also clears the current clock.
+- Does not change the backend stream scheduler, source, transcoding, SRT/HTTP output, CA, EPG, codecs, bitrate, AV synchronization or existing stream tile group/sorting behavior. Implemented on top of the isolated V286 HTTP output diagnostic branch; no changes to `main`.
+- Build/test with CTest, then confirm Start/Stop/Restart for two independent tiles and browser refresh (the clock must represent the server's true channel runtime rather than starting over on page reload).
+
 ## V10.8.286 — diagnose HTTP MPEG-TS output stalls and VLC disconnects (test branch)
 
 - V285 is **not a confirmed solution** for the user's HTTP playback freezes and sporadic VLC closure. The supplied three-minute journal contains many `NATIVE VIDEO ENCODE PERF` entries for `stream-1793481485131` (usually 24–25 FPS, `raw_drop_total=0`, Intel encode ~15–20ms) but **no `NATIVE HTTP TS TCP_NODELAY`, `NATIVE HTTP TS OUTPUT PERF`, or `subscriber backlog limit`**. This does *not* establish that the observed VLC connection uses this server's HTTP MPEG-TS output path or that the V285 environment override is active.
