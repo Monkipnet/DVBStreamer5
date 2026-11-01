@@ -1010,6 +1010,20 @@ void NativeUdpRelay::run() {
     std::uint64_t diagRelayLoopsOver100Ms = 0;
     std::size_t diagRelayQueuePeakBytes = 0;
 
+    // Only for a single explicitly opted-in HTTP TS service. The HTTP reader
+    // continues receiving immediately into the existing bounded 2MiB queue.
+    // This consumer pre-buffers source bursts, then releases small TS chunks
+    // using an adaptive byte-rate clock; it NEVER edits PCR, PTS or DTS.
+    constexpr auto kHttpJitterPrebuffer = std::chrono::milliseconds(1200);
+    auto jitterFirstChunkAt = std::chrono::steady_clock::time_point{};
+    auto jitterNextChunkAt = std::chrono::steady_clock::time_point{};
+    auto jitterRateMeasuredAt = std::chrono::steady_clock::time_point{};
+    bool jitterReady = false;
+    std::uint64_t jitterRateBps = 0;
+    std::uint64_t jitterRateBytesAt = 0;
+    std::uint64_t jitterOutputChunks = 0;
+    std::uint64_t jitterOutputBytes = 0;
+
     while (running_.load(std::memory_order_acquire)) {
         bool diagRelayDidChunk = false;
         auto diagRelayChunkStart = std::chrono::steady_clock::time_point{};
@@ -1089,8 +1103,119 @@ void NativeUdpRelay::run() {
                 break;
             }
             if (!httpQueue_.empty()) {
+                // Do not pace a discontinuity marker (empty vector). On
+                // reconnect, start a fresh latency budget and bitrate clock.
+                if (httpJitterEnabled_ && !httpQueue_.front().empty()) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (!jitterReady) {
+                        if (jitterFirstChunkAt ==
+                            std::chrono::steady_clock::time_point{}) {
+                            jitterFirstChunkAt = now;
+                        }
+                        const auto readyAt =
+                            jitterFirstChunkAt + kHttpJitterPrebuffer;
+                        if (now < readyAt && !httpFinished_) {
+                            httpQueueCondition_.wait_until(lock, readyAt,
+                                [this] {
+                                    return !running_.load(
+                                        std::memory_order_acquire);
+                                });
+                            continue;
+                        }
+                        const auto elapsedUs = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(1,
+                                std::chrono::duration_cast<
+                                    std::chrono::microseconds>(
+                                    now - jitterFirstChunkAt).count()));
+                        const auto receivedBytes =
+                            httpReceivedBytes_.load(std::memory_order_relaxed);
+                        // Estimate an initial transport rate from actual
+                        // HTTP bytes received during the prebuffer interval.
+                        const auto measured = receivedBytes * 8000000ULL /
+                            elapsedUs;
+                        jitterRateBps = std::clamp<std::uint64_t>(
+                            measured, 128000ULL, 80000000ULL);
+                        jitterRateMeasuredAt = now;
+                        jitterRateBytesAt = receivedBytes;
+                        jitterNextChunkAt = now;
+                        jitterReady = true;
+                        std::cerr << "NATIVE HTTP JITTER ready"
+                                  << " stream_id=" << config_.streamId
+                                  << " prebuffer_ms=" << elapsedUs / 1000ULL
+                                  << " bitrate_kbps=" << jitterRateBps / 1000ULL
+                                  << " backlog_bytes=" << httpQueuedBytes_
+                                  << std::endl;
+                    }
+                    // Re-estimate over several upstream HTTP bursts rather
+                    // than reacting to individual 460ms source gaps.
+                    if (now - jitterRateMeasuredAt >=
+                        std::chrono::seconds(3)) {
+                        const auto currentBytes =
+                            httpReceivedBytes_.load(std::memory_order_relaxed);
+                        const auto elapsedUs = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(1,
+                                std::chrono::duration_cast<
+                                    std::chrono::microseconds>(
+                                    now - jitterRateMeasuredAt).count()));
+                        if (currentBytes > jitterRateBytesAt) {
+                            const auto measured =
+                                (currentBytes - jitterRateBytesAt) *
+                                8000000ULL / elapsedUs;
+                            const auto bounded = std::clamp<std::uint64_t>(
+                                measured, 128000ULL, 80000000ULL);
+                            jitterRateBps = (jitterRateBps * 3ULL +
+                                             bounded) / 4ULL;
+                        }
+                        jitterRateMeasuredAt = now;
+                        jitterRateBytesAt = currentBytes;
+                    }
+                    if (now < jitterNextChunkAt) {
+                        httpQueueCondition_.wait_until(
+                            lock, jitterNextChunkAt, [this] {
+                                return !running_.load(
+                                    std::memory_order_acquire);
+                            });
+                        continue;
+                    }
+                }
                 auto chunk = std::move(httpQueue_.front());
                 httpQueue_.pop_front();
+                if (httpJitterEnabled_ && !chunk.empty() && jitterReady) {
+                    // Gently correct clock drift relative to the bounded
+                    // reservoir. Do not send a burst to catch up after a
+                    // source stall; always reanchor to current wall time.
+                    const auto targetBytes = std::max<std::uint64_t>(
+                        16384ULL, jitterRateBps * 1200ULL / 8000ULL);
+                    std::uint64_t effectiveBps = jitterRateBps;
+                    if (httpQueuedBytes_ > targetBytes * 3ULL / 2ULL)
+                        effectiveBps += jitterRateBps / 10ULL;
+                    else if (httpQueuedBytes_ < targetBytes / 2ULL)
+                        effectiveBps -= jitterRateBps / 10ULL;
+                    effectiveBps = std::max<std::uint64_t>(
+                        1ULL, effectiveBps);
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto advanceUs = std::max<std::uint64_t>(
+                        1ULL, static_cast<std::uint64_t>(
+                            chunk.size()) * 8000000ULL / effectiveBps);
+                    jitterNextChunkAt =
+                        std::max(jitterNextChunkAt, now) +
+                        std::chrono::microseconds(
+                            static_cast<std::int64_t>(advanceUs));
+                    jitterOutputBytes += chunk.size();
+                    if (++jitterOutputChunks >= 125) {
+                        std::cerr << "NATIVE HTTP JITTER STATUS"
+                                  << " stream_id=" << config_.streamId
+                                  << " chunks=" << jitterOutputChunks
+                                  << " bytes=" << jitterOutputBytes
+                                  << " bitrate_kbps=" << jitterRateBps / 1000ULL
+                                  << " backlog_bytes=" << httpQueuedBytes_
+                                  << " target_bytes=" << targetBytes
+                                  << " mode=paced_input"
+                                  << std::endl;
+                        jitterOutputChunks = 0;
+                        jitterOutputBytes = 0;
+                    }
+                }
                 if (diagnosticHttpRelay && !chunk.empty()) {
                     diagRelayQueuePeakBytes = std::max(
                         diagRelayQueuePeakBytes, httpQueuedBytes_);
@@ -1123,6 +1248,17 @@ void NativeUdpRelay::run() {
                     inputFramer.reset();
                     transformedFramer.reset();
                     continuity.reset();
+                    if (httpJitterEnabled_) {
+                        jitterReady = false;
+                        jitterFirstChunkAt = {};
+                        jitterNextChunkAt = {};
+                        jitterRateMeasuredAt = {};
+                        jitterRateBps = 0;
+                        jitterRateBytesAt = httpReceivedBytes_.load(
+                            std::memory_order_relaxed);
+                        jitterOutputChunks = 0;
+                        jitterOutputBytes = 0;
+                    }
                     continue;
                 }
 
