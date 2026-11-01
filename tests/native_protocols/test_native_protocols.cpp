@@ -159,12 +159,12 @@ bool testPlay() {
 
 } // namespace rtmp_test
 
-static bool makeTs(std::vector<std::uint8_t>& out) {
+static bool makeTs(std::vector<std::uint8_t>& out, int idrPadding = 256) {
     mpegts::NativeMpegTsMux mux; mpegts::NativeMuxConfig cfg; cfg.serviceId=100; cfg.videoPid=0x100; cfg.audioPid=0x101;
     std::string e; if(!mux.initialize(cfg,e)||!mux.setCodec(mpegts::ElementaryKind::Video,mpegts::ElementaryCodec::H264,e)||!mux.setCodec(mpegts::ElementaryKind::Audio,mpegts::ElementaryCodec::AacAdts,e)){std::cerr<<e<<"\n";return false;}
     // Baseline SPS/PPS + IDR. The native mux/demux treats them as opaque access units.
     std::vector<std::uint8_t> video={0,0,0,1,0x67,0x42,0x00,0x1e,0x95,0xa8,0x14,0x01,0x6e,0x9b,0x80,0x80,0x80,0xa0,0,0,0,1,0x68,0xce,0x3c,0x80,0,0,0,1,0x65,0x88,0x84,0x21,0xa0};
-    for (int i=0;i<256;++i) video.push_back(static_cast<std::uint8_t>(0x40+(i%47)));
+    for (int i=0;i<idrPadding;++i) video.push_back(static_cast<std::uint8_t>(0x40+(i%47)));
     // AAC-LC 48kHz stereo ADTS, tiny opaque payload.
     const std::vector<std::uint8_t> audio={0xff,0xf1,0x4c,0x80,0x02,0x9f,0xfc,1,2,3,4,5,6,7,8,9,10,11,12,13};
     for(int i=0;i<8;++i){
@@ -258,7 +258,15 @@ int main() {
         std::cerr << "native protocols failed at: CMAF\n";
         return 3;
     }
-    if (!testEncryptedCmaf(ts)) {
+    // Encryption correctness must be tested with at least one full CBCS
+    // 16-byte block beyond the 32-byte clear AVC NAL prefix. A too-small
+    // synthetic access unit is legitimately left entirely unencrypted.
+    std::vector<std::uint8_t> encryptableTs;
+    if (!makeTs(encryptableTs, 4096)) {
+        std::cerr << "native protocols failed at: make CBCS TS fixture\n";
+        return 4;
+    }
+    if (!testEncryptedCmaf(encryptableTs)) {
         std::cerr << "native protocols failed at: CMAF CBCS\n";
         return 4;
     }
