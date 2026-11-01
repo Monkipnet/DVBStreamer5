@@ -1,3 +1,10 @@
+## V10.8.292 — compare MPEG-TS production and actual client capacity
+
+- Adds `NATIVE HTTP TS HUB PRODUCER` once every five seconds while at least one subscriber exists, with `output_kbps`, `publish_calls`, `subscriber_count`, and `max_pending_bytes`. This measures TS bytes entering the fan-out hub before TCP/socket backpressure; compare directly with V291 `acked_kbps` and `delivered_kbps`.
+- A client that cannot sustain the actual TS production bitrate will eventually overflow a bounded queue. Increasing buffers only postpones failure and raises latency. This branch **does not** discard arbitrary TS packets, lower bitrate silently, or claim a TCP-only remedy.
+- No changes to codecs, AV synchronization, SRT, HLS, PCI/CI, MPEG-TS timestamps, TCP transport behavior or the 4 MiB queue limit. This is a diagnostic stepping stone to a properly validated remedy (quality/bitrate match or client receive bottleneck), not an established fix.
+- After building and running CTest, compare 60–120 seconds of `NATIVE HTTP TS HUB PRODUCER`, `NATIVE HTTP TS TCP STATUS`, and `NATIVE HTTP TS HUB backlog` while VLC is playing the same stream. For HLS, separate segment/manifest checks are required.
+
 ## V10.8.291 — TCP acknowledgements and receiver-window diagnosis
 
 - Public HTTP MPEG-TS clients now log `acked_kbps`, `acked_sample_valid`, `acked_total_bytes`, `snd_wnd_bytes`, `rwnd_limited_delta_us`, and `sndbuf_limited_delta_us` alongside existing five-second HTTP TCP metrics.
