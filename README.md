@@ -1,3 +1,11 @@
+## V10.8.279 — TS ingress versus demux PES arrival cadence (diagnostic branch)
+
+- On working stream `stream-1793481485131`, V278 reports decode `~2ms/PES`, stable windows with `125 decoded/125 PES` and no PES queue or FPS gate drops. But the decode worker waits up to 446–569ms between input PES and the encoder occasionally overflows a 12-frame RAW queue during catch-up bursts, even though Intel VAAPI encode itself is fast enough.
+- Adds `NATIVE VIDEO INPUT CADENCE` every 125 video PES: `pes_arrival_gap_max_ms`, `pes_gap_over_80ms`, `pes_gap_over_200ms`, `pes_burst_under_5ms`, `pes_pts_gap_max_ms`, `pes_pts_gap_over_80ms`, `ts_input_calls`, `ts_input_bytes`, `ts_input_gap_max_ms`, `ts_gap_over_80ms`, `ts_gap_over_200ms`.
+- Compares wall-clock gaps at `NativeTranscoderPipeline::process()` ingress against arrival gaps of completed video PES from `NativeTsDemux`. Long TS ingress gaps suggest the upstream input path or caller batching; continuous TS ingress with large PES gaps suggests PES assembly, missing/late video packets, or source timebase irregularity. PTS changes distinguish a media timestamp jump from transport timing gaps; they cannot by themselves prove the input transport is at fault.
+- All counters are per-pipeline and updated under the existing process mutex; compressed PES and TS payloads, mux PTS, deinterlacing, codec choice, FPS gate, queue capacities, drop policy and transport output are unchanged.
+- The first interval after a restart can be atypical. Compare several consecutive `INPUT CADENCE`, `DECODE PERF` and `ENCODE PERF` windows for the same stream. Test 5/5 before deployment; do not merge to main before live validation.
+
 ## V10.8.278 — per-stage source PES / AVC decode / frame-gate diagnostics (experimental)
 
 - V277 showed the hardware encoder spends only ~21ms processing a 1080p frame (5ms CPU upscale + 15ms Intel encode), but observed RAW-frame arrival was ~22fps and the encoder worker spent ~3068ms of its 125-frame window idle, including one 830ms gap, with zero RAW queue drops in that measurement.
