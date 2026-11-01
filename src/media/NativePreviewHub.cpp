@@ -77,6 +77,32 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
         size - (size % dvbstreamer5::media::mpegts::kPacketSize);
 
     std::lock_guard<std::mutex> lock(mutex_);
+    // Production rate is measured before any socket backpressure or TCP writer.
+    // This is the full MPEG-TS output rate, not the input HTTP bitrate.
+    const auto rateNow = std::chrono::steady_clock::now();
+    if (lastRateSample_ == std::chrono::steady_clock::time_point{})
+        lastRateSample_ = rateNow;
+    publishedBytes_ += alignedSize;
+    ++publishedCalls_;
+    const auto rateMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        rateNow - lastRateSample_).count();
+    if (rateMs >= 5000) {
+        if (!subscribers_.empty()) {
+            std::size_t largestQueue = 0;
+            for (const auto& entry : subscribers_)
+                largestQueue = std::max(largestQueue, entry.second.pendingBytes);
+            std::cerr << "NATIVE HTTP TS HUB PRODUCER"
+                      << " output_kbps=" << (publishedBytes_ * 8ULL /
+                          static_cast<std::uint64_t>(rateMs))
+                      << " publish_calls=" << publishedCalls_
+                      << " subscriber_count=" << subscribers_.size()
+                      << " max_pending_bytes=" << largestQueue
+                      << std::endl;
+        }
+        lastRateSample_ = rateNow;
+        publishedBytes_ = 0;
+        publishedCalls_ = 0;
+    }
     for (auto subscriber = subscribers_.begin();
          subscriber != subscribers_.end();) {
         auto& client = subscriber->second;
