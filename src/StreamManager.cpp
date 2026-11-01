@@ -23,12 +23,15 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <ctime>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
 #include <poll.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -2263,6 +2266,34 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             return false;
         }
     }
+    // V10.8.285: the HTTP MPEG-TS client is a TCP connection receiving
+    // many 1316-byte writes from a SOCK_SEQPACKET production hub. Unlike SRT,
+    // TCP may coalesce writes behind Nagle/delayed ACK. Explicitly opt in one
+    // affected *public* HTTP stream; browser preview and all other sessions
+    // preserve their existing socket options.
+    const char* noDelayId =
+        std::getenv("DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID");
+    const bool enableNoDelay =
+        previewSession.empty() && noDelayId && *noDelayId && id == noDelayId;
+    bool noDelayActive = false;
+    if (enableNoDelay) {
+        int value = 1;
+        if (::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+                         &value, sizeof(value)) == 0) {
+            noDelayActive = true;
+            std::cerr << "NATIVE HTTP TS TCP_NODELAY"
+                      << " stream_id=" << id
+                      << " enabled=1"
+                      << std::endl;
+        } else {
+            std::cerr << "NATIVE HTTP TS TCP_NODELAY"
+                      << " stream_id=" << id
+                      << " enabled=0"
+                      << " error=" << std::strerror(errno)
+                      << std::endl;
+        }
+    }
+
     std::string subscribeError;
     const int upstreamFd = hub->subscribe(subscribeError);
     if (upstreamFd < 0) {
@@ -2275,12 +2306,64 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                            std::chrono::steady_clock::now(), upstreamFd, previewSession};
     }
     try {
-        std::thread([this, hub, fd, upstreamFd]() {
+        std::thread([this, hub, fd, upstreamFd, id, noDelayActive]() {
             std::array<char, 64 * 1024> buffer{};
+            const char* diagnosticId =
+                std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+            const bool diagnostic = diagnosticId && *diagnosticId &&
+                                    diagnosticId == id;
+            auto lastRead = std::chrono::steady_clock::time_point{};
+            std::uint64_t chunks = 0;
+            std::uint64_t bytes = 0;
+            std::uint64_t receiveGapMaxMs = 0;
+            std::uint64_t sendMaxUs = 0;
+            std::uint64_t sendBlockedOver20Ms = 0;
+            std::uint64_t recvGapsOver80Ms = 0;
             for (;;) {
                 const ssize_t n = ::read(upstreamFd, buffer.data(), buffer.size());
                 if (n > 0) {
-                    if (!writeAll(fd, buffer.data(), static_cast<std::size_t>(n))) break;
+                    const auto readAt = std::chrono::steady_clock::now();
+                    if (diagnostic && lastRead !=
+                        std::chrono::steady_clock::time_point{}) {
+                        const auto gapMs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                readAt - lastRead).count());
+                        receiveGapMaxMs = std::max(receiveGapMaxMs, gapMs);
+                        if (gapMs > 80) ++recvGapsOver80Ms;
+                    }
+                    lastRead = readAt;
+                    // Writer remains dedicated to this client. No output
+                    // fan-out lock is held during a potentially slow TCP send.
+                    const bool sent = writeAll(
+                        fd, buffer.data(), static_cast<std::size_t>(n));
+                    if (diagnostic) {
+                        const auto sendUs = static_cast<std::uint64_t>(
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::steady_clock::now() - readAt).count());
+                        sendMaxUs = std::max(sendMaxUs, sendUs);
+                        if (sendUs > 20000) ++sendBlockedOver20Ms;
+                        bytes += static_cast<std::uint64_t>(n);
+                        if (++chunks >= 1024) {
+                            std::cerr << "NATIVE HTTP TS OUTPUT PERF"
+                                      << " stream_id=" << id
+                                      << " chunks=" << chunks
+                                      << " bytes=" << bytes
+                                      << " read_gap_max_ms=" << receiveGapMaxMs
+                                      << " read_gap_over_80ms=" << recvGapsOver80Ms
+                                      << " tcp_send_max_us=" << sendMaxUs
+                                      << " tcp_send_over_20ms="
+                                      << sendBlockedOver20Ms
+                                      << " tcp_nodelay=" << (noDelayActive ? 1 : 0)
+                                      << std::endl;
+                            chunks = 0;
+                            bytes = 0;
+                            receiveGapMaxMs = 0;
+                            recvGapsOver80Ms = 0;
+                            sendMaxUs = 0;
+                            sendBlockedOver20Ms = 0;
+                        }
+                    }
+                    if (!sent) break;
                     continue;
                 }
                 if (n < 0 && errno == EINTR) continue;
