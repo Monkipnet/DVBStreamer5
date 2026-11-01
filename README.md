@@ -1,3 +1,10 @@
+## V10.8.268 — HTTP MPEG-TS / SRT packet integrity (test branch)
+
+- HTTP production MPEG-TS now retains TS-aligned packets in an ordered, bounded per-subscriber backlog when the nonblocking socket reports EAGAIN. It no longer silently discards the remainder of each transport batch. Clients that fall over 4 MiB behind are disconnected rather than receiving silently corrupted TS. Increased HTTP socket send buffer to absorb short bursts.
+- SRT output's queued chunks are TS packet-aligned (multiples of 188 bytes), preventing partial-packet boundaries when dropping old queue data under congestion. Emits a throttled backlog-overflow diagnostic.
+- Added an HTTP backpressure regression test that verifies 4,096 TS packets arrive in order after the subscriber has temporarily stopped reading.
+- Inherits V267 MP2 cursor repair. This branch still needs server compilation and end-to-end HTTP/SRT playback tests before main merge.
+
 ## V10.8.267 — PL_MPEG MP2 cursor underflow fix (test branch)
 
 - Normalizes the PL_MPEG bit cursor before reading its remaining byte count or appending input, preventing the unsigned underflow reported as `pending=18446744073709551615` and the resulting unsafe `memmove`.
