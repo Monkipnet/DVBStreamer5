@@ -1,9 +1,10 @@
-## V10.8.293 — optional shared DVB input TS jitter smoother
+## V10.8.293 — per-tile DVB TS jitter switch (experimental)
 
-- Opt-in via `DVBSTREAMER5_DVB_JITTER_MS=100` (valid 20–500 ms). **Disabled by default**; unset or 0 preserves the V292 path.
-- Applies only to native shared DVB frontend reads in `SharedDvbInputPool`. One ordered timestamp queue per physical frontend; releases TS chunks after the configured age to all active service subscribers without changing PCR/PTS, remapping packets or changing downstream CBR pacing.
-- Bounded to 8 MiB of shared buffered input; when full, release oldest chunks early rather than drop them. Does not address sustained congestion on public HTTP TCP clients and does not replace output pacing.
-- Experimental first implementation: environment-controlled rather than tile UI, no dynamic adaptation or PCR-driven timing yet. Requires Linux build, CTest and cold-start DVB/CA checks before enabling in production. No merge to main until verified.
+- In the channel tile editor, **Satellite / DVB-S/S2 → DVB Jitter Buffer → Enable**. Switch saves `jitter_ms=100` in that channel's existing `dvb://` URL; disabling saves `jitter_ms=0`. No systemd override and no manual environment variable are required. The form has RU/EN/HR text.
+- On the shared physical DVB frontend, the buffer is one ordered, bounded queue. If multiple channels share the same transponder, the effective delay is the maximum requested by its active tiles; a per-tile switch therefore controls shared transport behavior and not an independent queue. Removing a subscriber recalculates the effective delay.
+- Buffer cap 8 MiB; on pressure old chunks release in order early rather than be dropped. When enabled, DVB read timeout 20ms improves release cadence. Input-only; output CBR pacing, codecs, PCR/PTS/DTS, SRT and HTTP are not changed.
+- **Experimental and disabled by default.** This is a fixed 100ms prebuffer, not yet PCR-driven or adaptive and not guaranteed to cure tuner jitter. Build/CTest and live test with a real DVB tuner before merging to main.
+- Existing opt-in service debug settings from V281/V283/V285 are not automatically migrated; their exact current systemd drop-in contents must be audited to avoid inadvertently enabling heavy diagnostics globally.
 
 ## V10.8.292 — compare MPEG-TS production and actual client capacity
 
