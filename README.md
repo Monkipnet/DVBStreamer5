@@ -1,3 +1,11 @@
+## V10.8.276 — exact CPU I420 upscaling performance optimization (test branch)
+
+- A profiling run on the actual Intel transcoder (`stream-1793481485131`, 1920x1080) showed 16–17 ms per frame spent in CPU I420 scaling versus 15–16 ms in VAAPI H.264 encode/mux submission. The 12-frame raw-video queue repeatedly filled and accumulated hundreds of pre-encoder drops even when AV mux late/drop counters remained zero.
+- Optimizes the native bilinear I420 scaler with *separable fixed-point* interpolation, caching two horizontally interpolated source rows while output rows advance. The interpolation weights, 8-bit precision, 32768 rounding and >>16 final conversion match the original calculation exactly; no quality downgrade is intended.
+- Keeps **separate thread-local luma and chroma geometry maps**, avoiding the former Y->U->V->Y map rebuild every frame. Cached horizontal row values are invalidated on each plane call, so no pixels are reused across frames or chroma planes.
+- Adds a six-geometry regression in `native_transcoder` that compares the optimized output **byte-for-byte against the former four-tap formula** (including 720x576->1920x1080, downscale, identity, frame-to-frame changes), and checks preserved frame PTS/key metadata. The test stays active alongside native H264 encode/decode tests.
+- No changes to Intel/NVENC selection, CBR, frame pacing, timestamping, MP2, SRT/HTTP transport, queue lengths, or existing V275 live behavior. Build + 5/5 CTest + live FPS/raw-drop check required before production or main merge.
+
 ## V10.8.275 — HLS duration and encrypted CMAF regression tests (experimental)
 
 - Fixes the synthetic HLS output test configuration: the `NativeHlsSegmenter` defaults to a 4-second segment target unless `durationExplicit=true`. The test's requested 1-second target is now explicit; no production segmenter behavior has changed.
