@@ -6,6 +6,7 @@
 #include "media/NativePreviewHub.h"
 #include "media/UdpSocket.h"
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -19,6 +20,20 @@
 #include <vector>
 
 namespace dvbstreamer5::media::network {
+
+namespace detail {
+// V10.8.284: stable proportional correction for the opt-in HTTP TS jitter
+// reservoir. Avoid the V283 +/-10%-only-at-extremes dead zone.
+// This math does not inspect or modify source timestamps.
+inline std::int64_t httpTsJitterCorrectionPercent(
+    std::size_t backlogBytes,
+    std::uint64_t targetBytes) noexcept {
+    if (targetBytes == 0) return 0;
+    const auto target = static_cast<std::int64_t>(targetBytes);
+    const auto delta = static_cast<std::int64_t>(backlogBytes) - target;
+    return std::clamp<std::int64_t>(delta * 40LL / target, -15LL, 30LL);
+}
+} // namespace detail
 
 struct NativeUdpRelayOutputConfig {
     std::string outputType;
