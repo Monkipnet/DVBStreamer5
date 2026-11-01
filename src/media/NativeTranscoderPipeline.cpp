@@ -752,6 +752,10 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
     std::uint64_t videoEncodeDiagFrames = 0;
     std::uint64_t videoEncodeDiagTotalUs = 0;
     std::uint64_t videoEncodeDiagMaxUs = 0;
+    std::uint64_t videoScaleDiagTotalUs = 0;
+    std::uint64_t videoScaleDiagMaxUs = 0;
+    std::uint64_t videoCodecDiagTotalUs = 0;
+    std::uint64_t videoCodecDiagMaxUs = 0;
     std::size_t videoEncodeDiagPeakRawQueue = 0;
     auto videoEncodeDiagWindowStart = std::chrono::steady_clock::now();
     for (;;) {
@@ -774,10 +778,13 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
         }
 
         const auto encodeBegin = std::chrono::steady_clock::now();
+        std::uint64_t scaleUs = 0;
+        std::uint64_t codecUs = 0;
         std::string error;
         {
             std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
-            if (frame && !handleDecodedVideoFrame(*frame, error))
+            if (frame && !handleDecodedVideoFrame(*frame, error,
+                                                   &scaleUs, &codecUs))
                 setFailure(error);
         }
 
@@ -787,6 +794,10 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
                 encodeEnd - encodeBegin).count());
         videoEncodeDiagTotalUs += encodeUs;
         videoEncodeDiagMaxUs = std::max(videoEncodeDiagMaxUs, encodeUs);
+        videoScaleDiagTotalUs += scaleUs;
+        videoScaleDiagMaxUs = std::max(videoScaleDiagMaxUs, scaleUs);
+        videoCodecDiagTotalUs += codecUs;
+        videoCodecDiagMaxUs = std::max(videoCodecDiagMaxUs, codecUs);
         ++videoEncodeDiagFrames;
         if (videoEncodeDiagFrames >= 125) {
             std::size_t rawQueue = 0;
@@ -807,6 +818,12 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
                       << " avg_ms=" << (videoEncodeDiagTotalUs /
                                         videoEncodeDiagFrames / 1000ULL)
                       << " max_ms=" << (videoEncodeDiagMaxUs / 1000ULL)
+                      << " scale_avg_ms=" << (videoScaleDiagTotalUs /
+                                               videoEncodeDiagFrames / 1000ULL)
+                      << " scale_max_ms=" << (videoScaleDiagMaxUs / 1000ULL)
+                      << " encode_avg_ms=" << (videoCodecDiagTotalUs /
+                                                videoEncodeDiagFrames / 1000ULL)
+                      << " encode_max_ms=" << (videoCodecDiagMaxUs / 1000ULL)
                       << " raw_vq=" << rawQueue
                       << " raw_vq_peak=" << videoEncodeDiagPeakRawQueue
                       << " raw_drop_total=" << rawDrops
@@ -817,6 +834,10 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
             videoEncodeDiagFrames = 0;
             videoEncodeDiagTotalUs = 0;
             videoEncodeDiagMaxUs = 0;
+            videoScaleDiagTotalUs = 0;
+            videoScaleDiagMaxUs = 0;
+            videoCodecDiagTotalUs = 0;
+            videoCodecDiagMaxUs = 0;
             videoEncodeDiagPeakRawQueue = 0;
         }
         videoEncodeWorkerActive_.store(false, std::memory_order_release);
@@ -1850,10 +1871,13 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
 }
 
 bool NativeTranscoderPipeline::handleDecodedVideoFrame(
-    const codec::RawVideoFrame& raw,
-    std::string& error) {
+    const codec::RawVideoFrame& raw, std::string& error,
+    std::uint64_t* scaleTimeUs, std::uint64_t* encodeTimeUs) {
+    if (scaleTimeUs) *scaleTimeUs = 0;
+    if (encodeTimeUs) *encodeTimeUs = 0;
     if (!ensureVideoEncoder(error)) return false;
 
+    const auto scaleBegin = std::chrono::steady_clock::now();
     codec::RawVideoFrame scaled;
     const codec::RawVideoFrame* source = &raw;
     if ((raw.width != config_.width || raw.height != config_.height) &&
@@ -1862,11 +1886,22 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
             return false;
         source = &scaled;
     }
+    const auto scaleEnd = std::chrono::steady_clock::now();
+    if (scaleTimeUs) {
+        *scaleTimeUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                scaleEnd - scaleBegin).count());
+    }
 
     std::vector<codec::EncodedVideoFrame> encoded;
     if (!videoEncoder_->encode(*source, encoded, error)) return false;
     for (const auto& frame : encoded)
         if (!emitVideo(frame, error)) return false;
+    if (encodeTimeUs) {
+        *encodeTimeUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - scaleEnd).count());
+    }
     return true;
 }
 
