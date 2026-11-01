@@ -91,6 +91,7 @@ struct NativeUdpRelayConfig {
     std::string streamId;  // diagnostic identity; never included in transport
     std::string inputUri;
     bool externallyFedInput = false;
+    bool httpTsInputJitterEnabled = false;
     // V10.8.137: set only when an external producer already emits contiguous,
     // structurally validated 188-byte MPEG-TS packets (shared-DVB prefilter).
     // Other external inputs retain the legacy full PacketFramer validation.
@@ -181,8 +182,7 @@ private:
     bool fileInputSource_ = false;
     bool httpInputSource_ = false;
     // Optional per-channel pacing of a bursty live HTTP MPEG-TS input.
-    // Enabled only when DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID exactly
-    // matches config_.streamId. All other input paths are unchanged.
+    // Controlled by per-channel persisted configuration; HTTP TS only.
     bool httpJitterEnabled_ = false;
     bool externalInputSource_ = false;
     bool dvbInputSource_ = false;
