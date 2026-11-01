@@ -1,3 +1,10 @@
+## V10.8.275 — HLS duration and encrypted CMAF regression tests (experimental)
+
+- Fixes the synthetic HLS output test configuration: the `NativeHlsSegmenter` defaults to a 4-second segment target unless `durationExplicit=true`. The test's requested 1-second target is now explicit; no production segmenter behavior has changed.
+- Updates the CBCS encrypted CMAF fixture to include sufficiently long video and AAC access units with complete 16-byte protected blocks. Preserves the AES-CBCS encryption and decryption code unchanged.
+- CBCS test scans fragments in stable filename order, decrypts and remuxes them all, and **requires at least one fragment to change**; short/no-encrypted-block fragments alone do not cause false failures. On failure, reports fragment count, largest fragment, source TS bytes and output TS bytes.
+- Retains V274 tested automatic FFmpeg recovery after silent Ittiam AVC startup. All five CTest cases and live verification are required before deployment or main merge.
+
 ## V10.8.274 — silent Ittiam AVC startup recovery / HLS and CBCS test fixtures (experimental)
 
 - When the explicit Ittiam AVC decoder consumes six initial access units without a single output frame, it now attempts a **one-time**, bounded (max 4 MiB) replay through the optional FFmpeg AVC decoder. The switch happens only if FFmpeg actually decodes pictures. Normal Ittiam output is not decoded twice, and VAAPI/NVENC/mux/PTS scheduling settings remain unchanged.
