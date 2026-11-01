@@ -456,6 +456,24 @@ private:
     // Producer-side count of compressed video PES admitted into the decode
     // queue. Read atomically by the decoder worker for cadence telemetry.
     std::atomic<std::uint64_t> videoPesQueuedTotal_{0};
+    // Ingress and PES cadence telemetry are touched only under mutex_ by
+    // process()/demux callback; no cross-thread access or frame pacing change.
+    std::chrono::steady_clock::time_point lastTsInputAt_{};
+    std::chrono::steady_clock::time_point lastVideoPesArrivalAt_{};
+    std::uint64_t tsInputCallsWindow_ = 0;
+    std::uint64_t tsInputBytesWindow_ = 0;
+    std::uint64_t tsInputGapMaxMsWindow_ = 0;
+    std::uint64_t tsInputGapOver80MsWindow_ = 0;
+    std::uint64_t tsInputGapOver200MsWindow_ = 0;
+    std::uint64_t pesArrivalsWindow_ = 0;
+    std::uint64_t pesArrivalGapMaxMsWindow_ = 0;
+    std::uint64_t pesArrivalGapOver80MsWindow_ = 0;
+    std::uint64_t pesArrivalGapOver200MsWindow_ = 0;
+    std::uint64_t pesArrivalBurstUnder5MsWindow_ = 0;
+    std::uint64_t lastVideoPesPts90kWindow_ = 0;
+    bool lastVideoPesHasPtsWindow_ = false;
+    std::uint64_t videoPesPtsGapOver80MsWindow_ = 0;
+    std::uint64_t videoPesPtsGapMaxMsWindow_ = 0;
     std::atomic<bool> externalVideoInput_{false};
     std::atomic<bool> externalAudioInput_{false};
     bool videoDropUntilRandomAccess_ = false;
