@@ -1,3 +1,10 @@
+## V10.8.273 — HLS fixture update and codec/CMAF test diagnostics (experimental)
+
+- HLS output CTest uses the independent-segment path for its deliberately synthetic PCR/random-access-only packet stream. Unlike the normal passthrough HLS path, this scenario does not require PAT/PMT and valid elementary PES. Reports actual segment count, target duration and endlist flags on failure.
+- CMAF CBCS CTest now prints fragment size and presence of moof/traf/senc/mdat metadata if decryption reports success without altering data. This remains a failing test until the reason is confirmed and resolved; do not disable CBCS correctness checks.
+- Native H.264 transcoder CTest now reports actual output TS size, video PES count, decoder errors, and comparison frame counts from the explicit FFmpeg AVC decoder versus the factory decoder (Ittiam). It retains the decode success assertion and will not falsely pass on empty output.
+- Retains the V272 end-of-input AV mux drain fix and V267–271 live pipeline work. No production codec, mux, transport or synchronization logic was changed in this V273 branch. Server compile and tests pending, not for main.
+
 ## V10.8.272 — finite-input mux drain fix (test branch)
 
 - Fixes the video-only `native_transcoder` CTest failure `flush: native transcoder async queues did not drain`: the live mux initially waits up to 2.5 s for a missing audio peer, while `waitForIdle()` times out after about 1 s. Explicit `flush()` now temporarily bypasses live peer-wait and A/V lead holds to drain a complete, finite input, then restores the live mux policy on all return paths.
