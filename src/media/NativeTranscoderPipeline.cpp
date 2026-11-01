@@ -462,6 +462,22 @@ void NativeTranscoderPipeline::reset() {
     inputVideoSamples_ = 0;
     inputAudioSamples_ = 0;
     videoPesQueuedTotal_.store(0, std::memory_order_release);
+    lastTsInputAt_ = {};
+    lastVideoPesArrivalAt_ = {};
+    tsInputCallsWindow_ = 0;
+    tsInputBytesWindow_ = 0;
+    tsInputGapMaxMsWindow_ = 0;
+    tsInputGapOver80MsWindow_ = 0;
+    tsInputGapOver200MsWindow_ = 0;
+    pesArrivalsWindow_ = 0;
+    pesArrivalGapMaxMsWindow_ = 0;
+    pesArrivalGapOver80MsWindow_ = 0;
+    pesArrivalGapOver200MsWindow_ = 0;
+    pesArrivalBurstUnder5MsWindow_ = 0;
+    lastVideoPesPts90kWindow_ = 0;
+    lastVideoPesHasPtsWindow_ = false;
+    videoPesPtsGapOver80MsWindow_ = 0;
+    videoPesPtsGapMaxMsWindow_ = 0;
     decodedVideoFrames_ = 0;
     videoRawPublishedTotal_ = 0;
     decodedAudioFrames_ = 0;
@@ -596,6 +612,78 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
                           << " selected=" << inputVideoPid_
                           << " count=" << ignoredVideoSamples_ << std::endl;
             return;
+        }
+
+        // These timestamps are recorded at the demux->PES boundary, not
+        // at decode completion. Compare them to TS process() ingress gaps
+        // to distinguish input transport stalls from PES assembly stalls.
+        // Both are serialized by the pipeline mutex_.
+        const auto pesArrivalNow = std::chrono::steady_clock::now();
+        if (lastVideoPesArrivalAt_.time_since_epoch().count() != 0) {
+            const auto gapMs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    pesArrivalNow - lastVideoPesArrivalAt_).count());
+            pesArrivalGapMaxMsWindow_ =
+                std::max(pesArrivalGapMaxMsWindow_, gapMs);
+            if (gapMs > 80) ++pesArrivalGapOver80MsWindow_;
+            if (gapMs > 200) ++pesArrivalGapOver200MsWindow_;
+            if (gapMs < 5) ++pesArrivalBurstUnder5MsWindow_;
+        }
+        lastVideoPesArrivalAt_ = pesArrivalNow;
+        if (sample.hasPts && lastVideoPesHasPtsWindow_) {
+            constexpr std::uint64_t mask = (1ULL << 33U) - 1ULL;
+            constexpr std::uint64_t half = (1ULL << 32U);
+            const auto ptsDelta =
+                (sample.pts90k - lastVideoPesPts90kWindow_) & mask;
+            // Ignore negative/reordered source PTS in this forward-gap
+            // metric. Normal 25fps video uses ~40ms forward increments.
+            if (ptsDelta < half) {
+                const auto gapMs = ptsDelta / 90ULL;
+                videoPesPtsGapMaxMsWindow_ =
+                    std::max(videoPesPtsGapMaxMsWindow_, gapMs);
+                if (gapMs > 80) ++videoPesPtsGapOver80MsWindow_;
+            }
+        }
+        lastVideoPesHasPtsWindow_ = sample.hasPts;
+        if (sample.hasPts) lastVideoPesPts90kWindow_ = sample.pts90k;
+
+        if (++pesArrivalsWindow_ >= 125) {
+            std::cerr << "NATIVE VIDEO INPUT CADENCE"
+                      << " stream_id=" << config_.streamId
+                      << " pes_window=" << pesArrivalsWindow_
+                      << " pes_arrival_gap_max_ms="
+                      << pesArrivalGapMaxMsWindow_
+                      << " pes_gap_over_80ms="
+                      << pesArrivalGapOver80MsWindow_
+                      << " pes_gap_over_200ms="
+                      << pesArrivalGapOver200MsWindow_
+                      << " pes_burst_under_5ms="
+                      << pesArrivalBurstUnder5MsWindow_
+                      << " pes_pts_gap_max_ms="
+                      << videoPesPtsGapMaxMsWindow_
+                      << " pes_pts_gap_over_80ms="
+                      << videoPesPtsGapOver80MsWindow_
+                      << " ts_input_calls=" << tsInputCallsWindow_
+                      << " ts_input_bytes=" << tsInputBytesWindow_
+                      << " ts_input_gap_max_ms="
+                      << tsInputGapMaxMsWindow_
+                      << " ts_gap_over_80ms="
+                      << tsInputGapOver80MsWindow_
+                      << " ts_gap_over_200ms="
+                      << tsInputGapOver200MsWindow_
+                      << std::endl;
+            pesArrivalsWindow_ = 0;
+            pesArrivalGapMaxMsWindow_ = 0;
+            pesArrivalGapOver80MsWindow_ = 0;
+            pesArrivalGapOver200MsWindow_ = 0;
+            pesArrivalBurstUnder5MsWindow_ = 0;
+            videoPesPtsGapMaxMsWindow_ = 0;
+            videoPesPtsGapOver80MsWindow_ = 0;
+            tsInputCallsWindow_ = 0;
+            tsInputBytesWindow_ = 0;
+            tsInputGapMaxMsWindow_ = 0;
+            tsInputGapOver80MsWindow_ = 0;
+            tsInputGapOver200MsWindow_ = 0;
         }
 
         std::lock_guard<std::mutex> qlock(videoQueueMutex_);
@@ -2282,6 +2370,20 @@ bool NativeTranscoderPipeline::process(const std::uint8_t* data, std::size_t siz
     std::lock_guard<std::mutex> lock(mutex_);
     error.clear(); output.clear();
     if (!initialized_) { error = "native transcoder is not initialized"; return false; }
+    // Observe actual caller-provided TS chunk cadence before the MPEG-TS
+    // framer/demux runs. These counters do not change scheduling or payload.
+    const auto tsInputNow = std::chrono::steady_clock::now();
+    if (lastTsInputAt_.time_since_epoch().count() != 0) {
+        const auto gapMs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                tsInputNow - lastTsInputAt_).count());
+        tsInputGapMaxMsWindow_ = std::max(tsInputGapMaxMsWindow_, gapMs);
+        if (gapMs > 80) ++tsInputGapOver80MsWindow_;
+        if (gapMs > 200) ++tsInputGapOver200MsWindow_;
+    }
+    lastTsInputAt_ = tsInputNow;
+    ++tsInputCallsWindow_;
+    tsInputBytesWindow_ += size;
     if (failed_.load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> failLock(failureMutex_); error = failure_; return false;
     }
