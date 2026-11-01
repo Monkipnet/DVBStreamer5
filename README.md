@@ -1,3 +1,8 @@
+## V10.8.280 — PTS diagnostic unsigned integer compile fix
+
+- Fixes GCC 13 compilation of the V279 input video PTS telemetry: `std::max()` requires matching argument types. Explicitly makes the computed PTS gap `std::uint64_t` instead of deducing `unsigned long long` from `/ 90ULL` on a system where `std::uint64_t` is `unsigned long`.
+- All V279 TS/PES cadence diagnostics remain enabled. No decoder, mux, scaling, PTS value, FPS gate, audio, queue or transport behavior changed. Server build/CTest not yet verified.
+
 ## V10.8.279 — TS ingress versus demux PES arrival cadence (diagnostic branch)
 
 - On working stream `stream-1793481485131`, V278 reports decode `~2ms/PES`, stable windows with `125 decoded/125 PES` and no PES queue or FPS gate drops. But the decode worker waits up to 446–569ms between input PES and the encoder occasionally overflows a 12-frame RAW queue during catch-up bursts, even though Intel VAAPI encode itself is fast enough.
