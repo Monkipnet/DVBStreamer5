@@ -1131,8 +1131,10 @@ void NativeUdpRelay::run() {
                             httpReceivedBytes_.load(std::memory_order_relaxed);
                         // Estimate an initial transport rate from actual
                         // HTTP bytes received during the prebuffer interval.
-                        const auto measured = receivedBytes * 8000000ULL /
-                            elapsedUs;
+                        const auto measured =
+                            (receivedBytes >= jitterRateBytesAt
+                                ? receivedBytes - jitterRateBytesAt
+                                : 0ULL) * 8000000ULL / elapsedUs;
                         jitterRateBps = std::clamp<std::uint64_t>(
                             measured, 128000ULL, 80000000ULL);
                         jitterRateMeasuredAt = now;
