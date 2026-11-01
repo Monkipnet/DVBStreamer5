@@ -1,4 +1,5 @@
 #include "media/NativeCodecRuntime.h"
+#include "media/NativeFfmpegAvcDecoder.h"
 #include "media/NativeMpegTsMux.h"
 #include "media/NativeTranscoderPipeline.h"
 #include "media/NativeTsDemux.h"
@@ -50,9 +51,62 @@ int main(){
     for(std::size_t off=0;off<input.size();off+=step){if(!tc.process(input.data()+off,std::min(step,input.size()-off),chunk,error)){std::cerr<<"process: "<<error<<"\n";return 3;}output.insert(output.end(),chunk.begin(),chunk.end());}
     if(!tc.flush(chunk,error)){std::cerr<<"flush: "<<error<<" status="<<tc.status()<<"\n";return 4;}output.insert(output.end(),chunk.begin(),chunk.end());
     if(output.empty()){std::cerr<<"no transcoded TS\n";return 5;}
-    mpegts::NativeTsDemux demux;int samples=0;int width=0,height=0;auto dec=codec::createVideoDecoder(mpegts::ElementaryCodec::H264,error);if(!dec){std::cerr<<error<<"\n";return 6;}
-    demux.setSampleCallback([&](mpegts::DemuxSample&& s){if(s.stream.kind!=mpegts::ElementaryKind::Video)return;std::vector<codec::RawVideoFrame> raw;std::string e;if(dec->decode(s.data.data(),s.data.size(),s.pts90k,s.hasPts,raw,e)){samples+=static_cast<int>(raw.size());if(!raw.empty()){width=raw.back().width;height=raw.back().height;}}});
-    if(!demux.push(output.data(),output.size(),error)){std::cerr<<error<<"\n";return 7;}demux.flush();
-    if(samples<=0||width!=160||height!=120){std::cerr<<"bad output samples="<<samples<<" size="<<width<<"x"<<height<<"\n";return 8;}
+    mpegts::NativeTsDemux demux;
+    int samples = 0, width = 0, height = 0;
+    int pesSamples = 0, decodeFailures = 0;
+    std::size_t largestPesBytes = 0;
+    std::string lastDecodeError;
+    auto dec = codec::createVideoDecoder(mpegts::ElementaryCodec::H264, error);
+    if (!dec) { std::cerr << error << "\n"; return 6; }
+    auto ffmpeg = codec::createFfmpegAvcDecoder(error);
+    int ffmpegFrames = 0;
+    std::string ffmpegDecodeError;
+    demux.setSampleCallback([&](mpegts::DemuxSample&& sample) {
+        if (sample.stream.kind != mpegts::ElementaryKind::Video) return;
+        ++pesSamples;
+        largestPesBytes = std::max(largestPesBytes, sample.data.size());
+        std::vector<codec::RawVideoFrame> raw;
+        std::string decodeError;
+        if (!dec->decode(sample.data.data(), sample.data.size(),
+                         sample.pts90k, sample.hasPts, raw, decodeError)) {
+            ++decodeFailures;
+            lastDecodeError = decodeError;
+        } else {
+            samples += static_cast<int>(raw.size());
+            if (!raw.empty()) {
+                width = raw.back().width;
+                height = raw.back().height;
+            }
+        }
+        if (ffmpeg) {
+            std::vector<codec::RawVideoFrame> ffmpegOutput;
+            std::string ffmpegError;
+            if (ffmpeg->decode(sample.data.data(), sample.data.size(),
+                               sample.pts90k, sample.hasPts,
+                               ffmpegOutput, ffmpegError)) {
+                ffmpegFrames += static_cast<int>(ffmpegOutput.size());
+            } else {
+                ffmpegDecodeError = ffmpegError;
+            }
+        }
+    });
+    if (!demux.push(output.data(), output.size(), error)) {
+        std::cerr << error << "\n";
+        return 7;
+    }
+    demux.flush();
+    if (samples <= 0 || width != 160 || height != 120) {
+        std::cerr << "bad output samples=" << samples
+                  << " size=" << width << "x" << height
+                  << " output_ts_bytes=" << output.size()
+                  << " pes_samples=" << pesSamples
+                  << " largest_pes_bytes=" << largestPesBytes
+                  << " decode_failures=" << decodeFailures
+                  << " last_decode_error=" << lastDecodeError
+                  << " ffmpeg_frames=" << ffmpegFrames
+                  << " ffmpeg_error=" << ffmpegDecodeError
+                  << "\n";
+        return 8;
+    }
     std::cout<<"PASS: native H.264 decode/scale/encode -> MPEG-TS\n";return 0;
 }
