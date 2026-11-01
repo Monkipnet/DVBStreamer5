@@ -751,6 +751,10 @@ struct SharedDvbInputPool::Impl {
                     subscriber = item->second;
                     bus->subscribers.erase(item);
                 }
+                int effectiveJitter = 0;
+                for (const auto& entry : bus->subscribers)
+                    effectiveJitter = std::max(effectiveJitter, entry.second->jitterMs);
+                bus->jitterMs.store(effectiveJitter, std::memory_order_release);
                 if (bus->subscribers.empty()) {
                     standby = bus->keepWarmOnIdle &&
                         bus->running.load(std::memory_order_acquire);
