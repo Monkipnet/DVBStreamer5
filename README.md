@@ -1,3 +1,11 @@
+## V10.8.281 — shared DVB source and subscriber cadence tracing (experimental)
+
+- V280 CTest passed all five tests. Live channel `stream-1793481485131` repeatedly exhibits 445–479 ms gaps at MPEG-TS ingestion matched by ~454–480 ms gaps at ready video PES (10–11 such gaps per 125 PES), followed by massive <5 ms PES bursts. Native decoding is ~3–4 ms/PES, queue drops are near zero after startup, and the Intel encoder is not the cause of these long upstream stalls.
+- The shared DVB source has a dedicated transport reader, per-service subscriber queues, a service prefilter, then the native relay input queue. To pinpoint the earliest pause, the shared DVB reader reports `SHARED DVB SOURCE CADENCE frontend=... read_gap_max_ms read_gaps_over_200ms poll_max_ms poll_empty` every 125 *successful* DVR reads, regardless of subscribers. Poll timeouts are counted but never treated as an error by this diagnostic.
+- Opt-in per-service `SHARED DVB SUBSCRIBER CADENCE stream_id=...` measures gaps between callback dispatches, callback wall time, callback delays >100 ms, and queue backlog peak. Only the service selected by the environment variable `DVBSTREAMER5_DIAG_INPUT_STREAM_ID` is logged, to prevent excess diagnostic logging across shared transponders.
+- Compare the two new messages to V280 `NATIVE VIDEO INPUT CADENCE`: source-reader gaps identify frontend/kernel feed stalls, subscriber-only gaps suggest scheduler/prefilter delays, and healthy source/subscriber with long transcoder input gaps implicates the relay input queue or downstream transform loop. Pauses are observations, not necessarily lost source packets; inspect packet continuity and playback before assuming a tuner fault.
+- No source timing correction, new buffering, CA algorithm, PCR/PTS changes, queue reconfiguration, decoder, mux or video encoder behavior. Run CTest 5/5 and a controlled live check before deployment/merge.
+
 ## V10.8.280 — PTS diagnostic unsigned integer compile fix
 
 - Fixes GCC 13 compilation of the V279 input video PTS telemetry: `std::max()` requires matching argument types. Explicitly makes the computed PTS gap `std::uint64_t` instead of deducing `unsigned long long` from `/ 90ULL` on a system where `std::uint64_t` is `unsigned long`.
