@@ -38,8 +38,11 @@ int NativePreviewHub::subscribe(std::string& error) {
         ::close(sockets[1]);
         return -1;
     }
-    const int queueBytes = 512 * 1024;
+    // Reserve enough kernel space for bursty producer scheduling. Preserve
+    // packet ordering and the bounded user-space queue on sustained stalls.
+    const int queueBytes = 2 * 1024 * 1024;
     ::setsockopt(sockets[1], SOL_SOCKET, SO_SNDBUF, &queueBytes, sizeof(queueBytes));
+    ::setsockopt(sockets[0], SOL_SOCKET, SO_RCVBUF, &queueBytes, sizeof(queueBytes));
 
     std::lock_guard<std::mutex> lock(mutex_);
     if (closed_) {
