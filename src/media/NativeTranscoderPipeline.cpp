@@ -318,7 +318,8 @@ bool NativeTranscoderPipeline::pushDecodedVideoFrame(
             ++droppedExternalVideoFrames_;
             if (droppedExternalVideoFrames_ <= 4 ||
                 (droppedExternalVideoFrames_ % 100U) == 0U) {
-                std::cerr << "NATIVE ABR RAW DROP dropped="
+                std::cerr << "NATIVE ABR RAW DROP stream_id="
+                          << config_.streamId << " dropped="
                           << droppedExternalVideoFrames_
                           << " queue=" << externalVideoQueue_.size()
                           << std::endl;
@@ -746,6 +747,13 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
 }
 
 void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
+    // Measure real encode/scaling throughput without changing scheduling,
+    // queue sizes, output PTS or video encoder settings.
+    std::uint64_t videoEncodeDiagFrames = 0;
+    std::uint64_t videoEncodeDiagTotalUs = 0;
+    std::uint64_t videoEncodeDiagMaxUs = 0;
+    std::size_t videoEncodeDiagPeakRawQueue = 0;
+    auto videoEncodeDiagWindowStart = std::chrono::steady_clock::now();
     for (;;) {
         std::shared_ptr<const codec::RawVideoFrame> frame;
         {
@@ -760,9 +768,12 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
 
             frame = std::move(externalVideoQueue_.front());
             externalVideoQueue_.pop_front();
+            videoEncodeDiagPeakRawQueue = std::max(
+                videoEncodeDiagPeakRawQueue, externalVideoQueue_.size());
             videoEncodeWorkerActive_.store(true, std::memory_order_release);
         }
 
+        const auto encodeBegin = std::chrono::steady_clock::now();
         std::string error;
         {
             std::lock_guard<std::mutex> codecLock(videoEncoderMutex_);
@@ -770,6 +781,44 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
                 setFailure(error);
         }
 
+        const auto encodeEnd = std::chrono::steady_clock::now();
+        const auto encodeUs = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                encodeEnd - encodeBegin).count());
+        videoEncodeDiagTotalUs += encodeUs;
+        videoEncodeDiagMaxUs = std::max(videoEncodeDiagMaxUs, encodeUs);
+        ++videoEncodeDiagFrames;
+        if (videoEncodeDiagFrames >= 125) {
+            std::size_t rawQueue = 0;
+            std::uint64_t rawDrops = 0;
+            {
+                std::lock_guard<std::mutex> lock(videoQueueMutex_);
+                rawQueue = externalVideoQueue_.size();
+                rawDrops = decodedVideoQueueDrops_;
+            }
+            const auto elapsedMs = std::max<std::int64_t>(
+                1, std::chrono::duration_cast<std::chrono::milliseconds>(
+                    encodeEnd - videoEncodeDiagWindowStart).count());
+            std::cerr << "NATIVE VIDEO ENCODE PERF"
+                      << " stream_id=" << config_.streamId
+                      << " frames=" << videoEncodeDiagFrames
+                      << " fps=" << (videoEncodeDiagFrames * 1000ULL /
+                                     static_cast<std::uint64_t>(elapsedMs))
+                      << " avg_ms=" << (videoEncodeDiagTotalUs /
+                                        videoEncodeDiagFrames / 1000ULL)
+                      << " max_ms=" << (videoEncodeDiagMaxUs / 1000ULL)
+                      << " raw_vq=" << rawQueue
+                      << " raw_vq_peak=" << videoEncodeDiagPeakRawQueue
+                      << " raw_drop_total=" << rawDrops
+                      << " video_size=" << config_.width
+                      << "x" << config_.height
+                      << std::endl;
+            videoEncodeDiagWindowStart = encodeEnd;
+            videoEncodeDiagFrames = 0;
+            videoEncodeDiagTotalUs = 0;
+            videoEncodeDiagMaxUs = 0;
+            videoEncodeDiagPeakRawQueue = 0;
+        }
         videoEncodeWorkerActive_.store(false, std::memory_order_release);
         idleCv_.notify_all();
         if (failed_.load(std::memory_order_acquire)) break;
@@ -1786,7 +1835,8 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 if (decodedVideoQueueDrops_ <= 4 ||
                     (decodedVideoQueueDrops_ % 100U) == 0U) {
                     std::cerr
-                        << "NATIVE PRIMARY RAW DROP dropped="
+                        << "NATIVE PRIMARY RAW DROP stream_id="
+                        << config_.streamId << " dropped="
                         << decodedVideoQueueDrops_
                         << " queue=" << externalVideoQueue_.size()
                         << std::endl;
