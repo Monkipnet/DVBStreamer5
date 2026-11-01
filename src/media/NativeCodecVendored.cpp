@@ -1208,6 +1208,12 @@ public:
         // Live transport streams can start on a broken MP2 frame or lose
         // synchronization. Rebuild both decoder and its buffer once the
         // unread backlog exceeds our bound rather than growing without limit.
+        // The pinned PL_MPEG cursor can be byte-aligned just beyond the
+        // available input after a partial MP2 frame. Its unsigned
+        // get_remaining() then underflows to SIZE_MAX, and the next
+        // buffer_write() would use that invalid cursor in memmove().
+        // Normalize before querying remaining bytes or appending data.
+        if (!repairReadCursor()) return true;
         const std::size_t remaining = plm_buffer_get_remaining(buffer_);
         if (remaining > kMaximumBufferedBytes ||
             length > kMaximumBufferedBytes - remaining) {
@@ -1230,6 +1236,10 @@ public:
         std::uint64_t current = pts;
         for (unsigned guard = 0; guard < 64; ++guard) {
             plm_samples_t* samples = plm_audio_decode(audio_);
+            // plm_audio_decode may finish on an incomplete, byte-aligned
+            // header. Repair immediately, before another library call
+            // can mistake the unsigned underflow for available input.
+            if (!repairReadCursor()) return true;
             if (!samples) break;
             const int rate = plm_audio_get_samplerate(audio_);
             if (rate <= 0 || samples->count > PLM_AUDIO_SAMPLES_PER_FRAME) {
@@ -1267,6 +1277,41 @@ private:
     static constexpr std::size_t kInitialCapacity = 128 * 1024;
     static constexpr std::size_t kMaximumInputBytes = 256 * 1024;
     static constexpr std::size_t kMaximumBufferedBytes = 512 * 1024;
+    static constexpr std::size_t kMaxRecoverableOverrunBits = 64;
+
+    // PL_MPEG is included with PL_MPEG_IMPLEMENTATION in this translation
+    // unit, so its pinned plm_buffer_t layout is available here. The
+    // upstream get_remaining()/discard_read_bytes() functions assume
+    // bit_index/8 <= length, but corrupted or incomplete live MP2 frames
+    // can leave the cursor beyond the end. Clamp small overruns rather
+    // than discarding the whole decoder and audible audio history.
+    bool repairReadCursor() {
+        if (!buffer_) return false;
+        if (buffer_->length > kMaximumBufferedBytes) {
+            std::cerr << "NATIVE MP2 DECODER excessive buffer length="
+                      << buffer_->length << " action=reset" << std::endl;
+            reset();
+            return false;
+        }
+        const std::size_t endBits = buffer_->length * 8;
+        if (buffer_->bit_index <= endBits) return true;
+        const std::size_t overrunBits = buffer_->bit_index - endBits;
+        if (overrunBits > kMaxRecoverableOverrunBits) {
+            std::cerr << "NATIVE MP2 DECODER invalid cursor overrun_bits="
+                      << overrunBits << " action=reset" << std::endl;
+            reset();
+            return false;
+        }
+        buffer_->bit_index = endBits;
+        ++cursorRepairs_;
+        if (cursorRepairs_ <= 4 || cursorRepairs_ % 500 == 0) {
+            std::cerr << "NATIVE MP2 DECODER cursor normalized overrun_bits="
+                      << overrunBits << " count=" << cursorRepairs_
+                      << std::endl;
+        }
+        return true;
+    }
+
     bool initialize() {
         buffer_ = plm_buffer_create_with_capacity(kInitialCapacity);
         if (!buffer_) return false;
@@ -1286,6 +1331,7 @@ private:
     }
     plm_buffer_t* buffer_ = nullptr;
     plm_audio_t* audio_ = nullptr;
+    std::uint64_t cursorRepairs_ = 0;
 };
 
 } // namespace
