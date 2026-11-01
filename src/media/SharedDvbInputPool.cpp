@@ -327,6 +327,19 @@ struct SharedDvbInputPool::Impl {
             lastReadAt = readEnd;
             diagReadBytes += received;
             if (++diagReads >= 125) {
+                // Only the explicitly selected diagnostic stream's physical
+                // transponder is logged, including when several buses share
+                // this process. Check membership at the sample boundary, not
+                // on every DVB read.
+                const char* diagnosticId =
+                    std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
+                bool logBus = false;
+                if (diagnosticId && *diagnosticId) {
+                    std::lock_guard<std::mutex> lock(bus->mutex);
+                    logBus = bus->subscribers.find(diagnosticId) !=
+                             bus->subscribers.end();
+                }
+                if (logBus) {
                 std::cerr << "SHARED DVB SOURCE CADENCE"
                           << " frontend=" << bus->frontend
                           << " read_chunks=" << diagReads
@@ -336,6 +349,7 @@ struct SharedDvbInputPool::Impl {
                           << " poll_max_ms=" << diagPollMaxMs
                           << " poll_empty=" << diagPollTimeouts
                           << std::endl;
+                }
                 diagReads = 0;
                 diagReadBytes = 0;
                 diagReadGapMaxMs = 0;
