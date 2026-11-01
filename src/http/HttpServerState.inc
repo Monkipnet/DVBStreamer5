@@ -1387,7 +1387,21 @@ std::string HttpServer::currentState() {
         item["ci_plus_backend"] = configuredVdrCiPlus ? "vdr-streamdev" : "";
         if (snap.count(cfg.id)) {
             auto* streamState = snap.at(cfg.id);
-            item["active"] = streamState->active.load();
+            const bool tileRunning = streamState->active.load();
+            item["active"] = tileRunning;
+            // Each tile has its own monotonic lifetime. An HTTP/SRT input
+            // reconnect or fallback does not reset the timer; a full restart
+            // creates a new StreamState and starts a new lifetime.
+            const auto tileNow = std::chrono::steady_clock::now();
+            const auto tileStart = streamState->startedAt;
+            item["running_seconds"] = Json::UInt64(
+                tileRunning && tileStart !=
+                    std::chrono::steady_clock::time_point{} &&
+                    tileNow >= tileStart
+                    ? static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::seconds>(
+                            tileNow - tileStart).count())
+                    : 0ULL);
             item["status"] = streamState->statusMessage;
             item["using_backup"] = streamState->usingBackup;
             item["active_input_uri"] = cfg.testPattern
@@ -1434,6 +1448,7 @@ std::string HttpServer::currentState() {
             item["cc_errors_total"] = item["input_cc_errors_total"];
         } else {
             item["active"] = false;
+            item["running_seconds"] = Json::UInt64(0);
             item["status"] = "stopped";
             item["using_backup"] = false;
             item["active_input_uri"] = cfg.testPattern ? "test://bars" : cfg.inputUri;
