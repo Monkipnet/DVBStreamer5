@@ -638,7 +638,7 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             // Ignore negative/reordered source PTS in this forward-gap
             // metric. Normal 25fps video uses ~40ms forward increments.
             if (ptsDelta < half) {
-                const auto gapMs = ptsDelta / 90ULL;
+                const std::uint64_t gapMs = ptsDelta / std::uint64_t{90};
                 videoPesPtsGapMaxMsWindow_ =
                     std::max(videoPesPtsGapMaxMsWindow_, gapMs);
                 if (gapMs > 80) ++videoPesPtsGapOver80MsWindow_;
