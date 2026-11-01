@@ -223,6 +223,22 @@ NativeUdpRelay::~NativeUdpRelay() {
 bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& error) {
     stop();
     config_ = config;
+    const char* jitterTarget =
+        std::getenv("DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID");
+    httpJitterEnabled_ = jitterTarget && *jitterTarget &&
+                         config_.streamId == jitterTarget &&
+                         !config_.externallyFedInput &&
+                         isHttpInput(config_.inputUri);
+    if (httpJitterEnabled_) {
+        std::cerr << "NATIVE HTTP JITTER enabled"
+                  << " stream_id=" << config_.streamId
+                  << " prebuffer_ms=1200"
+                  << " queue_limit_kib=2048"
+                  << " pacing_chunk_bytes=8192"
+                  << " media_pts=preserved"
+                  << " fallback=disabled_other_streams"
+                  << std::endl;
+    }
     if (config_.outputs.empty() && !config_.allowNoNetworkOutput) {
         config_.outputs.push_back({
             config.outputType,
@@ -459,8 +475,11 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         return false;
     }
     for (std::size_t offset = 0; offset < size;) {
+        // Small chunks allow near-20ms dequeue pacing for the opt-in
+        // HTTP jitter smoother. Other feeds retain the 64KiB fast path.
         const std::size_t chunkSize =
-            (std::min)(kMaximumChunkBytes, size - offset);
+            (std::min)(httpJitterEnabled_ ? std::size_t{8192}
+                                          : kMaximumChunkBytes, size - offset);
         if (chunkSize > kMaximumHttpQueueBytes) {
             return false;
         }
