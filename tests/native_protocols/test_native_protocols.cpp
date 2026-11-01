@@ -209,7 +209,22 @@ static bool testEncryptedCmaf(const std::vector<std::uint8_t>& ts) {
     auto init=load(dir/"init.mp4"), m4s=load(fragment);
     const auto encryptedCopy = m4s;
     if (!cmaf::decryptSampleAesFragment(m4s, cfg.key, e)) { std::cerr << "cmaf cbcs decrypt: " << e << "\n"; return false; }
-    if (m4s == encryptedCopy) { std::cerr << "cmaf cbcs did not transform fragment\n"; return false; }
+    if (m4s == encryptedCopy) {
+        const auto containsMarker = [&](const char* marker) {
+            return std::search(encryptedCopy.begin(), encryptedCopy.end(),
+                               marker, marker + 4) != encryptedCopy.end();
+        };
+        std::cerr << "cmaf cbcs did not transform fragment"
+                  << " fragment_bytes=" << encryptedCopy.size()
+                  << " has_moof=" << containsMarker("moof")
+                  << " has_traf=" << containsMarker("traf")
+                  << " has_senc=" << containsMarker("senc")
+                  << " has_mdat=" << containsMarker("mdat")
+                  << " init_bytes=" << init.size()
+                  << " decryption_status=success_no_changed_bytes"
+                  << "\n";
+        return false;
+    }
     std::vector<std::uint8_t> round;
     cmaf::Fmp4ToMpegTs in;
     if (!in.initialize(init,[&](const std::uint8_t*d,std::size_t n){round.insert(round.end(),d,d+n);return true;},e)) { std::cerr << "cmaf cbcs init: " << e << "\n"; return false; }
