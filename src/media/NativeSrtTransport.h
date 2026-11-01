@@ -86,6 +86,18 @@ public:
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
     std::uint64_t sentBytes() const noexcept { return sentBytes_.load(std::memory_order_relaxed); }
     std::uint64_t droppedBytes() const noexcept { return droppedBytes_.load(std::memory_order_relaxed); }
+    // Separate true producer-queue overruns from expected drops when no
+    // SRT peer is connected. Both were previously mixed in droppedBytes().
+    std::uint64_t queueOverrunBytes() const noexcept {
+        return queueOverrunBytes_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t noPeerDiscardBytes() const noexcept {
+        return noPeerDiscardBytes_.load(std::memory_order_relaxed);
+    }
+    std::size_t queuedBytes() const {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        return queuedBytes_;
+    }
     std::uint64_t reconnects() const noexcept { return reconnects_.load(std::memory_order_relaxed); }
     std::string lastError() const;
 
@@ -103,10 +115,12 @@ private:
     std::atomic<bool> connected_{false};
     std::atomic<std::uint64_t> sentBytes_{0};
     std::atomic<std::uint64_t> droppedBytes_{0};
+    std::atomic<std::uint64_t> queueOverrunBytes_{0};
+    std::atomic<std::uint64_t> noPeerDiscardBytes_{0};
     std::atomic<std::uint64_t> reconnects_{0};
     mutable std::mutex errorMutex_;
     std::string lastError_;
-    std::mutex queueMutex_;
+    mutable std::mutex queueMutex_;
     std::condition_variable queueCondition_;
     std::deque<std::vector<std::uint8_t>> queue_;
     std::size_t queuedBytes_ = 0;
