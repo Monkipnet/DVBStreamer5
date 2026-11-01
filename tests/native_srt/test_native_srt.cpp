@@ -99,6 +99,35 @@ int main() {
         return 5;
     }
 
+    // The listener without peers intentionally discards unsent data.
+    // This must NOT be counted or logged as producer queue congestion.
+    EndpointConfig idle = listener;
+    idle.port = 19092;
+    idle.passphrase.clear();
+    idle.pbkeylen = 0;
+    NativeSrtOutput idleOutput;
+    if (!idleOutput.start(idle, {}, {}, {}, error)) {
+        std::cerr << "idle SRT listener failed: " << error << "\n";
+        return 8;
+    }
+    for (int i = 0; i < 32; ++i) {
+        if (!idleOutput.push(block.data(), block.size())) {
+            idleOutput.stop();
+            std::cerr << "idle SRT test push failed\\n";
+            return 9;
+        }
+    }
+    for (int i = 0; i < 100 && idleOutput.noPeerDiscardBytes() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    const auto idleDrops = idleOutput.noPeerDiscardBytes();
+    const auto falseQueueDrops = idleOutput.queueOverrunBytes();
+    idleOutput.stop();
+    if (idleDrops == 0 || falseQueueDrops != 0) {
+        std::cerr << "SRT drop classification failed: no_peer="
+                  << idleDrops << " queue_overrun=" << falseQueueDrops << "\n";
+        return 10;
+    }
+
     std::string mapped;
     if (forbiddenExternalSrtOrCryptoMapped(mapped)) {
         std::cerr << "external SRT/GnuTLS/Nettle runtime was mapped: " << mapped << "\n";
