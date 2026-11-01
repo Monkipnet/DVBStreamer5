@@ -1,3 +1,10 @@
+## V10.8.290 — public HTTP TCP / hub queue diagnostics
+
+- On top of V289. Every ~5 seconds per public HTTP MPEG-TS client log `NATIVE HTTP TS TCP STATUS` with delivered_kbps, maximum blocking TCP send duration, Send-Q/notsent queue (when supported), RTT, retransmits and unacked packets. Private preview behavior unchanged.
+- Log `NATIVE HTTP TS HUB backlog` once when a subscriber's pending queue grows past 2 MiB; rearm below 1 MiB. The existing 4 MiB protective disconnect remains in place. This allows correlating queue growth with TCP status without excessive logs.
+- No changes to codecs, TS packet ordering, A/V mux, HLS segmentation, SRT, input jitter logic or subscriber queue limit.
+- This is diagnostic, not a claimed playback fix. Build and CTest on Linux before replacing the running binary, then compare loopback curl with remote VLC during freezes.
+
 ## V10.8.288 — HTTP/HLS delivery stability trial (not yet server validated)
 
 - Based on V287, which already has a per-tile stream uptime clock. Playback disconnects may happen without tile restarts; do not use uptime as proof that the HTTP subscriber remains attached.
