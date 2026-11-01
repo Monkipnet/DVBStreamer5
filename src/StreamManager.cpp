@@ -2254,6 +2254,10 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         std::lock_guard<std::mutex> lock(managerMutex);
         const auto it = streams.find(id);
         if (it == streams.end() || !it->second->active.load()) {
+            std::cerr << "NATIVE HTTP TS CLIENT rejected"
+                      << " stream_id=" << id
+                      << " reason=stream_inactive"
+                      << std::endl;
             ::close(fd);
             return false;
         }
@@ -2262,6 +2266,10 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         hub = previewSession.empty() ? it->second->nativeHttpHub
                                      : it->second->nativePreviewHub;
         if (!hub) {
+            std::cerr << "NATIVE HTTP TS CLIENT rejected"
+                      << " stream_id=" << id
+                      << " reason=hub_unavailable"
+                      << std::endl;
             ::close(fd);
             return false;
         }
@@ -2297,9 +2305,21 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
     std::string subscribeError;
     const int upstreamFd = hub->subscribe(subscribeError);
     if (upstreamFd < 0) {
+        std::cerr << "NATIVE HTTP TS CLIENT rejected"
+                  << " stream_id=" << id
+                  << " reason=subscribe_failed"
+                  << " detail=" << subscribeError
+                  << std::endl;
         ::close(fd);
         return false;
     }
+    std::cerr << "NATIVE HTTP TS CLIENT attach"
+              << " stream_id=" << id
+              << " kind=" << (previewSession.empty() ? "public" : "preview")
+              << " fd=" << fd
+              << " hub_fd=" << upstreamFd
+              << " tcp_nodelay=" << (noDelayActive ? 1 : 0)
+              << std::endl;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         httpClients[fd] = {id, normalizeIpAddress(clientIp), "mpegts",
@@ -2319,6 +2339,11 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             std::uint64_t sendMaxUs = 0;
             std::uint64_t sendBlockedOver20Ms = 0;
             std::uint64_t recvGapsOver80Ms = 0;
+            std::uint64_t totalSentBytes = 0;
+            std::uint64_t totalSentChunks = 0;
+            std::string disconnectReason = "unknown";
+            int disconnectErrno = 0;
+            const auto sessionStart = std::chrono::steady_clock::now();
             for (;;) {
                 const ssize_t n = ::read(upstreamFd, buffer.data(), buffer.size());
                 if (n > 0) {
@@ -2336,6 +2361,13 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                     // fan-out lock is held during a potentially slow TCP send.
                     const bool sent = writeAll(
                         fd, buffer.data(), static_cast<std::size_t>(n));
+                    if (sent) {
+                        totalSentBytes += static_cast<std::uint64_t>(n);
+                        ++totalSentChunks;
+                    } else {
+                        disconnectReason = "tcp_send_error";
+                        disconnectErrno = errno;
+                    }
                     if (diagnostic) {
                         const auto sendUs = static_cast<std::uint64_t>(
                             std::chrono::duration_cast<std::chrono::microseconds>(
@@ -2367,8 +2399,25 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                     continue;
                 }
                 if (n < 0 && errno == EINTR) continue;
+                disconnectReason = n == 0 ? "hub_eof" : "hub_read_error";
+                if (n < 0) disconnectErrno = errno;
                 break;
             }
+            const auto sessionMs = std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - sessionStart).count();
+            std::ostringstream report;
+            report << "NATIVE HTTP TS CLIENT detach"
+                   << " stream_id=" << id
+                   << " fd=" << fd
+                   << " hub_fd=" << upstreamFd
+                   << " reason=" << disconnectReason
+                   << " errno=" << disconnectErrno
+                   << " tcp_nodelay=" << (noDelayActive ? 1 : 0)
+                   << " duration_ms=" << sessionMs
+                   << " bytes_sent=" << totalSentBytes
+                   << " chunks_sent=" << totalSentChunks;
+            std::cerr << report.str() << std::endl;
             std::lock_guard<std::mutex> lock(managerMutex);
             httpClients.erase(fd);
             hub->unsubscribe(upstreamFd);
