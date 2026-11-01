@@ -1,3 +1,10 @@
+## V10.8.294 — Telegram configuration persistence fix
+
+- Fix `/api/save-config` losing Telegram bot token/chat ID when a partial request omits either field, or supplies an empty value. Previously `AppConfig::fromJson` defaulted missing Telegram fields to empty, unlike preserved general/CAM settings. The in-memory client could therefore stop sending messages until credentials were re-entered.
+- Stream tile editing no longer echoes cached `telegram_token`/`telegram_chat_id` values in its save payload; the server retains its existing credentials.
+- The fix does not require re-entering valid credentials after deployment. It does not address Telegram Bot API network outages or invalid tokens. Avoid recording tokens in journals or screenshots.
+- Requires local build/CTest and runtime verification; V294 stays separate from main until tested.
+
 ## V10.8.293 — migrate live systemd opt-ins into channel configuration
 
 - **DVB TS jitter**: Satellite / DVB-S/S2 tile switch, stored as `jitter_ms=100` in the DVB URI; no systemd variable.
