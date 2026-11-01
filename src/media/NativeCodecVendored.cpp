@@ -1182,14 +1182,110 @@ private:
     HANDLE_AACENCODER h_=nullptr;int rate_=0,channels_=0,frameLength_=1024;std::vector<std::int16_t>pending_;std::uint64_t nextPts_=0;bool havePts_=false;
 };
 
+// PL_MPEG's streaming buffer grows via realloc(). Never pass oversized or
+// unbounded input into plm_buffer_write; a stalled decoder otherwise grows
+// indefinitely, and an invalid/failed allocation can crash in memmove.
 class PlMpegMp2Decoder final : public AudioDecoder {
 public:
-    PlMpegMp2Decoder(){buffer_=plm_buffer_create_with_capacity(128*1024);if(buffer_)audio_=plm_audio_create_with_buffer(buffer_,0);}
-    ~PlMpegMp2Decoder()override{if(audio_)plm_audio_destroy(audio_);if(buffer_)plm_buffer_destroy(buffer_);}
-    bool valid()const noexcept{return buffer_&&audio_;}
-    bool decode(const std::uint8_t*d,std::size_t n,std::uint64_t pts,bool hasPts,std::vector<PcmAudioFrame>&out,std::string&error)override{error.clear();if(!valid()){error="PL_MPEG MP2 decoder unavailable";return false;}plm_buffer_write(buffer_,const_cast<std::uint8_t*>(d),n);std::uint64_t current=pts;for(int guard=0;guard<64;++guard){plm_samples_t*s=plm_audio_decode(audio_);if(!s)break;const int rate=plm_audio_get_samplerate(audio_);if(rate<=0){error="PL_MPEG invalid sample rate";return false;}PcmAudioFrame f;f.sampleRate=rate;f.channels=2;f.pts90k=current;f.hasPts=hasPts;f.samples.resize(static_cast<std::size_t>(s->count)*2);for(std::size_t i=0;i<static_cast<std::size_t>(s->count)*2;++i){float x=std::clamp(s->interleaved[i],-1.0f,1.0f);f.samples[i]=static_cast<std::int16_t>(std::lrint(x*32767.0f));}out.push_back(std::move(f));current+=static_cast<std::uint64_t>(s->count)*90000ULL/static_cast<unsigned>(rate);}return true;}
-    void reset()override{if(audio_)plm_audio_rewind(audio_);}
-private:plm_buffer_t*buffer_=nullptr;plm_audio_t*audio_=nullptr;
+    PlMpegMp2Decoder() { (void)initialize(); }
+    ~PlMpegMp2Decoder() override { release(); }
+    bool valid() const noexcept { return buffer_ != nullptr && audio_ != nullptr; }
+
+    bool decode(const std::uint8_t* data, std::size_t length,
+                std::uint64_t pts, bool hasPts,
+                std::vector<PcmAudioFrame>& out, std::string& error) override {
+        error.clear();
+        if (!valid()) {
+            error = "PL_MPEG MP2 decoder unavailable";
+            return false;
+        }
+        if (length == 0) return true;
+        if (!data || length > kMaximumInputBytes) {
+            error = "PL_MPEG MP2 invalid or oversized input packet";
+            return false;
+        }
+
+        // Live transport streams can start on a broken MP2 frame or lose
+        // synchronization. Rebuild both decoder and its buffer once the
+        // unread backlog exceeds our bound rather than growing without limit.
+        const std::size_t remaining = plm_buffer_get_remaining(buffer_);
+        if (remaining > kMaximumBufferedBytes ||
+            length > kMaximumBufferedBytes - remaining) {
+            release();
+            if (!initialize()) {
+                error = "PL_MPEG MP2 decoder reinitialization failed";
+                return false;
+            }
+            std::cerr << "NATIVE MP2 DECODER recovered stale buffer"
+                      << " pending=" << remaining << std::endl;
+        }
+        if (plm_buffer_write(buffer_, const_cast<std::uint8_t*>(data), length)
+            != length) {
+            error = "PL_MPEG MP2 buffer write failed";
+            release();
+            (void)initialize();
+            return false;
+        }
+
+        std::uint64_t current = pts;
+        for (unsigned guard = 0; guard < 64; ++guard) {
+            plm_samples_t* samples = plm_audio_decode(audio_);
+            if (!samples) break;
+            const int rate = plm_audio_get_samplerate(audio_);
+            if (rate <= 0 || samples->count > PLM_AUDIO_SAMPLES_PER_FRAME) {
+                error = "PL_MPEG MP2 invalid decoded audio frame";
+                release();
+                (void)initialize();
+                return false;
+            }
+            PcmAudioFrame frame;
+            frame.sampleRate = rate;
+            frame.channels = 2;
+            frame.pts90k = current;
+            frame.hasPts = hasPts;
+            const std::size_t sampleCount =
+                static_cast<std::size_t>(samples->count) * 2;
+            frame.samples.resize(sampleCount);
+            for (std::size_t k = 0; k < sampleCount; ++k) {
+                const float value = std::clamp(samples->interleaved[k], -1.0f, 1.0f);
+                frame.samples[k] =
+                    static_cast<std::int16_t>(std::lrint(value * 32767.0f));
+            }
+            out.push_back(std::move(frame));
+            current += static_cast<std::uint64_t>(samples->count) * 90000ULL /
+                       static_cast<unsigned>(rate);
+        }
+        return true;
+    }
+
+    void reset() override {
+        release();
+        (void)initialize();
+    }
+
+private:
+    static constexpr std::size_t kInitialCapacity = 128 * 1024;
+    static constexpr std::size_t kMaximumInputBytes = 256 * 1024;
+    static constexpr std::size_t kMaximumBufferedBytes = 512 * 1024;
+    bool initialize() {
+        buffer_ = plm_buffer_create_with_capacity(kInitialCapacity);
+        if (!buffer_) return false;
+        audio_ = plm_audio_create_with_buffer(buffer_, 0);
+        if (!audio_) {
+            plm_buffer_destroy(buffer_);
+            buffer_ = nullptr;
+            return false;
+        }
+        return true;
+    }
+    void release() noexcept {
+        if (audio_) plm_audio_destroy(audio_);
+        audio_ = nullptr;
+        if (buffer_) plm_buffer_destroy(buffer_);
+        buffer_ = nullptr;
+    }
+    plm_buffer_t* buffer_ = nullptr;
+    plm_audio_t* audio_ = nullptr;
 };
 
 } // namespace
