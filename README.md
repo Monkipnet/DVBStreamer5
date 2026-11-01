@@ -1,3 +1,10 @@
+## V10.8.291 — TCP acknowledgements and receiver-window diagnosis
+
+- Public HTTP MPEG-TS clients now log `acked_kbps`, `acked_sample_valid`, `acked_total_bytes`, `snd_wnd_bytes`, `rwnd_limited_delta_us`, and `sndbuf_limited_delta_us` alongside existing five-second HTTP TCP metrics.
+- `delivered_kbps` is retained for backward compatibility but represents application writes into TCP, **not** confirmed delivery. `acked_kbps` measures change in acknowledged bytes; first sample is marked invalid.
+- Extended Linux TCP_INFO is guarded by returned structure length. No changes to MPEG-TS production rate, codec/mux, HLS segmentation, SRT or socket backpressure; the 4 MiB subscriber queue cap remains.
+- Build and live-test the diagnostic branch before changing the transport architecture. If production TS really exceeds network/client receive capacity, increasing queues cannot ensure both low latency and lossless delivery.
+
 ## V10.8.290 — public HTTP TCP / hub queue diagnostics
 
 - On top of V289. Every ~5 seconds per public HTTP MPEG-TS client log `NATIVE HTTP TS TCP STATUS` with delivered_kbps, maximum blocking TCP send duration, Send-Q/notsent queue (when supported), RTT, retransmits and unacked packets. Private preview behavior unchanged.
