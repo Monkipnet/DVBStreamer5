@@ -32,6 +32,8 @@
 #include <poll.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/ioctl.h>
+#include <linux/sockios.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -2350,7 +2352,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                            std::chrono::steady_clock::now(), upstreamFd, previewSession};
     }
     try {
-        std::thread([this, hub, fd, upstreamFd, id, noDelayActive]() {
+        std::thread([this, hub, fd, upstreamFd, id, noDelayActive, previewSession]() {
             std::array<char, 64 * 1024> buffer{};
             const char* diagnosticId =
                 std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
@@ -2365,6 +2367,9 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             std::uint64_t recvGapsOver80Ms = 0;
             std::uint64_t totalSentBytes = 0;
             std::uint64_t totalSentChunks = 0;
+            auto lastTransportReport = std::chrono::steady_clock::now();
+            std::uint64_t reportBytes = 0;
+            std::uint64_t reportMaxSendUs = 0;
             std::string disconnectReason = "unknown";
             int disconnectErrno = 0;
             const auto sessionStart = std::chrono::steady_clock::now();
@@ -2388,6 +2393,7 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                     if (sent) {
                         totalSentBytes += static_cast<std::uint64_t>(n);
                         ++totalSentChunks;
+                        reportBytes += static_cast<std::uint64_t>(n);
                     } else {
                         disconnectReason = "tcp_send_error";
                         disconnectErrno = errno;
@@ -2417,6 +2423,41 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                             recvGapsOver80Ms = 0;
                             sendMaxUs = 0;
                             sendBlockedOver20Ms = 0;
+                        }
+                    }
+                    if (previewSession.empty()) {
+                        const auto now = std::chrono::steady_clock::now();
+                        const auto sendUs = std::chrono::duration_cast<
+                            std::chrono::microseconds>(now - readAt).count();
+                        reportMaxSendUs = std::max(reportMaxSendUs,
+                            static_cast<std::uint64_t>(std::max<std::int64_t>(0, sendUs)));
+                        const auto elapsedMs = std::chrono::duration_cast<
+                            std::chrono::milliseconds>(now - lastTransportReport).count();
+                        if (elapsedMs >= 5000) {
+                            int notSent = -1;
+                            int outQueue = -1;
+#ifdef SIOCOUTQNSD
+                            (void)::ioctl(fd, SIOCOUTQNSD, &notSent);
+#endif
+                            (void)::ioctl(fd, TIOCOUTQ, &outQueue);
+                            struct tcp_info info{};
+                            socklen_t infoLen = sizeof(info);
+                            const bool haveInfo = ::getsockopt(fd, IPPROTO_TCP,
+                                TCP_INFO, &info, &infoLen) == 0;
+                            std::cerr << "NATIVE HTTP TS TCP STATUS"
+                                      << " stream_id=" << id
+                                      << " delivered_kbps="
+                                      << (reportBytes * 8ULL / static_cast<std::uint64_t>(elapsedMs))
+                                      << " send_max_us=" << reportMaxSendUs
+                                      << " sendq_bytes=" << outQueue
+                                      << " notsent_bytes=" << notSent
+                                      << " rtt_us=" << (haveInfo ? info.tcpi_rtt : 0)
+                                      << " retransmits=" << (haveInfo ? info.tcpi_retransmits : 0)
+                                      << " unacked=" << (haveInfo ? info.tcpi_unacked : 0)
+                                      << std::endl;
+                            lastTransportReport = now;
+                            reportBytes = 0;
+                            reportMaxSendUs = 0;
                         }
                     }
                     if (!sent) break;
