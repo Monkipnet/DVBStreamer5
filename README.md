@@ -1,3 +1,11 @@
+## V10.8.288 — HTTP/HLS delivery stability trial (not yet server validated)
+
+- Based on V287, which already has a per-tile stream uptime clock. Playback disconnects may happen without tile restarts; do not use uptime as proof that the HTTP subscriber remains attached.
+- For **public HTTP MPEG-TS output**, enable TCP_NODELAY by default on each attached client socket to reduce avoidable delays in frequent 1316-byte TS writes. Private preview retains prior behavior. A nonempty DVBSTREAMER5_HTTP_MPEGTS_NODELAY_STREAM_ID limits this to the matching stream; set to `off` to disable across public outputs for A/B diagnostics.
+- Extend HLS OnDemand idle grace from 10 to 30 seconds, so slower/irregular playlist polling is less likely to deactivate an otherwise watched channel. No change to TS pacing, HLS segment data or codecs.
+- Keep existing V286 attach/detach reason logs and V285 per-client throughput diagnostics. These measures improve robustness but do **not** yet prove the cause of occasional VLC closure; compare client disconnect logs and inspect hub subscriber backpressure.
+- Test on an isolated branch; do not merge into main without CTest and sustained HTTP+HLS playback.
+
 ## V10.8.287 — live uptime counter centered in each tile header
 
 - Each channel's uppermost tile row now shows its own time elapsed since the streaming pipeline was successfully started. The compact `HH:MM:SS` clock (or `Nd HH:MM:SS` after a day) sits at the middle of the tile header, between the left-side stream title and existing right-side actions. The title retains a tooltip for full names; the timer has Russian, English and Croatian tooltips.
