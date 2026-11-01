@@ -1,3 +1,11 @@
+## V10.8.270 — SRT loss attribution and peer health (test branch)
+
+- Corrects misleading `NATIVE SRT TS queue overrun` messages: the former threshold used `droppedBytes`, which also increased when a listener had no connected SRT peer. The new warning reports **actual producer queue overflow only**.
+- Separately counts true SRT producer-queue overrun bytes and expected bytes discarded with no listener peer; retains the old aggregate dropped-byte count for compatibility.
+- Adds per-SRT-output `NATIVE SRT OUTPUT HEALTH` telemetry every 10 seconds: stream ID, connected state, queued/sent bytes, actual queue overflow, no-peer discard, total drops and reconnects.
+- Regression test covers a listening SRT output with no peer (offline drops are not queue overflow).
+- No changes to scaling, Intel VAAPI settings, 25 FPS cadence, mux timestamp logic, transport packet size or SRT latency. Existing V267–269 work retained. Build and live tests required before main merge.
+
 ## V10.8.269 — video encode / raw queue diagnostic test branch
 
 - Tags all `NATIVE PRIMARY RAW DROP` and `NATIVE ABR RAW DROP` messages with the stream ID.
