@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <cstring>
 #include <iomanip>
+#include <iostream>
 #include <memory>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -181,7 +182,46 @@ void NativeSrtInput::run(){std::vector<std::uint8_t>b(static_cast<std::size_t>(s
 
 NativeSrtOutput::~NativeSrtOutput(){stop();}
 bool NativeSrtOutput::start(const EndpointConfig& c,PeerAllowedCallback allow,PeerStateCallback con,PeerStateCallback dis,std::string& err){stop();if(!runtimeAvailable(&err))return false;config_=c;peerAllowed_=std::move(allow);onConnected_=std::move(con);onDisconnected_=std::move(dis);stopRequested_=false;running_=true;connected_=false;sentBytes_=0;droppedBytes_=0;reconnects_=0;setError({});clearQueuedData();try{worker_=std::thread(&NativeSrtOutput::run,this);}catch(const std::exception&e){running_=false;err=e.what();return false;}err.clear();return true;}
-bool NativeSrtOutput::push(const std::uint8_t*d,std::size_t n){if(!d||!n||!running_)return false;constexpr std::size_t maxQ=4*1024*1024,chunk=64*1024;std::unique_lock<std::mutex>l(queueMutex_);while(queuedBytes_+n>maxQ&&!queue_.empty()){droppedBytes_+=queue_.front().size();queuedBytes_-=queue_.front().size();queue_.pop_front();}if(n>maxQ){std::size_t keep=maxQ-(maxQ%188);droppedBytes_+=n-keep;d+=n-keep;n=keep;}for(std::size_t p=0;p<n;){std::size_t z=std::min(chunk,n-p);queue_.emplace_back(d+p,d+p+z);queuedBytes_+=z;p+=z;}l.unlock();queueCondition_.notify_one();return true;}
+bool NativeSrtOutput::push(const std::uint8_t* data, std::size_t size) {
+    if (!data || !size || !running_) return false;
+    constexpr std::size_t kTsPacket = 188;
+    constexpr std::size_t kMaxQueue = 4 * 1024 * 1024;
+    // Queue chunks must start and end on MPEG-TS packet boundaries.
+    // Discarding the old 64-KiB chunks truncated TS packets on overflow,
+    // causing recurring sync loss and visible SRT playback glitches.
+    constexpr std::size_t kChunk =
+        (64 * 1024 / kTsPacket) * kTsPacket;
+    std::unique_lock<std::mutex> lock(queueMutex_);
+    const std::uint64_t beforeDrops = droppedBytes_.load(
+        std::memory_order_relaxed);
+    if (size > kMaxQueue) {
+        const std::size_t keep = kMaxQueue - (kMaxQueue % kTsPacket);
+        droppedBytes_ += size - keep;
+        data += size - keep;
+        size = keep;
+    }
+    while (queuedBytes_ + size > kMaxQueue && !queue_.empty()) {
+        droppedBytes_ += queue_.front().size();
+        queuedBytes_ -= queue_.front().size();
+        queue_.pop_front();
+    }
+    for (std::size_t offset = 0; offset < size;) {
+        const std::size_t chunk = std::min(kChunk, size - offset);
+        queue_.emplace_back(data + offset, data + offset + chunk);
+        queuedBytes_ += chunk;
+        offset += chunk;
+    }
+    const std::uint64_t afterDrops = droppedBytes_.load(
+        std::memory_order_relaxed);
+    if ((afterDrops / kMaxQueue) != (beforeDrops / kMaxQueue)) {
+        std::cerr << "NATIVE SRT TS queue overrun dropped_bytes="
+                  << afterDrops << " queued_bytes=" << queuedBytes_
+                  << " action=discard_oldest_ts_aligned" << std::endl;
+    }
+    lock.unlock();
+    queueCondition_.notify_one();
+    return true;
+}
 void NativeSrtOutput::stop()noexcept{stopRequested_=true;queueCondition_.notify_all();if(worker_.joinable())worker_.join();running_=false;connected_=false;clearQueuedData();}
 void NativeSrtOutput::setError(const std::string&v){std::lock_guard<std::mutex>l(errorMutex_);lastError_=v;}
 std::string NativeSrtOutput::lastError()const{std::lock_guard<std::mutex>l(errorMutex_);return lastError_;}
