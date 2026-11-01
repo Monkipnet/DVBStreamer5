@@ -1,3 +1,9 @@
+## V10.8.267 — PL_MPEG MP2 cursor underflow fix (test branch)
+
+- Normalizes the PL_MPEG bit cursor before reading its remaining byte count or appending input, preventing the unsigned underflow reported as `pending=18446744073709551615` and the resulting unsafe `memmove`.
+- Repairs small bit-cursor overruns immediately after an MP2 decode attempt, avoiding needless decoder resets and audio interruptions. Invalid large cursor overruns still reset safely.
+- Retains V266's bounded buffer, and leaves FFmpeg/Intel/NVENC video paths untouched. Server-side build, playback and multi-stream restart tests are required before merging.
+
 ## V10.8.266 — MP2 decoder buffer safety (test branch)
 
 - Limits individual MPEG Layer II audio input packets and unread PL_MPEG streaming-buffer backlog.
