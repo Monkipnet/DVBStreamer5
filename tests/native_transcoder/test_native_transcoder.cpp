@@ -48,7 +48,7 @@ int main(){
     transcode::NativeTranscoderPipeline tc;if(!tc.initialize(cfg,error)){std::cerr<<"init: "<<error<<"\n";return 2;}
     std::vector<std::uint8_t> output,chunk; const std::size_t step=7*188;
     for(std::size_t off=0;off<input.size();off+=step){if(!tc.process(input.data()+off,std::min(step,input.size()-off),chunk,error)){std::cerr<<"process: "<<error<<"\n";return 3;}output.insert(output.end(),chunk.begin(),chunk.end());}
-    if(!tc.flush(chunk,error)){std::cerr<<"flush: "<<error<<"\n";return 4;}output.insert(output.end(),chunk.begin(),chunk.end());
+    if(!tc.flush(chunk,error)){std::cerr<<"flush: "<<error<<" status="<<tc.status()<<"\n";return 4;}output.insert(output.end(),chunk.begin(),chunk.end());
     if(output.empty()){std::cerr<<"no transcoded TS\n";return 5;}
     mpegts::NativeTsDemux demux;int samples=0;int width=0,height=0;auto dec=codec::createVideoDecoder(mpegts::ElementaryCodec::H264,error);if(!dec){std::cerr<<error<<"\n";return 6;}
     demux.setSampleCallback([&](mpegts::DemuxSample&& s){if(s.stream.kind!=mpegts::ElementaryKind::Video)return;std::vector<codec::RawVideoFrame> raw;std::string e;if(dec->decode(s.data.data(),s.data.size(),s.pts90k,s.hasPts,raw,e)){samples+=static_cast<int>(raw.size());if(!raw.empty()){width=raw.back().width;height=raw.back().height;}}});
