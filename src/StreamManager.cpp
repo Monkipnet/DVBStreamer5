@@ -1036,6 +1036,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
+    relay.streamId = streamConfig.id;
     relay.inputUri = testInput ? "external://test" : (hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput))));
     relay.externallyFedInput = testInput || hlsInput || srtInput || rtspInput || rtmpInput;
     relay.outputs = nativeOutputs;
