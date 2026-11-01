@@ -228,4 +228,36 @@ static bool testRtsp(const std::vector<std::uint8_t>& ts) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));for(int i=0;i<20&&got.empty();++i){server.push(ts.data(),ts.size());std::this_thread::sleep_for(std::chrono::milliseconds(50));}client.stop();server.stop();return !got.empty();
 }
 
-int main(){std::vector<std::uint8_t>ts;if(!makeTs(ts))return 1;if(!testSampleAes(ts))return 2;if(!testCmaf(ts))return 3;if(!testEncryptedCmaf(ts))return 4;if(!testRtsp(ts))return 5;if(!rtmp_test::testPublish(ts))return 6;if(!rtmp_test::testPlay())return 7;std::cout<<"PASS: native RTSP/RTMP/CMAF/cbcs/SAMPLE-AES protocols\n";return 0;}
+int main() {
+    std::vector<std::uint8_t> ts;
+    if (!makeTs(ts)) {
+        std::cerr << "native protocols failed at: makeTs\n";
+        return 1;
+    }
+    if (!testSampleAes(ts)) {
+        std::cerr << "native protocols failed at: SAMPLE-AES\n";
+        return 2;
+    }
+    if (!testCmaf(ts)) {
+        std::cerr << "native protocols failed at: CMAF\n";
+        return 3;
+    }
+    if (!testEncryptedCmaf(ts)) {
+        std::cerr << "native protocols failed at: CMAF CBCS\n";
+        return 4;
+    }
+    if (!testRtsp(ts)) {
+        std::cerr << "native protocols failed at: RTSP\n";
+        return 5;
+    }
+    if (!rtmp_test::testPublish(ts)) {
+        std::cerr << "native protocols failed at: RTMP publish\n";
+        return 6;
+    }
+    if (!rtmp_test::testPlay()) {
+        std::cerr << "native protocols failed at: RTMP play\n";
+        return 7;
+    }
+    std::cout << "PASS: native RTSP/RTMP/CMAF/cbcs/SAMPLE-AES protocols\n";
+    return 0;
+}
