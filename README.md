@@ -1,3 +1,10 @@
+## V10.8.271 — split software scaling and Intel encoding timing (test branch)
+
+- For each 125-frame video encode interval, `NATIVE VIDEO ENCODE PERF` additionally reports `scale_avg_ms`, `scale_max_ms`, `encode_avg_ms`, `encode_max_ms`, attributed per stream ID.
+- Includes CPU I420 scaling (for 720x576 -> 1920x1080) separately from hardware encoding + mux submission. No modification to the video processing results, 25-FPS gate, queue depth, drop policy, bitrate or output timestamps.
+- Allows diagnosis of frame drops on a functioning stream without relying on a temporarily offline input source. Inherits V270 accurate SRT peer/queue metrics and V267–269 fixes.
+- Experimental: build, unit tests and live HTTP/SRT playback testing are required before any main merge.
+
 ## V10.8.270 — SRT loss attribution and peer health (test branch)
 
 - Corrects misleading `NATIVE SRT TS queue overrun` messages: the former threshold used `droppedBytes`, which also increased when a listener had no connected SRT peer. The new warning reports **actual producer queue overflow only**.
