@@ -33,6 +33,7 @@ private:
         int sendFd = -1;
         std::deque<std::vector<std::uint8_t>> pending;
         std::size_t pendingBytes = 0;
+        bool backlogWarningLogged = false;
     };
     static constexpr std::size_t kMaxPendingBytes = 4U * 1024U * 1024U;
     std::map<int, Subscriber> subscribers_;
