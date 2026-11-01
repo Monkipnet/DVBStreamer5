@@ -223,10 +223,7 @@ NativeUdpRelay::~NativeUdpRelay() {
 bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& error) {
     stop();
     config_ = config;
-    const char* jitterTarget =
-        std::getenv("DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID");
-    httpJitterEnabled_ = jitterTarget && *jitterTarget &&
-                         config_.streamId == jitterTarget &&
+    httpJitterEnabled_ = config_.httpTsInputJitterEnabled &&
                          !config_.externallyFedInput &&
                          isHttpInput(config_.inputUri);
     if (httpJitterEnabled_) {
