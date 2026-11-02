@@ -30,6 +30,7 @@ struct EndpointConfig {
     std::string passphrase;
     int pbkeylen = 0;
     std::string streamId;
+    std::string diagnosticTileId; // local-only; never sent as SRT streamid
 };
 
 bool parseUri(const std::string& uri, EndpointConfig& config, std::string& error);
