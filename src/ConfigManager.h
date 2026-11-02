@@ -101,7 +101,8 @@ struct StreamConfig {
     // log any safety clamp/unsupported option instead of silently failing.
     std::string intelPresetMode = "auto"; // auto | balanced | quality
     std::string transcodePreset = "balanced"; // fastest | fast | balanced | quality | best
-    std::string transcodeProfile = "auto"; // auto | main | high
+    std::string transcodeProfile = "auto"; // effective profile: auto | main | high
+    std::string transcodeProfileMode = "auto"; // UI override; auto | main | high
     std::string transcodeLevel = "auto"; // auto | 3.1 | 4.0 | 4.1 | 5.0 | 5.1
     uint32_t transcodeGopFrames = 50;
     uint32_t transcodeBFrames = 0; // live default: zero-reorder
