@@ -542,6 +542,10 @@ public:
         }
 
         const bool idr = frameIndex_ == 0 || (frameIndex_ % gop_) == 0;
+        // H.264 IDR resets frame_num and POC; the global input frame count does not.
+        const std::uint64_t gopFrameIndex = frameIndex_ % static_cast<std::uint64_t>(gop_);
+        const unsigned h264FrameNum = static_cast<unsigned>(gopFrameIndex & 0x0fU);
+        const unsigned h264PocLsb = static_cast<unsigned>((gopFrameIndex * 2U) & 0x0fU);
         const int currentIndex = static_cast<int>(frameIndex_ & 1U);
         const int referenceIndex = currentIndex ^ 1;
         const VASurfaceID current = surfaces_[currentIndex];
@@ -624,7 +628,9 @@ public:
 
         VAEncPictureParameterBufferH264 pic{};
         pic.CurrPic.picture_id = current;
-        pic.CurrPic.frame_idx = static_cast<unsigned>(frameIndex_ & 0x0fU);
+        pic.CurrPic.frame_idx = h264FrameNum;
+        pic.CurrPic.TopFieldOrderCnt = static_cast<int>(gopFrameIndex * 2U);
+        pic.CurrPic.BottomFieldOrderCnt = pic.CurrPic.TopFieldOrderCnt;
         pic.CurrPic.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
         for (auto& r : pic.ReferenceFrames) {
             r.picture_id = VA_INVALID_SURFACE;
@@ -633,14 +639,16 @@ public:
         if (!idr && reference != VA_INVALID_SURFACE) {
             pic.ReferenceFrames[0].picture_id = reference;
             pic.ReferenceFrames[0].frame_idx =
-                static_cast<unsigned>((frameIndex_ - 1U) & 0x0fU);
+                static_cast<unsigned>((gopFrameIndex - 1U) & 0x0fU);
+            pic.ReferenceFrames[0].TopFieldOrderCnt = static_cast<int>((gopFrameIndex - 1U) * 2U);
+            pic.ReferenceFrames[0].BottomFieldOrderCnt = pic.ReferenceFrames[0].TopFieldOrderCnt;
             pic.ReferenceFrames[0].flags =
                 VA_PICTURE_H264_SHORT_TERM_REFERENCE;
         }
         pic.coded_buf = coded;
         pic.pic_parameter_set_id = 0;
         pic.seq_parameter_set_id = 0;
-        pic.frame_num = static_cast<unsigned>(frameIndex_ & 0x0fU);
+        pic.frame_num = h264FrameNum;
         pic.pic_init_qp = 26;
         pic.num_ref_idx_l0_active_minus1 = 0;
         pic.num_ref_idx_l1_active_minus1 = 0;
@@ -666,8 +674,7 @@ public:
         slice.idr_pic_id =
             idr ? static_cast<unsigned short>((frameIndex_ / gop_) & 0xffffU)
                 : 0;
-        slice.pic_order_cnt_lsb =
-            static_cast<unsigned>((frameIndex_ * 2U) & 0x0fU);
+        slice.pic_order_cnt_lsb = h264PocLsb;
 
         for (auto& r : slice.RefPicList0) {
             r.picture_id = VA_INVALID_SURFACE;
@@ -680,7 +687,9 @@ public:
         if (!idr && reference != VA_INVALID_SURFACE) {
             slice.RefPicList0[0].picture_id = reference;
             slice.RefPicList0[0].frame_idx =
-                static_cast<unsigned>((frameIndex_ - 1U) & 0x0fU);
+                static_cast<unsigned>((gopFrameIndex - 1U) & 0x0fU);
+            slice.RefPicList0[0].TopFieldOrderCnt = static_cast<int>((gopFrameIndex - 1U) * 2U);
+            slice.RefPicList0[0].BottomFieldOrderCnt = slice.RefPicList0[0].TopFieldOrderCnt;
             slice.RefPicList0[0].flags =
                 VA_PICTURE_H264_SHORT_TERM_REFERENCE;
         }
