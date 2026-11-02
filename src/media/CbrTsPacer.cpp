@@ -28,6 +28,7 @@ constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // legacy fixed-CBR o
 
 CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate)
     : sourcePllMode_(sourcePllEncodedTargetBitrate(targetBitrate)),
+      wisiReservoirAssist_(targetBitrate % 1000ULL == 809ULL),
       targetBitrate_(std::clamp(
           decodeTargetBitrate(targetBitrate), kMinimumBitrate, kMaximumBitrate)) {
     if (decodeTargetBitrate(targetBitrate) == 0) {
@@ -350,7 +351,22 @@ void CbrTsPacer::updateUsefulPace(
         // useful-packet count. Queue fill level must never accelerate or slow the
         // media clock; the fixed physical CBR sender simply fills all remaining
         // transport slots with NULL packets.
-        usefulPaceBitrate_ = base;
+        if (wisiReservoirAssist_) {
+            // WISI-only A/B: protect against a PCR-rate estimate running
+            // slightly ahead of the bursty transcoder output. Max -2%.
+            // Physical UDP CBR and PCR/PTS/DTS values remain unchanged.
+            const std::uint64_t targetPackets =
+                (std::max<std::uint64_t>)(64ULL,
+                    base * 1500ULL / (kPacketBits * 1000ULL));
+            const std::uint64_t buffered = queuedPackets_.size();
+            const std::uint64_t deficit = buffered < targetPackets
+                ? targetPackets - buffered : 0ULL;
+            const std::uint64_t correction = (std::min<std::uint64_t>)(
+                20000ULL, deficit * 20000ULL / targetPackets);
+            usefulPaceBitrate_ = base * (1000000ULL - correction) / 1000000ULL;
+        } else {
+            usefulPaceBitrate_ = base;
+        }
         return;
     }
 
