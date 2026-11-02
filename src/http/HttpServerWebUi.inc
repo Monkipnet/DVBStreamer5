@@ -7490,6 +7490,15 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Разрешение','Resolution')}>${uiBiText('Разрешение','Resolution')}</div><small class="field-help" ${uiBiAttrs('Размер выходного видео после масштабирования.','Output video size after scaling.')}>${uiBiText('Размер выходного видео после масштабирования.','Output video size after scaling.')}</small><select id="streamTranscodeResolution" onchange="applyRecommendedTranscodeBitrate()"><option value="3840x2160" ${stream.transcode_resolution==='3840x2160'?'selected':''}>3840×2160 / 4K UHD</option><option value="3200x1800" ${stream.transcode_resolution==='3200x1800'?'selected':''}>3200×1800 / 3K</option><option value="2560x1440" ${stream.transcode_resolution==='2560x1440'?'selected':''}>2560×1440 / 2K QHD</option><option value="1920x1080" ${(!stream.transcode_resolution||stream.transcode_resolution==='1920x1080')?'selected':''}>1920×1080 / Full HD</option><option value="1280x720" ${stream.transcode_resolution==='1280x720'?'selected':''}>1280×720 / HD</option><option value="1024x576" ${stream.transcode_resolution==='1024x576'?'selected':''}>1024×576 / SD 16:9</option><option value="720x576_16_9" ${stream.transcode_resolution==='720x576_16_9'?'selected':''}>720×576 / anamorphic 16:9</option><option value="720x576" ${stream.transcode_resolution==='720x576'?'selected':''}>720×576 / PAL SD</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Видео bitrate, kbps','Video bitrate, kbps')}>${uiBiText('Видео bitrate, kbps','Video bitrate, kbps')}</div><small class="field-help" ${uiBiAttrs('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}>${uiBiText('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}</small><input id="streamTranscodeBitrate" type="number" min="500" max="100000" step="100" value="${Math.round((stream.transcode_video_bitrate||6000000)/1000)}" /></div>
           </div>
+          <div class="edit-field" id="streamIntelPresetRow">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('Intel preset','Intel preset','Intel preset')}>Intel preset</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Авто выбирает Balanced или Quality; вручную можно переопределить.','Auto selects Balanced or Quality; manual override available.','Auto bira Balanced ili Quality; moguće ručno odabrati.') }>${subtitleUiTriText('Авто выбирает Balanced или Quality; вручную можно переопределить.','Auto selects Balanced or Quality; manual override available.','Auto bira Balanced ili Quality; moguće ručno odabrati.')}</small>
+            <select id="streamIntelPresetMode">
+              <option value="auto" ${(!stream.intel_preset_mode||stream.intel_preset_mode==='auto')?'selected':''}>Auto</option>
+              <option value="balanced" ${stream.intel_preset_mode==='balanced'?'selected':''}>Balanced</option>
+              <option value="quality" ${stream.intel_preset_mode==='quality'?'selected':''}>Quality</option>
+            </select>
+          </div>
           <div class="stream-video-grid transcode-quick-grid">
             <div class="edit-field"><div class="edit-field-title">FPS</div><small class="field-help" ${uiBiAttrs('Частота кадров выходного потока.','Output stream frame rate.')}>${uiBiText('Частота кадров выходного потока.','Output stream frame rate.')}</small><select id="streamTranscodeFps"><option value="25" ${Number(stream.transcode_fps||25)===25?'selected':''}>25</option><option value="50" ${Number(stream.transcode_fps)===50?'selected':''}>50</option><option value="29.97" ${Math.abs(Number(stream.transcode_fps)-29.97)<0.01?'selected':''}>29.97</option><option value="30" ${Number(stream.transcode_fps)===30?'selected':''}>30</option><option value="59.94" ${Math.abs(Number(stream.transcode_fps)-59.94)<0.01?'selected':''}>59.94</option><option value="60" ${Number(stream.transcode_fps)===60?'selected':''}>60</option></select></div>
             <div class="edit-toggle"><div class="edit-field-title">Deinterlace</div><small class="field-help" ${uiBiAttrs('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}>${uiBiText('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}</small><label class="checkbox-inline"><input id="streamTranscodeDeinterlace" type="checkbox" ${stream.transcode_deinterlace!==false?'checked':''}/><span ${uiBiAttrs('Включено','Enabled')}>${uiBiText('Включено','Enabled')}</span></label></div>
@@ -7551,6 +7560,7 @@ const transcodeFieldClipboardSchema = 'DVBStreamer5/transcode-settings';
 const transcodeClipboardFields = Object.freeze([
   ['streamTranscodeVideoCodec','transcode_video_codec','select'],
   ['streamTranscodeVideoEncoder','transcode_video_encoder','select'],
+  ['streamIntelPresetMode','intel_preset_mode','select'],
   ['streamTranscodeVideoDecoder','transcode_video_decoder','select'],
   ['streamTranscodeResolution','transcode_resolution','select'],
   ['streamTranscodeBitrate','transcode_video_bitrate_kbps','number'],
@@ -8008,6 +8018,7 @@ function saveStream(id) {
     transcode_resolution: document.getElementById('streamTranscodeResolution').value,
     transcode_video_codec: document.getElementById('streamTranscodeVideoCodec').value,
     transcode_video_encoder: document.getElementById('streamTranscodeVideoEncoder').value,
+    intel_preset_mode: document.getElementById('streamIntelPresetMode')?.value || 'auto',
     transcode_video_decoder: document.getElementById('streamTranscodeVideoDecoder').value,
     transcode_fps: Number(document.getElementById('streamTranscodeFps')?.value || 25),
     transcode_deinterlace: document.getElementById('streamTranscodeDeinterlace')?.checked !== false,
