@@ -754,6 +754,13 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         }
         tc.profile = autoTc.profile;
+        // V300: honour the validated H.264 profile selected in the tile.
+        // Automatic tuning must not overwrite the explicit Main/High choice.
+        if (tc.videoCodec == "h264" &&
+            (streamConfig.transcodeProfile == "main" ||
+             streamConfig.transcodeProfile == "high")) {
+            tc.profile = streamConfig.transcodeProfile;
+        }
         tc.level = autoTc.level;
         tc.gopFrames = autoTc.gopFrames;
         tc.bFrames = autoTc.bFrames;
