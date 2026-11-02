@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/Mp2Encoder.h"
+#include <fstream>
 #include "media/Mp3Encoder.h"
 #include "media/NativeCodecRuntime.h"
 #include "media/FfmpegPalPtsClock.h"
@@ -539,6 +540,11 @@ private:
     bool nvidiaZeroCopyAttempted_ = false;
     bool nvidiaZeroCopyFallbackLogged_ = false;
     std::atomic<bool> nvidiaZeroCopyActive_{false};
+    // V301 opt-in diagnostic: bytes of accepted encoded H.264 before TS mux.
+    std::mutex h264PremuxDiagnosticMutex_;
+    std::ofstream h264PremuxDiagnosticFile_;
+    bool h264PremuxDiagnosticInitialized_ = false;
+    std::uint64_t h264PremuxDiagnosticBytes_ = 0;
     std::unique_ptr<codec::VideoEncoder> videoEncoder_;
     PtsCorrectingAudioDecoderHandle audioDecoder_;
     PtsCorrectingAudioEncoderHandle aacEncoder_;
