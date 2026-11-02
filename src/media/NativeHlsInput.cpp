@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cctype>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstdint>
 #include <deque>
 #include <iostream>
@@ -564,6 +565,19 @@ void NativeHlsInput::run() {
         std::condition_variable bufferCv;
         std::deque<BufferedTsSegment> buffer;
         double bufferedSeconds = 0.0;
+        // V307 opt-in HLS buffer A/B. Keep all other streams unchanged.
+        const char* prefetchAb = std::getenv("DVBSTREAMER5_HLS_PREFETCH_AB_STREAM_ID");
+        const bool prefetchAbEnabled = prefetchAb &&
+            config_.streamId == prefetchAb;
+        const double maxAheadSeconds = prefetchAbEnabled ? 24.0 :
+            std::chrono::duration<double>(kMaxAhead).count();
+        const double targetAheadSeconds = prefetchAbEnabled ? 20.0 :
+            std::chrono::duration<double>(kTargetAhead).count();
+        if (prefetchAbEnabled) {
+            std::cerr << "NATIVE HLS PREFETCH AB stream_id=" << config_.streamId
+                      << " max_ahead_ms=24000 target_ahead_ms=20000"
+                      << " empty_poll_ms=400" << std::endl;
+        }
         std::atomic<bool> prefetchStop {false};
         bool producerDone = false;
         std::string producerFailure;
@@ -587,11 +601,11 @@ void NativeHlsInput::run() {
                     std::unique_lock<std::mutex> lock(bufferMutex);
                     bufferCv.wait_for(lock, std::chrono::milliseconds(100), [&] {
                         return stopping_.load() || prefetchStop.load() ||
-                               (bufferedSeconds < std::chrono::duration<double>(kMaxAhead).count() &&
+                               (bufferedSeconds < maxAheadSeconds &&
                                 buffer.size() < kMaxPrefetchSegments);
                     });
                     if (stopping_.load() || prefetchStop.load()) break;
-                    if (bufferedSeconds >= std::chrono::duration<double>(kMaxAhead).count() ||
+                    if (bufferedSeconds >= maxAheadSeconds ||
                         buffer.size() >= kMaxPrefetchSegments) {
                         continue;
                     }
@@ -623,7 +637,17 @@ void NativeHlsInput::run() {
                         std::cerr << "NATIVE HLS PLAYLIST FETCH ERROR"
                                   << " error=" << reloadError << std::endl;
                     }
-                    const auto interval = pollInterval(producerPlaylist);
+                    // When refreshed playlist already contains next segment,
+                    // fetch it immediately instead of sleeping one more poll interval.
+                    if (findSequence(producerPlaylist, producerSequence)) continue;
+                    double bufferedNow = 0.0;
+                    {
+                        std::lock_guard<std::mutex> lock(bufferMutex);
+                        bufferedNow = bufferedSeconds;
+                    }
+                    const auto interval = prefetchAbEnabled && bufferedNow < 0.001
+                        ? std::chrono::milliseconds(400)
+                        : pollInterval(producerPlaylist);
                     const auto sleepUntil = Clock::now() + interval;
                     while (!stopping_.load() && !prefetchStop.load() && Clock::now() < sleepUntil) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -683,7 +707,7 @@ void NativeHlsInput::run() {
         {
             std::unique_lock<std::mutex> lock(bufferMutex);
             while (!stopping_.load() && producerFailure.empty() && !producerDone) {
-                const double target = std::chrono::duration<double>(kTargetAhead).count();
+                const double target = targetAheadSeconds;
                 const double low = std::chrono::duration<double>(kLowAhead).count();
                 if (bufferedSeconds >= target) break;
                 if (Clock::now() >= initialBufferDeadline && bufferedSeconds >= low) break;
