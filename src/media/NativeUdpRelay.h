@@ -137,6 +137,8 @@ struct NativeUdpRelayConfig {
     // Pace observeTransport consumers (SRT/RTSP/RTMP/HLS/HTTP) at the
     // configured CBR instead of delivering mux bursts immediately.
     bool paceObservedTransport = false;
+    // Experimental UDP-CBR PCR timeline A/B for transcoded streams only.
+    bool wisiPreserveSourcePcr = false;
     std::vector<NativeUdpRelayOutputConfig> outputs;
     bool allowNoNetworkOutput = false;
 };
