@@ -1252,6 +1252,13 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
         static thread_local std::uint64_t over80Ms = 0;
         static thread_local std::uint64_t over200Ms = 0;
         static thread_local std::uint64_t maxMuxAgeMs = 0;
+        static thread_local std::uint64_t lastPts90k = 0;
+        static thread_local bool lastPtsValid = false;
+        static thread_local std::uint64_t maxPtsDelta90k = 0;
+        static thread_local std::uint64_t ptsOver60 = 0;
+        static thread_local std::uint64_t ptsRepeated = 0;
+        static thread_local std::uint64_t ptsBackward = 0;
+        static thread_local std::uint64_t maxMuxWriteMs = 0;
         static thread_local std::chrono::steady_clock::time_point windowStart{};
         const char* diag = std::getenv("DVBSTREAMER5_DIAG_LIVE_CADENCE");
         if (diag && diag[0] == '1' && diag[1] == '\0') {
@@ -1261,6 +1268,8 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
                 lastVideoMuxAt = {};
                 windowStart = now;
                 videoFrames = maxGapMs = over80Ms = over200Ms = maxMuxAgeMs = 0;
+                lastPtsValid = false;
+                lastPts90k = maxPtsDelta90k = ptsOver60 = ptsRepeated = ptsBackward = maxMuxWriteMs = 0;
             }
             if (lastVideoMuxAt.time_since_epoch().count() != 0) {
                 const auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1275,6 +1284,21 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
                     now - queued.queuedAt).count();
                 if (age > 0) maxMuxAgeMs = std::max(maxMuxAgeMs, static_cast<std::uint64_t>(age));
             }
+            if (queued.hasPts) {
+                constexpr std::uint64_t kMask = (1ULL << 33U) - 1ULL;
+                const auto pts = queued.pts90k & kMask;
+                if (lastPtsValid) {
+                    const auto forward = (pts - lastPts90k) & kMask;
+                    if (forward == 0) ++ptsRepeated;
+                    else if (forward >= (1ULL << 32U)) ++ptsBackward;
+                    else {
+                        maxPtsDelta90k = std::max(maxPtsDelta90k, forward);
+                        if (forward > 5400ULL) ++ptsOver60;
+                    }
+                }
+                lastPts90k = pts;
+                lastPtsValid = true;
+            }
             ++videoFrames;
             if (now - windowStart >= std::chrono::seconds(5)) {
                 const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1286,8 +1310,13 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
                     << " video_mux_gap_over80=" << over80Ms
                     << " video_mux_gap_over200=" << over200Ms
                     << " video_mux_queue_age_max_ms=" << maxMuxAgeMs
+                    << " pts_gap_max_ms=" << (maxPtsDelta90k / 90ULL)
+                    << " pts_gap_over60=" << ptsOver60
+                    << " pts_repeated=" << ptsRepeated
+                    << " pts_backward=" << ptsBackward
                     << std::endl;
                 videoFrames = maxGapMs = over80Ms = over200Ms = maxMuxAgeMs = 0;
+                maxPtsDelta90k = ptsOver60 = ptsRepeated = ptsBackward = 0;
                 windowStart = now;
             }
         }
