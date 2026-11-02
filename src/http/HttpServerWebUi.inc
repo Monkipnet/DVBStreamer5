@@ -7499,6 +7499,15 @@ function openStreamForm(stream) {
               <option value="quality" ${stream.intel_preset_mode==='quality'?'selected':''}>Quality</option>
             </select>
           </div>
+          <div class="edit-field">
+            <div class="edit-field-title" ${uiBiAttrs('Профиль H.264','H.264 profile')}>${uiBiText('Профиль H.264','H.264 profile')}</div>
+            <small class="field-help" ${uiBiAttrs('Auto: Main для SD 720×576; для остальных разрешений профиль выбирается автоматически.','Auto: Main for SD 720×576; other resolutions use automatic profile selection.')}>${uiBiText('Auto: Main для SD 720×576; для остальных разрешений профиль выбирается автоматически.','Auto: Main for SD 720×576; other resolutions use automatic profile selection.')}</small>
+            <select id="streamTranscodeProfileMode">
+              <option value="auto" ${(!stream.transcode_profile_mode||stream.transcode_profile_mode==='auto')?'selected':''}>Auto</option>
+              <option value="main" ${stream.transcode_profile_mode==='main'?'selected':''}>Main</option>
+              <option value="high" ${stream.transcode_profile_mode==='high'?'selected':''}>High</option>
+            </select>
+          </div>
           <div class="stream-video-grid transcode-quick-grid">
             <div class="edit-field"><div class="edit-field-title">FPS</div><small class="field-help" ${uiBiAttrs('Частота кадров выходного потока.','Output stream frame rate.')}>${uiBiText('Частота кадров выходного потока.','Output stream frame rate.')}</small><select id="streamTranscodeFps"><option value="25" ${Number(stream.transcode_fps||25)===25?'selected':''}>25</option><option value="50" ${Number(stream.transcode_fps)===50?'selected':''}>50</option><option value="29.97" ${Math.abs(Number(stream.transcode_fps)-29.97)<0.01?'selected':''}>29.97</option><option value="30" ${Number(stream.transcode_fps)===30?'selected':''}>30</option><option value="59.94" ${Math.abs(Number(stream.transcode_fps)-59.94)<0.01?'selected':''}>59.94</option><option value="60" ${Number(stream.transcode_fps)===60?'selected':''}>60</option></select></div>
             <div class="edit-toggle"><div class="edit-field-title">Deinterlace</div><small class="field-help" ${uiBiAttrs('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}>${uiBiText('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}</small><label class="checkbox-inline"><input id="streamTranscodeDeinterlace" type="checkbox" ${stream.transcode_deinterlace!==false?'checked':''}/><span ${uiBiAttrs('Включено','Enabled')}>${uiBiText('Включено','Enabled')}</span></label></div>
@@ -7560,7 +7569,7 @@ const transcodeFieldClipboardSchema = 'DVBStreamer5/transcode-settings';
 const transcodeClipboardFields = Object.freeze([
   ['streamTranscodeVideoCodec','transcode_video_codec','select'],
   ['streamTranscodeVideoEncoder','transcode_video_encoder','select'],
-  ['streamIntelPresetMode','intel_preset_mode','select'],
+  ['streamIntelPresetMode','intel_preset_mode','select'],\n  ['streamTranscodeProfileMode','transcode_profile_mode','select'],
   ['streamTranscodeVideoDecoder','transcode_video_decoder','select'],
   ['streamTranscodeResolution','transcode_resolution','select'],
   ['streamTranscodeBitrate','transcode_video_bitrate_kbps','number'],
@@ -8018,7 +8027,7 @@ function saveStream(id) {
     transcode_resolution: document.getElementById('streamTranscodeResolution').value,
     transcode_video_codec: document.getElementById('streamTranscodeVideoCodec').value,
     transcode_video_encoder: document.getElementById('streamTranscodeVideoEncoder').value,
-    intel_preset_mode: document.getElementById('streamIntelPresetMode')?.value || 'auto',
+    intel_preset_mode: document.getElementById('streamIntelPresetMode')?.value || 'auto',\n    transcode_profile_mode: document.getElementById('streamTranscodeProfileMode')?.value || 'auto',
     transcode_video_decoder: document.getElementById('streamTranscodeVideoDecoder').value,
     transcode_fps: Number(document.getElementById('streamTranscodeFps')?.value || 25),
     transcode_deinterlace: document.getElementById('streamTranscodeDeinterlace')?.checked !== false,
