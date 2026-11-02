@@ -235,7 +235,8 @@ std::vector<std::uint8_t> makeVaapiH264Sps(
     int width,
     int height,
     int alignedWidth,
-    int alignedHeight) {
+    int alignedHeight,
+    std::uint32_t maxRefFrames) {
     H264VaapiBitWriter w;
     const auto profileIdc = vaapiH264ProfileIdc(profile);
 
@@ -255,7 +256,7 @@ std::vector<std::uint8_t> makeVaapiH264Sps(
     w.ue(0);
     w.ue(0);
     w.ue(0);
-    w.ue(1);
+    w.ue(maxRefFrames);
     w.bit(false);
     w.ue(static_cast<std::uint32_t>(alignedWidth / 16 - 1));
     w.ue(static_cast<std::uint32_t>(alignedHeight / 16 - 1));
@@ -449,7 +450,7 @@ public:
             options_.level == "5.0" ? 50 :
             options_.level == "5.1" ? 51 : 40;
         refFrames_ = options_.refFrames == 0 ? 1 :
-            std::min<std::uint32_t>(options_.refFrames, 1U);
+            std::min<std::uint32_t>(options_.refFrames, 2U);
         if (options_.bFrames > 0 || options_.openGop) {
             std::cerr << "NATIVE VIDEO OPTIONS backend=vaapi-direct"
                       << " bframes_requested=" << options_.bFrames
@@ -459,7 +460,7 @@ public:
                       << std::endl;
         }
         spsAnnexB_ = makeVaapiH264Sps(
-            profile_, width_, height_, alignedWidth_, alignedHeight_);
+            profile_, width_, height_, alignedWidth_, alignedHeight_, refFrames_);
         ppsAnnexB_ = makeVaapiH264Pps();
 
         VASurfaceAttrib surfaceAttr{};
