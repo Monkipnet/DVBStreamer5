@@ -1,3 +1,11 @@
+## V10.8.295 — Intel encoder presets and QSV VBV
+
+- **Intel preset mode** in channel editor: Auto, Balanced, Quality; persistent `intel_preset_mode` key, copied/pasted with other transcode settings. Only applies to explicitly selected Intel `qsv` or `vaapi` encoders, never NVENC/CPU.
+- Intel Auto chooses Quality for 1080p+ output or low bits/pixel/second (<0.15), otherwise Balanced. Manual setting overrides that choice. Existing automatic GOP, profile, level and CBR transport headroom calculations remain.
+- QSV/oneVPL applies Quality as TargetUsage=2, Balanced as TargetUsage=4. For QSV CBR use a two-second video VBV reservoir, half-full initial delay (bounded to mfxU16 fields). The effective video bitrate is used; the user's stored video bitrate remains unchanged.
+- **Direct legacy VAAPI caveat:** its current H.264 implementation logs the preset but does not expose a driver quality-level or explicit VBV buffer; Intel preset selection cannot yet be guaranteed to change quality on this fallback. Do not claim the QSV VBV fix applies to direct VAAPI. This is pending hardware-specific validation.
+- No changes to NVENC, audio clocks, frame order, or output TS CBR pacing. Pending Ubuntu compile, tests and comparison under the same fast, bright scene.
+
 ## V10.8.294 — Telegram configuration persistence fix
 
 - Fix `/api/save-config` losing Telegram bot token/chat ID when a partial request omits either field, or supplies an empty value. Previously `AppConfig::fromJson` defaulted missing Telegram fields to empty, unlike preserved general/CAM settings. The in-memory client could therefore stop sending messages until credentials were re-entered.
