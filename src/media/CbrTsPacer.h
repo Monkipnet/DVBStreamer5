@@ -185,6 +185,8 @@ private:
     static constexpr std::size_t kPidCount = 8192;
 
     const bool sourcePllMode_;
+    // V299 opt-in WISI-only reservoir assist (+809); not used by HTTP observers.
+    const bool wisiReservoirAssist_;
     std::uint64_t targetBitrate_;
     std::deque<Packet> queuedPackets_;
 
