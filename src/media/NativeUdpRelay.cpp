@@ -829,7 +829,7 @@ void NativeUdpRelay::run() {
                         index,
                         config_.wisiPreserveSourcePcr &&
                             config_.targetBitrate % 1000ULL == 0ULL
-                            ? config_.targetBitrate + 777ULL
+                            ? config_.targetBitrate + 809ULL
                             : config_.targetBitrate,
                         &outputBytes_,
                         &running_,
