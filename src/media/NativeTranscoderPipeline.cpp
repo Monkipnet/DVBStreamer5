@@ -1190,10 +1190,57 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
     sample.hasPts = queued.hasPts;
     sample.hasDts = queued.hasDts;
     sample.randomAccess = queued.randomAccess;
+    // V304: opt-in hash of the H.264 access unit received by the TS mux.
+    if (queued.kind == mpegts::ElementaryKind::Video && config_.videoCodec == "h264") {
+        std::lock_guard<std::mutex> diagLock(h264PremuxDiagnosticMutex_);
+        if (!muxIntegrityInitialized_) {
+            muxIntegrityInitialized_ = true;
+            const char* enabled = std::getenv("DVBSTREAMER5_DIAG_H264_MUX_INTEGRITY");
+            if (enabled && std::string(enabled) == "1") {
+                const std::string prefix = "/tmp/dvbstreamer5-mux-integrity-" +
+                    std::to_string(reinterpret_cast<std::uintptr_t>(this));
+                muxIntegrityDigestFile_.open(prefix + ".csv", std::ios::out | std::ios::trunc);
+                muxIntegrityTsFile_.open(prefix + ".ts", std::ios::binary | std::ios::trunc);
+                if (muxIntegrityDigestFile_ && muxIntegrityTsFile_) {
+                    muxIntegrityDigestFile_ << "index,bytes,fnv1a64,pts90k,dts90k\n";
+                    std::cerr << "NATIVE H264 MUX INTEGRITY csv=" << prefix
+                              << ".csv ts=" << prefix << ".ts" << std::endl;
+                } else {
+                    muxIntegrityDigestFile_.close();
+                    muxIntegrityTsFile_.close();
+                    std::cerr << "NATIVE H264 MUX INTEGRITY open failed" << std::endl;
+                }
+            }
+        }
+        if (muxIntegrityDigestFile_) {
+            std::uint64_t hash = 14695981039346656037ULL;
+            for (const auto byte : queued.data) {
+                hash ^= byte;
+                hash *= 1099511628211ULL;
+            }
+            muxIntegrityDigestFile_ << muxIntegritySampleIndex_++ << ","
+                << queued.data.size() << "," << hash << ","
+                << queued.pts90k << "," << queued.dts90k << "\n";
+            muxIntegrityDigestFile_.flush();
+        }
+    }
     std::vector<mpegts::Packet> packets;
     {
         std::lock_guard<std::mutex> lock(muxMutex_);
         if (!mux_.write(queued.kind, sample, packets, error)) return false;
+    }
+    if (muxIntegrityTsFile_) {
+        std::lock_guard<std::mutex> diagLock(h264PremuxDiagnosticMutex_);
+        constexpr std::uint64_t kCap = 64ULL * 1024ULL * 1024ULL;
+        const auto bytes = static_cast<std::uint64_t>(packets.size()) * mpegts::kPacketSize;
+        if (muxIntegrityTsBytes_ + bytes <= kCap) {
+            for (const auto& packet : packets)
+                muxIntegrityTsFile_.write(
+                    reinterpret_cast<const char*>(packet.data()),
+                    static_cast<std::streamsize>(mpegts::kPacketSize));
+            muxIntegrityTsBytes_ += bytes;
+            muxIntegrityTsFile_.flush();
+        }
     }
     appendPackets(packets);
     return true;
