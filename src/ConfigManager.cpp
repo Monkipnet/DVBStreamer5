@@ -626,7 +626,8 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_deinterlace"] = transcodeDeinterlace;
     root["intel_preset_mode"] = intelPresetMode;
     root["transcode_preset"] = transcodePreset;
-    root["transcode_profile_mode"] = transcodeProfileMode;\n    root["transcode_profile"] = transcodeProfile;
+    root["transcode_profile_mode"] = transcodeProfileMode;
+    root["transcode_profile"] = transcodeProfile;
     root["transcode_level"] = transcodeLevel;
     root["transcode_gop_frames"] = transcodeGopFrames;
     root["transcode_bframes"] = transcodeBFrames;
