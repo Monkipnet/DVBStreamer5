@@ -464,7 +464,21 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.intelPresetMode != "quality")
         config.intelPresetMode = "auto";
     config.transcodePreset = automatic.preset;
+    config.transcodeProfileMode = toLower(root.get("transcode_profile_mode", "auto").asString());
+    if (config.transcodeProfileMode != "auto" &&
+        config.transcodeProfileMode != "main" &&
+        config.transcodeProfileMode != "high")
+        config.transcodeProfileMode = "auto";
     config.transcodeProfile = automatic.profile;
+    // SD H.264 receivers such as WISI Chameleon benefit from Main profile;
+    // preserve Auto for other resolutions and non-H.264 codecs.
+    if (config.transcodeVideoCodec == "h264" &&
+        config.transcodeResolution == "720x576" &&
+        config.transcodeProfileMode == "auto")
+        config.transcodeProfile = "main";
+    if (config.transcodeVideoCodec == "h264" &&
+        config.transcodeProfileMode != "auto")
+        config.transcodeProfile = config.transcodeProfileMode;
     config.transcodeLevel = automatic.level;
     config.transcodeGopFrames = automatic.gopFrames;
     config.transcodeBFrames = automatic.bFrames;
@@ -612,7 +626,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_deinterlace"] = transcodeDeinterlace;
     root["intel_preset_mode"] = intelPresetMode;
     root["transcode_preset"] = transcodePreset;
-    root["transcode_profile"] = transcodeProfile;
+    root["transcode_profile_mode"] = transcodeProfileMode;\n    root["transcode_profile"] = transcodeProfile;
     root["transcode_level"] = transcodeLevel;
     root["transcode_gop_frames"] = transcodeGopFrames;
     root["transcode_bframes"] = transcodeBFrames;
