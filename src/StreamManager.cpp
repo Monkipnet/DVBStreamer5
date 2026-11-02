@@ -1706,6 +1706,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         srtConfig.pbkeylen = streamConfig.srtInputPbKeyLen;
         srtConfig.bindAddress = cleanInterface(streamConfig.inputInterfaceAddress);
         srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
+        srtConfig.diagnosticTileId = streamConfig.id;
         if (streamConfig.srtVpsVdsOptimization) {
             std::cerr << "SRT VPS/VDS effective IN stream=" << streamConfig.id
                       << " mode=" << srtConfig.mode
