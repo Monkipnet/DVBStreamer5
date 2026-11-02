@@ -2130,7 +2130,18 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         // a 29.97/30 fps source does not feed ~30 frames/s into encoders that
         // are configured for 25 fps. Dropping before deinterlace/VPP/queues
         // keeps every rendition frame-aligned and avoids queue-overflow drops.
-        if (raw.hasPts && config_.fps > 0.0) {
+        // A 25-fps interlaced FFmpeg decode can carry reordered/field-pair PTS
+        // that are not a reliable 50-fps display clock. At >=50-fps output
+        // the gate must not remove any 25-fps decoded frames: it cannot
+        // synthesize new motion samples, and rejecting originals causes
+        // visible ticker judder (observed ~16/25 fps on TV3Bel).
+        // Keep existing gate behavior for 25-fps conversion and all other
+        // decoders / progressive sources.
+        const bool preserveInterlacedFfmpegFrames =
+            selectedAvcDecoder_ == "ffmpeg" && raw.interlaced &&
+            config_.fps >= 49.5;
+        if (raw.hasPts && config_.fps > 0.0 &&
+            !preserveInterlacedFfmpegFrames) {
             constexpr std::uint64_t kPtsMask = (1ULL << 33U) - 1ULL;
             constexpr std::uint64_t kPtsHalf = 1ULL << 32U;
             const std::uint64_t interval =
