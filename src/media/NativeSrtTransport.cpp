@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -178,7 +179,85 @@ bool NativeSrtInput::start(const EndpointConfig& c,DataCallback data,StateCallba
 void NativeSrtInput::stop()noexcept{stopRequested_=true;if(worker_.joinable())worker_.join();running_=false;}
 void NativeSrtInput::setError(const std::string& v){std::lock_guard<std::mutex>l(errorMutex_);lastError_=v;}
 std::string NativeSrtInput::lastError()const{std::lock_guard<std::mutex>l(errorMutex_);return lastError_;}
-void NativeSrtInput::run(){std::vector<std::uint8_t>b(static_cast<std::size_t>(std::max(1316,config_.payloadSize))*8);bool first=true;while(!stopRequested_){Socket s;std::string peer,e;if(!establishConnection(config_,false,s,peer,stopRequested_,e)){if(stopRequested_)break;setError(e);if(onState_)onState_("reconnecting: "+e);++reconnects_;pause(stopRequested_);continue;}if(!first)++reconnects_;first=false;setError({});if(onState_)onState_("connected"+(peer.empty()?std::string():" "+peer));for(;;){if(stopRequested_)break;int n=api().recv(s.s,reinterpret_cast<char*>(b.data()),static_cast<int>(b.size()));if(n>0){receivedBytes_+=static_cast<std::uint64_t>(n);if(!onData_(b.data(),static_cast<std::size_t>(n))){stopRequested_=true;break;}continue;}if(api().state(s.s)==SRTS_CONNECTED)continue;setError("SRT receive disconnected: "+api().lastError());break;}if(!stopRequested_)pause(stopRequested_);}running_=false;}
+void NativeSrtInput::run() {
+    using Clock = std::chrono::steady_clock;
+    std::vector<std::uint8_t> b(static_cast<std::size_t>(std::max(1316, config_.payloadSize)) * 8);
+    const char* diagId = std::getenv("DVBSTREAMER5_SRT_RX_DIAG_STREAM_ID");
+    // The selected tile ID is supplied via URI-independent environment marker
+    // on this instance by StreamManager, so diagnostics remain per-stream.
+    const bool diag = diagId && !config_.streamId.empty() && config_.streamId == diagId;
+    bool first = true;
+    while (!stopRequested_) {
+        Socket s;
+        std::string peer, e;
+        if (!establishConnection(config_, false, s, peer, stopRequested_, e)) {
+            if (stopRequested_) break;
+            setError(e);
+            if (onState_) onState_("reconnecting: " + e);
+            ++reconnects_;
+            pause(stopRequested_);
+            continue;
+        }
+        if (!first) ++reconnects_;
+        first = false;
+        setError({});
+        if (onState_) onState_("connected" + (peer.empty() ? std::string() : " " + peer));
+        auto lastData = Clock::now();
+        auto lastReport = lastData;
+        std::uint64_t rxBytes = 0;
+        std::uint64_t rxCalls = 0;
+        std::uint64_t rxGapOver200 = 0;
+        std::uint64_t callbackOver100 = 0;
+        long long maxRxGapMs = 0, maxCallbackMs = 0;
+        for (;;) {
+            if (stopRequested_) break;
+            const int n = api().recv(s.s, reinterpret_cast<char*>(b.data()), static_cast<int>(b.size()));
+            const auto receivedAt = Clock::now();
+            if (n > 0) {
+                const auto gapMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    receivedAt - lastData).count();
+                if (gapMs > maxRxGapMs) maxRxGapMs = gapMs;
+                if (gapMs > 200) ++rxGapOver200;
+                lastData = receivedAt;
+                ++rxCalls;
+                rxBytes += static_cast<std::uint64_t>(n);
+                receivedBytes_ += static_cast<std::uint64_t>(n);
+                const bool accepted = onData_(b.data(), static_cast<std::size_t>(n));
+                const auto afterCallback = Clock::now();
+                const auto callbackMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    afterCallback - receivedAt).count();
+                if (callbackMs > maxCallbackMs) maxCallbackMs = callbackMs;
+                if (callbackMs > 100) ++callbackOver100;
+                if (diag && afterCallback - lastReport >= std::chrono::seconds(5)) {
+                    std::cerr << "NATIVE SRT RX DIAG stream_id=" << config_.streamId
+                              << " rx_bytes=" << rxBytes
+                              << " rx_calls=" << rxCalls
+                              << " rx_gap_max_ms=" << maxRxGapMs
+                              << " rx_gap_over_200=" << rxGapOver200
+                              << " callback_max_ms=" << maxCallbackMs
+                              << " callback_over_100=" << callbackOver100
+                              << " latency_ms=" << config_.latencyMs << std::endl;
+                    rxBytes = rxCalls = rxGapOver200 = callbackOver100 = 0;
+                    maxRxGapMs = maxCallbackMs = 0;
+                    lastReport = afterCallback;
+                }
+                if (!accepted) { stopRequested_ = true; break; }
+                continue;
+            }
+            if (api().state(s.s) == SRTS_CONNECTED) continue;
+            if (diag) {
+                std::cerr << "NATIVE SRT RX DISCONNECT stream_id=" << config_.streamId
+                          << " no_data_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                              receivedAt - lastData).count()
+                          << " error=" << api().lastError() << std::endl;
+            }
+            setError("SRT receive disconnected: " + api().lastError());
+            break;
+        }
+        if (!stopRequested_) pause(stopRequested_);
+    }
+    running_ = false;
+}
 
 NativeSrtOutput::~NativeSrtOutput(){stop();}
 bool NativeSrtOutput::start(const EndpointConfig& c,PeerAllowedCallback allow,PeerStateCallback con,PeerStateCallback dis,std::string& err){stop();if(!runtimeAvailable(&err))return false;config_=c;peerAllowed_=std::move(allow);onConnected_=std::move(con);onDisconnected_=std::move(dis);stopRequested_=false;running_=true;connected_=false;sentBytes_=0;droppedBytes_=0;queueOverrunBytes_=0;noPeerDiscardBytes_=0;reconnects_=0;setError({});clearQueuedData();try{worker_=std::thread(&NativeSrtOutput::run,this);}catch(const std::exception&e){running_=false;err=e.what();return false;}err.clear();return true;}
