@@ -223,10 +223,7 @@ NativeUdpRelay::~NativeUdpRelay() {
 bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& error) {
     stop();
     config_ = config;
-    const char* jitterTarget =
-        std::getenv("DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID");
-    httpJitterEnabled_ = jitterTarget && *jitterTarget &&
-                         config_.streamId == jitterTarget &&
+    httpJitterEnabled_ = config_.httpTsInputJitterEnabled &&
                          !config_.externallyFedInput &&
                          isHttpInput(config_.inputUri);
     if (httpJitterEnabled_) {
@@ -882,9 +879,17 @@ void NativeUdpRelay::run() {
     if (config_.paceObservedTransport && config_.targetBitrate > 0 &&
         !shareObservedCbrWithUdpOutput) {
         try {
+            // HTTP/SRT/HLS observers must keep PCR in the same clock domain
+                // as unchanged video PTS/DTS. The legacy fixed-CBR pacer
+                // rewrites PCR to output packet slots and can stall VLC after
+                // an HLS/VAAPI transcode even while TCP delivers full rate.
+                // The +799 marker selects the existing source-PCR timeline
+                // mode; it is decoded internally and does not change CBR bps.
             observedCbrPacer =
                 std::make_unique<dvbstreamer5::media::mpegts::CbrTsPacer>(
-                    config_.targetBitrate);
+                    config_.targetBitrate % 1000ULL == 0ULL
+                        ? config_.targetBitrate + 799ULL
+                        : config_.targetBitrate);
             observedCbrWorker = std::thread([&] {
                 while (true) {
                     dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;

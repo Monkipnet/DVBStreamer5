@@ -80,6 +80,7 @@ struct StreamConfig {
     std::string hlsAccessKeyName = "Authorization";
     std::string hlsAccessKeyValue;
     std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
+    bool httpTsInputJitterEnabled = false;
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.
@@ -98,6 +99,7 @@ struct StreamConfig {
     bool transcodeDeinterlace = true;
     // Common video encoder controls. Backends apply the supported subset and
     // log any safety clamp/unsupported option instead of silently failing.
+    std::string intelPresetMode = "auto"; // auto | balanced | quality
     std::string transcodePreset = "balanced"; // fastest | fast | balanced | quality | best
     std::string transcodeProfile = "auto"; // auto | main | high
     std::string transcodeLevel = "auto"; // auto | 3.1 | 4.0 | 4.1 | 5.0 | 5.1

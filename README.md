@@ -1,3 +1,27 @@
+## V10.8.295 — Intel encoder presets and QSV VBV
+
+- **Intel preset mode** in channel editor: Auto, Balanced, Quality; persistent `intel_preset_mode` key, copied/pasted with other transcode settings. Only applies to explicitly selected Intel `qsv` or `vaapi` encoders, never NVENC/CPU.
+- Intel Auto chooses Quality for 1080p+ output or low bits/pixel/second (<0.15), otherwise Balanced. Manual setting overrides that choice. Existing automatic GOP, profile, level and CBR transport headroom calculations remain.
+- QSV/oneVPL applies Quality as TargetUsage=2, Balanced as TargetUsage=4. For QSV CBR use a two-second video VBV reservoir, half-full initial delay (bounded to mfxU16 fields). The effective video bitrate is used; the user's stored video bitrate remains unchanged.
+- **Direct legacy VAAPI caveat:** its current H.264 implementation logs the preset but does not expose a driver quality-level or explicit VBV buffer; Intel preset selection cannot yet be guaranteed to change quality on this fallback. Do not claim the QSV VBV fix applies to direct VAAPI. This is pending hardware-specific validation.
+- No changes to NVENC, audio clocks, frame order, or output TS CBR pacing. Pending Ubuntu compile, tests and comparison under the same fast, bright scene.
+
+## V10.8.294 — Telegram configuration persistence fix
+
+- Fix `/api/save-config` losing Telegram bot token/chat ID when a partial request omits either field, or supplies an empty value. Previously `AppConfig::fromJson` defaulted missing Telegram fields to empty, unlike preserved general/CAM settings. The in-memory client could therefore stop sending messages until credentials were re-entered.
+- Stream tile editing no longer echoes cached `telegram_token`/`telegram_chat_id` values in its save payload; the server retains its existing credentials.
+- The fix does not require re-entering valid credentials after deployment. It does not address Telegram Bot API network outages or invalid tokens. Avoid recording tokens in journals or screenshots.
+- Requires local build/CTest and runtime verification; V294 stays separate from main until tested.
+
+## V10.8.293 — migrate live systemd opt-ins into channel configuration
+
+- **DVB TS jitter**: Satellite / DVB-S/S2 tile switch, stored as `jitter_ms=100` in the DVB URI; no systemd variable.
+- **HTTP MPEG-TS input jitter**: channel editor switch, stored as `http_ts_input_jitter_enabled` in the normal JSON configuration. Reuses existing V283/V284 1200ms jitter reservoir with drift correction; defaults off for new channels. Remove the legacy `DVBSTREAMER5_HTTP_TS_JITTER_STREAM_ID` override only after enabling the switch on its intended channel and validating.
+- **HTTP output TCP_NODELAY**: already on for public HTTP MPEG-TS since V288; no per-channel environment override needed.
+- **V281 per-stream diagnostics**: `DVBSTREAMER5_DIAG_INPUT_STREAM_ID` was debug-only; not needed for normal production, should not become a global always-on setting.
+- **debug.conf**: `Restart=no` and `LimitCORE=infinity` are systemd operational debugging settings, not stream processing enhancements. After regression checks, remove only `debug.conf` to restore base unit `Restart=on-failure`; do not silently embed it in the program.
+- Experimental branch pending Linux compile, CTest and real DVB/HTTP playback verification. Existing active unit drop-ins are left untouched by GitHub edits.
+
 ## V10.8.292 — compare MPEG-TS production and actual client capacity
 
 - Adds `NATIVE HTTP TS HUB PRODUCER` once every five seconds while at least one subscriber exists, with `output_kbps`, `publish_calls`, `subscriber_count`, and `max_pending_bytes`. This measures TS bytes entering the fan-out hub before TCP/socket backpressure; compare directly with V291 `acked_kbps` and `delivered_kbps`.

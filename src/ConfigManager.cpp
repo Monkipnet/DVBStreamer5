@@ -414,6 +414,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.hlsAccessKeyMode == "query" ? "token" : "Authorization").asString();
     config.hlsAccessKeyValue = root.get("hls_access_key_value", "").asString();
     config.hlsUserAgent = root.get("hls_user_agent", "Mozilla/5.0 DVBStreamer5").asString();
+    config.httpTsInputJitterEnabled = root.get("http_ts_input_jitter_enabled", false).asBool();
     config.testPattern = root.get("test_pattern", false).asBool();
     config.activationMode = toLower(root.get("activation_mode", "online").asString());
     if (config.activationMode != "ondemand") config.activationMode = "online";
@@ -457,6 +458,11 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     const auto automatic = dvbstreamer5::app::automaticTranscodeSettings(
         config.transcodeFps, config.transcodeVideoBitrate,
         config.transcodeResolution, config.transcodeVideoEncoder);
+    config.intelPresetMode = toLower(root.get("intel_preset_mode", "auto").asString());
+    if (config.intelPresetMode != "auto" &&
+        config.intelPresetMode != "balanced" &&
+        config.intelPresetMode != "quality")
+        config.intelPresetMode = "auto";
     config.transcodePreset = automatic.preset;
     config.transcodeProfile = automatic.profile;
     config.transcodeLevel = automatic.level;
@@ -589,6 +595,7 @@ Json::Value StreamConfig::toJson() const {
     root["hls_access_key_name"] = hlsAccessKeyName;
     root["hls_access_key_value"] = hlsAccessKeyValue;
     root["hls_user_agent"] = hlsUserAgent;
+    root["http_ts_input_jitter_enabled"] = httpTsInputJitterEnabled;
     root["test_pattern"] = testPattern;
     root["activation_mode"] = activationMode == "ondemand" ? "ondemand" : "online";
     root["auto_start"] = autoStart;
@@ -603,6 +610,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_video_bitrate"] = Json::UInt64(transcodeVideoBitrate);
     root["transcode_fps"] = transcodeFps;
     root["transcode_deinterlace"] = transcodeDeinterlace;
+    root["intel_preset_mode"] = intelPresetMode;
     root["transcode_preset"] = transcodePreset;
     root["transcode_profile"] = transcodeProfile;
     root["transcode_level"] = transcodeLevel;

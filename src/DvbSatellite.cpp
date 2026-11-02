@@ -1010,7 +1010,8 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
         !parseUInt(query, "unicable_frequency_khz", params.unicableFrequencyKHz) ||
         !parseInt(query, "unicable_position", params.unicablePosition) ||
         !parseInt(query, "unicable_pin", params.unicablePin) ||
-        !parseInt(query, "stream_id", params.streamId)) {
+        !parseInt(query, "stream_id", params.streamId) ||
+        !parseInt(query, "jitter_ms", params.jitterMs)) {
         error = "Invalid DVB URI numeric parameter";
         return false;
     }
@@ -1027,6 +1028,10 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
         params.unicablePin = -1;
     }
 
+    if (params.jitterMs != 0 && (params.jitterMs < 20 || params.jitterMs > 500)) {
+        error = "DVB jitter_ms must be 0 or 20..500";
+        return false;
+    }
     if (params.frequencyKHz < 900000 || params.frequencyKHz > 14000000 ||
         params.symbolRateK < 100 || params.symbolRateK > 60000 ||
         (params.polarity != "H" && params.polarity != "V") ||
@@ -1056,6 +1061,7 @@ std::string buildUri(const DvbSatelliteParams& params) {
         << "&unicable_frequency_khz=" << params.unicableFrequencyKHz
         << "&unicable_position=" << params.unicablePosition
         << "&unicable_pin=" << params.unicablePin
+        << "&jitter_ms=" << params.jitterMs
         << "&stream_id=" << params.streamId
         << "&pids=" << percentEncode(params.pids.empty() ? "8192" : params.pids);
     return uri.str();

@@ -1127,6 +1127,12 @@ public:
             options_.preset == "best" ? 1 : 4);
         params_.mfx.TargetKbps = static_cast<mfxU16>(std::min<std::uint64_t>(bitrate / 1000ULL, 65535ULL));
         params_.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
+        // Two seconds of video at the effective video bitrate. This gives
+        // Intel QSV CBR enough reservoir for transient complex scenes.
+        const auto vbvKib = std::clamp<std::uint64_t>(
+            (bitrate * 2ULL + 7999ULL) / 8000ULL, 1ULL, 65535ULL);
+        params_.mfx.BufferSizeInKB = static_cast<mfxU16>(vbvKib);
+        params_.mfx.InitialDelayInKB = static_cast<mfxU16>(vbvKib / 2ULL);
         params_.mfx.GopPicSize = static_cast<mfxU16>(std::clamp<std::uint32_t>(
             options_.gopFrames > 0 ? options_.gopFrames :
             static_cast<std::uint32_t>(std::lround((fps > 0 ? fps : 25.0) * 2.0)),

@@ -258,6 +258,19 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     if (!root.isMember("language")) {
         nextConfig.language = configManager.config.language;
     }
+    // Partial settings and channel-editor saves must never clear Telegram
+    // credentials. Explicit non-empty updates still take effect immediately.
+    const auto preserveTelegramField = [&](const char* key, std::string& value,
+                                            const std::string& current) {
+        if (!root.isMember(key) || !root[key].isString() ||
+            root[key].asString().empty()) {
+            value = current;
+        }
+    };
+    preserveTelegramField("telegram_token", nextConfig.telegramToken,
+                          previousConfig.telegramToken);
+    preserveTelegramField("telegram_chat_id", nextConfig.telegramChatId,
+                          previousConfig.telegramChatId);
     if (!root.isMember("restart_schedule")) {
         nextConfig.restartSchedule = previousConfig.restartSchedule;
     }

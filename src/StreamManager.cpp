@@ -737,6 +737,22 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             static_cast<std::uint32_t>(tc.width),
             static_cast<std::uint32_t>(tc.height), tc.videoEncoder);
         tc.preset = autoTc.preset;
+        // Intel-only override. Never alter NVENC or CPU settings.
+        // Auto on Intel favours quality when upscaling or allocating
+        // fewer bits per pixel at the requested output frame rate.
+        if (tc.videoEncoder == "qsv" || tc.videoEncoder == "vaapi") {
+            if (streamConfig.intelPresetMode == "balanced" ||
+                streamConfig.intelPresetMode == "quality") {
+                tc.preset = streamConfig.intelPresetMode;
+            } else {
+                const double pixelsPerSecond =
+                    static_cast<double>(tc.width) * tc.height * tc.fps;
+                const double bpp = pixelsPerSecond > 0
+                    ? static_cast<double>(tc.videoBitrate) / pixelsPerSecond : 1.0;
+                tc.preset = (tc.width >= 1920 || bpp < 0.15)
+                    ? "quality" : "balanced";
+            }
+        }
         tc.profile = autoTc.profile;
         tc.level = autoTc.level;
         tc.gopFrames = autoTc.gopFrames;
@@ -1044,6 +1060,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.streamId = streamConfig.id;
     relay.inputUri = testInput ? "external://test" : (hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput))));
     relay.externallyFedInput = testInput || hlsInput || srtInput || rtspInput || rtmpInput;
+    relay.httpTsInputJitterEnabled = streamConfig.httpTsInputJitterEnabled;
     relay.outputs = nativeOutputs;
     relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput || !srtOutputSpecs.empty() || !rtspOutputSpecs.empty() || !rtmpOutputSpecs.empty()) && nativeOutputs.empty();
     relay.inputInterfaceAddress = cleanInterface(streamConfig.inputInterfaceAddress);
@@ -1131,6 +1148,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.dvbTuneConfig.unicablePosition = dvbParams.unicablePosition;
         relay.dvbTuneConfig.unicablePin = dvbParams.unicablePin;
         relay.dvbTuneConfig.streamId = dvbParams.streamId;
+        relay.dvbTuneConfig.jitterMs = dvbParams.jitterMs;
         // The shared reader still owns one full-MPTS demux for the frontend.
         // V10.8.117 moves only per-service PAT/PMT filtering ahead of the relay
         // queue, so tuner ownership/tuning and the shared bus remain unchanged.

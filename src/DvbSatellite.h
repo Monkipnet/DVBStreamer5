@@ -25,6 +25,7 @@ struct DvbSatelliteParams {
     int unicablePosition = 0;
     int unicablePin = -1;
     int streamId = -1;
+    int jitterMs = 0;
     // Colon-separated DVB PID filter. 8192 means full transport stream.
     std::string pids = "8192";
 };

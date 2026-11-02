@@ -7117,7 +7117,7 @@ function parseDvbTunerUri(value='') {
     diseqc_source:-1, lnb_lof1_khz:9750000, lnb_lof2_khz:10600000,
     lnb_slof_khz:11700000, unicable_mode:'none', unicable_user_band:-1,
     unicable_frequency_khz:0, unicable_position:0, unicable_pin:-1, stream_id:-1,
-    satellite_name:''
+    satellite_name:'', jitter_ms:0
   };
   const input = String(value || '').trim();
   if (!input.toLowerCase().startsWith('dvb://')) return result;
@@ -7149,6 +7149,7 @@ function parseDvbTunerUri(value='') {
   result.unicable_position = num('unicable_position', result.unicable_position);
   result.unicable_pin = num('unicable_pin', result.unicable_pin);
   result.stream_id = num('stream_id', result.stream_id);
+  result.jitter_ms = num('jitter_ms', 0);
   return result;
 }
 function updateDvbTunerVisibility() {
@@ -7189,6 +7190,8 @@ function rebuildDvbInputUriFromFields() {
   set('unicable_position', Number(document.getElementById('streamDvbUnicablePosition')?.value || 0));
   set('unicable_pin', Number(document.getElementById('streamDvbUnicablePin')?.value ?? -1));
   set('stream_id', Number(document.getElementById('streamDvbStreamId')?.value ?? -1));
+  const jitterEnabled = document.getElementById('streamDvbJitterEnabled')?.checked === true;
+  params.set('jitter_ms', jitterEnabled ? '100' : '0');
   const satelliteName=String(document.getElementById('streamDvbSatelliteName')?.value || '').trim().slice(0,80);
   if (satelliteName) params.set('satellite_name',satelliteName);
   else params.delete('satellite_name');
@@ -7363,10 +7366,22 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('LNB / спутник','LNB / satellite','LNB / satelit')}>${subtitleUiTriText('LNB / спутник','LNB / satellite','LNB / satelit')}</div><small class="field-help" ${subtitleUiTriAttrs('Выберите вход мультисвитча, LNB 1–4; зависит от настроек устройства.','Select multiswitch input LNB 1–4; mapping depends on hardware.','Odaberite ulaz multiswitcha LNB 1–4; raspored ovisi o uređaju.')}>${subtitleUiTriText('Выберите вход мультисвитча, LNB 1–4; зависит от настроек устройства.','Select multiswitch input LNB 1–4; mapping depends on hardware.','Odaberite ulaz multiswitcha LNB 1–4; raspored ovisi o uređaju.')}</small><select id="streamDvbUnicablePosition">${unicablePositionOptions(dvbTuner.unicable_mode,dvbTuner.unicable_position)}</select></div>
             <div class="edit-field"><div class="edit-field-title">PIN</div><small class="field-help" ${uiBiAttrs('-1 отключает PIN.','-1 disables the PIN.')}>${uiBiText('-1 отключает PIN.','-1 disables the PIN.')}</small><input id="streamDvbUnicablePin" type="number" min="-1" max="255" value="${dvbTuner.unicable_pin}" /></div>
           </div>
+          <div class="edit-toggle">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('DVB Jitter Buffer','DVB Jitter Buffer','DVB Jitter Buffer')}>${subtitleUiTriText('DVB Jitter Buffer','DVB Jitter Buffer','DVB Jitter Buffer')}</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Сглаживание подачи TS: 100 мс на общем транспондере.','Smooth shared transponder TS input by 100 ms.','Izravnava ulaz TS-a za 100 ms po transponderu.')}>${subtitleUiTriText('Сглаживание подачи TS: 100 мс на общем транспондере.','Smooth shared transponder TS input by 100 ms.','Izravnava ulaz TS-a za 100 ms po transponderu.')}</small>
+            <label class="checkbox-inline"><input type="checkbox" id="streamDvbJitterEnabled" ${Number(dvbTuner.jitter_ms)>0?'checked':''} /><span ${subtitleUiTriAttrs('Включить','Enable','Uključi')}>${subtitleUiTriText('Включить','Enable','Uključi')}</span></label>
+          </div>
           <div class="edit-inline-note" ${uiBiAttrs('PID/SID и параметры dvb:// URL сохраняются.','PID/SID and dvb:// URL parameters are preserved.')}>${uiBiText('PID/SID и неизвестные параметры исходного dvb:// URL сохраняются при редактировании.','PID/SID and unknown parameters from the original dvb:// URL are preserved when editing.')}</div>
           </div>
         </details>
         <div class="form-row full" id="streamSrtInputRow" style="display:${(stream.input_mode==='caller'||stream.input_mode==='listener'||String(stream.input_uri||'').toLowerCase().startsWith('srt://'))?'':'none'}"><label>SRT вход</label><div class="row-inline compact-row"><input id="streamSrtInputLatency" type="number" min="20" max="60000" value="${Number(stream.srt_input_latency_ms||120)}" placeholder="latency ms" /><select id="streamSrtInputPbKeyLen"><option value="16" ${Number(stream.srt_input_pbkeylen||16)===16?'selected':''}>AES-128</option><option value="24" ${Number(stream.srt_input_pbkeylen)===24?'selected':''}>AES-192</option><option value="32" ${Number(stream.srt_input_pbkeylen)===32?'selected':''}>AES-256</option></select><input id="streamSrtInputStreamId" value="${escapeHtmlValue(stream.srt_input_streamid||'')}" placeholder="Stream ID (optional)" /><input id="streamSrtInputPassphrase" type="password" value="${escapeHtmlValue(stream.srt_input_passphrase||'')}" autocomplete="new-password" placeholder="Passphrase 10–79 chars (optional)" /></div><small>Native SRT Caller/Listener. Passphrase пустой = без шифрования. Для шифрования минимум 10 символов.</small></div>
+        <div class="form-row full edit-section">
+          <div class="edit-toggle">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('HTTP TS Jitter Buffer','HTTP TS Jitter Buffer','HTTP TS Jitter Buffer')}>${subtitleUiTriText('HTTP TS Jitter Buffer','HTTP TS Jitter Buffer','HTTP TS Jitter Buffer')}</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Сглаживает входной HTTP MPEG-TS, предбуфер 1200 мс.','Smooths incoming HTTP MPEG-TS with a 1200 ms prebuffer.','Izravnava ulazni HTTP MPEG-TS uz međuspremnik 1200 ms.')}>${subtitleUiTriText('Сглаживает входной HTTP MPEG-TS, предбуфер 1200 мс.','Smooths incoming HTTP MPEG-TS with a 1200 ms prebuffer.','Izravnava ulazni HTTP MPEG-TS uz međuspremnik 1200 ms.')}</small>
+            <label class="checkbox-inline"><input type="checkbox" id="streamHttpTsJitterEnabled" ${stream.http_ts_input_jitter_enabled===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить','Enable','Uključi')}>${subtitleUiTriText('Включить','Enable','Uključi')}</span></label>
+          </div>
+        </div>
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
         <div class="form-row full edit-section">
           <div class="edit-section-head"><span ${uiBiAttrs('Условный доступ / CAM','Conditional Access / CAM')}>${uiBiText('Условный доступ / CAM','Conditional Access / CAM')}</span><small ${uiBiAttrs('режим задаётся отдельно для канала','configured per channel')}>${uiBiText('режим задаётся отдельно для канала','configured per channel')}</small></div>
@@ -7475,6 +7490,15 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Разрешение','Resolution')}>${uiBiText('Разрешение','Resolution')}</div><small class="field-help" ${uiBiAttrs('Размер выходного видео после масштабирования.','Output video size after scaling.')}>${uiBiText('Размер выходного видео после масштабирования.','Output video size after scaling.')}</small><select id="streamTranscodeResolution" onchange="applyRecommendedTranscodeBitrate()"><option value="3840x2160" ${stream.transcode_resolution==='3840x2160'?'selected':''}>3840×2160 / 4K UHD</option><option value="3200x1800" ${stream.transcode_resolution==='3200x1800'?'selected':''}>3200×1800 / 3K</option><option value="2560x1440" ${stream.transcode_resolution==='2560x1440'?'selected':''}>2560×1440 / 2K QHD</option><option value="1920x1080" ${(!stream.transcode_resolution||stream.transcode_resolution==='1920x1080')?'selected':''}>1920×1080 / Full HD</option><option value="1280x720" ${stream.transcode_resolution==='1280x720'?'selected':''}>1280×720 / HD</option><option value="1024x576" ${stream.transcode_resolution==='1024x576'?'selected':''}>1024×576 / SD 16:9</option><option value="720x576_16_9" ${stream.transcode_resolution==='720x576_16_9'?'selected':''}>720×576 / anamorphic 16:9</option><option value="720x576" ${stream.transcode_resolution==='720x576'?'selected':''}>720×576 / PAL SD</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Видео bitrate, kbps','Video bitrate, kbps')}>${uiBiText('Видео bitrate, kbps','Video bitrate, kbps')}</div><small class="field-help" ${uiBiAttrs('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}>${uiBiText('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}</small><input id="streamTranscodeBitrate" type="number" min="500" max="100000" step="100" value="${Math.round((stream.transcode_video_bitrate||6000000)/1000)}" /></div>
           </div>
+          <div class="edit-field" id="streamIntelPresetRow">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('Intel preset','Intel preset','Intel preset')}>Intel preset</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Авто выбирает Balanced или Quality; вручную можно переопределить.','Auto selects Balanced or Quality; manual override available.','Auto bira Balanced ili Quality; moguće ručno odabrati.') }>${subtitleUiTriText('Авто выбирает Balanced или Quality; вручную можно переопределить.','Auto selects Balanced or Quality; manual override available.','Auto bira Balanced ili Quality; moguće ručno odabrati.')}</small>
+            <select id="streamIntelPresetMode">
+              <option value="auto" ${(!stream.intel_preset_mode||stream.intel_preset_mode==='auto')?'selected':''}>Auto</option>
+              <option value="balanced" ${stream.intel_preset_mode==='balanced'?'selected':''}>Balanced</option>
+              <option value="quality" ${stream.intel_preset_mode==='quality'?'selected':''}>Quality</option>
+            </select>
+          </div>
           <div class="stream-video-grid transcode-quick-grid">
             <div class="edit-field"><div class="edit-field-title">FPS</div><small class="field-help" ${uiBiAttrs('Частота кадров выходного потока.','Output stream frame rate.')}>${uiBiText('Частота кадров выходного потока.','Output stream frame rate.')}</small><select id="streamTranscodeFps"><option value="25" ${Number(stream.transcode_fps||25)===25?'selected':''}>25</option><option value="50" ${Number(stream.transcode_fps)===50?'selected':''}>50</option><option value="29.97" ${Math.abs(Number(stream.transcode_fps)-29.97)<0.01?'selected':''}>29.97</option><option value="30" ${Number(stream.transcode_fps)===30?'selected':''}>30</option><option value="59.94" ${Math.abs(Number(stream.transcode_fps)-59.94)<0.01?'selected':''}>59.94</option><option value="60" ${Number(stream.transcode_fps)===60?'selected':''}>60</option></select></div>
             <div class="edit-toggle"><div class="edit-field-title">Deinterlace</div><small class="field-help" ${uiBiAttrs('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}>${uiBiText('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}</small><label class="checkbox-inline"><input id="streamTranscodeDeinterlace" type="checkbox" ${stream.transcode_deinterlace!==false?'checked':''}/><span ${uiBiAttrs('Включено','Enabled')}>${uiBiText('Включено','Enabled')}</span></label></div>
@@ -7536,6 +7560,7 @@ const transcodeFieldClipboardSchema = 'DVBStreamer5/transcode-settings';
 const transcodeClipboardFields = Object.freeze([
   ['streamTranscodeVideoCodec','transcode_video_codec','select'],
   ['streamTranscodeVideoEncoder','transcode_video_encoder','select'],
+  ['streamIntelPresetMode','intel_preset_mode','select'],
   ['streamTranscodeVideoDecoder','transcode_video_decoder','select'],
   ['streamTranscodeResolution','transcode_resolution','select'],
   ['streamTranscodeBitrate','transcode_video_bitrate_kbps','number'],
@@ -7993,6 +8018,7 @@ function saveStream(id) {
     transcode_resolution: document.getElementById('streamTranscodeResolution').value,
     transcode_video_codec: document.getElementById('streamTranscodeVideoCodec').value,
     transcode_video_encoder: document.getElementById('streamTranscodeVideoEncoder').value,
+    intel_preset_mode: document.getElementById('streamIntelPresetMode')?.value || 'auto',
     transcode_video_decoder: document.getElementById('streamTranscodeVideoDecoder').value,
     transcode_fps: Number(document.getElementById('streamTranscodeFps')?.value || 25),
     transcode_deinterlace: document.getElementById('streamTranscodeDeinterlace')?.checked !== false,
@@ -8012,6 +8038,7 @@ function saveStream(id) {
     audio_pid: Number(document.getElementById('streamAudioPid').value),
     video_pid: Number(document.getElementById('streamVideoPid').value),
     input_service_id: Number(document.getElementById('streamInputServiceId').value),
+    http_ts_input_jitter_enabled: document.getElementById('streamHttpTsJitterEnabled')?.checked === true,
     service_id: Number(document.getElementById('streamServiceId').value),
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,
@@ -8035,8 +8062,8 @@ function saveStream(id) {
   const savePayload = {
     login: state.login,
     server_name: state.server_name,
-    telegram_token: state.telegram_token,
-    telegram_chat_id: state.telegram_chat_id,
+    // Telegram credentials belong to server settings, not stream editing.
+    // Omit them entirely; the API retains the already configured values.
     http_port: state.http_port,
     language,
     streams: state.streams
