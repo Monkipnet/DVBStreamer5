@@ -765,6 +765,19 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.gopFrames = autoTc.gopFrames;
         tc.bFrames = autoTc.bFrames;
         tc.refFrames = autoTc.refFrames;
+        // V302: opt-in Intel H.264 DPB reference-count A/B; default unchanged.
+        // Never alter NVENC, CPU, or non-H.264 encoding.
+        if (tc.videoCodec == "h264" &&
+            (tc.videoEncoder == "vaapi" || tc.videoEncoder == "qsv")) {
+            const char* refsAb = std::getenv("DVBSTREAMER5_INTEL_H264_REFS_AB");
+            if (refsAb && (std::strcmp(refsAb, "1") == 0 ||
+                           std::strcmp(refsAb, "2") == 0)) {
+                tc.refFrames = static_cast<std::uint32_t>(refsAb[0] - '0');
+                std::cerr << "NATIVE INTEL H264 REFS AB stream="
+                          << streamConfig.id << " refs=" << tc.refFrames
+                          << " profile=" << tc.profile << std::endl;
+            }
+        }
         tc.openGop = autoTc.openGop;
         tc.aqStrength = autoTc.aqStrength;
         if (tc.videoCodec != "copy") {
