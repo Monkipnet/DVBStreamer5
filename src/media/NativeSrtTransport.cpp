@@ -202,6 +202,48 @@ void NativeSrtInput::run() {
         first = false;
         setError({});
         if (onState_) onState_("connected" + (peer.empty() ? std::string() : " " + peer));
+        std::array<int, 8192> lastPayloadCc;
+        lastPayloadCc.fill(-1);
+        std::vector<std::uint8_t> tsPending;
+        std::uint64_t tsPackets = 0, tsTei = 0, tsSyncBytes = 0;
+        std::uint64_t tsCcErrors = 0, tsCcDuplicates = 0, tsDiscontinuities = 0;
+        int lastErrorPid = -1;
+        auto inspectTs = [&](const std::uint8_t* data, std::size_t length) {
+            tsPending.insert(tsPending.end(), data, data + length);
+            std::size_t pos = 0;
+            while (tsPending.size() - pos >= 188) {
+                if (tsPending[pos] != 0x47 ||
+                    (tsPending.size() - pos >= 376 && tsPending[pos + 188] != 0x47)) {
+                    ++pos;
+                    ++tsSyncBytes;
+                    continue;
+                }
+                const auto* t = tsPending.data() + pos;
+                const int pid = ((t[1] & 0x1f) << 8) | t[2];
+                const int afc = (t[3] >> 4) & 3;
+                const int cc = t[3] & 15;
+                if (t[1] & 0x80) ++tsTei;
+                bool discontinuity = false;
+                if ((afc == 2 || afc == 3) && t[4] > 0 && t[4] <= 183)
+                    discontinuity = (t[5] & 0x80) != 0;
+                if (discontinuity) {
+                    ++tsDiscontinuities;
+                    lastPayloadCc[pid] = -1;
+                }
+                if (afc == 1 || afc == 3) {
+                    if (pid != 0x1fff && lastPayloadCc[pid] >= 0) {
+                        const int expected = (lastPayloadCc[pid] + 1) & 15;
+                        if (cc == lastPayloadCc[pid]) ++tsCcDuplicates;
+                        else if (cc != expected) { ++tsCcErrors; lastErrorPid = pid; }
+                    }
+                    lastPayloadCc[pid] = cc;
+                }
+                ++tsPackets;
+                pos += 188;
+            }
+            if (pos) tsPending.erase(tsPending.begin(), tsPending.begin() + static_cast<std::ptrdiff_t>(pos));
+            if (tsPending.size() > 188 * 32) { tsSyncBytes += tsPending.size(); tsPending.clear(); }
+        };
         auto lastData = Clock::now();
         auto lastReport = lastData;
         std::uint64_t rxBytes = 0;
@@ -222,6 +264,7 @@ void NativeSrtInput::run() {
                 ++rxCalls;
                 rxBytes += static_cast<std::uint64_t>(n);
                 receivedBytes_ += static_cast<std::uint64_t>(n);
+                if (diag) inspectTs(b.data(), static_cast<std::size_t>(n));
                 const bool accepted = onData_(b.data(), static_cast<std::size_t>(n));
                 const auto afterCallback = Clock::now();
                 const auto callbackMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -237,6 +280,16 @@ void NativeSrtInput::run() {
                               << " callback_max_ms=" << maxCallbackMs
                               << " callback_over_100=" << callbackOver100
                               << " latency_ms=" << config_.latencyMs << std::endl;
+                    std::cerr << "NATIVE SRT TS INTEGRITY stream_id=" << config_.diagnosticTileId
+                              << " packets=" << tsPackets
+                              << " sync_skipped_bytes=" << tsSyncBytes
+                              << " tei=" << tsTei
+                              << " cc_errors=" << tsCcErrors
+                              << " cc_duplicates=" << tsCcDuplicates
+                              << " discontinuity_flags=" << tsDiscontinuities
+                              << " last_error_pid=" << lastErrorPid << std::endl;
+                    tsPackets = tsTei = tsSyncBytes = tsCcErrors = tsCcDuplicates = tsDiscontinuities = 0;
+                    lastErrorPid = -1;
                     rxBytes = rxCalls = rxGapOver200 = callbackOver100 = 0;
                     maxRxGapMs = maxCallbackMs = 0;
                     lastReport = afterCallback;
