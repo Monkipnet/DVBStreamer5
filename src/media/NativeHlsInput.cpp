@@ -422,7 +422,19 @@ void NativeHlsInput::run() {
     }
     if (stopping_.load()) { running_.store(false); return; }
 
+    const char* liveEdgeAb = std::getenv("DVBSTREAMER5_HLS_LIVE_EDGE_AB_STREAM_ID");
+    const bool liveEdgeAbEnabled = liveEdgeAb && config_.id == liveEdgeAb;
     std::uint64_t nextSequence = startupSequence(playlist);
+    // Keep an additional complete segment behind live edge when the live
+    // playlist contains one; never invent, skip, or reorder media sequences.
+    if (liveEdgeAbEnabled && !playlist.endList && playlist.segments.size() >= 3) {
+        const auto index = findSequence(playlist, nextSequence);
+        if (index && *index > 0) nextSequence = playlist.segments[*index - 1].sequence;
+        std::cerr << "NATIVE HLS LIVE EDGE AB stream_id=" << config_.id
+                  << " startup_seq=" << nextSequence
+                  << " last_seq=" << playlist.segments.back().sequence
+                  << " poll_low_ms=400" << std::endl;
+    }
     double pushedSeconds = 0.0;
     std::uint64_t rateBytes = 0;
     double rateSeconds = 0.0;
@@ -677,7 +689,9 @@ void NativeHlsInput::run() {
                         std::lock_guard<std::mutex> lock(bufferMutex);
                         bufferedNow = bufferedSeconds;
                     }
-                    const auto interval = prefetchAbEnabled && bufferedNow < 0.001
+                    const auto interval =
+                        (liveEdgeAbEnabled && bufferedNow <= producerPlaylist.targetDuration + 0.001) ||
+                        (prefetchAbEnabled && bufferedNow < 0.001)
                         ? std::chrono::milliseconds(400)
                         : pollInterval(producerPlaylist);
                     const auto sleepUntil = Clock::now() + interval;
