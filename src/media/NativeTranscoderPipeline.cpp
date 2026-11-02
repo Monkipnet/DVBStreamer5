@@ -1358,8 +1358,18 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                                 ? kMaxAvLead90k : kMaxAvHardLead90k;
                         const bool withinHardLead =
                             !mpegts::ptsAheadOf90k(clock, otherClock, hardLead90k);
-                        const bool holdExpired =
-                            waited >= kMuxSingleStreamMaxHold;
+                        // V306 A/B: shorten only the single-video-stream hold.
+                        // Never override A/V hard-lead protection or drop frames.
+                        const char* videoHoldAb = std::getenv("DVBSTREAMER5_INTEL_MUX_VIDEO_HOLD_AB");
+                        const bool shortVideoHold =
+                            haveVideo && !ffmpegAvcMuxPolicy_.load(std::memory_order_acquire) &&
+                            config_.videoEncoder == "vaapi" &&
+                            videoHoldAb && videoHoldAb[0] == '1' && videoHoldAb[1] == '\0';
+                        const auto maxHold = shortVideoHold
+                            ? std::chrono::milliseconds(200)
+                            : std::chrono::duration_cast<std::chrono::milliseconds>(
+                                kMuxSingleStreamMaxHold);
+                        const bool holdExpired = waited >= maxHold;
                         // Never let bounded-hold recovery accumulate seconds
                         // (or minutes) of A/V skew. The 350 ms escape hatch may
                         // advance the healthy stream only within the selected
@@ -1388,7 +1398,14 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                         } else {
                             const auto deadline = otherClock == 0
                                 ? only.queuedAt + kMuxStartupPeerWait
-                                : only.queuedAt + kMuxSingleStreamMaxHold;
+                                : only.queuedAt + (
+                                    haveVideo &&
+                                    config_.videoEncoder == "vaapi" &&
+                                    std::getenv("DVBSTREAMER5_INTEL_MUX_VIDEO_HOLD_AB") &&
+                                    std::string(std::getenv("DVBSTREAMER5_INTEL_MUX_VIDEO_HOLD_AB")) == "1"
+                                        ? std::chrono::milliseconds(200)
+                                        : std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            kMuxSingleStreamMaxHold));
                             muxQueueCv_.wait_until(lock, deadline);
                         }
                         if (muxStop_.load(std::memory_order_acquire) &&
