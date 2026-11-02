@@ -458,6 +458,11 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     const auto automatic = dvbstreamer5::app::automaticTranscodeSettings(
         config.transcodeFps, config.transcodeVideoBitrate,
         config.transcodeResolution, config.transcodeVideoEncoder);
+    config.intelPresetMode = toLower(root.get("intel_preset_mode", "auto").asString());
+    if (config.intelPresetMode != "auto" &&
+        config.intelPresetMode != "balanced" &&
+        config.intelPresetMode != "quality")
+        config.intelPresetMode = "auto";
     config.transcodePreset = automatic.preset;
     config.transcodeProfile = automatic.profile;
     config.transcodeLevel = automatic.level;
@@ -605,6 +610,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_video_bitrate"] = Json::UInt64(transcodeVideoBitrate);
     root["transcode_fps"] = transcodeFps;
     root["transcode_deinterlace"] = transcodeDeinterlace;
+    root["intel_preset_mode"] = intelPresetMode;
     root["transcode_preset"] = transcodePreset;
     root["transcode_profile"] = transcodeProfile;
     root["transcode_level"] = transcodeLevel;
