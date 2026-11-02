@@ -2265,6 +2265,35 @@ bool NativeTranscoderPipeline::emitVideo(const codec::EncodedVideoFrame& frame, 
                   << " nal_random_access=1"
                   << std::endl;
     }
+    // V301: capture the exact H.264 access units accepted for TS muxing.
+    // One file per pipeline instance, 64 MiB maximum. Disabled by default.
+    if (outputCodec == mpegts::ElementaryCodec::H264) {
+        std::lock_guard<std::mutex> diagLock(h264PremuxDiagnosticMutex_);
+        if (!h264PremuxDiagnosticInitialized_) {
+            h264PremuxDiagnosticInitialized_ = true;
+            const char* enabled = std::getenv("DVBSTREAMER5_DIAG_H264_PREMUX");
+            if (enabled && std::string(enabled) == "1") {
+                const std::string path =
+                    "/tmp/dvbstreamer5-h264-premux-" +
+                    std::to_string(reinterpret_cast<std::uintptr_t>(this)) + ".h264";
+                h264PremuxDiagnosticFile_.open(path, std::ios::binary | std::ios::trunc);
+                if (h264PremuxDiagnosticFile_) {
+                    std::cerr << "NATIVE H264 PREMUX DIAG path=" << path << std::endl;
+                } else {
+                    std::cerr << "NATIVE H264 PREMUX DIAG open failed path=" << path << std::endl;
+                }
+            }
+        }
+        constexpr std::uint64_t kDiagnosticLimit = 64ULL * 1024ULL * 1024ULL;
+        if (h264PremuxDiagnosticFile_ && !frame.data.empty() &&
+            h264PremuxDiagnosticBytes_ + frame.data.size() <= kDiagnosticLimit) {
+            h264PremuxDiagnosticFile_.write(
+                reinterpret_cast<const char*>(frame.data.data()),
+                static_cast<std::streamsize>(frame.data.size()));
+            h264PremuxDiagnosticFile_.flush();
+            h264PremuxDiagnosticBytes_ += frame.data.size();
+        }
+    }
     MuxQueuedSample sample;
     sample.kind = mpegts::ElementaryKind::Video;
     sample.data = frame.data;
