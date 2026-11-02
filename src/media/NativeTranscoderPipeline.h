@@ -543,6 +543,12 @@ private:
     // V301 opt-in diagnostic: bytes of accepted encoded H.264 before TS mux.
     std::mutex h264PremuxDiagnosticMutex_;
     std::ofstream h264PremuxDiagnosticFile_;
+    // V304: independent mux-boundary digest and muxed TS capture.
+    std::ofstream muxIntegrityDigestFile_;
+    std::ofstream muxIntegrityTsFile_;
+    bool muxIntegrityInitialized_ = false;
+    std::uint64_t muxIntegritySampleIndex_ = 0;
+    std::uint64_t muxIntegrityTsBytes_ = 0;
     bool h264PremuxDiagnosticInitialized_ = false;
     std::uint64_t h264PremuxDiagnosticBytes_ = 0;
     std::unique_ptr<codec::VideoEncoder> videoEncoder_;
