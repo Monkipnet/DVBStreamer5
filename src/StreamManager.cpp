@@ -1071,6 +1071,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
+    // Opt-in A/B via service environment; never change passthrough or HTTP CBR.
+    relay.wisiPreserveSourcePcr = streamConfig.transcodeEnabled &&
+        streamConfig.cbr && std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB") &&
+        std::string(std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB")) == "1";
     relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
 
     if (streamConfig.epgEnabled && streamConfig.epgEitOutput) {
