@@ -568,13 +568,13 @@ void NativeHlsInput::run() {
         // V307 opt-in HLS buffer A/B. Keep all other streams unchanged.
         const char* prefetchAb = std::getenv("DVBSTREAMER5_HLS_PREFETCH_AB_STREAM_ID");
         const bool prefetchAbEnabled = prefetchAb &&
-            config_.streamId == prefetchAb;
+            config_.id == prefetchAb;
         const double maxAheadSeconds = prefetchAbEnabled ? 24.0 :
             std::chrono::duration<double>(kMaxAhead).count();
         const double targetAheadSeconds = prefetchAbEnabled ? 20.0 :
             std::chrono::duration<double>(kTargetAhead).count();
         if (prefetchAbEnabled) {
-            std::cerr << "NATIVE HLS PREFETCH AB stream_id=" << config_.streamId
+            std::cerr << "NATIVE HLS PREFETCH AB stream_id=" << config_.id
                       << " max_ahead_ms=24000 target_ahead_ms=20000"
                       << " empty_poll_ms=400" << std::endl;
         }
