@@ -99,6 +99,7 @@ struct StreamConfig {
     bool transcodeDeinterlace = true;
     // Common video encoder controls. Backends apply the supported subset and
     // log any safety clamp/unsupported option instead of silently failing.
+    std::string intelPresetMode = "auto"; // auto | balanced | quality
     std::string transcodePreset = "balanced"; // fastest | fast | balanced | quality | best
     std::string transcodeProfile = "auto"; // auto | main | high
     std::string transcodeLevel = "auto"; // auto | 3.1 | 4.0 | 4.1 | 5.0 | 5.1
