@@ -1011,6 +1011,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // Apply VPS/VDS tuning last so the normal per-output latency cannot
         // overwrite the optimization profile after URI parsing.
         srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
+        srtConfig.diagnosticTileId = streamConfig.id;
         std::cerr << "SRT OUT route stream=" << streamConfig.id
                   << " mode=" << srtConfig.mode
                   << " local_bind=" << (srtConfig.bindAddress.empty() ? std::string("auto") : srtConfig.bindAddress)
