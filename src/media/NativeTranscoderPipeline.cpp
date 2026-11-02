@@ -1242,6 +1242,56 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
             muxIntegrityTsFile_.flush();
         }
     }
+    // V305: low-overhead real-time mux cadence measurements, opt-in.
+    // Uses atomics-free thread-local counters: writeMuxSample runs on mux worker.
+    if (queued.kind == mpegts::ElementaryKind::Video) {
+        static thread_local const NativeTranscoderPipeline* diagOwner = nullptr;
+        static thread_local std::chrono::steady_clock::time_point lastVideoMuxAt{};
+        static thread_local std::uint64_t videoFrames = 0;
+        static thread_local std::uint64_t maxGapMs = 0;
+        static thread_local std::uint64_t over80Ms = 0;
+        static thread_local std::uint64_t over200Ms = 0;
+        static thread_local std::uint64_t maxMuxAgeMs = 0;
+        static thread_local std::chrono::steady_clock::time_point windowStart{};
+        const char* diag = std::getenv("DVBSTREAMER5_DIAG_LIVE_CADENCE");
+        if (diag && diag[0] == '1' && diag[1] == '\0') {
+            const auto now = std::chrono::steady_clock::now();
+            if (diagOwner != this) {
+                diagOwner = this;
+                lastVideoMuxAt = {};
+                windowStart = now;
+                videoFrames = maxGapMs = over80Ms = over200Ms = maxMuxAgeMs = 0;
+            }
+            if (lastVideoMuxAt.time_since_epoch().count() != 0) {
+                const auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - lastVideoMuxAt).count();
+                if (gap > 0) maxGapMs = std::max(maxGapMs, static_cast<std::uint64_t>(gap));
+                if (gap > 80) ++over80Ms;
+                if (gap > 200) ++over200Ms;
+            }
+            lastVideoMuxAt = now;
+            if (queued.queuedAt.time_since_epoch().count() != 0) {
+                const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - queued.queuedAt).count();
+                if (age > 0) maxMuxAgeMs = std::max(maxMuxAgeMs, static_cast<std::uint64_t>(age));
+            }
+            ++videoFrames;
+            if (now - windowStart >= std::chrono::seconds(5)) {
+                const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - windowStart).count();
+                std::cerr << "NATIVE LIVE CADENCE stream_id=" << config_.streamId
+                    << " frames=" << videoFrames
+                    << " elapsed_ms=" << elapsedMs
+                    << " video_mux_gap_max_ms=" << maxGapMs
+                    << " video_mux_gap_over80=" << over80Ms
+                    << " video_mux_gap_over200=" << over200Ms
+                    << " video_mux_queue_age_max_ms=" << maxMuxAgeMs
+                    << std::endl;
+                videoFrames = maxGapMs = over80Ms = over200Ms = maxMuxAgeMs = 0;
+                windowStart = now;
+            }
+        }
+    }
     appendPackets(packets);
     return true;
 }
