@@ -185,7 +185,7 @@ void NativeSrtInput::run() {
     const char* diagId = std::getenv("DVBSTREAMER5_SRT_RX_DIAG_STREAM_ID");
     // The selected tile ID is supplied via URI-independent environment marker
     // on this instance by StreamManager, so diagnostics remain per-stream.
-    const bool diag = diagId && !config_.streamId.empty() && config_.streamId == diagId;
+    const bool diag = diagId && !config_.diagnosticTileId.empty() && config_.diagnosticTileId == diagId;
     bool first = true;
     while (!stopRequested_) {
         Socket s;
@@ -229,7 +229,7 @@ void NativeSrtInput::run() {
                 if (callbackMs > maxCallbackMs) maxCallbackMs = callbackMs;
                 if (callbackMs > 100) ++callbackOver100;
                 if (diag && afterCallback - lastReport >= std::chrono::seconds(5)) {
-                    std::cerr << "NATIVE SRT RX DIAG stream_id=" << config_.streamId
+                    std::cerr << "NATIVE SRT RX DIAG stream_id=" << config_.diagnosticTileId
                               << " rx_bytes=" << rxBytes
                               << " rx_calls=" << rxCalls
                               << " rx_gap_max_ms=" << maxRxGapMs
@@ -246,7 +246,7 @@ void NativeSrtInput::run() {
             }
             if (api().state(s.s) == SRTS_CONNECTED) continue;
             if (diag) {
-                std::cerr << "NATIVE SRT RX DISCONNECT stream_id=" << config_.streamId
+                std::cerr << "NATIVE SRT RX DISCONNECT stream_id=" << config_.diagnosticTileId
                           << " no_data_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
                               receivedAt - lastData).count()
                           << " error=" << api().lastError() << std::endl;
