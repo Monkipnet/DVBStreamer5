@@ -625,7 +625,31 @@ void NativeHlsInput::run() {
 
                     Playlist refreshed;
                     std::string reloadError;
+                    const auto reloadStart = Clock::now();
                     if (loadPlaylistAt(producerActive, refreshed, reloadError)) {
+                        const auto reloadMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            Clock::now() - reloadStart).count();
+                        const auto firstSeq = refreshed.segments.front().sequence;
+                        const auto lastSeq = refreshed.segments.back().sequence;
+                        const char* diagStream = std::getenv("DVBSTREAMER5_HLS_PLAYLIST_DIAG_STREAM_ID");
+                        if (diagStream && config_.id == diagStream) {
+                            double readySeconds = 0.0;
+                            std::size_t readySegments = 0;
+                            {
+                                std::lock_guard<std::mutex> lock(bufferMutex);
+                                readySeconds = bufferedSeconds;
+                                readySegments = buffer.size();
+                            }
+                            std::cerr << "NATIVE HLS PLAYLIST DIAG stream_id=" << config_.id
+                                      << " requested_seq=" << producerSequence
+                                      << " first_seq=" << firstSeq
+                                      << " last_seq=" << lastSeq
+                                      << " available=" << (producerSequence >= firstSeq && producerSequence <= lastSeq ? 1 : 0)
+                                      << " reload_ms=" << reloadMs
+                                      << " queued_segments=" << readySegments
+                                      << " queued_ms=" << static_cast<long long>(readySeconds * 1000.0)
+                                      << std::endl;
+                        }
                         producerPlaylist = std::move(refreshed);
                         if (producerSequence < producerPlaylist.segments.front().sequence) {
                             producerSequence = startupSequence(producerPlaylist);
@@ -634,6 +658,14 @@ void NativeHlsInput::run() {
                                       << " next_seq=" << producerSequence << std::endl;
                         }
                     } else if (!stopping_.load() && !prefetchStop.load()) {
+                        const char* diagStream = std::getenv("DVBSTREAMER5_HLS_PLAYLIST_DIAG_STREAM_ID");
+                        if (diagStream && config_.id == diagStream) {
+                            std::cerr << "NATIVE HLS PLAYLIST DIAG stream_id=" << config_.id
+                                      << " requested_seq=" << producerSequence
+                                      << " reload_failed=1 reload_ms="
+                                      << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          Clock::now() - reloadStart).count() << std::endl;
+                        }
                         std::cerr << "NATIVE HLS PLAYLIST FETCH ERROR"
                                   << " error=" << reloadError << std::endl;
                     }
@@ -746,6 +778,17 @@ void NativeHlsInput::run() {
 
             const auto waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 Clock::now() - waitStart).count();
+            const char* hlsDiagStream = std::getenv("DVBSTREAMER5_HLS_PLAYLIST_DIAG_STREAM_ID");
+            if (hlsDiagStream && config_.id == hlsDiagStream && waitedMs > 50) {
+                std::cerr << "NATIVE HLS CONSUMER WAIT stream_id=" << config_.id
+                          << " seq=" << item.segment.sequence
+                          << " wait_ms=" << waitedMs
+                          << " remaining_buffer_ms="
+                          << static_cast<long long>(remainingBufferedSeconds * 1000.0)
+                          << " segment_fetch_ms="
+                          << static_cast<long long>(item.fetchSeconds * 1000.0)
+                          << std::endl;
+            }
             if (tsPacingStarted && waitedMs > 250) {
                 item.segment.discontinuity = true;
                 std::cerr << "NATIVE HLS BUFFER UNDERRUN"
