@@ -827,7 +827,10 @@ void NativeUdpRelay::run() {
                     std::make_unique<dvbstreamer5::media::network::WisiCbrOutputWorker>(
                         output.socket,
                         index,
-                        config_.targetBitrate,
+                        config_.wisiPreserveSourcePcr &&
+                            config_.targetBitrate % 1000ULL == 0ULL
+                            ? config_.targetBitrate + 777ULL
+                            : config_.targetBitrate,
                         &outputBytes_,
                         &running_,
                         std::move(observer),
