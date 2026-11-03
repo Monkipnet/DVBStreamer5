@@ -711,28 +711,126 @@ public:
     bool valid() const noexcept { return encoder_ != nullptr; }
     void setOptions(const VideoEncoderOptions& options) override { options_=options; }
     bool configure(int w,int h,double fps,std::uint64_t bitrate,std::string&error) override {
-        error.clear(); if(!encoder_){error="OpenH264 encoder unavailable";return false;} close(); haveTimestampBase_=false; timestampBase90k_=0;
-        SEncParamBase p{};p.iUsageType=CAMERA_VIDEO_REAL_TIME;p.iPicWidth=w;p.iPicHeight=h;p.iTargetBitrate=static_cast<int>(std::min<std::uint64_t>(bitrate,INT_MAX));p.iRCMode=RC_BITRATE_MODE;p.fMaxFrameRate=static_cast<float>(fps>0?fps:25.0);
-        if(encoder_->Initialize(&p)!=cmResultSuccess){error="OpenH264 Initialize failed";return false;} int fmt=videoFormatI420;encoder_->SetOption(ENCODER_OPTION_DATAFORMAT,&fmt);w_=w;h_=h;fps_=fps>0?fps:25.0;gopFrames_=std::max<std::uint64_t>(1,static_cast<std::uint64_t>(options_.gopFrames>0?options_.gopFrames:std::llround(fps_*2.0)));frameIndex_=0;configured_=true;
+        error.clear();
+        if (!encoder_) { error="OpenH264 encoder unavailable"; return false; }
+        close();
+        haveTimestampBase_ = false;
+        timestampBase90k_ = 0;
+        fps_ = fps > 0 ? fps : 25.0;
+        gopFrames_ = std::max<std::uint64_t>(1,
+            static_cast<std::uint64_t>(options_.gopFrames > 0 ?
+                options_.gopFrames : std::llround(fps_ * 2.0)));
+        const int targetBitrate = static_cast<int>(
+            std::min<std::uint64_t>(bitrate, INT_MAX));
+
+        // V329: OpenH264's basic Initialize() hides H.264 entropy-coding and
+        // rate-control tuning. Use the upstream 2.6.0 extended API for
+        // efficient CPU broadcasting at constrained SD/HD video bitrates.
+        // Opt out process-wide with DVBSTREAMER5_OPENH264_QUALITY=0.
+        // No other encoder/decoder, MPEG-TS, PTS, or service state is touched.
+        const char* qualityEnv = std::getenv("DVBSTREAMER5_OPENH264_QUALITY");
+        const bool optOut = qualityEnv && std::strcmp(qualityEnv, "0") == 0;
+        bool extended = false;
+        bool cabac = false;
+        bool highComplexity = false;
+        int extStatus = cmResultSuccess;
+        if (!optOut) {
+            SEncParamExt param{};
+            extStatus = encoder_->GetDefaultParams(&param);
+            if (extStatus == cmResultSuccess) {
+                const bool sd = static_cast<std::uint64_t>(w) *
+                        static_cast<std::uint64_t>(h) <= 1280ULL * 720ULL &&
+                    fps_ <= 30.0;
+                highComplexity = sd || options_.preset == "quality" ||
+                    options_.preset == "best";
+                param.iUsageType = CAMERA_VIDEO_REAL_TIME;
+                param.iPicWidth = w;
+                param.iPicHeight = h;
+                param.iTargetBitrate = targetBitrate;
+                param.iMaxBitrate = targetBitrate;
+                param.fMaxFrameRate = static_cast<float>(fps_);
+                param.iRCMode = RC_BITRATE_MODE;
+                param.iTemporalLayerNum = 1;
+                param.iSpatialLayerNum = 1;
+                param.iComplexityMode = highComplexity ?
+                    HIGH_COMPLEXITY : MEDIUM_COMPLEXITY;
+                // CABAC is supported by pinned OpenH264 2.6.0 with Main/High.
+                // It improves bits-per-pixel without increasing transport CBR.
+                param.iEntropyCodingModeFlag = 1;
+                param.sSpatialLayers[0].uiProfileIdc =
+                    options_.profile == "main" ? PRO_MAIN : PRO_HIGH;
+                param.sSpatialLayers[0].iVideoWidth = w;
+                param.sSpatialLayers[0].iVideoHeight = h;
+                param.sSpatialLayers[0].fFrameRate = static_cast<float>(fps_);
+                param.sSpatialLayers[0].iSpatialBitrate = targetBitrate;
+                param.sSpatialLayers[0].iMaxSpatialBitrate = targetBitrate;
+                param.bEnableAdaptiveQuant = true;
+                param.bEnableSceneChangeDetect = true;
+                param.bEnableFrameSkip = false;
+                param.bFixRCOverShoot = true;
+                param.iLoopFilterDisableIdc = 0;
+                param.uiIntraPeriod = static_cast<unsigned int>(
+                    std::min<std::uint64_t>(gopFrames_,
+                        static_cast<std::uint64_t>(std::numeric_limits<unsigned int>::max())));
+                extStatus = encoder_->InitializeExt(&param);
+                extended = extStatus == cmResultSuccess;
+                cabac = extended;
+            }
+            if (!extended) {
+                // Preserve live service availability on an OpenH264 build
+                // rejecting extended parameters. The original base encoder
+                // remains the fallback; the selected backend stays CPU.
+                std::cerr << "NATIVE CPU ENCODER quality-init-fallback"
+                          << " backend=openh264 status=" << extStatus
+                          << " action=legacy-initialize" << std::endl;
+                (void)encoder_->Uninitialize();
+            }
+        }
+        if (!extended) {
+            SEncParamBase param{};
+            param.iUsageType = CAMERA_VIDEO_REAL_TIME;
+            param.iPicWidth = w;
+            param.iPicHeight = h;
+            param.iTargetBitrate = targetBitrate;
+            param.iRCMode = RC_BITRATE_MODE;
+            param.fMaxFrameRate = static_cast<float>(fps_);
+            if (encoder_->Initialize(&param) != cmResultSuccess) {
+                error = "OpenH264 Initialize failed";
+                return false;
+            }
+        }
+        int fmt = videoFormatI420;
+        encoder_->SetOption(ENCODER_OPTION_DATAFORMAT, &fmt);
+        w_ = w;
+        h_ = h;
+        frameIndex_ = 0;
+        configured_ = true;
         std::cerr << "NATIVE CPU ENCODER backend=openh264 codec=h264"
                   << " size=" << w_ << "x" << h_
                   << " fps=" << fps_
-                  << " bitrate_kbps=" << (bitrate/1000ULL)
+                  << " bitrate_kbps=" << (bitrate / 1000ULL)
                   << " preset=" << options_.preset
                   << " profile=" << options_.profile
                   << " level=" << options_.level
                   << " gop_frames=" << gopFrames_
-                  << " bframes=0"
-                  << " refs=encoder-default"
+                  << " rc=bitrate"
+                  << " mode=" << (extended ? "extended-quality" : "legacy")
+                  << " entropy=" << (cabac ? "cabac" : "cavlc")
+                  << " complexity=" << (extended ?
+                      (highComplexity ? "high" : "medium") : "legacy")
+                  << " frame_skip=" << (extended ? "off" : "legacy")
+                  << " adaptive_quant=" << (extended ? "on" : "legacy")
+                  << " optout=" << (optOut ? 1 : 0)
+                  << " bframes=0 refs=encoder-default"
                   << std::endl;
-        if(options_.bFrames>0||options_.openGop||options_.refFrames>0||options_.profile!="auto"||options_.level!="auto"){
+        if (options_.bFrames > 0 || options_.openGop ||
+            options_.refFrames > 0 || options_.level != "auto") {
             std::cerr << "NATIVE VIDEO OPTIONS backend=openh264"
-                      << " safe_subset=gop,fps"
-                      << " ignored_profile=" << options_.profile
+                      << " safe_subset=gop,fps,profile"
                       << " ignored_level=" << options_.level
                       << " ignored_bframes=" << options_.bFrames
                       << " ignored_refs=" << options_.refFrames
-                      << " ignored_open_gop=" << (options_.openGop?1:0)
+                      << " ignored_open_gop=" << (options_.openGop ? 1 : 0)
                       << std::endl;
         }
         return true;
