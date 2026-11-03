@@ -421,6 +421,15 @@ find_package(ZLIB REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCURL REQUIRED IMPORTED_TARGET libcurl)
 find_package(LibXml2 REQUIRED)
+# DOCX ticker import tests: no file uploads or network needed.
+add_executable(dvbstreamer5_docx_import_test
+    tests/ticker/test_docx_import.cpp)
+target_include_directories(dvbstreamer5_docx_import_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(dvbstreamer5_docx_import_test PRIVATE
+    LibXml2::LibXml2 ZLIB::ZLIB)
+add_test(NAME ticker_docx_import COMMAND dvbstreamer5_docx_import_test)
+
 target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
 target_link_libraries(DVBStreamer5 ZLIB::ZLIB PkgConfig::LIBCURL LibXml2::LibXml2)
 message(STATUS "XMLTV external download: libcurl, libxml2 and gzip enabled")
