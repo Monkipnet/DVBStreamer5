@@ -84,6 +84,14 @@ const std::vector<std::pair<std::string,std::string>>& fonts() {
 }
 std::string preferredFont() {
     const auto& found=fonts();
+    for (const auto& f : found)
+        if (f.first.find("DejaVu Sans") != std::string::npos &&
+            f.second.find("DejaVuSans.ttf") != std::string::npos)
+            return f.second; // covers Cyrillic without a custom font selection
+    for (const auto& f : found)
+        if (f.first.find("Noto Sans") != std::string::npos &&
+            f.second.find("NotoSans-Regular") != std::string::npos)
+            return f.second;
     return found.empty() ? std::string() : found.front().second;
 }
 bool knownFont(const std::string& file) {
@@ -231,6 +239,14 @@ bool TickerOverlay::validate(const Json::Value& config,std::string& error) {
         if(id.empty()||id.size()>256||!ids.insert(id).second||text.size()>512) {
             error="Invalid ticker stream ID or text (512 bytes max)";return false;
         }
+        for (const char* key : {"font_file", "foreground", "background"})
+            if(item.isMember(key) && !item[key].isString()) {
+                error="Ticker font/colors must be strings";return false;
+            }
+        for (const char* key : {"font_size", "speed", "background_opacity", "offset_px"})
+            if(item.isMember(key) && !item[key].isInt()) {
+                error="Ticker numeric field is invalid";return false;
+            }
         const std::string font=item.get("font_file","").asString();
         if(!font.empty()&&!knownFont(font)) {error="Font is not installed";return false;}
         if(!hexColor(item.get("foreground","#ffffff").asString())||
