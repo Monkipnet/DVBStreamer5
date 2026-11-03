@@ -359,6 +359,12 @@ set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
 
+# V325: isolated 25-fps source-cadence detection regression.
+add_executable(dvbstreamer5_video_cadence_test tests/test_video_source_cadence.cpp)
+target_include_directories(dvbstreamer5_video_cadence_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME video_source_cadence COMMAND dvbstreamer5_video_cadence_test)
+
 # Live ticker regression checks (no streams, sockets or devices required).
 add_executable(dvbstreamer5_ticker_test tests/ticker/test_ticker.cpp)
 target_link_libraries(dvbstreamer5_ticker_test PRIVATE
