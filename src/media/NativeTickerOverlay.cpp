@@ -241,6 +241,9 @@ bool TickerOverlay::validate(const Json::Value& config,std::string& error) {
     }
     std::set<std::string> ids;
     for(const auto& item:config) {
+        if(item.isObject() && item.isMember("enabled") && !item["enabled"].isBool()) {
+            error="Ticker enabled must be boolean";return false;
+        }
         if(!item.isObject() || !item["stream_id"].isString() ||
            !item["text"].isString()) { error="Invalid ticker entry";return false; }
         const std::string id=item["stream_id"].asString();
@@ -274,6 +277,9 @@ bool TickerOverlay::validate(const Json::Value& config,std::string& error) {
             error="Expected at most 32 schedule intervals";return false;
         }
         for(const auto& window:windows) {
+            if(window.isObject() && window.isMember("enabled") && !window["enabled"].isBool()) {
+                error="Schedule enabled must be boolean";return false;
+            }
             if(!window.isObject() || !window["start"].isString() ||
                !window["end"].isString() || !window["days"].isArray()) {
                 error="Invalid schedule interval";return false;
@@ -295,6 +301,7 @@ void TickerOverlay::configure(const Json::Value& config) {
     std::vector<Entry> next;
     if(config.isArray())for(const auto& item:config){
         Entry e;
+        e.enabled=item.get("enabled",true).asBool();
         e.streamId=item["stream_id"].asString();
         e.text=item["text"].asString();
         e.fontFile=item.get("font_file","").asString();
@@ -306,6 +313,7 @@ void TickerOverlay::configure(const Json::Value& config) {
         e.offsetPx=item.get("offset_px",0).asInt();
         for(const auto& w:item["windows"]) {
             TimeWindow t;
+            t.enabled=w.get("enabled",true).asBool();
             t.start=w["start"].asString();
             t.end=w["end"].asString();
             for(const auto& d:w["days"])t.days.push_back(d.asInt());
@@ -319,9 +327,21 @@ void TickerOverlay::configure(const Json::Value& config) {
 }
 bool TickerOverlay::enabledFor(const std::string& id) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for(const auto& e:entries_)if(e.streamId==id&&!e.text.empty()&&!e.windows.empty())
+    for(const auto& e:entries_)if(e.streamId==id&&e.enabled&&!e.text.empty()&&!e.windows.empty())
         return true;
     return false;
+}
+bool TickerOverlay::renderRequestedFor(const std::string& id) const {
+    Entry entry;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it=std::find_if(entries_.begin(),entries_.end(),
+            [&](const Entry& e){return e.streamId==id;});
+        if(it==entries_.end()||!it->enabled||it->text.empty()||it->windows.empty())
+            return false;
+        entry=*it;
+    }
+    return available() && active(entry);
 }
 bool TickerOverlay::active(const Entry& e) const {
     const auto now=std::time(nullptr);
@@ -331,7 +351,7 @@ bool TickerOverlay::active(const Entry& e) const {
 #else
     localtime_r(&now,&local);
 #endif
-    for(const auto& w:e.windows)if(intervalActive(w,local))return true;
+    for(const auto& w:e.windows)if(w.enabled&&intervalActive(w,local))return true;
     return false;
 }
 bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame) {
@@ -341,7 +361,7 @@ bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it=std::find_if(entries_.begin(),entries_.end(),[&](const Entry& e){return e.streamId==streamId;});
-        if(it==entries_.end()||it->text.empty()||it->windows.empty())return false;
+        if(it==entries_.end()||!it->enabled||it->text.empty()||it->windows.empty())return false;
         entry=*it;
         started=animationStart_;
     }
