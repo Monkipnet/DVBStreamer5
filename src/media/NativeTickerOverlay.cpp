@@ -266,10 +266,10 @@ bool TickerOverlay::validate(const Json::Value& config,std::string& error) {
             error="Invalid color";return false;
         }
         const int fontSize=item.get("font_size",32).asInt();
-        const int speed=item.get("speed",100).asInt();
+        const int speed=item.get("speed",40).asInt();
         const int opacity=item.get("background_opacity",70).asInt();
         const int offset=item.get("offset_px",0).asInt();
-        if(fontSize<12||fontSize>96||speed<10||speed>600||opacity<0||opacity>100||offset<0||offset>2160) {
+        if(fontSize<12||fontSize>96||speed<5||speed>600||opacity<0||opacity>100||offset<0||offset>2160) {
             error="Ticker appearance is out of range";return false;
         }
         const auto& windows=item["windows"];
@@ -309,7 +309,7 @@ void TickerOverlay::configure(const Json::Value& config) {
         e.background=item.get("background","#000000").asString();
         e.backgroundOpacity=item.get("background_opacity",70).asInt();
         e.fontSize=item.get("font_size",32).asInt();
-        e.speed=item.get("speed",100).asInt();
+        e.speed=item.get("speed",40).asInt();
         e.offsetPx=item.get("offset_px",0).asInt();
         for(const auto& w:item["windows"]) {
             TimeWindow t;
@@ -323,7 +323,13 @@ void TickerOverlay::configure(const Json::Value& config) {
     }
     std::lock_guard<std::mutex> lock(mutex_);
     entries_=std::move(next);
-    animationStart_=std::chrono::steady_clock::now();
+    // Retain motion phase across edits; remove only obsolete channel clocks.
+    for (auto it=motion_.begin();it!=motion_.end();) {
+        const bool exists=std::any_of(entries_.begin(),entries_.end(),
+            [&](const Entry& e){return e.streamId==it->first;});
+        if(!exists)it=motion_.erase(it);
+        else ++it;
+    }
 }
 bool TickerOverlay::enabledFor(const std::string& id) const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -354,16 +360,15 @@ bool TickerOverlay::active(const Entry& e) const {
     for(const auto& w:e.windows)if(w.enabled&&intervalActive(w,local))return true;
     return false;
 }
-bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame) {
+bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame,
+                         double nominalFps) {
 #ifdef DVBSTREAMER5_HAVE_FREETYPE
     Entry entry;
-    std::chrono::steady_clock::time_point started;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it=std::find_if(entries_.begin(),entries_.end(),[&](const Entry& e){return e.streamId==streamId;});
         if(it==entries_.end()||!it->enabled||it->text.empty()||it->windows.empty())return false;
         entry=*it;
-        started=animationStart_;
     }
     if(!active(entry))return false;
     const int w=frame.width,h=frame.height;
@@ -375,24 +380,64 @@ bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame
     const int top=std::clamp(h-bandH-entry.offsetPx,0,std::max(0,h-bandH));
     const Yuv bg=yuvOf(entry.background),fg=yuvOf(entry.foreground);
     const int bgAlpha=entry.backgroundOpacity*255/100;
-    const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+    // Animate using video presentation timestamps, not encoder-worker time.
+    // Invalid/discontinuous PTS advances one nominal frame, avoiding leaps.
+    const double fps=std::isfinite(nominalFps) && nominalFps>=1.0 && nominalFps<=240.0
+        ? nominalFps : 25.0;
+    const double fallbackStep=1.0/fps;
     const double period=static_cast<double>(w+cache.w+80);
-    const int textX=w-static_cast<int>(std::fmod(seconds*entry.speed,period));
+    double travelled=0.0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& motion=motion_[streamId];
+        if(!motion.initialized || motion.text!=entry.text ||
+           motion.fontFile!=entry.fontFile || motion.fontSize!=entry.fontSize) {
+            motion.initialized=true;
+            motion.text=entry.text;
+            motion.fontFile=entry.fontFile;
+            motion.fontSize=entry.fontSize;
+            motion.distancePx=0.0;
+        } else {
+            double deltaSeconds=fallbackStep;
+            if(frame.hasPts && motion.lastHasPts) {
+                constexpr std::uint64_t kPtsMask=(1ULL<<33U)-1ULL;
+                const std::uint64_t delta=(frame.pts90k-motion.lastPts90k)&kPtsMask;
+                if(delta==0)deltaSeconds=0.0;
+                else if(delta<=22500U)deltaSeconds=static_cast<double>(delta)/90000.0;
+                // Discontinuities >250ms do not have drawable intermediate
+                // frames, so never skip a large visible portion of the text.
+            }
+            motion.distancePx=std::fmod(motion.distancePx+
+                static_cast<double>(entry.speed)*deltaSeconds,period);
+        }
+        motion.lastHasPts=frame.hasPts;
+        motion.lastPts90k=frame.pts90k;
+        travelled=motion.distancePx;
+    }
+    const double textX=static_cast<double>(w)-travelled;
     for(int y=0;y<bandH && top+y<h;++y)
         for(int x=0;x<w;++x)
             if(bgAlpha)blend(frame,x,top+y,bg,bgAlpha);
-    const int first=std::max(0,-textX);
-    const int last=std::min(cache.w,w-textX);
-    for(int y=0;y<cache.h && top+y<h;++y) {
-        for(int tx=first;tx<last;++tx){
-            const int x=textX+tx;
-            const int alpha=cache.alpha[static_cast<std::size_t>(y*cache.w+tx)];
+    // Linear coverage interpolation preserves fractional pixel positions:
+    // no whole-pixel snapping, including at slow (5-25 px/s) speed.
+    const int first=std::max(0,static_cast<int>(std::floor(textX)));
+    const int last=std::min(w,static_cast<int>(std::ceil(textX+cache.w)));
+    if(first<last)for(int y=0;y<cache.h && top+y<h;++y) {
+        const auto offset=static_cast<std::size_t>(y)*cache.w;
+        for(int x=first;x<last;++x){
+            const double at=static_cast<double>(x)-textX;
+            const int x0=static_cast<int>(std::floor(at));
+            const double frac=at-x0;
+            const int a0=(x0>=0&&x0<cache.w) ? cache.alpha[offset+x0] : 0;
+            const int a1=(x0+1>=0&&x0+1<cache.w) ? cache.alpha[offset+x0+1] : 0;
+            const int alpha=std::clamp(static_cast<int>(
+                std::lround((1.0-frac)*a0+frac*a1)),0,255);
             if(alpha)blend(frame,x,top+y,fg,alpha);
         }
     }
     return true;
 #else
-    (void)streamId;(void)frame;return false;
+    (void)streamId;(void)frame;(void)nominalFps;return false;
 #endif
 }
 } // namespace dvbstreamer5::media::ticker
