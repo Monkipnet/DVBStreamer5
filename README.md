@@ -1,3 +1,12 @@
+## V10.8.323 — smooth PTS-driven scrolling ticker and live speed control
+
+- **Smoother broadcast ticker:** movement is now driven by each output stream's decoded **90 kHz video presentation timestamps** rather than wall-clock delays in the encoder queue. A frame's ticker position is independent of bursts in the encoder thread. Missing/invalid PTS uses one nominal frame step; large timestamp discontinuities are clamped to avoid jumping across a large section of the message.
+- **Fractional-pixel movement:** text coverage is linearly interpolated across neighboring I420 pixels before the existing video encoder. Slow movement no longer snaps to integer horizontal positions. Other channels, untouched video encoders and transport PTS/PCR are not modified.
+- **Speed controls:** Menu → Scrolling ticker now has an interactive slider for **5–300 px/s** and a fine numeric field for **5–600 px/s**. The default is **40 px/s** for new tickers; existing configured speeds remain unchanged. The miniature preview animates at the selected speed, and the panel suggests 15–50 px/s for better appearance.
+- **Live changes:** saving speed or scheduling updates the overlay manager without restarting the tile. Unchanged channels preserve their independent animation phases; changing the speed of an active ticker does not teleport it back to the right edge. The new `NATIVE TICKER MOTION` log includes clock, speed and nominal FPS.
+- **Regression:** `ctest --test-dir build -R ticker --output-on-failure` now checks repeated-PTS pixel stability, minimum speed and preservation of text position on a live speed edit.
+- **Important:** smooth interpolation cannot create missing video frames. If `NATIVE VIDEO ENCODE PERF` still reports 16–18 fps on a supposed 25 fps channel, motion remains visually limited by that frame cadence. Diagnose the incoming/raw video frame rate separately before changing the already-working mux or GPU encoder.
+
 ## V10.8.322 — independent ticker persistence, interval pause and live on/off
 
 - **Dedicated config file:** `/etc/dvbstreamer5/ticker-overlays.json` stores ticker entries separately from `dvbstreamer5-config.json`. The panel uses an atomic write/fsync/rename with permissions 0600; saving the ticker no longer rewrites the main stream configuration or rebuilds the UDP input firewall. Existing inline `ticker_overlays` entries from V320/V321 are migrated on first start when no dedicated file exists. A malformed independent file disables the ticker only, preserving the streaming service and source file for inspection.
