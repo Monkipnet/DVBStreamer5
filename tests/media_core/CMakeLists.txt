@@ -36,3 +36,9 @@ endif()
 
 enable_testing()
 add_test(NAME media_core_tests COMMAND media_core_tests)
+
+# V330: deterministic NVENC A/B policy test, independent of CUDA/NVENC drivers.
+add_executable(nvenc_quality_policy_test test_nvenc_quality_policy.cpp)
+target_include_directories(nvenc_quality_policy_test PRIVATE ../../src)
+add_test(NAME nvenc_quality_policy COMMAND nvenc_quality_policy_test)
+
