@@ -731,7 +731,7 @@ private:
                                     if (forward > kPcrWrap / 2ULL) ++diagPcrBackwards;
                                     else {
                                         diagPcrGapMaxTicks =
-                                            (std::max)(diagPcrGapMaxTicks, forward);
+                                            (std::max<std::uint64_t>)(diagPcrGapMaxTicks, forward);
                                         if (forward > 2700000ULL) ++diagPcrOver100;
                                     }
                                 }
