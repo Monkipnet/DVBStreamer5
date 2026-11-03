@@ -1417,10 +1417,20 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         auto subtitles = std::make_shared<DvbSubtitlePassthrough>(
             streamConfig.dvbSubtitlesLanguage, streamConfig.dvbSubtitlesTrack);
         state->dvbSubtitleMonitor = subtitles;
-        relay.observeDvbSubtitles = [subtitles](const std::uint8_t* data,
-                                                std::size_t size) {
-            subtitles->observe(data, size);
-        };
+        if (DvbSatellite::isDvbUri(streamConfig.inputUri)) {
+            // Preserve the existing DVB subtitle PES monitor.
+            relay.observeDvbSubtitles = [subtitles](const std::uint8_t* data,
+                                                    std::size_t size) {
+                subtitles->observe(data, size);
+            };
+        } else {
+            // IPTV/HLS/SRT/HTTP MPEG-TS only needs PAT/PMT diagnostics.
+            // This cannot allocate/copy the complete 188-byte packet block.
+            relay.observeMediaPmt = [subtitles](
+                const std::vector<dvbstreamer5::media::mpegts::Packet>& packets) {
+                subtitles->observeMediaPackets(packets);
+            };
+        }
         if (DvbSatellite::isDvbUri(streamConfig.inputUri) &&
             streamConfig.dvbSubtitlesEnabled) {
             // After transcoding we must reattach missing DVB PES and PMT.
