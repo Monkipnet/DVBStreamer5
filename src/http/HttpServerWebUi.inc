@@ -9034,7 +9034,7 @@ async function openTickerModal() {
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'+
       '<h2 style="margin:0">'+lbl('Бегущая строка','Scrolling ticker','Pokretni tekst')+'</h2>'+
       '<button type="button" onclick="closeTickerModal()">✕</button></div>'+
-      '<p style="font-size:12px;opacity:.75">'+lbl('Расписание использует время сервера. Для наложения необходимо видеотранскодирование; при первом включении на GPU zero-copy перезапустите только выбранные плитки.','Schedules use server-local time. Video transcoding is required; restart only affected tiles when first enabling on GPU zero-copy.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
+      '<p style="font-size:12px;opacity:.75">'+lbl('Включение и отключение выполняется без перезапуска плитки. При первом включении на GPU zero-copy возможна короткая пауза видео. Для наложения нужно видеотранскодирование.','Enable/disable without tile restart. First activation on GPU zero-copy can briefly pause video while switching decode paths. Video transcoding is required.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
       (data.available?'':'<p style="color:#ffc674">'+lbl('На сервере отсутствует поддержка FreeType — установите libfreetype-dev и пересоберите программу.','FreeType support missing; install libfreetype-dev and rebuild.','Nedostaje FreeType.')+'</p>')+
       '<section style="border:1px solid rgba(125,209,255,.17);padding:9px;border-radius:9px;margin-top:8px;background:rgba(255,255,255,.02)">'+
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
@@ -9049,6 +9049,10 @@ async function openTickerModal() {
       '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
       '</div>'+
       '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
+      '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid rgba(125,209,255,.19);border-radius:9px;margin:6px 0">'+
+      '<input id="tickerEnabled" type="checkbox" checked>'+
+      '<strong>'+lbl('Бегущая строка включена','Enable scrolling ticker','Uključi pokretni tekst')+'</strong>'+
+      '<small style="opacity:.7">'+lbl('Выключение сохраняет текст и интервалы','Disabling retains text and intervals','Isključivanje čuva tekst i intervale')+'</small></label>'+
       '<div style="display:block;margin:10px 0"><label for="tickerText">'+lbl('Текст','Text','Tekst')+'</label>'+
       '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:5px 0">'+
       '<button type="button" onclick="document.getElementById(\'tickerFileInput\').click()">↥ '+lbl('Загрузить TXT / DOCX','Import TXT / DOCX','Uvezi TXT / DOCX')+'</button>'+
@@ -9082,14 +9086,14 @@ async function openTickerModal() {
       '</section>';
     render.addEventListener('mousedown',function(event){if(event.target===render)closeTickerModal();});
     document.body.append(render);
-    ['tickerText','tickerSpeed','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont']
+    ['tickerText','tickerSpeed','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont','tickerEnabled']
       .forEach(function(id){document.getElementById(id).addEventListener('input',function(){tickerEditor.dirty=true;tickerPreviewUpdate();});});
     tickerSwitch(data.streams[0].id);
     tickerRenderChannels();
   }catch(e){alert(tickerWord('Ошибка загрузки бегущей строки: ','Unable to load ticker: ')+e.message);}
 }
 function tickerDefault() {
-  return {stream_id:tickerEditor.selected,text:'',font_file:'',font_size:32,speed:100,
+  return {stream_id:tickerEditor.selected,enabled:true,text:'',font_file:'',font_size:32,speed:100,
     foreground:'#ffffff',background:'#000000',background_opacity:70,offset_px:0,
     windows:[{start:'00:00',end:'00:00',days:[1,2,3,4,5,6,7]}]};
 }
@@ -9099,12 +9103,19 @@ function tickerSwitch(id) {
     document.getElementById('tickerStream').value=tickerEditor.selected;
     return;
   }
+  // Changing the settings template also selects that channel. A single
+  // previous default selection is replaced, avoiding accidental mass changes.
+  if(tickerEditor.selected && tickerEditor.checkedIds.size===1 &&
+     tickerEditor.checkedIds.has(tickerEditor.selected))
+    tickerEditor.checkedIds=new Set([id]);
+  else tickerEditor.checkedIds.add(id);
   tickerEditor.selected=id;
   tickerEditor.dirty=false;
   document.getElementById('tickerStream').value=id;
   const entry=tickerEditor.entries.find(function(e){return e.stream_id===id;})||tickerDefault();
   const val=function(field,value){document.getElementById(field).value=value;};
   val('tickerText',entry.text||'');
+  document.getElementById('tickerEnabled').checked=entry.enabled!==false;
   val('tickerFont',entry.font_file||'');
   val('tickerFontSize',entry.font_size==null?32:entry.font_size);
   val('tickerSpeed',entry.speed==null?100:entry.speed);
@@ -9120,6 +9131,7 @@ function tickerSwitch(id) {
     (s.video_decoder==='nvidia_hw'?tickerWord('Декодер NVIDIA HW zero-copy не поддерживает CPU-наложение. Выберите FFmpeg или Auto и перезапустите эту плитку.','NVIDIA HW zero-copy cannot burn in CPU text. Choose FFmpeg or Auto and restart this tile.'):'');
   document.getElementById('tickerChannelHint').textContent=warn;
   tickerPreviewUpdate();
+  tickerRenderChannels();
 }
 function tickerMove(delta) {
   const el=document.getElementById('tickerOffset');
@@ -9155,6 +9167,8 @@ function tickerAddInterval(windowValue) {
     l('Чт','Thu','Čet'),l('Пт','Fri','Pet'),l('Сб','Sat','Sub'),l('Вс','Sun','Ned')];
   wrap.innerHTML=
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">'+
+    '<label style="display:flex;align-items:center;gap:4px"><input class="tickerWindowEnabled" type="checkbox" '+
+      (v.enabled===false?'':'checked')+'>'+l('Активен','Enabled','Aktivan')+'</label>'+
     '<label>'+l('Начало','Start','Početak')+'<input class="tickerBegin" type="time" value="'+tickerEsc(v.start)+'"></label>'+
     '<label>'+l('Конец','End','Kraj')+'<input class="tickerEnd" type="time" value="'+tickerEsc(v.end)+'"></label>'+
     '<button type="button" onclick="this.closest(\'.tickerInterval\').remove();tickerEditor.dirty=true">'+l('Удалить','Delete','Izbriši')+'</button></div>'+
@@ -9175,11 +9189,13 @@ function tickerCollect() {
   tickerEditor.entries=tickerEditor.entries.filter(function(e){return e.stream_id!==id;});
   if(!text.trim())return;
   const windows=Array.from(document.querySelectorAll('#tickerWindows .tickerInterval')).map(function(node){
-    return {start:node.querySelector('.tickerBegin').value,
+    return {enabled:node.querySelector('.tickerWindowEnabled').checked,
+      start:node.querySelector('.tickerBegin').value,
       end:node.querySelector('.tickerEnd').value,
       days:Array.from(node.querySelectorAll('.tickerDay:checked')).map(function(d){return Number(d.dataset.day);})};
   });
-  tickerEditor.entries.push({stream_id:id,text:text,font_file:document.getElementById('tickerFont').value,
+  tickerEditor.entries.push({stream_id:id,enabled:document.getElementById('tickerEnabled').checked,
+    text:text,font_file:document.getElementById('tickerFont').value,
     font_size:Number(document.getElementById('tickerFontSize').value),
     speed:Number(document.getElementById('tickerSpeed').value),
     foreground:document.getElementById('tickerForeground').value,
@@ -9217,7 +9233,7 @@ async function tickerSave() {
     if(!response.ok||reply.error)throw new Error(reply.error||('HTTP '+response.status));
     closeTickerModal();
     alert(tickerWord('Настройки сохранены для отмеченных каналов: ','Saved to selected channels: ')+selectedIds.length+'. '+
-      tickerWord('При первом включении на GPU zero-copy перезапустите только затронутые плитки.','For initial GPU zero-copy activation, restart only affected tiles.'));
+      tickerWord('Изменения применены без перезапуска плиток. При переходе с GPU zero-copy на программный путь возможна краткая пауза видео.','Updated without tile restart; first GPU zero-copy to I420 switch may briefly pause video.'));
   }catch(e){status.textContent=tickerWord('Ошибка: ','Error: ')+e.message;}
 }
 
