@@ -2412,7 +2412,21 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             lastDecodedVideoPts90k_.store(raw.pts90k & ((1ULL << 33U) - 1ULL),
                                          std::memory_order_relaxed);
 
-        if (config_.deinterlace) codec::deinterlaceBlendI420(raw);
+        // V317: legacy stays unchanged. 25p uses the existing deinterlacer;
+        // Bob 50p emits one progressive I420 frame for each source field.
+        const bool bob50 = config_.deinterlaceMode == "bob50" && raw.interlaced;
+        if (config_.deinterlaceMode == "25p" ||
+            (config_.deinterlaceMode == "legacy" && config_.deinterlace))
+            codec::deinterlaceBlendI420(raw);
+        if (bob50) {
+            static thread_local std::uint64_t bobPairsLogged = 0;
+            ++bobPairsLogged;
+            if (bobPairsLogged <= 4 || bobPairsLogged % 500 == 0)
+                std::cerr << "NATIVE DEINTERLACE BOB50 stream_id=" << config_.streamId
+                          << " pairs=" << bobPairsLogged
+                          << " top_field_first=" << (raw.topFieldFirst ? 1 : 0)
+                          << " pts=" << raw.pts90k << std::endl;
+        }
 
         // Replace ONLY the decoded pixel buffer on the named diagnostic tile.
         // Keep original input decode, timing, geometry, and all downstream
@@ -2437,8 +2451,28 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                           << std::endl;
         }
 
+        std::vector<codec::RawVideoFrame> outputFrames;
+        if (bob50) {
+            codec::RawVideoFrame first;
+            codec::RawVideoFrame second;
+            if (codec::deinterlaceBobFieldI420(raw, raw.topFieldFirst, first) &&
+                codec::deinterlaceBobFieldI420(raw, !raw.topFieldFirst, second)) {
+                constexpr std::uint64_t kMask33 = (1ULL << 33U) - 1ULL;
+                // The source pair represents two fields 20 ms apart.
+                if (second.hasPts) second.pts90k = (second.pts90k + 1800ULL) & kMask33;
+                if (second.hasDts) second.dts90k = (second.dts90k + 1800ULL) & kMask33;
+                second.keyFrame = false;
+                outputFrames.push_back(std::move(first));
+                outputFrames.push_back(std::move(second));
+            } else {
+                outputFrames.push_back(std::move(raw));
+            }
+        } else {
+            outputFrames.push_back(std::move(raw));
+        }
+        for (auto& progressiveRaw : outputFrames) {
         auto sharedRaw =
-            std::make_shared<codec::RawVideoFrame>(std::move(raw));
+            std::make_shared<codec::RawVideoFrame>(std::move(progressiveRaw));
 
         DecodedVideoObserver observer;
         {
@@ -2466,6 +2500,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         }
         ++videoRawPublishedTotal_;
         videoEncodeQueueCv_.notify_one();
+        }
     }
     return true;
 }
