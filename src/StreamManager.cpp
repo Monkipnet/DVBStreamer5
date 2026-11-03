@@ -1185,7 +1185,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         streamConfig.inputAudioPid != 0 ||
         (sharedDvbInputSource && streamConfig.inputServiceId > 0);
     if (relay.remapEnabled) {
-        const uint32_t outSid = streamConfig.remapEnabled ? streamConfig.serviceId : streamConfig.inputServiceId;
+        const uint32_t outSid = streamConfig.remapEnabled
+            ? streamConfig.serviceId
+            : (streamConfig.inputServiceId ? streamConfig.inputServiceId
+                                           : streamConfig.serviceId);
         if (streamConfig.inputServiceId > 0xffff || outSid == 0 || outSid > 0xffff ||
             streamConfig.videoPid > 0xffff || streamConfig.audioPid > 0xffff) {
             CardManager::instance().releaseService(streamConfig.id);
