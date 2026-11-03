@@ -3,6 +3,7 @@
 `src/HttpServer.cpp` is now a small composition unit. The implementation is split by responsibility while intentionally remaining a single C++ translation unit. This preserves the existing anonymous-namespace helpers, static state, macro behavior, and linkage during the structural refactor.
 
 - `HttpServerCommon.inc` — includes, shared helpers, URL/output helpers.
+- `HttpServerTickerImport.inc` — bounded local DOCX ZIP/XML text extraction for authenticated ticker file imports (no shell or external service).
 - `HttpServerTransport.inc` — listener/session handling, authentication, HTTP port management.
 - `HttpServerState.inc` — interfaces, system metrics, runtime state serialization.
 - `HttpServerDvbMedia.inc` — DVB/CA endpoints and HTTP/HLS media delivery.
