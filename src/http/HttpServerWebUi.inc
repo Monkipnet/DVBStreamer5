@@ -6810,7 +6810,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_deinterlace_mode:'legacy', transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
@@ -7510,7 +7510,17 @@ function openStreamForm(stream) {
           </div>
           <div class="stream-video-grid transcode-quick-grid">
             <div class="edit-field"><div class="edit-field-title">FPS</div><small class="field-help" ${uiBiAttrs('Частота кадров выходного потока.','Output stream frame rate.')}>${uiBiText('Частота кадров выходного потока.','Output stream frame rate.')}</small><select id="streamTranscodeFps"><option value="25" ${Number(stream.transcode_fps||25)===25?'selected':''}>25</option><option value="50" ${Number(stream.transcode_fps)===50?'selected':''}>50</option><option value="29.97" ${Math.abs(Number(stream.transcode_fps)-29.97)<0.01?'selected':''}>29.97</option><option value="30" ${Number(stream.transcode_fps)===30?'selected':''}>30</option><option value="59.94" ${Math.abs(Number(stream.transcode_fps)-59.94)<0.01?'selected':''}>59.94</option><option value="60" ${Number(stream.transcode_fps)===60?'selected':''}>60</option></select></div>
-            <div class="edit-toggle"><div class="edit-field-title">Deinterlace</div><small class="field-help" ${uiBiAttrs('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}>${uiBiText('Удаление чересстрочности 576i/1080i перед кодированием.','Deinterlace 576i/1080i before encoding.')}</small><label class="checkbox-inline"><input id="streamTranscodeDeinterlace" type="checkbox" ${stream.transcode_deinterlace!==false?'checked':''}/><span ${uiBiAttrs('Включено','Enabled')}>${uiBiText('Включено','Enabled')}</span></label></div>
+            <div class="edit-field">
+              <div class="edit-field-title" ${uiBiAttrs('Деинтерлейсинг','Deinterlacing')}>${uiBiText('Деинтерлейсинг','Deinterlacing')}</div>
+              <small class="field-help" ${uiBiAttrs('50p Bob: два кадра из двух полей; FPS автоматически 50.','50p Bob: one frame per field; FPS automatically 50.') }>${uiBiText('50p Bob: два кадра из двух полей; FPS автоматически 50.','50p Bob: one frame per field; FPS automatically 50.')}</small>
+              <select id="streamTranscodeDeinterlaceMode" onchange="if(this.value==='bob50'){const fps=document.getElementById('streamTranscodeFps');if(fps)fps.value='50';}">
+                <option value="legacy" ${(!stream.transcode_deinterlace_mode||stream.transcode_deinterlace_mode==='legacy')?'selected':''}>${uiBiText('Как раньше (совместимость)','Legacy (compatibility)')}</option>
+                <option value="off" ${stream.transcode_deinterlace_mode==='off'?'selected':''}>${uiBiText('Выключено','Off')}</option>
+                <option value="25p" ${stream.transcode_deinterlace_mode==='25p'?'selected':''}>${uiBiText('25p — устранить гребёнку','25p — remove combing')}</option>
+                <option value="bob50" ${stream.transcode_deinterlace_mode==='bob50'?'selected':''}>${uiBiText('50p Bob — плавное движение','50p Bob — smooth motion')}</option>
+              </select>
+              <input id="streamTranscodeDeinterlace" type="checkbox" style="display:none" ${stream.transcode_deinterlace!==false?'checked':''}/>
+            </div>
           </div>
           <div class="transcode-section-caption" ${subtitleUiTriAttrs('Аудио и адаптивное качество','Audio and adaptive streaming','Zvuk i prilagodljiva kvaliteta')}>${subtitleUiTriText('Аудио и адаптивное качество','Audio and adaptive streaming','Zvuk i prilagodljiva kvaliteta')}</div>
           <div class="stream-video-grid transcode-audio-grid">
@@ -7576,6 +7586,7 @@ const transcodeClipboardFields = Object.freeze([
   ['streamTranscodeBitrate','transcode_video_bitrate_kbps','number'],
   ['streamTranscodeFps','transcode_fps','select'],
   ['streamTranscodeDeinterlace','transcode_deinterlace','checkbox'],
+  ['streamTranscodeDeinterlaceMode','transcode_deinterlace_mode','select'],
   ['streamTranscodeMultibitrate','transcode_multibitrate_enabled','checkbox'],
   ['streamTranscodeAudioCodec','transcode_audio_codec','select'],
   ['streamTranscodeAudioBitrate','transcode_audio_bitrate','select']
@@ -8033,6 +8044,7 @@ function saveStream(id) {
     transcode_video_decoder: document.getElementById('streamTranscodeVideoDecoder').value,
     transcode_fps: Number(document.getElementById('streamTranscodeFps')?.value || 25),
     transcode_deinterlace: document.getElementById('streamTranscodeDeinterlace')?.checked !== false,
+    transcode_deinterlace_mode: document.getElementById('streamTranscodeDeinterlaceMode')?.value || 'legacy',
     transcode_multibitrate_enabled: document.getElementById('streamTranscodeMultibitrate')?.checked === true,
     hls_segment_duration: hlsDuration,
     hls_segment_count: hlsCount,
