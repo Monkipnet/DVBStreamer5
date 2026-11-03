@@ -407,6 +407,13 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 @media(max-width:650px) { .tvp-overlay{padding:4px}.tvp-dialog{padding:10px}.tvp-video{max-height:48vh} }
 
 
+@keyframes ticker-preview-flow {
+  from { transform:translateX(var(--ticker-preview-start, 380px)); }
+  to { transform:translateX(-100%); }
+}
+#tickerOverlayModal #tickerPreviewText {
+  display:inline-block;white-space:nowrap;min-width:max-content;will-change:transform;
+}
 /* V321: broadcast ticker follows the application dark/blue palette. */
 #tickerOverlayModal{background:rgba(5,8,13,.86)!important;padding:8px!important}
 #tickerOverlayModal>section{background:#10151e!important;color:#e7edf8!important;border:1px solid rgba(125,209,255,.22)!important;border-radius:16px!important;padding:12px!important;width:min(1000px,100%)!important;max-height:calc(100dvh - 16px)!important;box-shadow:0 25px 70px #000a!important;font-size:12px!important}
@@ -9078,7 +9085,7 @@ async function openTickerModal() {
       '<span id="tickerOffsetLabel"></span>'+
       '<input type="hidden" id="tickerOffset" value="0"></div>'+
       '<div style="background:#06111b;height:125px;position:relative;overflow:hidden;border:1px solid #506075;border-radius:6px" id="tickerPreview">'+
-      '<div id="tickerPreviewBand" style="position:absolute;left:0;right:0;bottom:0;white-space:nowrap;padding:3px 8px;overflow:hidden;text-overflow:ellipsis"></div></div>'+
+      '<div id="tickerPreviewBand" style="position:absolute;left:0;right:0;bottom:0;white-space:nowrap;padding:3px 8px;overflow:hidden"><span id="tickerPreviewText"></span></div></div>'+
       '<h3 style="margin:14px 0 6px">'+lbl('Временные интервалы','Time intervals','Vremenski intervali')+'</h3>'+
       '<div id="tickerWindows"></div>'+
       '<button type="button" onclick="tickerAddInterval()" style="margin:7px 0">+ '+lbl('Добавить интервал','Add interval','Dodaj interval')+'</button>'+
@@ -9166,9 +9173,17 @@ function tickerPreviewUpdate() {
   band.style.color=fg;
   band.style.fontSize=Math.max(11,Math.min(27,Number(document.getElementById('tickerFontSize').value||32)*.52))+'px';
   band.style.bottom=Math.min(95,offset/11)+'px';
-  band.textContent=document.getElementById('tickerText').value||tickerWord('Пример бегущей строки','Ticker preview');
-  document.getElementById('tickerOpacityValue').textContent=Math.round(opacity*100)+'%';
   const speed=Number(document.getElementById('tickerSpeed').value)||40;
+  const previewText=document.getElementById('tickerPreviewText');
+  const content=document.getElementById('tickerText').value||tickerWord('Пример бегущей строки','Ticker preview');
+  previewText.textContent=content.length>220?content.slice(0,220)+'…':content;
+  // A real moving preview: its duration follows the same px/s speed control.
+  // Limit the preview text length to keep large DOCX imports responsive.
+  previewText.style.animation='none';
+  previewText.style.setProperty('--ticker-preview-start',band.clientWidth+'px');
+  const duration=Math.max(1,(band.clientWidth+previewText.scrollWidth)/Math.max(5,speed));
+  previewText.style.animation='ticker-preview-flow '+duration.toFixed(2)+'s linear infinite';
+  document.getElementById('tickerOpacityValue').textContent=Math.round(opacity*100)+'%';
   document.getElementById('tickerSpeedHint').textContent=
     speed+' '+tickerWord('пикс./с','px/s')+' • '+
     tickerWord('рекомендуется 15–50 для плавности','15–50 recommended for smooth motion');
