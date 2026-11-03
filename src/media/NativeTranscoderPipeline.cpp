@@ -215,6 +215,7 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     error.clear();
     reset();
     config_ = config;
+    tickerLastDrawActive_ = false;
     const bool tickerConfigured = ticker::TickerOverlay::instance().enabledFor(config_.streamId);
     // The explicitly requested NVIDIA HW decoder produces no CPU frames.
     // Preserve the working stream rather than causing it to fail on reboot;
@@ -2548,10 +2549,18 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
     // Apply optional broadcast graphics on I420 only. The existing encoder,
     // deinterlacer, PTS and transport scheduling remain untouched when disabled.
     codec::RawVideoFrame tickerFrame;
-    if (ticker::TickerOverlay::instance().enabledFor(config_.streamId)) {
+    const bool tickerEnabled = ticker::TickerOverlay::instance().enabledFor(config_.streamId);
+    bool tickerDrawn = false;
+    if (tickerEnabled) {
         tickerFrame = *source;
-        (void)ticker::TickerOverlay::instance().draw(config_.streamId, tickerFrame);
+        tickerDrawn = ticker::TickerOverlay::instance().draw(config_.streamId, tickerFrame);
         source = &tickerFrame;
+    }
+    if (tickerDrawn != tickerLastDrawActive_) {
+        tickerLastDrawActive_ = tickerDrawn;
+        std::cerr << "NATIVE TICKER SCHEDULE stream_id=" << config_.streamId
+                  << " active=" << (tickerDrawn ? 1 : 0)
+                  << " stage=pre-encoder" << std::endl;
     }
     std::vector<codec::EncodedVideoFrame> encoded;
     if (!videoEncoder_->encode(*source, encoded, error)) return false;
