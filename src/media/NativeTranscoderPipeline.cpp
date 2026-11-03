@@ -216,6 +216,7 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     reset();
     config_ = config;
     tickerLastDrawActive_ = false;
+    tickerLiveSwitchDenied_ = false;
     const bool tickerRequestedAtStart =
         ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId);
     // The explicitly requested NVIDIA HW decoder produces no CPU frames.
@@ -2066,25 +2067,37 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     // The transport/mux/audio workers and stream lifecycle are left running.
     // The switch is one-way for the active tile (even when graphics are later
     // disabled), avoiding repeated decoder teardown at schedule boundaries.
-    if (tickerZeroCopyAllowed_ && !forceNvidiaHardwareAvc &&
+    if (tickerZeroCopyAllowed_ && !tickerLiveSwitchDenied_ &&
+        !forceNvidiaHardwareAvc &&
         ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId)) {
-        tickerZeroCopyAllowed_ = false;
-        if (nvidiaZeroCopy_ || intelZeroCopy_) {
-            nvidiaZeroCopy_.reset();
-            intelZeroCopy_.reset();
-            nvidiaZeroCopyActive_.store(false,std::memory_order_release);
-            intelZeroCopyActive_.store(false,std::memory_order_release);
-            std::cerr << "NATIVE TICKER LIVE SWITCH stream_id=" << config_.streamId
-                      << " from=gpu-zero-copy to=i420-frames"
-                      << " video_reinit=1 tile_restart=0"
-                      << " encoder_backend=" << config_.videoEncoder
-                      << std::endl;
+        // Verify a frame-producing decoder exists before touching an active
+        // NVDEC/oneVPL pipeline. Never sacrifice a working channel if no
+        // compatible CPU/I420 decoder can be selected.
+        std::string tickerDecoderError;
+        if (!ensureVideoDecoder(sample.stream.codec,tickerDecoderError)) {
+            tickerLiveSwitchDenied_ = true;
+            std::cerr << "NATIVE TICKER LIVE SWITCH refused stream_id=" << config_.streamId
+                      << " reason=" << tickerDecoderError
+                      << " action=keep-existing-zero-copy" << std::endl;
         } else {
-            std::cerr << "NATIVE TICKER LIVE READY stream_id=" << config_.streamId
-                      << " path=i420-frames tile_restart=0" << std::endl;
+            tickerZeroCopyAllowed_ = false;
+            if (nvidiaZeroCopy_ || intelZeroCopy_) {
+                nvidiaZeroCopy_.reset();
+                intelZeroCopy_.reset();
+                nvidiaZeroCopyActive_.store(false,std::memory_order_release);
+                intelZeroCopyActive_.store(false,std::memory_order_release);
+                std::cerr << "NATIVE TICKER LIVE SWITCH stream_id=" << config_.streamId
+                          << " from=gpu-zero-copy to=i420-frames"
+                          << " video_reinit=1 tile_restart=0"
+                          << " encoder_backend=" << config_.videoEncoder
+                          << std::endl;
+            } else {
+                std::cerr << "NATIVE TICKER LIVE READY stream_id=" << config_.streamId
+                          << " path=i420-frames tile_restart=0" << std::endl;
+            }
+            nvidiaZeroCopyAttempted_ = true;
+            intelZeroCopyAttempted_ = true;
         }
-        nvidiaZeroCopyAttempted_ = true;
-        intelZeroCopyAttempted_ = true;
     }
     if (forceNvidiaHardwareAvc && !zeroCopyBackend) {
         error = "NVIDIA HW decoder requires video encoder=nvenc or auto because "
