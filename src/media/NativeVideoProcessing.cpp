@@ -493,6 +493,41 @@ void deinterlaceBlendI420(RawVideoFrame& frame) {
     deinterlacePlane(v, frame.width / 2, frame.height / 2, frame.width / 2);
 }
 
+
+bool deinterlaceBobFieldI420(const RawVideoFrame& input, bool topField,
+                            RawVideoFrame& output) {
+    if (!input.interlaced || input.width <= 0 || input.height < 4 ||
+        (input.width & 1) || (input.height & 1)) return false;
+    const std::size_t expected =
+        static_cast<std::size_t>(input.width) * input.height * 3U / 2U;
+    if (input.i420.size() < expected) return false;
+    output = input;
+    output.interlaced = false;
+    std::size_t offset = 0;
+    for (int plane = 0; plane < 3; ++plane) {
+        const int w = plane == 0 ? input.width : input.width / 2;
+        const int h = plane == 0 ? input.height : input.height / 2;
+        const auto* src = input.i420.data() + offset;
+        auto* dst = output.i420.data() + offset;
+        const int parity = topField ? 0 : 1;
+        for (int y = 0; y < h; ++y) {
+            if ((y & 1) == parity) continue;
+            int prev = y - 1;
+            int next = y + 1;
+            if (prev < 0) prev = next;
+            if (next >= h) next = prev;
+            for (int x = 0; x < w; ++x) {
+                dst[static_cast<std::size_t>(y) * w + x] =
+                    static_cast<std::uint8_t>(
+                        (static_cast<unsigned>(src[static_cast<std::size_t>(prev) * w + x]) +
+                         static_cast<unsigned>(src[static_cast<std::size_t>(next) * w + x]) + 1U) / 2U);
+            }
+        }
+        offset += static_cast<std::size_t>(w) * h;
+    }
+    return true;
+}
+
 bool resamplePcm16(const PcmAudioFrame& input, int sampleRate, int channels,
                    PcmAudioFrame& output, std::string& error) {
     error.clear();
