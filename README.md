@@ -1,3 +1,13 @@
+## V10.8.320 — Scheduled scrolling ticker overlay
+
+- **Menu:** renamed System to Menu (RU / EN / HR) and moved VLC playlist into the dropdown.
+- **Scrolling ticker:** Menu → Scrolling ticker. Select an existing channel and enter UTF-8 text (including Cyrillic). Choose one of the fonts installed on the host (fontconfig), text/background colors, background opacity (0–100%, including transparent), speed (10–600 px/s), font size and placement using ↑ / ↓. The default is the bottom edge.
+- **Schedule:** multiple independent intervals with weekday checkboxes. Add, edit or delete intervals; equal start/end represents the full selected day, and overnight intervals are supported. The server-local timezone applies. No intervals or blank text disables the overlay.
+- **Persistence and API:** `ticker_overlays` in the existing `/etc/dvbstreamer5/dvbstreamer5-config.json`; panel-authenticated `GET /api/tickers` provides channels, fonts and settings, `POST /api/tickers/save` validates and saves metadata, updating the software render path live without restarting unrelated streams.
+- **Rendering:** optional native FreeType glyph rasterization into I420 just before the video encoder; no change to MPEG-TS PCR, PTS, SRT, HTTP, HLS, WISI CBR or audio. Build with `libfreetype-dev fontconfig fonts-dejavu-core` to enable the overlay. Without FreeType, existing builds are supported but overlay drawing is disabled.
+- **Important:** burn-in needs actual video transcoding (not H.264/HEVC/TS copy). GPU zero-copy bypasses CPU frame rendering; restarting **only the selected tile** once after first enabling a ticker selects the frame-producing decoder path. The explicit `nvidia_hw` decoder must be changed to `Auto` or `FFmpeg` for this feature; NVENC encoding can remain selected. Existing running streams without a ticker retain their zero-copy path. A save alone cannot insert graphics into an already running zero-copy encoder.
+- **Regression:** `cmake --build build --target dvbstreamer5_ticker_test && ctest --test-dir build -R ticker_smoke --output-on-failure`. First compile and test on Ubuntu before deploying to production; the live hardware paths have not yet been tested.
+
 ## V10.8.295 — Intel encoder presets and QSV VBV
 
 - **Intel preset mode** in channel editor: Auto, Balanced, Quality; persistent `intel_preset_mode` key, copied/pasted with other transcode settings. Only applies to explicitly selected Intel `qsv` or `vaapi` encoders, never NVENC/CPU.
