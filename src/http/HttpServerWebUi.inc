@@ -3109,8 +3109,20 @@ function toggleLanguage() {
   saveLanguagePreference();
 }
 function closeSystemMenu() {
-  document.getElementById('systemMenu')?.removeAttribute('open');
+  const menu=document.getElementById('systemMenu');
+  if (!menu) return;
+  menu.removeAttribute('open');
+  menu.querySelectorAll('.system-submenu[open]').forEach(section=>section.removeAttribute('open'));
 }
+// Keep the nested Menu compact: opening one section closes its siblings.
+document.querySelectorAll('#systemMenu .system-submenu').forEach(section=>{
+  section.addEventListener('toggle',()=>{
+    if (!section.open) return;
+    document.querySelectorAll('#systemMenu .system-submenu').forEach(other=>{
+      if(other!==section)other.open=false;
+    });
+  });
+});
 document.addEventListener('click', event => {
   const menu = document.getElementById('systemMenu');
   if (menu && !menu.contains(event.target)) closeSystemMenu();
