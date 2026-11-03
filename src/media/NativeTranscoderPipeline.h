@@ -520,6 +520,9 @@ private:
     // decoder emits a usable IDR. Do not release seconds of audio first.
     static constexpr auto kMuxStartupPeerWait = std::chrono::milliseconds(2500);
     NativeTranscoderConfig config_;
+    // Latched at stream start: a live ticker metadata save must never tear down
+    // an existing NVDEC/oneVPL zero-copy session mid-stream.
+    bool tickerZeroCopyAllowed_ = true;
     bool diagnosticI420Enabled_ = false;
     bool diagnosticColorI420Enabled_ = false;
     std::string selectedAvcDecoder_ = "auto";
