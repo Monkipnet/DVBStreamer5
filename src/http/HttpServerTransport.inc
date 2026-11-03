@@ -552,6 +552,22 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer,
                     streamManager.externalXmltvChannels());
+            } else if (target.rfind("/api/media-tracks?stream_id=", 0) == 0) {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                std::string id=target.substr(
+                    std::string("/api/media-tracks?stream_id=").size());
+                const auto amp=id.find('&');
+                if(amp!=std::string::npos)id.resize(amp);
+                id=urlDecode(id);
+                if(id.empty()||id.size()>256 ||
+                   !findStreamConfigById(configManager.config.streams,id)) {
+                    res.result(http::status::bad_request);
+                    res.body()=R"({"error":"Unknown or invalid stream ID"})";
+                } else {
+                    Json::StreamWriterBuilder writer;
+                    res.body()=Json::writeString(writer,streamManager.mediaTracks(id));
+                }
             } else if (target.rfind("/api/dvb-subtitles?stream_id=", 0) == 0) {
                 res.set(http::field::content_type, "application/json");
                 std::string streamId = target.substr(
