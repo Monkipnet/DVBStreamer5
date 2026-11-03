@@ -34,6 +34,23 @@ int main() {
     list.append(entry);
     std::string error;
     require(TickerOverlay::validate(list,error), "TickerOverlay::validate(list,error)");
+    // Master and per-window switches keep their configuration yet suppress
+    // the live overlay without stream or encoder restarts.
+    auto paused=list;
+    paused[0]["enabled"]=false;
+    require(TickerOverlay::validate(paused,error), "valid master pause");
+    auto& overlay=TickerOverlay::instance();
+    overlay.configure(paused);
+    require(!overlay.enabledFor("ticker-test"), "master pause disabled");
+    require(!overlay.renderRequestedFor("ticker-test"), "master pause invisible");
+    paused=list;
+    paused[0]["windows"][0]["enabled"]=false;
+    require(TickerOverlay::validate(paused,error), "valid window pause");
+    overlay.configure(paused);
+    require(overlay.enabledFor("ticker-test"), "window pause retained entry");
+    require(!overlay.renderRequestedFor("ticker-test"), "window pause invisible");
+    paused[0]["windows"][0]["enabled"]="on";
+    require(!TickerOverlay::validate(paused,error), "invalid window boolean rejected");
     auto malformed=list;
     malformed[0]["windows"][0]["start"] = "25:00";
     require(!TickerOverlay::validate(malformed,error), "!TickerOverlay::validate(malformed,error)");
@@ -44,7 +61,6 @@ int main() {
     malformed[0]["font_size"] = 0;
     require(!TickerOverlay::validate(malformed,error), "!TickerOverlay::validate(malformed,error)");
 
-    auto& overlay=TickerOverlay::instance();
     overlay.configure(list);
     require(overlay.enabledFor("ticker-test"), "overlay.enabledFor('ticker-test')");
     require(!overlay.enabledFor("other-channel"), "!overlay.enabledFor('other-channel')");
