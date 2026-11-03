@@ -1182,6 +1182,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     relay.remapEnabled = streamConfig.remapEnabled ||
+        streamConfig.inputAudioPid != 0 ||
         (sharedDvbInputSource && streamConfig.inputServiceId > 0);
     if (relay.remapEnabled) {
         const uint32_t outSid = streamConfig.remapEnabled ? streamConfig.serviceId : streamConfig.inputServiceId;
@@ -1195,6 +1196,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.remapConfig.outputServiceId = static_cast<uint16_t>(outSid);
         relay.remapConfig.outputVideoPid = streamConfig.remapEnabled ? static_cast<uint16_t>(streamConfig.videoPid) : 0;
         relay.remapConfig.outputAudioPid = streamConfig.remapEnabled ? static_cast<uint16_t>(streamConfig.audioPid) : 0;
+        relay.remapConfig.inputAudioPid = static_cast<uint16_t>(streamConfig.inputAudioPid);
+        relay.remapConfig.preserveSourceServiceId = !streamConfig.remapEnabled;
         relay.remapConfig.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
         relay.remapConfig.serviceProvider = streamConfig.serviceProvider;
     }
@@ -1404,10 +1407,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         };
     }
 
-    if (DvbSatellite::isDvbUri(streamConfig.inputUri)) {
-        // Monitor the live, selected-service, post-CA PAT/PMT even when
-        // subtitles are switched off. UI enumeration must not require
-        // enabling an untested output or restarting a tuner.
+    {
+        // Observe the selected service post-CA PAT/PMT for DVB, IPTV, HTTP,
+        // SRT and HLS TS inputs. PMT inspection does not change transport.
+        // Previously this monitor existed only for DVB subtitle inputs.
         auto subtitles = std::make_shared<DvbSubtitlePassthrough>(
             streamConfig.dvbSubtitlesLanguage, streamConfig.dvbSubtitlesTrack);
         state->dvbSubtitleMonitor = subtitles;
@@ -1415,7 +1418,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                                                 std::size_t size) {
             subtitles->observe(data, size);
         };
-        if (streamConfig.dvbSubtitlesEnabled) {
+        if (DvbSatellite::isDvbUri(streamConfig.inputUri) &&
+            streamConfig.dvbSubtitlesEnabled) {
             // After transcoding we must reattach missing DVB PES and PMT.
             // With no transcoder the remapper already passes subtitle PES:
             // filter the original PMT/PIDs instead of duplicating packets.
@@ -1433,6 +1437,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         }
     }
 
+    state->outputMediaMonitor = std::make_shared<DvbSubtitlePassthrough>();
+    auto outputMediaMonitor = state->outputMediaMonitor;
     auto httpHub = state->nativeHttpHub;
     auto* hlsSegmenter = state->nativeHlsSegmenter.get();
     auto* cmafSegmenter = state->nativeCmafSegmenter.get();
@@ -1442,7 +1448,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
     StreamState* outputStatsState = state.get();
-    relay.observeTransport = [httpHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState](const uint8_t* data, std::size_t size) {
+    relay.observeTransport = [httpHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState, outputMediaMonitor](const uint8_t* data, std::size_t size) {
+        // Passive output PMT capture: the editor displays actual emitted codecs,
+        // including native decoder fallback and audio copy, not a guess from settings.
+        if (outputMediaMonitor) outputMediaMonitor->observe(data,size);
         // V10.8.70: dashboard decode state must describe the transport that
         // clients actually receive. Count payload/scrambling/PES only here,
         // after remap + CA descrambling + optional production transcoding.
@@ -2799,6 +2808,42 @@ Json::Value StreamManager::externalXmltvStatus() const {
 Json::Value StreamManager::externalXmltvChannels() const {
     return externalXmltvManager_
         ? externalXmltvManager_->channels() : Json::Value(Json::arrayValue);
+}
+
+Json::Value StreamManager::mediaTracks(const std::string& id) const {
+    Json::Value result(Json::objectValue);
+    result["stream_id"]=id;
+    result["active"]=false;
+    result["input_scanned"]=false;
+    result["output_scanned"]=false;
+    result["input"]=Json::Value(Json::arrayValue);
+    result["output"]=Json::Value(Json::arrayValue);
+    std::shared_ptr<DvbSubtitlePassthrough> inputMonitor,outputMonitor;
+    {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        const auto it=streams.find(id);
+        if(it!=streams.end() && it->second) {
+            result["active"]=it->second->active.load();
+            inputMonitor=it->second->dvbSubtitleMonitor;
+            outputMonitor=it->second->outputMediaMonitor;
+        }
+    }
+    const auto append=[&](const std::shared_ptr<DvbSubtitlePassthrough>& monitor,
+                          const char* listKey,const char* scanKey) {
+        if(!monitor)return;
+        result[scanKey]=monitor->hasParsedPmt();
+        for(const auto& track:monitor->availableMediaTracks()) {
+            Json::Value item(Json::objectValue);
+            item["pid"]=track.pid;
+            item["kind"]=track.kind;
+            item["codec"]=track.codec;
+            item["language"]=track.language;
+            result[listKey].append(item);
+        }
+    };
+    append(inputMonitor,"input","input_scanned");
+    append(outputMonitor,"output","output_scanned");
+    return result;
 }
 
 Json::Value StreamManager::dvbSubtitleTracks(const std::string& id) const {
