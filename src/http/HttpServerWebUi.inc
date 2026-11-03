@@ -434,6 +434,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <summary class="button-secondary" data-i18n="system">Menu</summary>
 <div class="system-menu-list">
 <button class="system-menu-item" onclick="openPlaylistModal();closeSystemMenu()" data-i18n="playlist">VLC playlist</button>
+<button class="system-menu-item" onclick="openTickerModal();closeSystemMenu()" data-ui-ru="Бегущая строка" data-ui-en="Scrolling ticker" data-ui-hr="Pokretni tekst">Бегущая строка</button>
 <button class="system-menu-item" onclick="openSystemLoadModal();closeSystemMenu()" data-i18n="systemLoad">System load</button>
 <button class="system-menu-item" onclick="openGlobalRestartScheduleModal();closeSystemMenu()" data-ui-ru="Расписание перезапуска потоков" data-ui-en="Stream restart schedule" data-ui-hr="Raspored ponovnog pokretanja tokova">Расписание перезапуска потоков</button>
 <button class="system-menu-item" onclick="openNetworkModal();closeSystemMenu()" data-i18n="network">Network</button>
@@ -8964,6 +8965,199 @@ window.addEventListener('beforeunload', () => {
 window.dvbstreamerPreviewController = window.DVBStreamerPreview.install({
   tileSelector: '.tile[data-stream-id]'
 });
+
+// V10.8.320: schedule-driven burn-in ticker editor. Uses the dedicated
+// metadata-only API: editing does not restart unrelated streams.
+let tickerEditor = null;
+function tickerEsc(value) {
+  return String(value == null ? '' : value).replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function tickerWord(ru,en,hr) {
+  return language==='ru'?ru:(language==='hr'?(hr||en):en);
+}
+function closeTickerModal() {
+  var el=document.getElementById('tickerOverlayModal');
+  if(el)el.remove();
+  tickerEditor=null;
+}
+async function openTickerModal() {
+  closeTickerModal();
+  try {
+    const response=await fetch('/api/tickers',{credentials:'same-origin'});
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    const data=await response.json();
+    if(!Array.isArray(data.streams)||!data.streams.length) {
+      alert(tickerWord('Сначала добавьте канал','Create a channel first'));return;
+    }
+    tickerEditor={entries:Array.isArray(data.entries)?data.entries:[],
+      streams:data.streams,fonts:Array.isArray(data.fonts)?data.fonts:[],selected:''};
+    const options=data.streams.map(function(s){
+      return '<option value="'+tickerEsc(s.id)+'">'+tickerEsc(s.name||s.id)+'</option>';
+    }).join('');
+    const fontOptions='<option value="">'+tickerWord('Системный по умолчанию','System default','Zadani font')+'</option>'+
+      tickerEditor.fonts.map(function(f){
+        return '<option value="'+tickerEsc(f.file)+'">'+tickerEsc(f.name)+'</option>';
+      }).join('');
+    const lbl=function(ru,en,hr){return tickerWord(ru,en,hr)};
+    const render=document.createElement('div');
+    render.id='tickerOverlayModal';
+    render.style.cssText='position:fixed;inset:0;z-index:230000;background:#020915d9;display:flex;align-items:center;justify-content:center;padding:8px';
+    render.innerHTML=
+      '<section role="dialog" aria-modal="true" style="width:min(850px,100%);max-height:95vh;overflow:auto;background:#162235;color:#e9f0fa;border:1px solid #40536b;border-radius:14px;padding:18px;box-sizing:border-box">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'+
+      '<h2 style="margin:0">'+lbl('Бегущая строка','Scrolling ticker','Pokretni tekst')+'</h2>'+
+      '<button type="button" onclick="closeTickerModal()">✕</button></div>'+
+      '<p style="font-size:12px;opacity:.75">'+lbl('Расписание работает по местному времени сервера. Для наложения необходимо включённое видеотранскодирование; при первом включении на GPU zero-copy перезапустите только выбранную плитку.','Schedules use server-local time. Video transcoding must be enabled; restart only the selected tile when first enabling on GPU zero-copy.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
+      (data.available?'':'<p style="color:#ffc674">'+lbl('На сервере отсутствует поддержка FreeType — установите libfreetype-dev и пересоберите программу.','FreeType support missing; install libfreetype-dev and rebuild.','Nedostaje FreeType.')+'</p>')+
+      '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'+
+      '<label>'+lbl('Канал','Channel','Kanal')+'<select id="tickerStream" style="width:100%" onchange="tickerSwitch(this.value)">'+options+'</select></label>'+
+      '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
+      '</div>'+
+      '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
+      '<label style="display:block;margin:10px 0">'+lbl('Текст','Text','Tekst')+
+      '<textarea id="tickerText" rows="2" maxlength="512" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></label>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">'+
+      '<label>'+lbl('Скорость (пикс./с)','Speed (px/s)','Brzina')+'<input id="tickerSpeed" type="number" min="10" max="600" value="100" style="width:100%"></label>'+
+      '<label>'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
+      '<label>'+lbl('Цвет текста','Text color','Boja teksta')+'<input id="tickerForeground" type="color" value="#ffffff" style="width:100%"></label>'+
+      '<label>'+lbl('Цвет подложки','Background color','Boja podloge')+'<input id="tickerBackground" type="color" value="#000000" style="width:100%"></label>'+
+      '<label>'+lbl('Непрозрачность подложки, %','Background opacity, %','Neprozirnost, %')+
+      '<input id="tickerOpacity" type="range" min="0" max="100" value="70" oninput="document.getElementById(\'tickerOpacityValue\').textContent=this.value+\'%\'" style="width:100%"><span id="tickerOpacityValue">70%</span></label>'+
+      '</div>'+
+      '<div style="margin:10px 0;display:flex;align-items:center;flex-wrap:wrap;gap:10px">'+
+      '<strong>'+lbl('Положение строки','Ticker position','Položaj teksta')+'</strong>'+
+      '<button type="button" onclick="tickerMove(10)" aria-label="Up">↑</button>'+
+      '<button type="button" onclick="tickerMove(-10)" aria-label="Down">↓</button>'+
+      '<span id="tickerOffsetLabel"></span>'+
+      '<input type="hidden" id="tickerOffset" value="0"></div>'+
+      '<div style="background:#06111b;height:125px;position:relative;overflow:hidden;border:1px solid #506075;border-radius:6px" id="tickerPreview">'+
+      '<div id="tickerPreviewBand" style="position:absolute;left:0;right:0;bottom:0;white-space:nowrap;padding:3px 8px;overflow:hidden;text-overflow:ellipsis"></div></div>'+
+      '<h3 style="margin:14px 0 6px">'+lbl('Временные интервалы','Time intervals','Vremenski intervali')+'</h3>'+
+      '<div id="tickerWindows"></div>'+
+      '<button type="button" onclick="tickerAddInterval()" style="margin:7px 0">+ '+lbl('Добавить интервал','Add interval','Dodaj interval')+'</button>'+
+      '<p style="font-size:12px;opacity:.75">'+lbl('Пустое расписание отключает строку. Одинаковые начало и конец — круглосуточно в выбранные дни. Поддерживаются интервалы через полночь.','An empty schedule disables the ticker. Equal start/end means full day; overnight intervals are supported.','Prazan raspored isključuje tekst.')+'</p>'+
+      '<p id="tickerSaveStatus" style="color:#ffcb8b"></p>'+
+      '<div style="display:flex;justify-content:flex-end;gap:8px">'+
+      '<button type="button" onclick="closeTickerModal()">'+lbl('Отмена','Cancel','Odustani')+'</button>'+
+      '<button type="button" class="button-primary" onclick="tickerSave()">'+lbl('Сохранить','Save','Spremi')+'</button></div>'+
+      '</section>';
+    render.addEventListener('mousedown',function(event){if(event.target===render)closeTickerModal();});
+    document.body.append(render);
+    ['tickerText','tickerSpeed','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont']
+      .forEach(function(id){document.getElementById(id).addEventListener('input',tickerPreviewUpdate);});
+    tickerSwitch(data.streams[0].id);
+  }catch(e){alert(tickerWord('Ошибка загрузки бегущей строки: ','Unable to load ticker: ')+e.message);}
+}
+function tickerDefault() {
+  return {stream_id:tickerEditor.selected,text:'',font_file:'',font_size:32,speed:100,
+    foreground:'#ffffff',background:'#000000',background_opacity:70,offset_px:0,
+    windows:[{start:'00:00',end:'00:00',days:[1,2,3,4,5,6,7]}]};
+}
+function tickerSwitch(id) {
+  if(!tickerEditor)return;
+  if(tickerEditor.selected)tickerCollect();
+  tickerEditor.selected=id;
+  document.getElementById('tickerStream').value=id;
+  const entry=tickerEditor.entries.find(function(e){return e.stream_id===id;})||tickerDefault();
+  const val=function(field,value){document.getElementById(field).value=value;};
+  val('tickerText',entry.text||'');
+  val('tickerFont',entry.font_file||'');
+  val('tickerFontSize',entry.font_size==null?32:entry.font_size);
+  val('tickerSpeed',entry.speed==null?100:entry.speed);
+  val('tickerForeground',entry.foreground||'#ffffff');
+  val('tickerBackground',entry.background||'#000000');
+  val('tickerOpacity',entry.background_opacity==null?70:entry.background_opacity);
+  val('tickerOffset',entry.offset_px||0);
+  document.getElementById('tickerWindows').innerHTML='';
+  (entry.windows||[]).forEach(tickerAddInterval);
+  const s=tickerEditor.streams.find(function(x){return x.id===id;});
+  const warn=!s.transcode_enabled||s.video_codec==='copy'?
+    tickerWord('Наложение не работает в режиме passthrough: включите транскодирование видео в настройках этого канала.','Passthrough cannot burn-in graphics: enable video transcoding for this channel.'):
+    (s.video_decoder==='nvidia_hw'?tickerWord('Декодер NVIDIA HW zero-copy не поддерживает CPU-наложение. Выберите FFmpeg или Auto и перезапустите эту плитку.','NVIDIA HW zero-copy cannot burn in CPU text. Choose FFmpeg or Auto and restart this tile.'):'');
+  document.getElementById('tickerChannelHint').textContent=warn;
+  tickerPreviewUpdate();
+}
+function tickerMove(delta) {
+  const el=document.getElementById('tickerOffset');
+  el.value=Math.max(0,Math.min(2160,Number(el.value||0)+delta));
+  tickerPreviewUpdate();
+}
+function tickerPreviewUpdate() {
+  if(!tickerEditor)return;
+  const offset=Number(document.getElementById('tickerOffset').value||0);
+  const label=document.getElementById('tickerOffsetLabel');
+  label.textContent=tickerWord('Отступ снизу: ','Bottom offset: ')+offset+' px';
+  const band=document.getElementById('tickerPreviewBand');
+  const bg=document.getElementById('tickerBackground').value;
+  const fg=document.getElementById('tickerForeground').value;
+  const opacity=Number(document.getElementById('tickerOpacity').value||0)/100;
+  const rgb=parseInt(bg.slice(1),16);
+  band.style.backgroundColor='rgba('+((rgb>>16)&255)+','+((rgb>>8)&255)+','+(rgb&255)+','+opacity+')';
+  band.style.color=fg;
+  band.style.fontSize=Math.max(11,Math.min(27,Number(document.getElementById('tickerFontSize').value||32)*.52))+'px';
+  band.style.bottom=Math.min(95,offset/11)+'px';
+  band.textContent=document.getElementById('tickerText').value||tickerWord('Пример бегущей строки','Ticker preview');
+  document.getElementById('tickerOpacityValue').textContent=Math.round(opacity*100)+'%';
+}
+function tickerAddInterval(windowValue) {
+  const v=windowValue && windowValue.days?windowValue:
+    {start:'00:00',end:'00:00',days:[1,2,3,4,5,6,7]};
+  const wrap=document.createElement('div');
+  wrap.className='tickerInterval';
+  wrap.style.cssText='border:1px solid #42516a;padding:8px;margin:6px 0;border-radius:7px';
+  const l=tickerWord;
+  const days=[l('Пн','Mon','Pon'),l('Вт','Tue','Uto'),l('Ср','Wed','Sri'),
+    l('Чт','Thu','Čet'),l('Пт','Fri','Pet'),l('Сб','Sat','Sub'),l('Вс','Sun','Ned')];
+  wrap.innerHTML=
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">'+
+    '<label>'+l('Начало','Start','Početak')+'<input class="tickerBegin" type="time" value="'+tickerEsc(v.start)+'"></label>'+
+    '<label>'+l('Конец','End','Kraj')+'<input class="tickerEnd" type="time" value="'+tickerEsc(v.end)+'"></label>'+
+    '<button type="button" onclick="this.closest(\'.tickerInterval\').remove()">'+l('Удалить','Delete','Izbriši')+'</button></div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
+    days.map(function(name,i){const d=i+1;return '<label style="font-size:12px;white-space:nowrap">'+
+      '<input type="checkbox" class="tickerDay" data-day="'+d+'" '+
+      ((v.days||[]).includes(d)?'checked':'')+'>'+name+'</label>';}).join('')+
+    '</div>';
+  document.getElementById('tickerWindows').append(wrap);
+}
+function tickerCollect() {
+  if(!tickerEditor||!tickerEditor.selected)return;
+  const id=tickerEditor.selected;
+  const text=document.getElementById('tickerText').value;
+  tickerEditor.entries=tickerEditor.entries.filter(function(e){return e.stream_id!==id;});
+  if(!text.trim())return;
+  const windows=Array.from(document.querySelectorAll('#tickerWindows .tickerInterval')).map(function(node){
+    return {start:node.querySelector('.tickerBegin').value,
+      end:node.querySelector('.tickerEnd').value,
+      days:Array.from(node.querySelectorAll('.tickerDay:checked')).map(function(d){return Number(d.dataset.day);})};
+  });
+  tickerEditor.entries.push({stream_id:id,text:text,font_file:document.getElementById('tickerFont').value,
+    font_size:Number(document.getElementById('tickerFontSize').value),
+    speed:Number(document.getElementById('tickerSpeed').value),
+    foreground:document.getElementById('tickerForeground').value,
+    background:document.getElementById('tickerBackground').value,
+    background_opacity:Number(document.getElementById('tickerOpacity').value),
+    offset_px:Number(document.getElementById('tickerOffset').value),
+    windows:windows});
+}
+async function tickerSave() {
+  if(!tickerEditor)return;
+  tickerCollect();
+  const status=document.getElementById('tickerSaveStatus');
+  status.textContent=tickerWord('Сохранение...','Saving...');
+  try {
+    const response=await fetch('/api/tickers/save',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({entries:tickerEditor.entries})});
+    const reply=await response.json();
+    if(!response.ok||reply.error)throw new Error(reply.error||('HTTP '+response.status));
+    closeTickerModal();
+    alert(tickerWord('Расписание сохранено. Уже запущенный zero-copy канал требует отдельного перезапуска плитки для активации наложения.','Ticker saved. Restart only an already-running zero-copy tile to activate its overlay.'));
+  }catch(e){status.textContent=tickerWord('Ошибка: ','Error: ')+e.message;}
+}
+
 </script>
 </body>
 </html>
