@@ -9016,7 +9016,8 @@ async function openTickerModal() {
       alert(tickerWord('Сначала добавьте канал','Create a channel first'));return;
     }
     tickerEditor={entries:Array.isArray(data.entries)?data.entries:[],
-      streams:data.streams,fonts:Array.isArray(data.fonts)?data.fonts:[],selected:''};
+      streams:data.streams,fonts:Array.isArray(data.fonts)?data.fonts:[],selected:'',
+      checkedIds:new Set([data.streams[0].id]),search:'',dirty:false};
     const options=data.streams.map(function(s){
       return '<option value="'+tickerEsc(s.id)+'">'+tickerEsc(s.name||s.id)+'</option>';
     }).join('');
@@ -9082,8 +9083,9 @@ async function openTickerModal() {
     render.addEventListener('mousedown',function(event){if(event.target===render)closeTickerModal();});
     document.body.append(render);
     ['tickerText','tickerSpeed','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont']
-      .forEach(function(id){document.getElementById(id).addEventListener('input',tickerPreviewUpdate);});
+      .forEach(function(id){document.getElementById(id).addEventListener('input',function(){tickerEditor.dirty=true;tickerPreviewUpdate();});});
     tickerSwitch(data.streams[0].id);
+    tickerRenderChannels();
   }catch(e){alert(tickerWord('Ошибка загрузки бегущей строки: ','Unable to load ticker: ')+e.message);}
 }
 function tickerDefault() {
@@ -9093,8 +9095,9 @@ function tickerDefault() {
 }
 function tickerSwitch(id) {
   if(!tickerEditor)return;
-  if(tickerEditor.selected)tickerCollect();
+  if(tickerEditor.selected && tickerEditor.dirty && !confirm(tickerWord('Отменить несохранённые изменения шаблона?','Discard unsaved template changes?')))return;
   tickerEditor.selected=id;
+  tickerEditor.dirty=false;
   document.getElementById('tickerStream').value=id;
   const entry=tickerEditor.entries.find(function(e){return e.stream_id===id;})||tickerDefault();
   const val=function(field,value){document.getElementById(field).value=value;};
@@ -9118,6 +9121,7 @@ function tickerSwitch(id) {
 function tickerMove(delta) {
   const el=document.getElementById('tickerOffset');
   el.value=Math.max(0,Math.min(2160,Number(el.value||0)+delta));
+  tickerEditor.dirty=true;
   tickerPreviewUpdate();
 }
 function tickerPreviewUpdate() {
@@ -9156,7 +9160,10 @@ function tickerAddInterval(windowValue) {
       '<input type="checkbox" class="tickerDay" data-day="'+d+'" '+
       ((v.days||[]).includes(d)?'checked':'')+'>'+name+'</label>';}).join('')+
     '</div>';
+  wrap.addEventListener('input',function(){tickerEditor.dirty=true;});
+  wrap.addEventListener('change',function(){tickerEditor.dirty=true;});
   document.getElementById('tickerWindows').append(wrap);
+  if(!windowValue)tickerEditor.dirty=true;
 }
 function tickerCollect() {
   if(!tickerEditor||!tickerEditor.selected)return;
@@ -9180,13 +9187,22 @@ function tickerCollect() {
 }
 async function tickerSave() {
   if(!tickerEditor)return;
+  const selectedIds=[...tickerEditor.checkedIds];
+  if(!selectedIds.length){alert(tickerWord('Отметьте каналы галочками','Select at least one channel'));return;}
+  if(selectedIds.length>64){alert(tickerWord('Максимум 64 канала','Maximum 64 channels'));return;}
+  const originalEntries=tickerEditor.entries.filter(e=>!tickerEditor.checkedIds.has(e.stream_id));
   tickerCollect();
+  const template=tickerEditor.entries.find(e=>e.stream_id===tickerEditor.selected);
+  const entries=template
+    ? originalEntries.concat(selectedIds.map(id=>({...template,stream_id:id,
+        windows:(template.windows||[]).map(w=>({...w,days:[...(w.days||[])]}))})))
+    : originalEntries;
   const status=document.getElementById('tickerSaveStatus');
   status.textContent=tickerWord('Сохранение...','Saving...');
   try {
     const response=await fetch('/api/tickers/save',{method:'POST',credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({entries:tickerEditor.entries})});
+      body:JSON.stringify({entries})});
     const reply=await response.json();
     if(!response.ok||reply.error)throw new Error(reply.error||('HTTP '+response.status));
     closeTickerModal();
