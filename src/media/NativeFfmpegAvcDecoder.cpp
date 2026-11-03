@@ -215,6 +215,7 @@ private:
 #else
         dest.interlaced = src.interlaced_frame != 0;
 #endif
+        dest.topFieldFirst = src.top_field_first != 0;
         ++frames_;
         if (frames_ <= 4 || (frames_ % 250U) == 0U) {
             std::cerr << "NATIVE AVC FFMPEG OUTPUT frames=" << frames_
