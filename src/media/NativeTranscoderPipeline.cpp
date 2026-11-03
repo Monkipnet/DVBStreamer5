@@ -2332,7 +2332,10 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         // display clock before the generic FPS gate. No change for Ittiam,
         // OpenH264, NVDEC, progressive or 30/50-fps sources.
         if (selectedAvcDecoder_ == "ffmpeg" && raw.interlaced &&
-            raw.hasPts && config_.fps >= 24.99 && config_.fps <= 25.01) {
+            raw.hasPts &&
+            ((config_.fps >= 24.99 && config_.fps <= 25.01) ||
+             (config_.deinterlaceMode == "bob50" &&
+              config_.fps >= 49.5 && config_.fps <= 50.5))) {
             const auto pal = ffmpegPalPtsClock_.apply(raw.pts90k);
             if (pal.discontinuity || pal.locked) {
                 // The accepted PTS lock now inherits the *current* source
