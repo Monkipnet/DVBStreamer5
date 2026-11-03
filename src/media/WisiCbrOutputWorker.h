@@ -714,10 +714,10 @@ private:
                                 const std::uint64_t ext =
                                     ((std::uint64_t(packet[10]) & 1ULL) << 8U) |
                                     std::uint64_t(packet[11]);
-                                const auto ticks = base * 300ULL + ext;
+                                const std::uint64_t ticks = base * std::uint64_t{300} + ext;
                                 ++diagPcrCount;
                                 if (havePcr[pid] && !discontinuity) {
-                                    const auto forward =
+                                    const std::uint64_t forward =
                                         (ticks + kPcrWrap - lastPcr[pid]) % kPcrWrap;
                                     if (forward > kPcrWrap / 2ULL) ++diagPcrBackwards;
                                     else {
