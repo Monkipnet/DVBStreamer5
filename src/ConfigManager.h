@@ -131,7 +131,8 @@ struct StreamConfig {
     std::string hlsEncryptionKeyHex;
     std::string transcodeAudioCodec = "aac";
     uint64_t transcodeAudioBitrate = 192000;
-    uint32_t audioPid = 0;
+    uint32_t audioPid = 0; // output PID (unchanged)
+    uint32_t inputAudioPid = 0; // 0=auto; select input PMT audio track
     uint32_t videoPid = 0;
     uint32_t inputServiceId = 0;
     uint32_t serviceId = 1;
