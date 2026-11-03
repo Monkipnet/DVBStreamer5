@@ -74,6 +74,38 @@ int main() {
     if (TickerOverlay::available() && TickerOverlay::fontList().size()>0) {
         require(overlay.draw("ticker-test",frame), "overlay.draw('ticker-test',frame)");
         require(frame.i420!=pristine, "frame.i420!=pristine");
+        // V323: motion follows presentation PTS; same PTS produces exactly
+        // the same picture even when encoder-thread timing is irregular.
+        auto moving=list;
+        moving[0]["text"]="ПЛАВНАЯ БЕГУЩАЯ СТРОКА";
+        moving[0]["speed"]=600;
+        overlay.configure(moving);
+        dvbstreamer5::media::codec::RawVideoFrame base;
+        base.width=320;
+        base.height=180;
+        base.hasPts=true;
+        base.i420=pristine;
+        dvbstreamer5::media::codec::RawVideoFrame shown;
+        for(int i=0;i<=16;++i) {
+            auto current=base;
+            current.pts90k=static_cast<std::uint64_t>(i)*3600U;
+            require(overlay.draw("ticker-test",current,25.0),"PTS ticker draw");
+            if(i==16)shown=std::move(current);
+        }
+        require(shown.i420!=pristine,"moving ticker visible after 16 frames");
+        auto repeated=base;
+        repeated.pts90k=16U*3600U;
+        require(overlay.draw("ticker-test",repeated,25.0),"same-PTS ticker draw");
+        require(repeated.i420==shown.i420,
+                "repeated PTS must not advance ticker motion");
+        moving[0]["speed"]=5;
+        require(TickerOverlay::validate(moving,error),"slow 5 px/s valid");
+        overlay.configure(moving);
+        repeated=base;
+        repeated.pts90k=16U*3600U;
+        require(overlay.draw("ticker-test",repeated,25.0),"speed edit live");
+        require(repeated.i420==shown.i420,
+                "changing speed must not reset ticker position");
     } else {
         std::cout << "Ticker FreeType/fonts unavailable; render test skipped\n";
     }
