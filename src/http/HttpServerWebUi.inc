@@ -9060,7 +9060,11 @@ async function openTickerModal() {
       '<span class="ticker-file-status" id="tickerFileStatus"></span></div>'+
       '<textarea id="tickerText" rows="3" maxlength="8192" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">'+
-      '<label>'+lbl('Скорость (пикс./с)','Speed (px/s)','Brzina')+'<input id="tickerSpeed" type="number" min="10" max="600" value="100" style="width:100%"></label>'+
+      '<label style="grid-column:span 2">'+lbl('Скорость движения, пикселей в секунду','Scroll speed, pixels per second','Brzina pomicanja, px/s')+
+      '<div style="display:flex;align-items:center;gap:9px;min-width:0">'+
+      '<input id="tickerSpeedSlider" type="range" min="5" max="300" step="1" value="40" style="flex:1;min-width:70px;accent-color:#1f8bff">'+
+      '<input id="tickerSpeed" type="number" min="5" max="600" step="1" value="40" style="width:70px"></div>'+
+      '<small id="tickerSpeedHint" style="opacity:.7">'+lbl('Рекомендуется 15–50 пикс./с для плавного движения','Recommended 15–50 px/s for smoother motion','Preporuka 15–50 px/s')+'</small></label>'+
       '<label>'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
       '<label>'+lbl('Цвет текста','Text color','Boja teksta')+'<input id="tickerForeground" type="color" value="#ffffff" style="width:100%"></label>'+
       '<label>'+lbl('Цвет подложки','Background color','Boja podloge')+'<input id="tickerBackground" type="color" value="#000000" style="width:100%"></label>'+
@@ -9086,14 +9090,22 @@ async function openTickerModal() {
       '</section>';
     render.addEventListener('mousedown',function(event){if(event.target===render)closeTickerModal();});
     document.body.append(render);
-    ['tickerText','tickerSpeed','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont','tickerEnabled']
-      .forEach(function(id){document.getElementById(id).addEventListener('input',function(){tickerEditor.dirty=true;tickerPreviewUpdate();});});
+    ['tickerText','tickerSpeed','tickerSpeedSlider','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont','tickerEnabled']
+      .forEach(function(id){document.getElementById(id).addEventListener('input',function(){
+        if(id==='tickerSpeedSlider')
+          document.getElementById('tickerSpeed').value=this.value;
+        if(id==='tickerSpeed')
+          document.getElementById('tickerSpeedSlider').value=
+            Math.max(5,Math.min(300,Number(this.value)||5));
+        tickerEditor.dirty=true;
+        tickerPreviewUpdate();
+      });});
     tickerSwitch(data.streams[0].id);
     tickerRenderChannels();
   }catch(e){alert(tickerWord('Ошибка загрузки бегущей строки: ','Unable to load ticker: ')+e.message);}
 }
 function tickerDefault() {
-  return {stream_id:tickerEditor.selected,enabled:true,text:'',font_file:'',font_size:32,speed:100,
+  return {stream_id:tickerEditor.selected,enabled:true,text:'',font_file:'',font_size:32,speed:40,
     foreground:'#ffffff',background:'#000000',background_opacity:70,offset_px:0,
     windows:[{start:'00:00',end:'00:00',days:[1,2,3,4,5,6,7]}]};
 }
@@ -9118,7 +9130,8 @@ function tickerSwitch(id) {
   document.getElementById('tickerEnabled').checked=entry.enabled!==false;
   val('tickerFont',entry.font_file||'');
   val('tickerFontSize',entry.font_size==null?32:entry.font_size);
-  val('tickerSpeed',entry.speed==null?100:entry.speed);
+  val('tickerSpeed',entry.speed==null?40:entry.speed);
+  val('tickerSpeedSlider',Math.max(5,Math.min(300,entry.speed==null?40:entry.speed)));
   val('tickerForeground',entry.foreground||'#ffffff');
   val('tickerBackground',entry.background||'#000000');
   val('tickerOpacity',entry.background_opacity==null?70:entry.background_opacity);
@@ -9155,6 +9168,10 @@ function tickerPreviewUpdate() {
   band.style.bottom=Math.min(95,offset/11)+'px';
   band.textContent=document.getElementById('tickerText').value||tickerWord('Пример бегущей строки','Ticker preview');
   document.getElementById('tickerOpacityValue').textContent=Math.round(opacity*100)+'%';
+  const speed=Number(document.getElementById('tickerSpeed').value)||40;
+  document.getElementById('tickerSpeedHint').textContent=
+    speed+' '+tickerWord('пикс./с','px/s')+' • '+
+    tickerWord('рекомендуется 15–50 для плавности','15–50 recommended for smooth motion');
 }
 function tickerAddInterval(windowValue) {
   const v=windowValue && windowValue.days?windowValue:
