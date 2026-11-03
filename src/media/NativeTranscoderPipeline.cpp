@@ -2596,11 +2596,12 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
     // Apply optional broadcast graphics on I420 only. The existing encoder,
     // deinterlacer, PTS and transport scheduling remain untouched when disabled.
     codec::RawVideoFrame tickerFrame;
-    const bool tickerEnabled = ticker::TickerOverlay::instance().enabledFor(config_.streamId);
+    // Avoid copying a full I420 picture outside enabled schedule windows.
+    const bool tickerEnabled = ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId);
     bool tickerDrawn = false;
     if (tickerEnabled) {
         tickerFrame = *source;
-        tickerDrawn = ticker::TickerOverlay::instance().draw(config_.streamId, tickerFrame);
+        tickerDrawn = ticker::TickerOverlay::instance().draw(config_.streamId, tickerFrame, config_.fps);
         source = &tickerFrame;
     }
     if (tickerDrawn != tickerLastDrawActive_) {
