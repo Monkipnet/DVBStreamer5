@@ -359,6 +359,16 @@ set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
 
+# V326: audio PID track selection and PMT codec/language discovery.
+add_executable(dvbstreamer5_audio_track_test
+    tests/test_audio_track_selection.cpp
+    src/DvbSubtitlePassthrough.cpp)
+target_include_directories(dvbstreamer5_audio_track_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(dvbstreamer5_audio_track_test PRIVATE
+    dvbstreamer5_media_core)
+add_test(NAME audio_track_selection COMMAND dvbstreamer5_audio_track_test)
+
 # V325: isolated 25-fps source-cadence detection regression.
 add_executable(dvbstreamer5_video_cadence_test tests/test_video_source_cadence.cpp)
 target_include_directories(dvbstreamer5_video_cadence_test PRIVATE
