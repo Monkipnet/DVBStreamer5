@@ -136,6 +136,35 @@ static void selectedAudio(bool remapped) {
     check(std::any_of(out.begin(),out.end(),
         [](const Packet& p){return pidOf(p)==0x100;}),"video PID preserved");
 }
+static void outputPidMayEqualUnselectedInputPid() {
+    Remapper mapper;
+    RemapConfig cfg;
+    cfg.inputServiceId=37;
+    cfg.outputServiceId=37;
+    cfg.inputAudioPid=0x111; // select Russian
+    cfg.outputAudioPid=0x110; // output PID formerly used by English source
+    std::string error;
+    check(mapper.initialize(cfg,error),"collision remapper init");
+    std::vector<Packet> out;
+    check(mapper.process(section(0,pat()),out,error),"collision PAT");
+    out.clear();
+    check(mapper.process(section(0x1000,pmt()),out,error),"collision PMT");
+    mapper.tick(out);
+    const auto audio=pmtAudioPids(find(out,0x1000));
+    check(audio.size()==1U&&audio.front()==0x110,"single mapped output PID");
+    check(!mapper.wantsInputPid(0x110),"old source English must be rejected");
+    check(mapper.wantsInputPid(0x111),"Russian source must be admitted");
+    out.clear();
+    check(mapper.process(ts(0x110),out,error),"English transport filtered");
+    check(std::none_of(out.begin(),out.end(),[](const Packet& p) {
+        return pidOf(p)==0x110;
+    }),"English audio with same output PID cannot leak into output");
+    out.clear();
+    check(mapper.process(ts(0x111),out,error),"Russian transport forwarded");
+    check(std::any_of(out.begin(),out.end(),[](const Packet& p) {
+        return pidOf(p)==0x110;
+    }),"Russian audio remapped to 0x110");
+}
 static void autoAudioUnchanged() {
     Remapper mapper;
     RemapConfig cfg;
@@ -169,6 +198,7 @@ static void pmtDetection() {
 int main(){
     selectedAudio(false);
     selectedAudio(true);
+    outputPidMayEqualUnselectedInputPid();
     autoAudioUnchanged();
     pmtDetection();
     std::cout<<"PASS audio track selector, source PMT languages, codecs and CRC\n";
