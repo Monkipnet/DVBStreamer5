@@ -452,6 +452,11 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     if (!std::isfinite(config.transcodeFps) || config.transcodeFps < 1.0 ||
         config.transcodeFps > 60.0) config.transcodeFps = 25.0;
     config.transcodeDeinterlace = root.get("transcode_deinterlace", true).asBool();
+    config.transcodeDeinterlaceMode = toLower(root.get("transcode_deinterlace_mode", "legacy").asString());
+    if (config.transcodeDeinterlaceMode != "legacy" && config.transcodeDeinterlaceMode != "off" &&
+        config.transcodeDeinterlaceMode != "25p" && config.transcodeDeinterlaceMode != "bob50")
+        config.transcodeDeinterlaceMode = "legacy";
+    if (config.transcodeDeinterlaceMode == "bob50") config.transcodeFps = 50.0;
     // V10.8.240: manual legacy knobs are ignored on config load and API save.
     // The output FPS, selected resolution and video bitrate are authoritative.
     // This also migrates previously saved CPU/NVENC/Intel manual profiles.
@@ -624,6 +629,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_video_bitrate"] = Json::UInt64(transcodeVideoBitrate);
     root["transcode_fps"] = transcodeFps;
     root["transcode_deinterlace"] = transcodeDeinterlace;
+    root["transcode_deinterlace_mode"] = transcodeDeinterlaceMode;
     root["intel_preset_mode"] = intelPresetMode;
     root["transcode_preset"] = transcodePreset;
     root["transcode_profile_mode"] = transcodeProfileMode;
