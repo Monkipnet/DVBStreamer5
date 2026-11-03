@@ -1242,6 +1242,138 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
             muxIntegrityTsFile_.flush();
         }
     }
+    // V315: compare the exact encoder H.264 access unit against the PES
+    // payload reconstructed from the muxer's TS packets. Opt-in, read-only,
+    // scoped by stream ID. No changes to encoding, muxing or network pacing.
+    if (queued.kind == mpegts::ElementaryKind::Video &&
+        config_.videoCodec == "h264") {
+        const char* diagId = std::getenv("DVBSTREAMER5_DIAG_H264_PES_STREAM_ID");
+        if (diagId && config_.streamId == diagId) {
+            static thread_local const NativeTranscoderPipeline* integrityOwner = nullptr;
+            static thread_local std::chrono::steady_clock::time_point integrityStart{};
+            static thread_local std::uint64_t checked = 0;
+            static thread_local std::uint64_t matched = 0;
+            static thread_local std::uint64_t mismatched = 0;
+            static thread_local std::uint64_t incomplete = 0;
+            static thread_local std::uint64_t bytesChecked = 0;
+            static thread_local std::uint64_t idrSeen = 0;
+            static thread_local std::uint64_t spsSeen = 0;
+            static thread_local std::uint64_t ppsSeen = 0;
+            static thread_local std::uint64_t idrWithoutSets = 0;
+            const auto now = std::chrono::steady_clock::now();
+            if (integrityOwner != this) {
+                integrityOwner = this;
+                integrityStart = now;
+                checked = matched = mismatched = incomplete = bytesChecked = 0;
+                idrSeen = spsSeen = ppsSeen = idrWithoutSets = 0;
+            }
+            ++checked;
+            // Parse Annex-B start codes to measure SPS/PPS presence per AU.
+            bool hasSps = false, hasPps = false, hasIdr = false;
+            for (std::size_t pos = 0; pos + 4 < queued.data.size(); ++pos) {
+                if (queued.data[pos] != 0 || queued.data[pos + 1] != 0)
+                    continue;
+                std::size_t prefix = 0;
+                if (queued.data[pos + 2] == 1) prefix = 3;
+                else if (pos + 4 < queued.data.size() &&
+                         queued.data[pos + 2] == 0 &&
+                         queued.data[pos + 3] == 1) prefix = 4;
+                if (!prefix || pos + prefix >= queued.data.size()) continue;
+                const auto type = queued.data[pos + prefix] & 0x1fU;
+                if (type == 7) hasSps = true;
+                if (type == 8) hasPps = true;
+                if (type == 5) hasIdr = true;
+                pos += prefix;
+            }
+            if (hasSps) ++spsSeen;
+            if (hasPps) ++ppsSeen;
+            if (hasIdr) {
+                ++idrSeen;
+                if (!hasSps || !hasPps) ++idrWithoutSets;
+            }
+
+            // Find the video PES start (0x000001E0..0xEF), then compare
+            // its ES bytes across TS boundaries with the original AU.
+            std::size_t compared = 0;
+            bool foundPes = false;
+            bool bad = false;
+            std::uint16_t videoPid = 0xffffU;
+            for (const auto& ts : packets) {
+                if (ts[0] != mpegts::kSyncByte) continue;
+                const unsigned afc = (ts[3] >> 4U) & 3U;
+                if (!(afc & 1U)) continue;
+                const std::uint16_t pid =
+                    static_cast<std::uint16_t>(((ts[1] & 0x1fU) << 8U) | ts[2]);
+                std::size_t start = 4;
+                if (afc & 2U) start += 1U + ts[4];
+                if (start >= mpegts::kPacketSize) continue;
+                const bool pusi = (ts[1] & 0x40U) != 0;
+                if (!foundPes) {
+                    if (!pusi || start + 9U > mpegts::kPacketSize) continue;
+                    if (ts[start] != 0 || ts[start + 1] != 0 ||
+                        ts[start + 2] != 1 ||
+                        (ts[start + 3] & 0xf0U) != 0xe0U) continue;
+                    const std::size_t header = 9U + ts[start + 8];
+                    if (start + header > mpegts::kPacketSize) {
+                        bad = true;
+                        break;
+                    }
+                    videoPid = pid;
+                    foundPes = true;
+                    start += header;
+                } else if (pid != videoPid) {
+                    continue;
+                }
+                for (std::size_t j = start;
+                     j < mpegts::kPacketSize && compared < queued.data.size(); ++j) {
+                    if (ts[j] != queued.data[compared]) {
+                        bad = true;
+                        break;
+                    }
+                    ++compared;
+                }
+                if (bad || compared == queued.data.size()) break;
+            }
+            bytesChecked += compared;
+            if (bad) {
+                ++mismatched;
+                if (mismatched <= 5) {
+                    std::cerr << "NATIVE H264 PES INTEGRITY MISMATCH stream_id="
+                              << config_.streamId << " au=" << checked
+                              << " compared=" << compared
+                              << " expected_bytes=" << queued.data.size()
+                              << " pts90k=" << queued.pts90k << std::endl;
+                }
+            } else if (!foundPes || compared != queued.data.size()) {
+                ++incomplete;
+                if (incomplete <= 5) {
+                    std::cerr << "NATIVE H264 PES INTEGRITY INCOMPLETE stream_id="
+                              << config_.streamId << " au=" << checked
+                              << " compared=" << compared
+                              << " expected_bytes=" << queued.data.size()
+                              << " pts90k=" << queued.pts90k << std::endl;
+                }
+            } else {
+                ++matched;
+            }
+            if (now - integrityStart >= std::chrono::seconds(5)) {
+                std::cerr << "NATIVE H264 PES INTEGRITY stream_id=" << config_.streamId
+                          << " au_checked=" << checked
+                          << " matched=" << matched
+                          << " mismatched=" << mismatched
+                          << " incomplete=" << incomplete
+                          << " bytes_compared=" << bytesChecked
+                          << " idr=" << idrSeen
+                          << " sps_au=" << spsSeen
+                          << " pps_au=" << ppsSeen
+                          << " idr_missing_sps_pps=" << idrWithoutSets
+                          << std::endl;
+                integrityStart = now;
+                checked = matched = mismatched = incomplete = bytesChecked = 0;
+                idrSeen = spsSeen = ppsSeen = idrWithoutSets = 0;
+            }
+        }
+    }
     // V305: low-overhead real-time mux cadence measurements, opt-in.
     // Uses atomics-free thread-local counters: writeMuxSample runs on mux worker.
     if (queued.kind == mpegts::ElementaryKind::Video) {
