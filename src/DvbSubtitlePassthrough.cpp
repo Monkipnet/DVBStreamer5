@@ -271,6 +271,14 @@ void DvbSubtitlePassthrough::readPmt(const Packet& packet) {
         sourcePmt_.expected = 0;
     }
 }
+void DvbSubtitlePassthrough::observeMediaPackets(const std::vector<Packet>& packets) {
+    for(const auto& packet:packets) {
+        if(packet[0]!=0x47U)continue;
+        const auto pid=packetPid(packet);
+        if(pid==0U)readPat(packet);
+        else if(pid==sourcePmtPid_)readPmt(packet);
+    }
+}
 void DvbSubtitlePassthrough::observe(const std::uint8_t* data, std::size_t size) {
     if (!data) return;
     for (std::size_t offset = 0; offset + kPacketSize <= size; offset += kPacketSize) {
