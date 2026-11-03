@@ -279,11 +279,13 @@ std::vector<std::uint8_t> makeVaapiH264Sps(
     return makeH264AnnexBNal(0x67, w.finish());
 }
 
-std::vector<std::uint8_t> makeVaapiH264Pps() {
+std::vector<std::uint8_t> makeVaapiH264Pps(bool cabac) {
     H264VaapiBitWriter w;
     w.ue(0);
     w.ue(0);
-    w.bit(false);
+    // H.264 pic_parameter_set: entropy_coding_mode_flag must agree
+    // with VAEncPictureParameterBufferH264 on *every* encoded picture.
+    w.bit(cabac);
     w.bit(false);
     w.ue(0);
     w.ue(0);
@@ -459,9 +461,18 @@ public:
                       << " reason=live_zero_reorder"
                       << std::endl;
         }
+        // V328: Main/High hardware H.264 can use CABAC rather than CAVLC.
+        // The legacy fallback previously forced CAVLC even in High, wasting
+        // bitrate on detailed/dark scenes. Keep Baseline CAVLC per H.264.
+        // A process-level emergency opt-out preserves old bitstream behavior
+        // on a driver which advertises Main/High but mishandles CABAC.
+        const char* cabacAb = std::getenv("DVBSTREAMER5_VAAPI_CABAC");
+        const bool disableCabac = cabacAb && std::strcmp(cabacAb, "0") == 0;
+        cabac_ = (profile_ == VAProfileH264High ||
+                  profile_ == VAProfileH264Main) && !disableCabac;
         spsAnnexB_ = makeVaapiH264Sps(
             profile_, width_, height_, alignedWidth_, alignedHeight_, refFrames_);
-        ppsAnnexB_ = makeVaapiH264Pps();
+        ppsAnnexB_ = makeVaapiH264Pps(cabac_);
 
         VASurfaceAttrib surfaceAttr{};
         surfaceAttr.type = VASurfaceAttribPixelFormat;
@@ -502,6 +513,8 @@ public:
             << " gop_frames=" << gop_
             << " refs=" << refFrames_
             << " rc=" << (cbr_ ? "cbr" : "cqp")
+            << " entropy=" << (cabac_ ? "cabac" : "cavlc")
+            << " cabac_optout=" << (disableCabac ? 1 : 0)
             << std::endl;
         return true;
     }
@@ -654,7 +667,7 @@ public:
         pic.num_ref_idx_l1_active_minus1 = 0;
         pic.pic_fields.bits.idr_pic_flag = idr ? 1 : 0;
         pic.pic_fields.bits.reference_pic_flag = 1;
-        pic.pic_fields.bits.entropy_coding_mode_flag = 0;
+        pic.pic_fields.bits.entropy_coding_mode_flag = cabac_ ? 1 : 0;
         pic.pic_fields.bits.deblocking_filter_control_present_flag = 1;
 
         if (!createParam(
@@ -1037,6 +1050,7 @@ private:
         frameIndex_ = 0;
         startupLogged_ = false;
         scalePolicyLogged_ = false;
+        cabac_ = false;
         spsAnnexB_.clear();
         ppsAnnexB_.clear();
     }
@@ -1055,6 +1069,7 @@ private:
     bool vaInitialized_ = false;
     bool configured_ = false;
     bool cbr_ = false;
+    bool cabac_ = false;
     int width_ = 0;
     int height_ = 0;
     int alignedWidth_ = 0;
