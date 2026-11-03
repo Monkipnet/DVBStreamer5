@@ -243,6 +243,8 @@ public:
     bool save();
     bool loadSubscribers();
     bool saveSubscribers();
+    // Dedicated, atomic ticker storage; never rewrites the general config.
+    bool saveTickerOverlays(const Json::Value& entries, std::string& error);
 
     AppConfig config;
     SubscriberListConfig subscribers;
