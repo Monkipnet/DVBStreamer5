@@ -458,6 +458,21 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 #tickerOverlayModal .ticker-channel-list{max-height:30dvh}
 }
 
+
+/* V324: compact accordion submenus in the main program Menu */
+.system-menu-list{width:245px;min-width:225px;max-height:min(78vh,620px);overflow-y:auto;padding:7px}
+.system-submenu{display:block;margin:2px 0;border:1px solid rgba(255,255,255,.06);border-radius:9px;background:rgba(255,255,255,.022)}
+.system-menu .system-submenu>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;cursor:pointer;color:#cce5fc;font-size:.78rem;font-weight:700;background:transparent;border-radius:8px}
+.system-menu .system-submenu>summary::-webkit-details-marker{display:none}
+.system-menu .system-submenu>summary:after{content:'▸';display:inline-block;font-size:12px;color:#8ed0ff;transform:none;border:0;width:auto;height:auto;opacity:1}
+.system-menu .system-submenu[open]>summary:after{transform:rotate(90deg)}
+.system-menu .system-submenu[open]>summary{background:rgba(31,139,255,.1);color:#fff}
+.system-menu .system-submenu>summary:hover{background:rgba(31,139,255,.14)}
+.system-menu .system-submenu>summary:focus-visible{outline:2px solid #7dd1ff;outline-offset:-2px}
+.system-submenu-list{display:grid;gap:2px;padding:3px 4px 7px;border-top:1px solid rgba(255,255,255,.06)}
+.system-menu .system-submenu-list .system-menu-item{font-size:.74rem;padding:7px 10px;line-height:1.22;white-space:normal}
+@media(max-width:560px){.system-menu-list{left:auto;right:0;transform:none;width:min(270px,calc(100vw - 20px));max-height:65dvh}}
+
 </style>
 </head>
 <body>
@@ -485,21 +500,41 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <details class="system-menu" id="systemMenu">
 <summary class="button-secondary" data-i18n="system">Menu</summary>
 <div class="system-menu-list">
+<details class="system-submenu">
+<summary data-ui-ru="Вещание" data-ui-en="Broadcast" data-ui-hr="Emitiranje">Вещание</summary>
+<div class="system-submenu-list">
 <button class="system-menu-item" onclick="openPlaylistModal();closeSystemMenu()" data-i18n="playlist">VLC playlist</button>
 <button class="system-menu-item" onclick="openTickerModal();closeSystemMenu()" data-ui-ru="Бегущая строка" data-ui-en="Scrolling ticker" data-ui-hr="Pokretni tekst">Бегущая строка</button>
-<button class="system-menu-item" onclick="openSystemLoadModal();closeSystemMenu()" data-i18n="systemLoad">System load</button>
-<button class="system-menu-item" onclick="openGlobalRestartScheduleModal();closeSystemMenu()" data-ui-ru="Расписание перезапуска потоков" data-ui-en="Stream restart schedule" data-ui-hr="Raspored ponovnog pokretanja tokova">Расписание перезапуска потоков</button>
-<button class="system-menu-item" onclick="openNetworkModal();closeSystemMenu()" data-i18n="network">Network</button>
 <button class="system-menu-item" onclick="openMptsModal();closeSystemMenu()">MPTS</button>
-<button class="system-menu-item" onclick="openLoginModal();closeSystemMenu()" data-i18n="user">User</button>
-<button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()">Конфигурация</button>
 <button class="system-menu-item" onclick="openXmltvModal();closeSystemMenu()" data-ui-ru="Источники XMLTV" data-ui-en="XMLTV sources" data-ui-hr="XMLTV izvori">Источники XMLTV</button>
+<button class="system-menu-item" onclick="openGlobalRestartScheduleModal();closeSystemMenu()" data-ui-ru="Расписание перезапуска потоков" data-ui-en="Stream restart schedule" data-ui-hr="Raspored ponovnog pokretanja tokova">Расписание перезапуска потоков</button>
+</div>
+</details>
+<details class="system-submenu">
+<summary data-ui-ru="Мониторинг и сеть" data-ui-en="Monitoring &amp; network" data-ui-hr="Nadzor i mreža">Мониторинг и сеть</summary>
+<div class="system-submenu-list">
+<button class="system-menu-item" onclick="openSystemLoadModal();closeSystemMenu()" data-i18n="systemLoad">System load</button>
+<button class="system-menu-item" onclick="openNetworkModal();closeSystemMenu()" data-i18n="network">Network</button>
+</div>
+</details>
+<details class="system-submenu">
+<summary data-ui-ru="Доступ и интеграции" data-ui-en="Access &amp; integrations" data-ui-hr="Pristup i integracije">Доступ и интеграции</summary>
+<div class="system-submenu-list">
+<button class="system-menu-item" onclick="openLoginModal();closeSystemMenu()" data-i18n="user">User</button>
 <button class="system-menu-item" onclick="openTelegramModal();closeSystemMenu()" data-i18n="telegram">Telegram API</button>
 <button class="system-menu-item" onclick="openNewcamdModal();closeSystemMenu()">Newcamd</button>
 <button class="system-menu-item" onclick="window.location.href='/oscam-mini';closeSystemMenu()">OSCam-mini</button>
+</div>
+</details>
+<details class="system-submenu">
+<summary data-ui-ru="Администрирование" data-ui-en="Administration" data-ui-hr="Administracija">Администрирование</summary>
+<div class="system-submenu-list">
+<button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()" data-ui-ru="Конфигурация" data-ui-en="Configuration" data-ui-hr="Konfiguracija">Конфигурация</button>
 <button class="system-menu-item" onclick="openAboutModal();closeSystemMenu()" data-i18n="about">About</button>
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
 <button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
+</div>
+</details>
 </div>
 </details>
 <button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>
