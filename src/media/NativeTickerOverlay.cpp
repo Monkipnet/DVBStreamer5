@@ -170,11 +170,20 @@ struct RasterCache {
             for(int yy=0;yy<static_cast<int>(bmp.rows);++yy) {
                 const int y=y0+yy;
                 if(y<0||y>=h)continue;
-                const auto* row=bmp.buffer+static_cast<std::ptrdiff_t>(yy)*bmp.pitch;
+                // FreeType bitmap pitch may be negative and monochrome rows
+                // are bit-packed (row[xx] would overread a MONO glyph).
+                const int pitch=static_cast<int>(bmp.pitch);
+                const int physicalRow=pitch>=0?yy:static_cast<int>(bmp.rows)-1-yy;
+                const auto* row=bmp.buffer+static_cast<std::ptrdiff_t>(physicalRow)*std::abs(pitch);
                 for(int xx=0;xx<static_cast<int>(bmp.width);++xx) {
                     const int x=x0+xx;
-                    if(x>=0&&x<w)alpha[static_cast<std::size_t>(y*w+x)]=
-                        bmp.pixel_mode==FT_PIXEL_MODE_GRAY ? row[xx] : (row[xx]?255:0);
+                    if(x<0||x>=w)continue;
+                    std::uint8_t coverage=0;
+                    if(bmp.pixel_mode==FT_PIXEL_MODE_GRAY)coverage=row[xx];
+                    else if(bmp.pixel_mode==FT_PIXEL_MODE_MONO)
+                        coverage=(row[xx/8]&(0x80U>>(xx%8)))?255:0;
+                    else continue;
+                    alpha[static_cast<std::size_t>(y*w+x)]=coverage;
                 }
             }
             pen+=static_cast<int>(glyph.advance.x>>6);
@@ -352,10 +361,11 @@ bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame
     for(int y=0;y<bandH && top+y<h;++y)
         for(int x=0;x<w;++x)
             if(bgAlpha)blend(frame,x,top+y,bg,bgAlpha);
+    const int first=std::max(0,-textX);
+    const int last=std::min(cache.w,w-textX);
     for(int y=0;y<cache.h && top+y<h;++y) {
-        for(int tx=0;tx<cache.w;++tx){
+        for(int tx=first;tx<last;++tx){
             const int x=textX+tx;
-            if(x<0||x>=w)continue;
             const int alpha=cache.alpha[static_cast<std::size_t>(y*cache.w+tx)];
             if(alpha)blend(frame,x,top+y,fg,alpha);
         }
