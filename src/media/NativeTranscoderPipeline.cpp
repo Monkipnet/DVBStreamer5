@@ -514,6 +514,7 @@ void NativeTranscoderPipeline::reset() {
     videoRateClockValid_ = false;
     videoRateNextPts90k_ = 0;
     videoRateDroppedFrames_ = 0;
+    videoSourceCadence_.reset();
     ffmpegPalPtsClock_.reset();
     ffmpegPalPtsCorrectedFrames_ = 0;
     sourceGeometryResolved_ = false;
@@ -1976,6 +1977,26 @@ bool NativeTranscoderPipeline::ensureAudioEncoder(const codec::PcmAudioFrame&, s
 
 bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::string& error) {
     ++inputVideoSamples_;
+    // Observe H.264 source PES in presentation-time units, independent of
+    // potentially reordered/field-pair timestamps emitted by the decoder.
+    // This only gates the generic 25-fps downsampler; it does NOT rewrite PTS.
+    if (sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+        config_.fps >= 24.99 && config_.fps <= 25.01 &&
+        config_.videoCodec != "copy") {
+        const auto cadence = videoSourceCadence_.observe(
+            sample.pts90k, sample.hasPts);
+        if (cadence.changed) {
+            videoRateClockValid_ = false;
+            std::cerr << "NATIVE VIDEO FPS GATE SOURCE CADENCE"
+                      << " stream_id=" << config_.streamId
+                      << " source_fps=" << cadence.measuredFps
+                      << " target_fps=" << config_.fps
+                      << " action=" << (cadence.matches25
+                          ? "preserve-all-decoded-frames" : "use-normal-downsampler")
+                      << " input=compressed-h264-pes"
+                      << std::endl;
+        }
+    }
     // Capture exactly what the selected live H.264 decoder receives.
     // No-op in production unless DVBSTREAMER5_DUMP_H264_ES is explicitly set.
     if (sample.stream.pid == inputVideoPid_)
@@ -2428,6 +2449,16 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             }
         }
 
+        // Source-verified 25-fps H.264 does not need 25-fps downsampling.
+        // Decoder field/reorder PTS can run backward/duplicate transiently
+        // even when 125 compressed pictures represent 125 real PAL frames.
+        // V324 telemetry: decoded=125, gate_dropped=40, published=85.
+        // Preserve those frames ONLY after 33 source PES PTS prove <=26.5 fps.
+        // A true 29.97/30/50-fps source continues using the original gate.
+        const bool sourceMatches25Fps =
+            sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+            config_.fps >= 24.99 && config_.fps <= 25.01 &&
+            videoSourceCadence_.matches25();
         // All ABR renditions share this post-decode frame. Gate once here so
         // a 29.97/30 fps source does not feed ~30 frames/s into encoders that
         // are configured for 25 fps. Dropping before deinterlace/VPP/queues
@@ -2443,7 +2474,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             selectedAvcDecoder_ == "ffmpeg" && raw.interlaced &&
             config_.fps >= 49.5;
         if (raw.hasPts && config_.fps > 0.0 &&
-            !preserveInterlacedFfmpegFrames) {
+            !preserveInterlacedFfmpegFrames && !sourceMatches25Fps) {
             constexpr std::uint64_t kPtsMask = (1ULL << 33U) - 1ULL;
             constexpr std::uint64_t kPtsHalf = 1ULL << 32U;
             const std::uint64_t interval =
