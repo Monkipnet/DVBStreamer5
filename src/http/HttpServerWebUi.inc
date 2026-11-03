@@ -9210,6 +9210,102 @@ async function tickerSave() {
   }catch(e){status.textContent=tickerWord('Ошибка: ','Error: ')+e.message;}
 }
 
+
+// V321: search, bulk checkbox selection and local TXT/DOCX import.
+function tickerRenderChannels(){
+  if(!tickerEditor)return;
+  const root=document.getElementById('tickerChannelList');
+  const search=(tickerEditor.search||'').toLocaleLowerCase();
+  const frag=document.createDocumentFragment();
+  tickerEditor.streams.filter(s=>String(s.name||s.id).toLocaleLowerCase().includes(search)).forEach(s=>{
+    const label=document.createElement('label');label.className='ticker-channel-option';
+    const input=document.createElement('input');input.type='checkbox';input.value=s.id;
+    input.checked=tickerEditor.checkedIds.has(s.id);
+    input.addEventListener('change',()=>{
+      if(input.checked)tickerEditor.checkedIds.add(s.id);
+      else tickerEditor.checkedIds.delete(s.id);
+      tickerSelectedCount();
+    });
+    const title=document.createElement('span');title.textContent=s.name||s.id;title.title=s.name||s.id;
+    label.append(input,title);frag.append(label);
+  });
+  root.replaceChildren(frag);tickerSelectedCount();
+}
+function tickerSelectedCount(){
+  if(!tickerEditor)return;
+  document.getElementById('tickerSelectedCount').textContent=
+    '('+tickerEditor.checkedIds.size+'/'+tickerEditor.streams.length+')';
+}
+function tickerSearchChannels(value){
+  if(!tickerEditor)return;
+  tickerEditor.search=String(value||'');tickerRenderChannels();
+}
+function tickerSelectAll(select){
+  if(!tickerEditor)return;
+  const search=(tickerEditor.search||'').toLocaleLowerCase();
+  tickerEditor.streams.filter(s=>String(s.name||s.id).toLocaleLowerCase().includes(search)).forEach(s=>{
+    if(select)tickerEditor.checkedIds.add(s.id);
+    else tickerEditor.checkedIds.delete(s.id);
+  });
+  tickerRenderChannels();
+}
+function tickerImportedText(text,file){
+  // A ticker is one moving line: connect document paragraphs with separators.
+  const flattened=String(text||'').replace(/\r\n?/g,'\n').split(/\n+/)
+    .map(line=>line.replace(/\t/g,' ').trim()).filter(Boolean).join('  •  ');
+  if(!flattened)throw Error(tickerWord('В файле нет текста','File contains no text'));
+  const encoded=new TextEncoder().encode(flattened);
+  const clipped=encoded.length>8192;
+  const result=clipped?new TextDecoder().decode(encoded.slice(0,8192)).replace(/\uFFFD$/,''):flattened;
+  document.getElementById('tickerText').value=result;
+  document.getElementById('tickerFileStatus').textContent=file+(clipped?
+    tickerWord(' — начало файла (8192 байта)',' — truncated at 8192 bytes'):'');
+  tickerEditor.dirty=true;
+  tickerPreviewUpdate();
+}
+function tickerEncodeBase64(data){
+  const u=new Uint8Array(data);let raw='';
+  for(let i=0;i<u.length;i+=8192){
+    const part=u.subarray(i,i+8192);
+    for(let j=0;j<part.length;++j)raw+=String.fromCharCode(part[j]);
+  }
+  return btoa(raw);
+}
+async function tickerImportFile(file){
+  const field=document.getElementById('tickerFileInput');
+  if(field)field.value='';
+  if(!file||!tickerEditor)return;
+  const status=document.getElementById('tickerFileStatus');
+  status.textContent=tickerWord('Чтение...','Reading...');
+  try{
+    if(file.size>2*1024*1024)throw Error(tickerWord('Файл больше 2 МБ','File exceeds 2 MiB'));
+    const extension=String(file.name).split('.').pop().toLowerCase();
+    let text='';
+    if(extension==='txt'){
+      const bytes=new Uint8Array(await file.arrayBuffer());
+      if(bytes.length>=2 && bytes[0]===255 && bytes[1]===254)
+        text=new TextDecoder('utf-16le').decode(bytes);
+      else if(bytes.length>=2 && bytes[0]===254 && bytes[1]===255)
+        text=new TextDecoder('utf-16be').decode(bytes);
+      else{
+        text=new TextDecoder('utf-8').decode(bytes);
+        if(text.includes('\uFFFD')){
+          try{text=new TextDecoder('windows-1251').decode(bytes);}catch(_e){}
+        }
+      }
+    }else if(extension==='docx'){
+      const response=await fetch('/api/tickers/import-docx',{
+        method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({base64:tickerEncodeBase64(await file.arrayBuffer())})
+      });
+      const data=await response.json();
+      if(!response.ok||data.error)throw Error(data.error||('HTTP '+response.status));
+      text=data.text||'';
+    }else throw Error(tickerWord('Поддерживаются TXT и DOCX','Only TXT and DOCX supported'));
+    tickerImportedText(text,file.name);
+  }catch(e){status.textContent=tickerWord('Ошибка: ','Error: ')+e.message;}
+}
+
 </script>
 </body>
 </html>
