@@ -274,6 +274,9 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     if (!root.isMember("restart_schedule")) {
         nextConfig.restartSchedule = previousConfig.restartSchedule;
     }
+    if (!root.isMember("ticker_overlays")) {
+        nextConfig.tickerOverlays = previousConfig.tickerOverlays;
+    }
     if (!root.isMember("srt_vps_vds_optimization")) {
         nextConfig.srtVpsVdsOptimization = configManager.config.srtVpsVdsOptimization;
     }
@@ -358,6 +361,7 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
 
     configManager.config = nextConfig;
     configManager.save();
+    dvbstreamer5::media::ticker::TickerOverlay::instance().configure(configManager.config.tickerOverlays);
     // A changed XMLTV URL or daily schedule is metadata-only. It must not
     // retune a DVB card, reconfigure CA or interrupt transcoding.
     streamManager.configureExternalXmltvSources();
