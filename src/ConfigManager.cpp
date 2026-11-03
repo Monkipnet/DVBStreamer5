@@ -1001,18 +1001,22 @@ bool ConfigManager::load() {
                 !Json::parseFromStream(readerBuilder,tickerInput,&tickerRoot,&tickerParseError) ||
                 !tickerRoot.isObject() || !tickerRoot["entries"].isArray()) {
                 std::cerr << "TICKER CONFIG read failed file=" << tickerPath
-                          << " error=" << tickerParseError << std::endl;
-                return false; // retain file for recovery; do not silently erase
+                          << " error=" << tickerParseError
+                          << " action=disable-ticker-only (streams preserved)" << std::endl;
+                config.tickerOverlays = Json::Value(Json::arrayValue);
+            } else {
+                std::string validationError;
+                if (!dvbstreamer5::media::ticker::TickerOverlay::validate(
+                        tickerRoot["entries"],validationError)) {
+                    std::cerr << "TICKER CONFIG validation failed: " << validationError
+                              << " action=disable-ticker-only (streams preserved)" << std::endl;
+                    config.tickerOverlays = Json::Value(Json::arrayValue);
+                } else {
+                    config.tickerOverlays = tickerRoot["entries"];
+                    std::cerr << "TICKER CONFIG loaded file=" << tickerPath
+                              << " entries=" << config.tickerOverlays.size() << std::endl;
+                }
             }
-            std::string validationError;
-            if (!dvbstreamer5::media::ticker::TickerOverlay::validate(
-                    tickerRoot["entries"],validationError)) {
-                std::cerr << "TICKER CONFIG validation failed: " << validationError << std::endl;
-                return false;
-            }
-            config.tickerOverlays = tickerRoot["entries"];
-            std::cerr << "TICKER CONFIG loaded file=" << tickerPath
-                      << " entries=" << config.tickerOverlays.size() << std::endl;
         }
         dvbstreamer5::media::ticker::TickerOverlay::instance().configure(config.tickerOverlays);
     }
