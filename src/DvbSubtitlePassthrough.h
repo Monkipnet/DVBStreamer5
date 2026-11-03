@@ -29,6 +29,13 @@ public:
         std::uint16_t compositionPageId = 0;
         std::uint16_t ancillaryPageId = 0;
     };
+    struct AvailableMediaTrack {
+        std::uint16_t pid = 0;
+        std::string kind; // video or audio
+        std::string codec;
+        std::string language; // ISO639-2 or empty
+    };
+    std::vector<AvailableMediaTrack> availableMediaTracks() const;
     explicit DvbSubtitlePassthrough(std::string language = "auto",
                                     std::string selectedTrack = "auto");
     std::vector<AvailableTrack> availableTracks() const;
@@ -69,6 +76,7 @@ private:
     std::string selectedTrack_;
     mutable std::mutex availableMutex_;
     std::vector<AvailableTrack> availableTracks_;
+    std::vector<AvailableMediaTrack> availableMediaTracks_;
     bool availablePmtParsed_ = false;
     std::array<bool, 8192> passthroughExcludedPids_{};
     bool passthroughFilterActive_ = false;
