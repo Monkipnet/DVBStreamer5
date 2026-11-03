@@ -2067,6 +2067,14 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     // The transport/mux/audio workers and stream lifecycle are left running.
     // The switch is one-way for the active tile (even when graphics are later
     // disabled), avoiding repeated decoder teardown at schedule boundaries.
+    if (forceNvidiaHardwareAvc && !tickerLiveSwitchDenied_ &&
+        ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId)) {
+        tickerLiveSwitchDenied_ = true;
+        std::cerr << "NATIVE TICKER LIVE SWITCH refused stream_id=" << config_.streamId
+                  << " reason=explicit-nvidia-hw-decoder"
+                  << " action=keep-existing-hardware-stream"
+                  << " hint=select-auto-or-ffmpeg-decoder" << std::endl;
+    }
     if (tickerZeroCopyAllowed_ && !tickerLiveSwitchDenied_ &&
         !forceNvidiaHardwareAvc &&
         ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId)) {
