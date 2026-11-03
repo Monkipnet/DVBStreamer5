@@ -1374,6 +1374,83 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
             }
         }
     }
+    // V316: encoded AU bitrate burst telemetry *before* MPEG-TS and CBR pacing.
+    // Uses video PTS (90 kHz) for rolling 100-ms and 1-second windows.
+    // This is intentionally opt-in and does not change encoded frames.
+    if (queued.kind == mpegts::ElementaryKind::Video) {
+        const char* burstId = std::getenv("DVBSTREAMER5_DIAG_VIDEO_BURSTS_STREAM_ID");
+        if (burstId && config_.streamId == burstId) {
+            static thread_local const NativeTranscoderPipeline* burstOwner = nullptr;
+            static thread_local std::deque<std::pair<std::uint64_t, std::size_t>> burstSamples;
+            static thread_local std::uint64_t burstBytes100 = 0;
+            static thread_local std::uint64_t burstBytes1000 = 0;
+            static thread_local std::uint64_t burstPeak100Kbps = 0;
+            static thread_local std::uint64_t burstPeak1000Kbps = 0;
+            static thread_local std::uint64_t burstLargestAuBytes = 0;
+            static thread_local std::uint64_t burstLargestIdrBytes = 0;
+            static thread_local std::uint64_t burstAuCount = 0;
+            static thread_local std::chrono::steady_clock::time_point burstSince{};
+            const auto burstNow = std::chrono::steady_clock::now();
+            if (burstOwner != this) {
+                burstOwner = this;
+                burstSamples.clear();
+                burstBytes100 = burstBytes1000 = 0;
+                burstPeak100Kbps = burstPeak1000Kbps = 0;
+                burstLargestAuBytes = burstLargestIdrBytes = burstAuCount = 0;
+                burstSince = burstNow;
+            }
+            // Rolling 100-ms peak from the last 100 ms of video PTS.
+            // Recalculate both sums over at most 26 entries (25 fps typical);
+            // only on the selected diagnostic stream.
+            if (queued.hasPts) {
+                constexpr std::uint64_t kMask33 = (1ULL << 33U) - 1ULL;
+                constexpr std::uint64_t kHalf33 = (1ULL << 32U);
+                const auto pts = queued.pts90k & kMask33;
+                if (!burstSamples.empty()) {
+                    const auto step = (pts - burstSamples.back().first) & kMask33;
+                    if (step >= kHalf33 || step > 90000ULL)
+                        burstSamples.clear(); // PTS discontinuity: new window
+                }
+                burstSamples.emplace_back(pts, queued.data.size());
+                while (!burstSamples.empty()) {
+                    const auto age = (pts - burstSamples.front().first) & kMask33;
+                    if (age < 90000ULL) break;
+                    burstSamples.pop_front();
+                }
+                burstBytes100 = 0;
+                burstBytes1000 = 0;
+                for (const auto& entry : burstSamples) {
+                    burstBytes1000 += entry.second;
+                    const auto age = (pts - entry.first) & kMask33;
+                    if (age < 9000ULL) burstBytes100 += entry.second;
+                }
+                burstPeak100Kbps = (std::max)(burstPeak100Kbps,
+                    burstBytes100 * std::uint64_t{8} / std::uint64_t{100});
+                burstPeak1000Kbps = (std::max)(burstPeak1000Kbps,
+                    burstBytes1000 * std::uint64_t{8} / std::uint64_t{1000});
+            }
+            burstLargestAuBytes = (std::max)(burstLargestAuBytes,
+                static_cast<std::uint64_t>(queued.data.size()));
+            if (queued.randomAccess)
+                burstLargestIdrBytes = (std::max)(burstLargestIdrBytes,
+                    static_cast<std::uint64_t>(queued.data.size()));
+            ++burstAuCount;
+            if (burstNow - burstSince >= std::chrono::seconds(5)) {
+                std::cerr << "NATIVE VIDEO BURST DIAG stream_id=" << config_.streamId
+                          << " codec=" << config_.videoCodec
+                          << " au=" << burstAuCount
+                          << " peak_100ms_kbps=" << burstPeak100Kbps
+                          << " peak_1s_kbps=" << burstPeak1000Kbps
+                          << " max_au_bytes=" << burstLargestAuBytes
+                          << " max_idr_au_bytes=" << burstLargestIdrBytes
+                          << " encoder_target_kbps=" << (config_.videoBitrate / 1000ULL)
+                          << std::endl;
+                burstSince = burstNow;
+                burstPeak100Kbps = burstPeak1000Kbps = 0;
+                burstLargestAuBytes = burstLargestIdrBytes = burstAuCount = 0;
+            }
+        }
+    }
     // V305: low-overhead real-time mux cadence measurements, opt-in.
     // Uses atomics-free thread-local counters: writeMuxSample runs on mux worker.
     if (queued.kind == mpegts::ElementaryKind::Video) {
