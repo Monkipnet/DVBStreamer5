@@ -41,6 +41,9 @@ public:
     std::vector<AvailableTrack> availableTracks() const;
     bool hasParsedPmt() const;
     void observe(const std::uint8_t* data, std::size_t size);
+    // Lightweight PMT-only monitor for non-DVB streams: consumes existing
+    // packet views, no serialized TS copy or subtitle PES queueing.
+    void observeMediaPackets(const std::vector<Packet>& packets);
     void inject(std::vector<Packet>& output);
     // For untouched (non-transcoded) TS: keep existing PES once and filter PMT/PIDs.
     void filterPassthrough(std::vector<Packet>& output);
