@@ -15,6 +15,8 @@ struct RemapConfig {
     std::uint16_t outputServiceId = 0;
     std::uint16_t outputVideoPid = 0;
     std::uint16_t outputAudioPid = 0;
+    std::uint16_t inputAudioPid = 0; // optional explicit input track
+    bool preserveSourceServiceId = false; // for track-only filtering
     std::string serviceName;
     std::string serviceProvider;
 };
