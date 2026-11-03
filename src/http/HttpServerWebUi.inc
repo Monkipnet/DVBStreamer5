@@ -473,6 +473,15 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .system-menu .system-submenu-list .system-menu-item{font-size:.74rem;padding:7px 10px;line-height:1.22;white-space:normal}
 @media(max-width:560px){.system-menu-list{left:auto;right:0;transform:none;width:min(270px,calc(100vw - 20px));max-height:65dvh}}
 
+
+/* V326 codec/track snapshot in the editable channel heading */
+.stream-edit-heading{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:8px!important}
+.stream-edit-heading #streamEditChannelName{font-size:.95rem;color:#80cbff;font-weight:750;overflow-wrap:anywhere}
+.stream-media-codec-status{display:flex;align-items:center;flex-wrap:wrap;gap:6px 15px;padding:8px 10px;margin:0 0 9px;border:1px solid rgba(125,209,255,.2);background:#111c2b;border-radius:9px;color:#aecce6;font-size:.7rem}
+.stream-media-codec-status strong{color:#e6f3ff}
+.stream-media-codec-status>div{min-width:200px;flex:1}
+.stream-media-codec-status button{padding:4px 8px;flex:none}
+
 </style>
 </head>
 <body>
@@ -6911,7 +6920,7 @@ function openStreamModal() {
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
     interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_deinterlace_mode:'legacy', transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
-    audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
+    audio_pid:0, input_audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
 function outputTypeOptions(selected) {
@@ -7401,6 +7410,76 @@ function refreshDvbSubtitleTracksFromForm() {
   const select = document.getElementById('streamDvbSubtitlesTrack');
   if (select?.dataset.streamId) void loadDvbSubtitleTracks(select.dataset.streamId);
 }
+
+// V326: read exact input/output PMT media codecs and audio track choices.
+// Never guess source codecs from requested transcoder settings.
+function streamMediaTracksSummary(tracks) {
+  const media=Array.isArray(tracks)?tracks:[];
+  const pick=kind=>media.filter(x=>x.kind===kind)
+    .map(x=>String(x.codec||'?')+(x.language?' ('+subtitleTrackName(x.language)+')':'')+
+         ' · PID '+x.pid);
+  const video=pick('video'),audio=pick('audio');
+  return subtitleUiTriText('Видео: ','Video: ','Video: ')+
+    (video.length?video.join(', '):'—')+' · '+
+    subtitleUiTriText('Аудио: ','Audio: ','Audio: ')+
+    (audio.length?audio.join(', '):'—');
+}
+async function loadStreamMediaTracks(streamId,attempt=0){
+  const select=document.getElementById('streamInputAudioPid');
+  if(!select||select.dataset.streamId!==String(streamId))return;
+  const status=document.getElementById('streamInputAudioStatus');
+  try {
+    const data=await fetchJson(
+      '/api/media-tracks?stream_id='+encodeURIComponent(streamId),{},10000);
+    if(!select.isConnected||select.dataset.streamId!==String(streamId))return;
+    const tracks=(Array.isArray(data.input)?data.input:[])
+      .filter(track=>track.kind==='audio'&&Number(track.pid)>0&&Number(track.pid)<8191);
+    const existing=select.value||'0';
+    const saved=select.dataset.savedPid||'0';
+    const selected=select.dataset.userSelected==='1'?existing:saved;
+    const option=(value,label)=>{
+      const o=document.createElement('option');o.value=String(value);o.textContent=label;return o;
+    };
+    select.replaceChildren(option(0,subtitleUiTriText(
+      'Авто — оригинальные дорожки','Auto — original audio tracks','Automatski — izvorni audio zapisi')));
+    for(const track of tracks){
+      const label=subtitleTrackName(track.language||'')+
+        (track.language?' ('+track.language+')':'')+
+        ' · '+track.codec+' · PID '+track.pid;
+      select.append(option(track.pid,label));
+    }
+    if(selected!=='0'&&!Array.from(select.options).some(o=>o.value===selected))
+      select.append(option(selected,subtitleUiTriText(
+        'Сохранённый PID (пока не найден): ','Saved PID (not found yet): ',
+        'Spremljeni PID (nije pronađen): ')+selected));
+    select.value=selected;
+    if(status)status.textContent=!data.active?subtitleUiTriText(
+      'Канал остановлен — запустите плитку для чтения аудиодорожек.',
+      'Channel stopped — start tile to read audio tracks.',
+      'Kanal je zaustavljen — pokrenite ga za čitanje audio zapisa.') :
+      !data.input_scanned?subtitleUiTriText(
+      'Ожидание PMT входного потока…','Waiting for input PMT…','Čekanje ulaznog PMT-a…'):
+      subtitleUiTriText('Обнаружено аудиодорожек: ','Detected audio tracks: ',
+      'Pronađeno audio zapisa: ')+tracks.length;
+    const input=document.getElementById('streamInputCodecs');
+    const output=document.getElementById('streamOutputCodecs');
+    if(input)input.textContent=data.input_scanned?
+      streamMediaTracksSummary(data.input):subtitleUiTriText(
+        'PMT пока не получена','PMT not received yet','PMT nije primljen');
+    if(output)output.textContent=data.output_scanned?
+      streamMediaTracksSummary(data.output):subtitleUiTriText(
+        'PMT пока не получена','PMT not received yet','PMT nije primljen');
+    if(data.active && (!data.input_scanned||!data.output_scanned) && attempt<5)
+      setTimeout(()=>loadStreamMediaTracks(streamId,attempt+1),1800);
+  }catch(e){
+    if(select.isConnected&&status)
+      status.textContent=String(e?.message||e);
+  }
+}
+function refreshStreamMediaTracksFromForm(){
+  const id=document.getElementById('streamInputAudioPid')?.dataset.streamId;
+  if(id)void loadStreamMediaTracks(id);
+}
 function openStreamForm(stream) {
   const renderStreamForm = () => {
     const ifaceOptions = state.interfaces || [];
@@ -7428,9 +7507,14 @@ function openStreamForm(stream) {
     const transcoderStatusRu = transcoderStatusFor('ru');
     const transcoderStatusEn = transcoderStatusFor('en');
     openModal(`
-      <h2>${stream.name ? uiBiText('Редактирование канала','Edit channel') : uiBiText('Новый канал','New channel')}</h2>
+      <h2 class="stream-edit-heading">${stream.name ? uiBiText('Редактирование канала','Edit channel') : uiBiText('Новый канал','New channel')}<span id="streamEditChannelName">${escapeHtmlValue(stream.name||stream.service_name||stream.id)}</span></h2>
+      <div id="streamMediaCodecStatus" class="stream-media-codec-status">
+        <div><strong>${subtitleUiTriText('Вход','Input','Ulaz')}:</strong> <span id="streamInputCodecs">${subtitleUiTriText('Ожидание определения кодеков по PMT','Waiting for PMT codecs','Čekanje PMT kodeka')}</span></div>
+        <div><strong>${subtitleUiTriText('Выход','Output','Izlaz')}:</strong> <span id="streamOutputCodecs">${subtitleUiTriText('Ожидание определения кодеков по PMT','Waiting for PMT codecs','Čekanje PMT kodeka')}</span></div>
+        <button type="button" class="button-secondary" onclick="refreshStreamMediaTracksFromForm()">⟳ ${subtitleUiTriText('Обновить','Refresh','Osvježi')}</button>
+      </div>
       <div class="form-grid">
-        <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${stream.name||''}" placeholder="Belarus 5" /></div>
+        <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${escapeHtmlValue(stream.name||'')}" placeholder="Belarus 5" oninput="document.getElementById('streamEditChannelName').textContent=this.value||'${uiEscapeAttr(stream.id)}'" /></div>
         <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} oninput="updateDvbTunerVisibility()" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility();if(this.value==='vdr'){const ca=document.getElementById('streamCaMode');if(ca){ca.value='ciplus';updateStreamCaMode();}}"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
         <details class="form-row full edit-section edit-collapsible" id="streamDvbTunerPanel" style="display:${String(stream.input_uri||'').toLowerCase().startsWith('dvb://')?'':'none'}">
           <summary class="edit-section-head"><span ${uiBiAttrs('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}>${uiBiText('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
@@ -7540,7 +7624,19 @@ function openStreamForm(stream) {
         <div class="form-row full"><label>Тестовая таблица</label><div class="checkbox-inline"><input id="streamTestPattern" type="checkbox" ${stream.test_pattern ? 'checked' : ''} /><span>Использовать вместо входных потоков</span></div></div>
         <div class="form-row full"><label>Интерфейс вывода</label><select class="compact" id="streamInterface" onchange="syncOutputHostWithInterface()"><option value="">Auto / все интерфейсы</option>${outputOptions}</select></div>
         <div class="form-row full"><label>Выходные форматы</label><div id="streamOutputs" class="output-list">${renderOutputRows(outputs, links)}</div><button class="button-secondary" type="button" onclick="addStreamOutput()">+ Добавить формат</button></div>
-        <div class="form-row full"><label>V-PID / A-PID</label><div class="row-inline compact-row"><input class="compact" id="streamVideoPid" type="number" min="16" max="8190" value="${stream.video_pid||258}" placeholder="V-PID 258" /><input class="compact" id="streamAudioPid" type="number" min="16" max="8190" value="${stream.audio_pid||257}" placeholder="A-PID 257" /></div></div>
+        <div class="form-row full edit-section">
+          <div class="edit-field-title">${subtitleUiTriText('Входная аудиодорожка','Input audio track','Ulazni audio zapis')}</div>
+          <small class="field-help">${subtitleUiTriText('Выберите язык, кодек и PID из входной PMT. Авто оставляет все оригинальные дорожки без транскодирования.','Choose language, codec and PID from input PMT. Auto preserves all original tracks without transcoding.','Odaberite jezik, kodek i PID iz PMT-a.')}</small>
+          <div class="row-inline compact-row">
+            <select id="streamInputAudioPid" data-stream-id="${uiEscapeAttr(stream.id)}" data-saved-pid="${Number(stream.input_audio_pid||0)}" onchange="this.dataset.userSelected='1'">
+              <option value="0" ${!stream.input_audio_pid?'selected':''}>${subtitleUiTriText('Авто — исходные дорожки','Auto — original audio tracks','Automatski — izvorni audio zapisi')}</option>
+              ${stream.input_audio_pid?'<option value="'+Number(stream.input_audio_pid)+'" selected>'+subtitleUiTriText('Сохранённый PID ','Saved PID ','Spremljeni PID ')+Number(stream.input_audio_pid)+'</option>':''}
+            </select>
+            <button type="button" class="button-secondary" onclick="refreshStreamMediaTracksFromForm()">⟳ ${subtitleUiTriText('Обновить дорожки','Refresh tracks','Osvježi zapise')}</button>
+          </div>
+          <small id="streamInputAudioStatus" class="field-help" aria-live="polite"></small>
+        </div>
+        <div class="form-row full"><label>${subtitleUiTriText('Выходные V-PID / A-PID','Output V-PID / A-PID','Izlazni V-PID / A-PID')}</label><div class="row-inline compact-row"><input class="compact" id="streamVideoPid" type="number" min="16" max="8190" value="${stream.video_pid||258}" placeholder="V-PID 258" /><input class="compact" id="streamAudioPid" type="number" min="16" max="8190" value="${stream.audio_pid||257}" placeholder="A-PID 257" /></div></div>
         <div class="form-row"><label>SID входа</label><input class="compact" id="streamInputServiceId" type="number" min="0" max="65535" value="${stream.input_service_id ?? 0}" placeholder="0 = Auto" /><small>0 = автоопределение SID из PAT; значение 1–65535 = выбрать конкретный входной канал.</small></div>
         <div class="form-row"><label>SID выхода</label><input class="compact" id="streamServiceId" type="number" min="1" max="65535" value="${stream.service_id||1}" placeholder="1" /></div>
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
@@ -7652,6 +7748,7 @@ function openStreamForm(stream) {
     updateBackupInputMode();
     updateTranscodeControls();
     updateDvbSubtitleLanguageControls();
+    void loadStreamMediaTracks(stream.id);
     void loadDvbSubtitleTracks(stream.id);
     loadUploadedBackupFiles();
     updateOutputHints();
@@ -8159,6 +8256,7 @@ function saveStream(id) {
     transcode_audio_codec: document.getElementById('streamTranscodeAudioCodec').value,
     transcode_audio_bitrate: Number(document.getElementById('streamTranscodeAudioBitrate').value),
     audio_pid: Number(document.getElementById('streamAudioPid').value),
+    input_audio_pid: Number(document.getElementById('streamInputAudioPid')?.value||0),
     video_pid: Number(document.getElementById('streamVideoPid').value),
     input_service_id: Number(document.getElementById('streamInputServiceId').value),
     http_ts_input_jitter_enabled: document.getElementById('streamHttpTsJitterEnabled')?.checked === true,
