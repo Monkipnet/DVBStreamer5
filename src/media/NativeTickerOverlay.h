@@ -4,6 +4,7 @@
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace dvbstreamer5::media::ticker {
@@ -25,7 +26,7 @@ struct Entry {
     std::string background = "#000000";
     int backgroundOpacity = 70; // percent; 0 = fully transparent
     int fontSize = 32;          // rendered pixels at the source/encoder raster
-    int speed = 100;            // pixels per second, right-to-left
+    int speed = 40;             // pixels per second, right-to-left (smooth default)
     int offsetPx = 0;           // positive moves the ticker up from the bottom
     std::vector<TimeWindow> windows;
 };
@@ -40,12 +41,24 @@ public:
     bool enabledFor(const std::string& streamId) const;
     // Only true during an enabled interval; polled by the active video worker.
     bool renderRequestedFor(const std::string& streamId) const;
-    bool draw(const std::string& streamId, codec::RawVideoFrame& frame);
+    bool draw(const std::string& streamId, codec::RawVideoFrame& frame,
+              double nominalFps = 25.0);
 private:
     TickerOverlay() = default;
     bool active(const Entry& entry) const;
     mutable std::mutex mutex_;
     std::vector<Entry> entries_;
-    std::chrono::steady_clock::time_point animationStart_ = std::chrono::steady_clock::now();
+    // Phase is tracked independently per output stream using presentation PTS;
+    // saving settings for one channel never restarts other channels' motion.
+    struct MotionClock {
+        bool initialized = false;
+        bool lastHasPts = false;
+        std::uint64_t lastPts90k = 0;
+        double distancePx = 0.0;
+        std::string text;
+        std::string fontFile;
+        int fontSize = 0;
+    };
+    std::unordered_map<std::string, MotionClock> motion_;
 };
 } // namespace dvbstreamer5::media::ticker
