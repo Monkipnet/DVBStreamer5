@@ -2457,6 +2457,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         // A true 29.97/30/50-fps source continues using the original gate.
         const bool sourceMatches25Fps =
             sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+            decoded.size() == 1U && // never bypass if decoder emits two fields
             config_.fps >= 24.99 && config_.fps <= 25.01 &&
             videoSourceCadence_.matches25();
         // All ABR renditions share this post-decode frame. Gate once here so
