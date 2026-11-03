@@ -126,10 +126,10 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .tile.error{border-color:#fb5f5f}
 .tile .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px;padding-right:64px;min-height:27px;min-width:0;overflow:hidden}
 .tile .top>div{min-width:0;max-width:100%;overflow:hidden}
-/* The local uptime clock stays centered in the tile's first row, while
-   the channel heading stays left and the output/delete actions stay right. */
-.tile .top>.tile-heading{max-width:calc(50% - 1px)}
-.tile .tile-uptime{position:absolute;top:9px;left:50%;transform:translateX(-50%);display:block;max-width:72px;font-size:9px;font-weight:700;line-height:13px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:center;color:#9fe7b3;pointer-events:none;z-index:1}
+/* V331: the tile uptime sits next to ONLINE/BACKUP/OFFLINE, with no
+   absolute position in the channel-name row (also on mobile). */
+.tile .top>.tile-heading{flex:1 1 auto;max-width:100%}
+.tile .tile-uptime{position:static;display:inline-block;flex:0 0 auto;max-width:none;transform:none;font-size:9px;font-weight:700;line-height:12px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:left;color:#9fe7b3;pointer-events:none}
 .tile .tile-uptime.offline{color:#788697}
 .tile .tile-actions{position:absolute;top:8px;right:8px;display:flex;align-items:center;gap:5px;z-index:2}
 .tile .delete-button{display:inline-flex;align-items:center;justify-content:center;position:static;width:18px;height:18px;padding:0;border:0;border-radius:50%;background:#d9363e;color:#fff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 3px 8px rgba(0,0,0,.24)}
@@ -5288,12 +5288,12 @@ function render(force=false) {
           <div class="title" title="${escapeHtmlValue(stream.name || stream.id)}">${escapeHtmlValue(stream.name || stream.id)}</div>
           <div class="status-line">
             <div data-role="status-pill" class="status-pill ${stream.active ? 'active' : 'stopped'}">${stream.active ? (stream.using_backup ? 'Backup' : 'Online') : 'Offline'}</div>
+            <span data-role="tile-uptime" class="tile-uptime elapsed-clock${stream.active ? '' : ' offline'}"
+                  title="${subtitleUiTriText('Время с запуска канала', 'Time since channel start', 'Vrijeme od pokretanja kanala')}"
+                  aria-label="${subtitleUiTriText('Время с запуска канала', 'Time since channel start', 'Vrijeme od pokretanja kanala')}">—</span>
             <span data-role="runtime-status" class="runtime-status${tileRuntimeStatusIsRunning(stream.status) ? ' running-dot' : ''}" title="${escapeHtmlValue(tileRuntimeStatus(stream.status))}" aria-label="${escapeHtmlValue(tileRuntimeStatus(stream.status))}">${tileRuntimeStatusIsRunning(stream.status) ? '' : escapeHtmlValue(tileRuntimeStatus(stream.status))}</span>
           </div>
         </div>
-        <span data-role="tile-uptime" class="tile-uptime elapsed-clock${stream.active ? '' : ' offline'}"
-              title="${subtitleUiTriText('Время с запуска канала', 'Time since channel start', 'Vrijeme od pokretanja kanala')}"
-              aria-label="${subtitleUiTriText('Время с запуска канала', 'Time since channel start', 'Vrijeme od pokretanja kanala')}">—</span>
       </div>
       <div class="tile-actions">
         <div class="badge">${outputs.length > 1 ? outputBadgeText(stream) : bitrateMode}</div>
