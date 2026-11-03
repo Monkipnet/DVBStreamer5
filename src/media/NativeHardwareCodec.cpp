@@ -1,4 +1,5 @@
 #include "media/NativeHardwareCodec.h"
+#include "media/NativeNvencQualityPolicy.h"
 #include "media/NativeScaleMode.h"
 #include "media/NativeVideoProcessing.h"
 
@@ -1370,6 +1371,11 @@ public:
 
         const GUID codecGuid = codec_ == mpegts::ElementaryCodec::H264
             ? NV_ENC_CODEC_H264_GUID : NV_ENC_CODEC_HEVC_GUID;
+        // Opt-in only: default remains the known-working two-frame VBV/P2-P7
+        // rate control until real NVIDIA hardware A/B testing is available.
+        const auto qualityChoice = selectNvencQualityChoice(
+            options_.preset, width, height, fps,
+            std::getenv("DVBSTREAMER5_NVENC_QUALITY"));
         if (!validateCapabilities(codecGuid, error)) {
             close(); return false;
         }
@@ -1388,7 +1394,7 @@ public:
             presetName = "p5";
             return NV_ENC_PRESET_P5_GUID;
         };
-        presetGuid = selectPreset(options_.preset);
+        presetGuid = selectPreset(qualityChoice.preset);
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -1457,7 +1463,8 @@ public:
             1ULL, static_cast<std::uint64_t>(cfg.rcParams.averageBitRate) /
                 roundedFps);
         const std::uint64_t vbvBits = std::min<std::uint64_t>(
-            0xffffffffULL, frameBudgetBits * 2ULL);
+            0xffffffffULL, frameBudgetBits *
+                static_cast<std::uint64_t>(qualityChoice.vbvFrames));
         cfg.rcParams.vbvBufferSize = static_cast<std::uint32_t>(vbvBits);
         cfg.rcParams.vbvInitialDelay = cfg.rcParams.vbvBufferSize;
 
@@ -1538,7 +1545,10 @@ public:
                   << " tuning=" << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr"
                   << " bframes=0 lookahead=0 reorder_delay=0"
-                  << " vbv_frames=2 spatial_aq=1 aq_strength=8"
+                  << " vbv_frames=" << qualityChoice.vbvFrames
+                  << " spatial_aq=1"
+                  << " nvenc_quality=" << (qualityChoice.enabled ? 1 : 0)
+                  << " requested_preset=" << options_.preset
                   << " gop_frames=" << gopFrames_
                   << " live_random_access=force-idr+spspps"
                   << std::endl;
