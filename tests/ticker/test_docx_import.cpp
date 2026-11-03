@@ -58,10 +58,10 @@ static std::string makeDocx(const std::string& xml, bool compress) {
 }
 int main() {
     const std::string xml=
-        R"doc(<?xml version="1.0" encoding="UTF-8"?>)"
-        R"doc(<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">)"
-        R"doc(<w:body><w:p><w:r><w:t>Привет &amp; мир</w:t></w:r></w:p>)"
-        R"doc(<w:p><w:r><w:t>Вторая строка</w:t></w:r></w:p></w:body></w:document>)doc";
+        R"doc(<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p><w:r><w:t>Привет &amp; мир</w:t></w:r></w:p>
+<w:p><w:r><w:t>Вторая строка</w:t></w:r></w:p></w:body></w:document>)doc";
     for(const bool compressed:{false,true}) {
         std::string output,error;
         const auto zip=makeDocx(xml,compressed);
