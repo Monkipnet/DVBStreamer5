@@ -406,6 +406,30 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .tvp-status { margin:0;min-height:1.5em;color:#b8c7d9;overflow-wrap:anywhere; }.tvp-error { color:#ffb7aa; }
 @media(max-width:650px) { .tvp-overlay{padding:4px}.tvp-dialog{padding:10px}.tvp-video{max-height:48vh} }
 
+
+/* V321: broadcast ticker follows the application dark/blue palette. */
+#tickerOverlayModal{background:rgba(5,8,13,.86)!important;padding:8px!important}
+#tickerOverlayModal>section{background:#10151e!important;color:#e7edf8!important;border:1px solid rgba(125,209,255,.22)!important;border-radius:16px!important;padding:12px!important;width:min(1000px,100%)!important;max-height:calc(100dvh - 16px)!important;box-shadow:0 25px 70px #000a!important;font-size:12px!important}
+#tickerOverlayModal h2{font-size:17px!important;color:#f7faff;margin:0!important}
+#tickerOverlayModal h3{font-size:12px!important;color:#bfe2ff;margin:9px 0 5px!important}
+#tickerOverlayModal p{font-size:11px!important;line-height:1.35!important;margin:6px 0!important;color:#95a9bf}
+#tickerOverlayModal input[type="text"],#tickerOverlayModal input[type="search"],#tickerOverlayModal input[type="number"],#tickerOverlayModal input[type="time"],#tickerOverlayModal textarea,#tickerOverlayModal select{background:#111923!important;color:#e7edf8!important;border:1px solid #34445b!important;border-radius:8px!important;padding:7px!important;box-sizing:border-box;min-width:0}
+#tickerOverlayModal :is(input,select,textarea):focus-visible{outline:2px solid #7dd1ff;outline-offset:1px}
+#tickerOverlayModal button{border-radius:8px!important;padding:6px 10px!important;border:1px solid rgba(125,209,255,.2)!important;background:rgba(255,255,255,.06)!important;color:#e7edf8!important;font-size:11px!important}
+#tickerOverlayModal button:hover{background:rgba(31,139,255,.19)!important}
+#tickerOverlayModal button.button-primary{background:#1f8bff!important;border-color:#1f8bff!important;color:#fff!important}
+#tickerOverlayModal input[type="checkbox"],#tickerOverlayModal input[type="range"]{accent-color:#1f8bff}
+#tickerOverlayModal #tickerPreview{background:#0c121b!important;border-color:#34445b!important;height:78px!important;margin-top:7px}
+#tickerOverlayModal #tickerWindows{max-height:170px;overflow:auto}
+#tickerOverlayModal .tickerInterval{background:rgba(255,255,255,.025)!important;border-color:rgba(125,209,255,.15)!important;padding:7px!important;margin:5px 0!important}
+#tickerOverlayModal .ticker-channel-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px;max-height:142px;overflow:auto;background:#0e151f;border:1px solid #34445b;border-radius:9px;padding:7px}
+#tickerOverlayModal .ticker-channel-option{display:flex;align-items:center;gap:6px;min-width:0;border-radius:7px;padding:4px 6px;background:rgba(255,255,255,.025);cursor:pointer;font-size:11px}
+#tickerOverlayModal .ticker-channel-option:has(input:checked){background:rgba(31,139,255,.17);color:#bfe5ff}
+#tickerOverlayModal .ticker-channel-option span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tickerOverlayModal .ticker-channel-option input{margin:0;flex:none}
+#tickerOverlayModal .ticker-file-status{font-size:11px;color:#9ed6ff;margin-left:8px}
+@media(max-width:600px){#tickerOverlayModal>section{padding:9px!important}#tickerOverlayModal #tickerWindows{max-height:130px}#tickerOverlayModal .ticker-channel-list{max-height:130px;grid-template-columns:repeat(auto-fill,minmax(135px,1fr))}}
+
 </style>
 </head>
 <body>
