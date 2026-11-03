@@ -390,6 +390,15 @@ bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto& motion=motion_[streamId];
+        if(!motion.initialized || motion.lastSpeed!=entry.speed) {
+            std::cerr << "NATIVE TICKER MOTION stream_id=" << streamId
+                      << " clock=video_pts90k"
+                      << " subpixel=1"
+                      << " speed_px_s=" << entry.speed
+                      << " fps_reference=" << fps
+                      << std::endl;
+            motion.lastSpeed=entry.speed;
+        }
         if(!motion.initialized || motion.text!=entry.text ||
            motion.fontFile!=entry.fontFile || motion.fontSize!=entry.fontSize) {
             motion.initialized=true;
