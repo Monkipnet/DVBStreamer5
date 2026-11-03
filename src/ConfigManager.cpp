@@ -1,4 +1,5 @@
 #include "ConfigManager.h"
+#include "media/NativeTickerOverlay.h"
 #include "AutoTranscodePolicy.h"
 #include "UdpInputFirewall.h"
 #include "utils.h"
@@ -793,6 +794,7 @@ Json::Value AppConfig::toJson() const {
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
     root["restart_schedule"] = restartSchedule.toJson();
+    root["ticker_overlays"] = tickerOverlays;
     Json::Value udpFilterInterfaces(Json::arrayValue);
     for (const auto& address : udpInputFilterInterfaces) {
         if (!address.empty()) udpFilterInterfaces.append(address);
@@ -829,6 +831,12 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.telegramChatId = root.get("telegram_chat_id", "").asString();
     config.srtVpsVdsOptimization = root.get("srt_vps_vds_optimization", false).asBool();
     config.restartSchedule = StreamRestartSchedule::fromJson(root["restart_schedule"]);
+    if (root["ticker_overlays"].isArray()) {
+        std::string tickerError;
+        if (dvbstreamer5::media::ticker::TickerOverlay::validate(root["ticker_overlays"], tickerError))
+            config.tickerOverlays = root["ticker_overlays"];
+        else std::cerr << "TICKER config ignored: " << tickerError << std::endl;
+    }
     if (root.isMember("udp_input_filter_interfaces") && root["udp_input_filter_interfaces"].isArray()) {
         std::set<std::string> uniqueAddresses;
         for (const auto& item : root["udp_input_filter_interfaces"]) {
@@ -982,6 +990,7 @@ bool ConfigManager::load() {
         root["password"] = runtimePassword;
         migratePlaintextPassword = storedPassword.rfind(kUiPasswordPrefix, 0) != 0;
         config = AppConfig::fromJson(root);
+        dvbstreamer5::media::ticker::TickerOverlay::instance().configure(config.tickerOverlays);
     }
 
     // Transparently migrate older plaintext configurations on the first load.
