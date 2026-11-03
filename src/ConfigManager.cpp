@@ -1167,6 +1167,11 @@ bool ConfigManager::save() {
     return true;
 }
 
+Json::Value ConfigManager::tickerOverlaysSnapshot() {
+    std::lock_guard<std::mutex> lock(fileMutex);
+    return config.tickerOverlays;
+}
+
 bool ConfigManager::saveTickerOverlays(const Json::Value& entries, std::string& error) {
     if (!dvbstreamer5::media::ticker::TickerOverlay::validate(entries,error))
         return false;
