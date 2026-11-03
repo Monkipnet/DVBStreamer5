@@ -47,6 +47,12 @@ DvbSubtitlePassthrough::availableTracks() const {
     std::lock_guard<std::mutex> lock(availableMutex_);
     return availableTracks_;
 }
+std::vector<DvbSubtitlePassthrough::AvailableMediaTrack>
+DvbSubtitlePassthrough::availableMediaTracks() const {
+    std::lock_guard<std::mutex> lock(availableMutex_);
+    return availableMediaTracks_;
+}
+
 bool DvbSubtitlePassthrough::hasParsedPmt() const {
     std::lock_guard<std::mutex> lock(availableMutex_);
     return availablePmtParsed_;
@@ -93,6 +99,7 @@ void DvbSubtitlePassthrough::readPat(const Packet& packet) {
             {
                 std::lock_guard<std::mutex> lock(availableMutex_);
                 availableTracks_.clear();
+                availableMediaTracks_.clear();
                 availablePmtParsed_ = false;
             }
             selectedPids_.fill(false);
@@ -110,12 +117,42 @@ void DvbSubtitlePassthrough::acceptPmtSection(
     if (at > end) return;
     std::vector<Track> tracks;
     std::vector<AvailableTrack> available;
+    std::vector<AvailableMediaTrack> mediaAvailable;
     for (; at + 5U <= end;) {
         const auto pid = esPid(section.data() + at + 1U);
         const auto type = section[at];
         const std::size_t length =
             ((section[at + 3U] & 0x0fU) << 8U) | section[at + 4U];
         if (at + 5U + length > end) return;
+        // Audio language is advertised by ISO-639 descriptor (0x0A).
+        // DVB private PES 0x06 needs AC-3/E-AC-3 descriptors to count as audio.
+        std::string codec;
+        std::string kind;
+        switch (type) {
+          case 0x01: case 0x02: codec="MPEG-2"; kind="video"; break;
+          case 0x1b: codec="H.264"; kind="video"; break;
+          case 0x24: codec="HEVC"; kind="video"; break;
+          case 0x03: case 0x04: codec="MPEG Audio"; kind="audio"; break;
+          case 0x0f: codec="AAC"; kind="audio"; break;
+          case 0x11: codec="AAC LATM"; kind="audio"; break;
+          case 0x81: codec="AC-3"; kind="audio"; break;
+          case 0x87: codec="E-AC-3"; kind="audio"; break;
+          default: break;
+        }
+        std::string language;
+        const std::size_t descEnd=at+5U+length;
+        for(std::size_t d=at+5U;d+2U<=descEnd;) {
+            const auto len=static_cast<std::size_t>(section[d+1U]);
+            if(d+2U+len>descEnd)break;
+            if(section[d]==0x0aU && len>=4U)
+                language.assign(reinterpret_cast<const char*>(section.data()+d+2U),3U);
+            if(type==0x06U && section[d]==0x6aU) { codec="AC-3";kind="audio"; }
+            if(type==0x06U && section[d]==0x7aU) { codec="E-AC-3";kind="audio"; }
+            d+=2U+len;
+        }
+        if(!kind.empty() && pid>=0x20U && pid<0x1fffU &&
+           mediaAvailable.size()<64U)
+            mediaAvailable.push_back({pid,kind,codec,language});
         if (type == 0x06U && pid >= 0x20U && pid < 0x1fffU) {
             std::vector<std::uint8_t> desc;
             const std::size_t limit = at + 5U + length;
@@ -169,6 +206,7 @@ void DvbSubtitlePassthrough::acceptPmtSection(
     {
         std::lock_guard<std::mutex> lock(availableMutex_);
         availableTracks_ = std::move(available);
+        availableMediaTracks_ = std::move(mediaAvailable);
         availablePmtParsed_ = true;
     }
     bool same = tracks.size() == sourceTracks_.size();
