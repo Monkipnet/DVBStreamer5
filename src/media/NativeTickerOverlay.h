@@ -58,6 +58,7 @@ private:
         std::string text;
         std::string fontFile;
         int fontSize = 0;
+        int lastSpeed = -1;
     };
     std::unordered_map<std::string, MotionClock> motion_;
 };
