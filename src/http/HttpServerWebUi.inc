@@ -9045,7 +9045,7 @@ async function openTickerModal() {
       '<div class="ticker-channel-list" id="tickerChannelList"></div>'+
       '<p>'+lbl('Галочки — каналы для сохранения. Выпадающий список ниже — какой канал загрузить как образец. Неотмеченные сохраняют свои настройки.','Checked channels receive these settings. The selector below loads a channel as a template. Unchecked channels are preserved.','Označeni kanali dobivaju ove postavke.')+'</p></section>'+
       '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'+
-      '<label>'+lbl('Канал','Channel','Kanal')+'<select id="tickerStream" style="width:100%" onchange="tickerSwitch(this.value)">'+options+'</select></label>'+
+      '<label>'+lbl('Образец настроек канала','Channel settings template','Predložak kanala')+'<select id="tickerStream" style="width:100%" onchange="tickerSwitch(this.value)">'+options+'</select></label>'+
       '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
       '</div>'+
       '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
@@ -9095,7 +9095,10 @@ function tickerDefault() {
 }
 function tickerSwitch(id) {
   if(!tickerEditor)return;
-  if(tickerEditor.selected && tickerEditor.dirty && !confirm(tickerWord('Отменить несохранённые изменения шаблона?','Discard unsaved template changes?')))return;
+  if(tickerEditor.selected && tickerEditor.dirty && !confirm(tickerWord('Отменить несохранённые изменения шаблона?','Discard unsaved template changes?'))){
+    document.getElementById('tickerStream').value=tickerEditor.selected;
+    return;
+  }
   tickerEditor.selected=id;
   tickerEditor.dirty=false;
   document.getElementById('tickerStream').value=id;
@@ -9190,6 +9193,13 @@ async function tickerSave() {
   const selectedIds=[...tickerEditor.checkedIds];
   if(!selectedIds.length){alert(tickerWord('Отметьте каналы галочками','Select at least one channel'));return;}
   if(selectedIds.length>64){alert(tickerWord('Максимум 64 канала','Maximum 64 channels'));return;}
+  if(new TextEncoder().encode(document.getElementById('tickerText').value).length>8192){
+    alert(tickerWord('Максимальный размер текста — 8192 байта UTF-8','Maximum ticker text is 8192 UTF-8 bytes'));
+    return;
+  }
+  if(!document.getElementById('tickerText').value.trim() && !confirm(tickerWord(
+    'Удалить строку у всех отмеченных каналов?',
+    'Remove ticker from all checked channels?')))return;
   const originalEntries=tickerEditor.entries.filter(e=>!tickerEditor.checkedIds.has(e.stream_id));
   tickerCollect();
   const template=tickerEditor.entries.find(e=>e.stream_id===tickerEditor.selected);
@@ -9206,7 +9216,8 @@ async function tickerSave() {
     const reply=await response.json();
     if(!response.ok||reply.error)throw new Error(reply.error||('HTTP '+response.status));
     closeTickerModal();
-    alert(tickerWord('Расписание сохранено. Уже запущенный zero-copy канал требует отдельного перезапуска плитки для активации наложения.','Ticker saved. Restart only an already-running zero-copy tile to activate its overlay.'));
+    alert(tickerWord('Настройки сохранены для отмеченных каналов: ','Saved to selected channels: ')+selectedIds.length+'. '+
+      tickerWord('При первом включении на GPU zero-copy перезапустите только затронутые плитки.','For initial GPU zero-copy activation, restart only affected tiles.'));
   }catch(e){status.textContent=tickerWord('Ошибка: ','Error: ')+e.message;}
 }
 
