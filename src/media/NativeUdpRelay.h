@@ -110,6 +110,9 @@ struct NativeUdpRelayConfig {
     // Optional DVB subtitles retention, only when native transcoding is in use.
     // The first tap observes post-CA TS and the second injects caption PES
     // after the native encoder mux has emitted a new MPEG-TS output.
+    // PMT-only diagnostics use the existing packet vector: avoids a full
+    // MPEG-TS materialization for passthrough IPTV channels.
+    std::function<void(const std::vector<mpegts::Packet>&)> observeMediaPmt;
     std::function<void(const std::uint8_t*, std::size_t)> observeDvbSubtitles;
     std::function<void(std::vector<mpegts::Packet>&)> injectDvbSubtitles;
     std::function<bool(std::uint8_t*, std::size_t)> processTransport;
