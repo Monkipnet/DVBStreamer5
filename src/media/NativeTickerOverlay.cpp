@@ -245,8 +245,8 @@ bool TickerOverlay::validate(const Json::Value& config,std::string& error) {
            !item["text"].isString()) { error="Invalid ticker entry";return false; }
         const std::string id=item["stream_id"].asString();
         const std::string text=item["text"].asString();
-        if(id.empty()||id.size()>256||!ids.insert(id).second||text.size()>512) {
-            error="Invalid ticker stream ID or text (512 bytes max)";return false;
+        if(id.empty()||id.size()>256||!ids.insert(id).second||text.size()>8192) {
+            error="Invalid ticker stream ID or text (8192 bytes max)";return false;
         }
         for (const char* key : {"font_file", "foreground", "background"})
             if(item.isMember(key) && !item[key].isString()) {
