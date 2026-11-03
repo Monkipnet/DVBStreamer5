@@ -523,6 +523,7 @@ private:
     // Latched at stream start: a live ticker metadata save must never tear down
     // an existing NVDEC/oneVPL zero-copy session mid-stream.
     bool tickerZeroCopyAllowed_ = true;
+    bool tickerLiveSwitchDenied_ = false;
     bool tickerLastDrawActive_ = false;
     bool diagnosticI420Enabled_ = false;
     bool diagnosticColorI420Enabled_ = false;
