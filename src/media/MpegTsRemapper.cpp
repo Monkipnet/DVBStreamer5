@@ -152,6 +152,7 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     pmtPid_ = 0x1fff;
     inputVideoPid_ = 0;
     inputAudioPid_ = 0;
+    excludedInputAudioPids_.fill(false);
     transportStreamId_ = 1;
     originalNetworkId_ = 1;
     patOutputContinuity_ = 0;
@@ -398,6 +399,7 @@ bool Remapper::processPatSection(
         pmtPid_ = selectedPmtPid;
         inputVideoPid_ = 0;
         inputAudioPid_ = 0;
+        excludedInputAudioPids_.fill(false);
         pmtSection_ = {};
         pmtOutputSection_.clear();
         pmtOutputContinuity_ = 0;
@@ -633,7 +635,14 @@ bool Remapper::processPmtSection(
     }
 
     allowedPids_ = allowed;
+    excludedInputAudioPids_.fill(false);
+    for(const auto excludedPid:otherAudioPids)
+        if(excludedPid<excludedInputAudioPids_.size())
+            excludedInputAudioPids_[excludedPid]=true;
     inputAdmissionPids_ = allowed;
+    for(const auto excludedPid:otherAudioPids)
+        if(excludedPid<inputAdmissionPids_.size())
+            inputAdmissionPids_[excludedPid]=false;
     if (inputVideoPid_ < inputAdmissionPids_.size()) {
         inputAdmissionPids_[inputVideoPid_] = true;
     }
@@ -846,6 +855,10 @@ bool Remapper::processValidated(
     }
 
     if (!remapReady_) return true;
+    // Input PIDs are distinct from output PID mapping: an unselected audio
+    // source PID may equal the remapped selected track's destination.
+    if(info.pid<excludedInputAudioPids_.size() &&
+       excludedInputAudioPids_[info.pid])return true;
 
     if (info.pid == 0x0011) {
         if (!collectSections(input, sdtSection_, sections, error)) return false;
