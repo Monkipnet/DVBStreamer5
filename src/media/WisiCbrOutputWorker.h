@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <functional>
@@ -565,6 +566,31 @@ private:
             phaseDebtNs_ = 0;
             lastSendNs_ = 0;
 
+            // V314: opt-in *output-side* transport diagnostics. Read packets
+            // after CBR restamping, before UDP send; never modify packet data.
+            // Optional index filter avoids affecting unrelated 40+ CBR outputs.
+            const char* diagEnv = std::getenv("DVBSTREAMER5_WISI_CBR_TS_DIAG");
+            bool diagEnabled = diagEnv && std::string(diagEnv) == "1";
+            const char* diagIndex = std::getenv("DVBSTREAMER5_WISI_CBR_TS_DIAG_INDEX");
+            if (diagEnabled && diagIndex && *diagIndex) {
+                char* end = nullptr;
+                const auto index = std::strtoull(diagIndex, &end, 10);
+                if (!end || *end != '\0' ||
+                    index != static_cast<unsigned long long>(outputIndex_))
+                    diagEnabled = false;
+            }
+            std::array<int, 8192> lastCc{};
+            lastCc.fill(-1);
+            std::array<std::uint64_t, 8192> lastPcr{};
+            std::array<bool, 8192> havePcr{};
+            std::uint64_t diagStartNs = 0;
+            std::uint64_t diagDatagrams = 0, diagUseful = 0;
+            std::uint64_t diagNull = 0, diagCcErrors = 0, diagTei = 0;
+            std::uint64_t diagPcrCount = 0, diagPcrBackwards = 0;
+            std::uint64_t diagPcrGapMaxTicks = 0, diagPcrOver100 = 0;
+            std::uint64_t diagGapMaxNs = 0, diagLateMaxNs = 0;
+            std::uint64_t diagNullOnly = 0;
+
             while (!stopping_.load(std::memory_order_acquire) &&
                    relayRunning_->load(std::memory_order_acquire)) {
                 if (!drainIngress()) return;
@@ -655,6 +681,101 @@ private:
                     : 0ULL;
                 lastSendNs_ = sendNs;
                 updateClockDiagnostics(sendNs, gapNs, lateNs);
+
+                if (diagEnabled) {
+                    if (!diagStartNs) diagStartNs = sendNs;
+                    ++diagDatagrams;
+                    diagUseful += useful;
+                    if (!useful) ++diagNullOnly;
+                    diagGapMaxNs = (std::max)(diagGapMaxNs, gapNs);
+                    diagLateMaxNs = (std::max)(diagLateMaxNs, lateNs);
+                    constexpr std::uint64_t kPcrWrap = (1ULL << 33U) * 300ULL;
+                    for (const auto& packet : datagram) {
+                        if (packet[0] != mpegts::kSyncByte) continue;
+                        const unsigned pid =
+                            (static_cast<unsigned>(packet[1] & 0x1fU) << 8U) |
+                            static_cast<unsigned>(packet[2]);
+                        if (pid == 0x1fffU) { ++diagNull; continue; }
+                        if (packet[1] & 0x80U) ++diagTei;
+                        const unsigned afc = (packet[3] >> 4U) & 3U;
+                        const bool payload = (afc & 1U) != 0;
+                        const bool adaptation = (afc & 2U) != 0;
+                        bool discontinuity = false;
+                        if (adaptation && packet[4] > 0 && packet[4] <= 183) {
+                            const unsigned flags = packet[5];
+                            discontinuity = (flags & 0x80U) != 0;
+                            if ((flags & 0x10U) && packet[4] >= 7) {
+                                const std::uint64_t base =
+                                    (std::uint64_t(packet[6]) << 25U) |
+                                    (std::uint64_t(packet[7]) << 17U) |
+                                    (std::uint64_t(packet[8]) << 9U) |
+                                    (std::uint64_t(packet[9]) << 1U) |
+                                    (std::uint64_t(packet[10]) >> 7U);
+                                const std::uint64_t ext =
+                                    ((std::uint64_t(packet[10]) & 1ULL) << 8U) |
+                                    std::uint64_t(packet[11]);
+                                const auto ticks = base * 300ULL + ext;
+                                ++diagPcrCount;
+                                if (havePcr[pid] && !discontinuity) {
+                                    const auto forward =
+                                        (ticks + kPcrWrap - lastPcr[pid]) % kPcrWrap;
+                                    if (forward > kPcrWrap / 2ULL) ++diagPcrBackwards;
+                                    else {
+                                        diagPcrGapMaxTicks =
+                                            (std::max)(diagPcrGapMaxTicks, forward);
+                                        if (forward > 2700000ULL) ++diagPcrOver100;
+                                    }
+                                }
+                                lastPcr[pid] = ticks;
+                                havePcr[pid] = true;
+                            }
+                        }
+                        if (discontinuity) {
+                            lastCc[pid] = -1;
+                            havePcr[pid] = false;
+                        }
+                        if (payload) {
+                            const int cc = packet[3] & 0x0f;
+                            if (lastCc[pid] >= 0 && cc != ((lastCc[pid] + 1) & 15))
+                                ++diagCcErrors;
+                            lastCc[pid] = cc;
+                        }
+                    }
+                    if (sendNs - diagStartNs >= 5000000000ULL) {
+                        const auto elapsedNs = sendNs - diagStartNs;
+                        const auto actualKbps = elapsedNs
+                            ? static_cast<std::uint64_t>(
+                                (static_cast<unsigned __int128>(diagDatagrams) *
+                                 kDatagramBytes * 8ULL * 1000000ULL) / elapsedNs)
+                            : 0ULL;
+                        std::cerr << "WISI CBR TS DIAG worker=" << workerId_
+                            << " index=" << outputIndex_
+                            << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
+                            << " actual_kbps=" << actualKbps
+                            << " datagrams=" << diagDatagrams
+                            << " useful_packets=" << diagUseful
+                            << " null_packets=" << diagNull
+                            << " null_only_datagrams=" << diagNullOnly
+                            << " cc_errors=" << diagCcErrors
+                            << " tei=" << diagTei
+                            << " pcr_count=" << diagPcrCount
+                            << " pcr_gap_max_ms=" << (diagPcrGapMaxTicks / 27000ULL)
+                            << " pcr_gap_over100=" << diagPcrOver100
+                            << " pcr_backwards=" << diagPcrBackwards
+                            << " udp_gap_max_us=" << (diagGapMaxNs / 1000ULL)
+                            << " sender_late_max_us=" << (diagLateMaxNs / 1000ULL)
+                            << " buffered_kb="
+                            << (bufferedPackets_.load(std::memory_order_relaxed) *
+                                mpegts::kPacketSize / 1024U)
+                            << " source_kbps=" << (pacer_.sourcePayloadBitrate() / 1000ULL)
+                            << " useful_kbps=" << (pacer_.usefulPaceBitrate() / 1000ULL)
+                            << std::endl;
+                        diagStartNs = sendNs;
+                        diagDatagrams = diagUseful = diagNull = diagCcErrors = diagTei = 0;
+                        diagPcrCount = diagPcrBackwards = diagPcrGapMaxTicks = 0;
+                        diagPcrOver100 = diagGapMaxNs = diagLateMaxNs = diagNullOnly = 0;
+                    }
+                }
 
                 if (!firstSendLogged_) {
                     firstSendLogged_ = true;
