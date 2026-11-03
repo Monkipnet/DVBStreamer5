@@ -97,6 +97,7 @@ struct StreamConfig {
     uint64_t transcodeVideoBitrate = 6000000;
     double transcodeFps = 25.0;
     bool transcodeDeinterlace = true;
+    std::string transcodeDeinterlaceMode = "legacy"; // legacy | off | 25p | bob50
     // Common video encoder controls. Backends apply the supported subset and
     // log any safety clamp/unsupported option instead of silently failing.
     std::string intelPresetMode = "auto"; // auto | balanced | quality
