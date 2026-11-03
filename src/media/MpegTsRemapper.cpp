@@ -471,6 +471,7 @@ bool Remapper::processPmtSection(
     std::uint16_t inputVideo = 0;
     std::uint16_t inputAudio = 0;
     bool preferredAudioFound = config_.inputAudioPid == 0;
+    std::uint16_t firstSourceAudioPid = 0;
     std::vector<std::uint16_t> otherAudioPids;
     const std::size_t end = section.size() - 4;
     std::uint16_t pcrPid = readPid(section.data() + 8);
@@ -509,6 +510,7 @@ bool Remapper::processPmtSection(
             }
         }
         if (audioEs) {
+            if(firstSourceAudioPid==0)firstSourceAudioPid=pid;
             if (config_.inputAudioPid != 0 && pid == config_.inputAudioPid) {
                 inputAudio = pid;
                 preferredAudioFound = true;
@@ -527,6 +529,17 @@ bool Remapper::processPmtSection(
     if (offset != end) {
         error = "native remap encountered trailing bytes in PMT";
         return false;
+    }
+    // The editor can observe an already remapped channel where the
+    // first source audio PID was replaced by outputAudioPid. Interpret
+    // that displayed mapped PID as the original first source track.
+    // The conflict check above prevents mapping onto another audio PID.
+    if (!preferredAudioFound && config_.outputAudioPid != 0 &&
+        config_.inputAudioPid == config_.outputAudioPid && firstSourceAudioPid != 0) {
+        inputAudio=firstSourceAudioPid;
+        preferredAudioFound=true;
+        otherAudioPids.erase(std::remove(otherAudioPids.begin(),
+            otherAudioPids.end(),firstSourceAudioPid),otherAudioPids.end());
     }
     if (!preferredAudioFound || (config_.inputAudioPid != 0 && inputAudio == 0)) {
         error = "selected input audio PID " + std::to_string(config_.inputAudioPid) +
