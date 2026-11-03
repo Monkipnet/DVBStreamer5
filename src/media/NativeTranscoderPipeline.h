@@ -5,6 +5,7 @@
 #include "media/Mp3Encoder.h"
 #include "media/NativeCodecRuntime.h"
 #include "media/FfmpegPalPtsClock.h"
+#include "media/NativeVideoSourceCadence.h"
 #include "media/NativeIntelZeroCopy.h"
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeMpegTsMux.h"
@@ -485,6 +486,9 @@ private:
     bool videoRateClockValid_ = false;
     std::uint64_t videoRateNextPts90k_ = 0;
     std::uint64_t videoRateDroppedFrames_ = 0;
+    // Source PES cadence is independent from decoder field/reorder PTS.
+    // Accessed only in the video decode worker (no cross-thread race).
+    codec::NativeVideoSourceCadence videoSourceCadence_;
     codec::FfmpegPalPtsClock ffmpegPalPtsClock_;
     std::uint64_t ffmpegPalPtsCorrectedFrames_ = 0;
     bool sourceGeometryResolved_ = false;
