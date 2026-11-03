@@ -437,6 +437,27 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 #tickerOverlayModal .ticker-file-status{font-size:11px;color:#9ed6ff;margin-left:8px}
 @media(max-width:600px){#tickerOverlayModal>section{padding:9px!important}#tickerOverlayModal #tickerWindows{max-height:130px}#tickerOverlayModal .ticker-channel-list{max-height:130px;grid-template-columns:repeat(auto-fill,minmax(135px,1fr))}}
 
+
+/* V324: compact searchable checkbox picker inside ticker editor */
+#tickerOverlayModal .ticker-channel-picker{position:relative;z-index:30;margin:8px 0}
+#tickerOverlayModal .ticker-channel-toggle{display:flex!important;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:36px;border:1px solid #3c536d!important;background:#132337!important;color:#e7f4ff!important;text-align:left}
+#tickerOverlayModal .ticker-channel-dropdown{position:absolute;left:0;top:calc(100% + 4px);width:min(445px,100%);z-index:100;box-sizing:border-box;padding:9px;border-radius:10px;border:1px solid #4b6886;background:#0d1826;box-shadow:0 18px 40px #000c}
+#tickerOverlayModal .ticker-channel-dropdown[hidden]{display:none!important}
+#tickerOverlayModal .ticker-channel-tools{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+#tickerOverlayModal .ticker-channel-tools input{flex:1;min-width:140px}
+#tickerOverlayModal .ticker-channel-list{display:flex!important;flex-direction:column;max-height:min(38vh,315px);overflow:auto;gap:3px}
+#tickerOverlayModal .ticker-channel-option{display:flex!important;align-items:center;gap:5px;justify-content:space-between;padding:3px 5px!important}
+#tickerOverlayModal .ticker-channel-check{display:flex;align-items:center;gap:7px;min-width:0;flex:1;cursor:pointer}
+#tickerOverlayModal .ticker-channel-check span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tickerOverlayModal .ticker-channel-edit{flex:none!important;padding:4px 6px!important;border-color:#365d80!important;color:#9bd9ff!important}
+#tickerOverlayModal .ticker-picker-hint{margin:6px 0 0!important;color:#94afc9}
+#tickerOverlayModal .ticker-current-template{display:flex;flex-direction:column;gap:3px;min-width:0;padding:6px 9px;background:#162439;border-radius:8px;font-size:11px;color:#9cbbd9}
+#tickerOverlayModal .ticker-current-template strong{color:#e7f4ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:600px){
+#tickerOverlayModal .ticker-channel-dropdown{width:100%;max-height:55dvh;overflow:auto}
+#tickerOverlayModal .ticker-channel-list{max-height:30dvh}
+}
+
 </style>
 </head>
 <body>
@@ -9022,12 +9043,11 @@ async function openTickerModal() {
     if(!Array.isArray(data.streams)||!data.streams.length) {
       alert(tickerWord('Сначала добавьте канал','Create a channel first'));return;
     }
+    // Loading a settings template does not implicitly check a channel:
+    // only explicit checkbox selections receive batch edits.
     tickerEditor={entries:Array.isArray(data.entries)?data.entries:[],
       streams:data.streams,fonts:Array.isArray(data.fonts)?data.fonts:[],selected:'',
-      checkedIds:new Set([data.streams[0].id]),search:'',dirty:false};
-    const options=data.streams.map(function(s){
-      return '<option value="'+tickerEsc(s.id)+'">'+tickerEsc(s.name||s.id)+'</option>';
-    }).join('');
+      checkedIds:new Set(),search:'',dirty:false};
     const fontOptions='<option value="">'+tickerWord('Системный по умолчанию','System default','Zadani font')+'</option>'+
       tickerEditor.fonts.map(function(f){
         return '<option value="'+tickerEsc(f.file)+'">'+tickerEsc(f.name)+'</option>';
@@ -9043,16 +9063,22 @@ async function openTickerModal() {
       '<button type="button" onclick="closeTickerModal()">✕</button></div>'+
       '<p style="font-size:12px;opacity:.75">'+lbl('Включение и отключение выполняется без перезапуска плитки. При первом включении на GPU zero-copy возможна короткая пауза видео. Для наложения нужно видеотранскодирование.','Enable/disable without tile restart. First activation on GPU zero-copy can briefly pause video while switching decode paths. Video transcoding is required.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
       (data.available?'':'<p style="color:#ffc674">'+lbl('На сервере отсутствует поддержка FreeType — установите libfreetype-dev и пересоберите программу.','FreeType support missing; install libfreetype-dev and rebuild.','Nedostaje FreeType.')+'</p>')+
-      '<section style="border:1px solid rgba(125,209,255,.17);padding:9px;border-radius:9px;margin-top:8px;background:rgba(255,255,255,.02)">'+
-      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
-      '<strong>'+lbl('Каналы для применения','Apply to channels','Odabir kanala')+' <span id="tickerSelectedCount"></span></strong>'+
-      '<input id="tickerChannelSearch" type="search" oninput="tickerSearchChannels(this.value)" placeholder="'+lbl('Поиск','Search','Pretraži')+'" style="flex:1;min-width:130px">'+
+      '<div id="tickerChannelPicker" class="ticker-channel-picker">'+
+      '<button type="button" id="tickerChannelToggle" class="button-secondary ticker-channel-toggle" aria-expanded="false" aria-controls="tickerChannelDropdown" onclick="tickerToggleChannels()">'+
+      lbl('Выбрать каналы','Select channels','Odaberi kanale')+' <span id="tickerSelectedCount">(0)</span> ▾</button>'+
+      '<div id="tickerChannelDropdown" class="ticker-channel-dropdown" hidden>'+
+      '<div class="ticker-channel-tools">'+
+      '<input id="tickerChannelSearch" type="search" oninput="tickerSearchChannels(this.value)" placeholder="'+lbl('Поиск каналов','Search channels','Pretraži kanale')+'">'+
+      '<div style="display:flex;gap:6px">'+
       '<button type="button" onclick="tickerSelectAll(true)">'+lbl('Все','All','Svi')+'</button>'+
-      '<button type="button" onclick="tickerSelectAll(false)">'+lbl('Снять','Clear','Poništi')+'</button></div>'+
+      '<button type="button" onclick="tickerSelectAll(false)">'+lbl('Снять','Clear','Poništi')+'</button></div></div>'+
       '<div class="ticker-channel-list" id="tickerChannelList"></div>'+
-      '<p>'+lbl('Галочки — каналы для сохранения. Выпадающий список ниже — какой канал загрузить как образец. Неотмеченные сохраняют свои настройки.','Checked channels receive these settings. The selector below loads a channel as a template. Unchecked channels are preserved.','Označeni kanali dobivaju ove postavke.')+'</p></section>'+
+      '<p class="ticker-picker-hint">'+lbl('Отметьте каналы галочками. «Ред.» загружает настройки канала для редактирования, но не выбирает его автоматически.','Check channels to apply settings. Edit loads a channel template without selecting it.','Označite kanale; Uredi učitava postavke kanala.')+'</p>'+
+      '</div></div>'+
+
       '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'+
-      '<label>'+lbl('Образец настроек канала','Channel settings template','Predložak kanala')+'<select id="tickerStream" style="width:100%" onchange="tickerSwitch(this.value)">'+options+'</select></label>'+
+      '<div class="ticker-current-template">'+lbl('Редактируем настройки: ','Editing settings: ','Uređivanje postavki: ')+
+      '<strong id="tickerCurrentTemplate"></strong></div>'+
       '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
       '</div>'+
       '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
@@ -9109,6 +9135,9 @@ async function openTickerModal() {
       });});
     tickerSwitch(data.streams[0].id);
     tickerRenderChannels();
+    render.addEventListener('click',function(event){
+      if (!event.target.closest('.ticker-channel-picker')) tickerCloseChannels();
+    });
   }catch(e){alert(tickerWord('Ошибка загрузки бегущей строки: ','Unable to load ticker: ')+e.message);}
 }
 function tickerDefault() {
@@ -9119,18 +9148,14 @@ function tickerDefault() {
 function tickerSwitch(id) {
   if(!tickerEditor)return;
   if(tickerEditor.selected && tickerEditor.dirty && !confirm(tickerWord('Отменить несохранённые изменения шаблона?','Discard unsaved template changes?'))){
-    document.getElementById('tickerStream').value=tickerEditor.selected;
     return;
   }
-  // Changing the settings template also selects that channel. A single
-  // previous default selection is replaced, avoiding accidental mass changes.
-  if(tickerEditor.selected && tickerEditor.checkedIds.size===1 &&
-     tickerEditor.checkedIds.has(tickerEditor.selected))
-    tickerEditor.checkedIds=new Set([id]);
-  else tickerEditor.checkedIds.add(id);
+  // Editing a template is independent from selecting broadcast channels.
   tickerEditor.selected=id;
   tickerEditor.dirty=false;
-  document.getElementById('tickerStream').value=id;
+  const editingChannel=tickerEditor.streams.find(s=>s.id===id);
+  document.getElementById('tickerCurrentTemplate').textContent=
+    editingChannel ? (editingChannel.name||editingChannel.id) : id;
   const entry=tickerEditor.entries.find(function(e){return e.stream_id===id;})||tickerDefault();
   const val=function(field,value){document.getElementById(field).value=value;};
   val('tickerText',entry.text||'');
@@ -9271,13 +9296,29 @@ async function tickerSave() {
 
 
 // V321: search, bulk checkbox selection and local TXT/DOCX import.
+
+function tickerToggleChannels(){
+  const panel=document.getElementById('tickerChannelDropdown');
+  const button=document.getElementById('tickerChannelToggle');
+  if(!panel||!button)return;
+  panel.hidden=!panel.hidden;
+  button.setAttribute('aria-expanded',String(!panel.hidden));
+  if(!panel.hidden)document.getElementById('tickerChannelSearch')?.focus();
+}
+function tickerCloseChannels(){
+  const panel=document.getElementById('tickerChannelDropdown');
+  const button=document.getElementById('tickerChannelToggle');
+  if(panel)panel.hidden=true;
+  if(button)button.setAttribute('aria-expanded','false');
+}
 function tickerRenderChannels(){
   if(!tickerEditor)return;
   const root=document.getElementById('tickerChannelList');
   const search=(tickerEditor.search||'').toLocaleLowerCase();
   const frag=document.createDocumentFragment();
   tickerEditor.streams.filter(s=>String(s.name||s.id).toLocaleLowerCase().includes(search)).forEach(s=>{
-    const label=document.createElement('label');label.className='ticker-channel-option';
+    const row=document.createElement('div');row.className='ticker-channel-option';
+    const label=document.createElement('label');label.className='ticker-channel-check';
     const input=document.createElement('input');input.type='checkbox';input.value=s.id;
     input.checked=tickerEditor.checkedIds.has(s.id);
     input.addEventListener('change',()=>{
@@ -9286,14 +9327,23 @@ function tickerRenderChannels(){
       tickerSelectedCount();
     });
     const title=document.createElement('span');title.textContent=s.name||s.id;title.title=s.name||s.id;
-    label.append(input,title);frag.append(label);
+    label.append(input,title);
+    const edit=document.createElement('button');edit.type='button';
+    edit.className='ticker-channel-edit';edit.textContent=tickerWord('Ред.','Edit','Uredi');
+    edit.title=tickerWord('Загрузить настройки для редактирования','Load these settings for editing');
+    edit.addEventListener('click',()=>{
+      tickerSwitch(s.id);
+      if(tickerEditor.selected===s.id)tickerCloseChannels();
+    });
+    row.append(label,edit);frag.append(row);
   });
   root.replaceChildren(frag);tickerSelectedCount();
 }
 function tickerSelectedCount(){
   if(!tickerEditor)return;
+  const count=tickerEditor.checkedIds.size;
   document.getElementById('tickerSelectedCount').textContent=
-    '('+tickerEditor.checkedIds.size+'/'+tickerEditor.streams.length+')';
+    '('+count+'/'+tickerEditor.streams.length+')';
 }
 function tickerSearchChannels(value){
   if(!tickerEditor)return;
