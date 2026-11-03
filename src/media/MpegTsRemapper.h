@@ -35,7 +35,8 @@ public:
         // are cached when PAT/CAT/PMT state changes, leaving one table lookup per
         // packet while preserving the V10.8.131 admission semantics exactly.
         if (!initialized_) return true;
-        return pid < inputAdmissionPids_.size() && inputAdmissionPids_[pid];
+        return pid < inputAdmissionPids_.size() &&
+               !excludedInputAudioPids_[pid] && inputAdmissionPids_[pid];
     }
 
 private:
@@ -77,6 +78,9 @@ private:
 
     RemapConfig config_;
     std::array<bool, 8192> allowedPids_ {};
+    // Explicit track selection filters unused input audio even if one old
+    // source PID equals the selected track's remapped OUTPUT PID.
+    std::array<bool, 8192> excludedInputAudioPids_ {};
     std::array<bool, 8192> caPids_ {};
     std::array<bool, 8192> inputAdmissionPids_ {};
     std::uint16_t inputServiceId_ = 0;
