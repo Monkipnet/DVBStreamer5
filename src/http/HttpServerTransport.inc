@@ -856,16 +856,14 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                             res.result(http::status::bad_request);
                             response["error"] = error;
                         } else {
-                            const Json::Value previous = configManager.config.tickerOverlays;
-                            configManager.config.tickerOverlays = entries;
-                            if (!configManager.save()) {
-                                configManager.config.tickerOverlays = previous;
+                            if (!configManager.saveTickerOverlays(entries,error)) {
                                 res.result(http::status::internal_server_error);
-                                response["error"] = "Cannot save ticker configuration";
+                                response["error"] = "Cannot save ticker-overlays.json: " + error;
                             } else {
                                 dvbstreamer5::media::ticker::TickerOverlay::instance().configure(entries);
                                 response["result"] = "ok";
-                                response["note"] = "When enabling a ticker on hardware zero-copy, restart only affected tiles. Video transcoding is required.";
+                                response["saved_file"] = "ticker-overlays.json";
+                                response["note"] = "Ticker metadata applied live; a first-time switch from zero-copy to CPU-frame overlay may cause a short video decoder reinitialization without restarting the tile.";
                             }
                         }
                     }
