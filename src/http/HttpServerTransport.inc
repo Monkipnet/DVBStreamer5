@@ -843,15 +843,34 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         res.result(http::status::bad_request);
                         response["error"] = error;
                     } else {
+                        // Previously saved tickers may reference a channel
+                        // that was deleted/renamed after the initial save.
+                        // Keep those records unchanged as archived settings;
+                        // forbid creating or modifying unknown channel IDs.
+                        const Json::Value savedEntries = configManager.tickerOverlaysSnapshot();
+                        unsigned int archivedCount = 0U;
                         for (const auto& entry : entries) {
+                            const std::string id = entry["stream_id"].asString();
                             bool found = false;
                             for (const auto& cfg : configManager.config.streams) {
-                                if (cfg.id == entry["stream_id"].asString()) {
+                                if (cfg.id == id) {
                                     found = true;
                                     break;
                                 }
                             }
-                            if (!found) { error = "Ticker references unknown stream"; break; }
+                            if (found) continue;
+                            bool preserved = false;
+                            for (const auto& old : savedEntries) {
+                                if (old["stream_id"].asString() == id && old == entry) {
+                                    preserved = true;
+                                    ++archivedCount;
+                                    break;
+                                }
+                            }
+                            if (!preserved) {
+                                error = "Ticker references unknown stream: " + id;
+                                break;
+                            }
                         }
                         if (!error.empty()) {
                             res.result(http::status::bad_request);
@@ -864,6 +883,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                                 dvbstreamer5::media::ticker::TickerOverlay::instance().configure(entries);
                                 response["result"] = "ok";
                                 response["saved_file"] = "ticker-overlays.json";
+                                response["archived_count"] = archivedCount;
                                 response["note"] = "Ticker metadata applied live; a first-time switch from zero-copy to CPU-frame overlay may cause a short video decoder reinitialization without restarting the tile.";
                             }
                         }
