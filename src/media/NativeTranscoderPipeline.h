@@ -40,6 +40,7 @@ struct NativeTranscoderConfig {
     std::uint64_t videoBitrate = 6000000;
     std::uint64_t audioBitrate = 192000;
     bool deinterlace = true;
+    std::string deinterlaceMode = "legacy"; // legacy | off | 25p | bob50
     std::string preset = "balanced";
     std::string profile = "auto";
     std::string level = "auto";
