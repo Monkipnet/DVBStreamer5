@@ -359,6 +359,12 @@ set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
 
+# Live ticker regression checks (no streams, sockets or devices required).
+add_executable(dvbstreamer5_ticker_test tests/ticker/test_ticker.cpp)
+target_link_libraries(dvbstreamer5_ticker_test PRIVATE
+    dvbstreamer5_media_core dvbstreamer5_jsoncpp)
+add_test(NAME ticker_smoke COMMAND dvbstreamer5_ticker_test)
+
 add_executable(DVBStreamer5
     src/main.cpp
     src/utils.cpp
