@@ -174,7 +174,7 @@ struct RasterCache {
                 // are bit-packed (row[xx] would overread a MONO glyph).
                 const int pitch=static_cast<int>(bmp.pitch);
                 const int physicalRow=pitch>=0?yy:static_cast<int>(bmp.rows)-1-yy;
-                const auto* row=bmp.buffer+static_cast<std::ptrdiff_t>(physicalRow)*std::abs(pitch);
+                const auto* row=bmp.buffer+static_cast<std::ptrdiff_t>(physicalRow)*pitch;
                 for(int xx=0;xx<static_cast<int>(bmp.width);++xx) {
                     const int x=x0+xx;
                     if(x<0||x>=w)continue;
