@@ -274,10 +274,17 @@ void DvbSubtitlePassthrough::readPmt(const Packet& packet) {
 void DvbSubtitlePassthrough::observe(const std::uint8_t* data, std::size_t size) {
     if (!data) return;
     for (std::size_t offset = 0; offset + kPacketSize <= size; offset += kPacketSize) {
+        const auto* bytes = data + offset;
+        if (bytes[0] != 0x47U) continue;
+        const auto pid = static_cast<std::uint16_t>(
+            ((bytes[1] & 0x1fU) << 8U) | bytes[2]);
+        // PMT diagnostics for many IPTV channels should be nearly free:
+        // avoid copying every video/audio TS packet unless it is selected
+        // for DVB subtitle reinjection. PAT/PMT still get parsed normally.
+        if(pid!=0 && pid!=sourcePmtPid_ &&
+           (pid>=selectedPids_.size() || !selectedPids_[pid]))continue;
         Packet packet{};
-        std::memcpy(packet.data(), data + offset, packet.size());
-        if (packet[0] != 0x47U) continue;
-        const auto pid = packetPid(packet);
+        std::memcpy(packet.data(), bytes, packet.size());
         if (pid == 0U) readPat(packet);
         else if (pid == sourcePmtPid_) readPmt(packet);
         if (pid >= selectedPids_.size() || !selectedPids_[pid]) continue;
