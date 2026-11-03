@@ -1,3 +1,11 @@
+## V10.8.324 — compact submenus and robust ticker channel selection
+
+- **Main Menu:** four expandable submenus with RU/EN/HR labels: **Broadcast** (VLC playlist, ticker, MPTS, XMLTV, restart schedules), **Monitoring & network** (system load, network), **Access & integrations** (user, Telegram, Newcamd, OSCam-mini), and **Administration** (configuration transfer, about, service restart, logout). Only one submenu is expanded at a time; all close on leaving the Menu. Existing actions are preserved.
+- **Ticker channel picker:** use the **Select channels** dropdown with searchable checkbox rows, Select all / Clear controls and a visible selected-count badge. The adjacent **Edit** action for each channel loads its saved ticker settings into the editing form but does *not* select that channel implicitly. No channels are preselected, to prevent accidentally applying one ticker to other streams.
+- **Unknown-channel save fix:** the backend now permits *unchanged, previously saved* ticker entries for deleted or renamed streams to be preserved as archived records. They are never applied to a newly added stream automatically. New references to unknown IDs or modified archived entries still fail validation. Saving settings for any currently listed channel no longer fails with `Ticker references unknown stream` just because unrelated historical entries are present. Response `archived_count` shows the count retained.
+- **No streaming changes:** only UI code and ticker metadata save validation are changed. Stream video decoding, PTS clock, audio, NVENC, VAAPI, MUX, WISI CBR and OSCam remain untouched.
+- **Validation:** rebuild on Ubuntu, run `ctest --test-dir build --output-on-failure`, then verify a ticker saved to one or more selected channels appears in `/etc/dvbstreamer5/ticker-overlays.json` while all unselected entries remain unchanged.
+
 ## V10.8.323 — smooth PTS-driven scrolling ticker and live speed control
 
 - **Smoother broadcast ticker:** movement is now driven by each output stream's decoded **90 kHz video presentation timestamps** rather than wall-clock delays in the encoder queue. A frame's ticker position is independent of bursts in the encoder thread. Missing/invalid PTS uses one nominal frame step; large timestamp discontinuities are clamped to avoid jumping across a large section of the message.
