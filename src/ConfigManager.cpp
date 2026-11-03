@@ -794,7 +794,7 @@ Json::Value AppConfig::toJson() const {
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
     root["restart_schedule"] = restartSchedule.toJson();
-    root["ticker_overlays"] = tickerOverlays;
+    // Ticker overlays are saved in ticker-overlays.json, not the main config.
     Json::Value udpFilterInterfaces(Json::arrayValue);
     for (const auto& address : udpInputFilterInterfaces) {
         if (!address.empty()) udpFilterInterfaces.append(address);
@@ -990,7 +990,43 @@ bool ConfigManager::load() {
         root["password"] = runtimePassword;
         migratePlaintextPassword = storedPassword.rfind(kUiPasswordPrefix, 0) != 0;
         config = AppConfig::fromJson(root);
+        // Dedicated file is authoritative. Legacy inline configuration is
+        // used only when the dedicated file is absent (migration below).
+        const auto tickerPath = configPath.parent_path() / "ticker-overlays.json";
+        if (std::filesystem::exists(tickerPath)) {
+            std::ifstream tickerInput(tickerPath);
+            Json::Value tickerRoot;
+            std::string tickerParseError;
+            if (!tickerInput ||
+                !Json::parseFromStream(readerBuilder,tickerInput,&tickerRoot,&tickerParseError) ||
+                !tickerRoot.isObject() || !tickerRoot["entries"].isArray()) {
+                std::cerr << "TICKER CONFIG read failed file=" << tickerPath
+                          << " error=" << tickerParseError << std::endl;
+                return false; // retain file for recovery; do not silently erase
+            }
+            std::string validationError;
+            if (!dvbstreamer5::media::ticker::TickerOverlay::validate(
+                    tickerRoot["entries"],validationError)) {
+                std::cerr << "TICKER CONFIG validation failed: " << validationError << std::endl;
+                return false;
+            }
+            config.tickerOverlays = tickerRoot["entries"];
+            std::cerr << "TICKER CONFIG loaded file=" << tickerPath
+                      << " entries=" << config.tickerOverlays.size() << std::endl;
+        }
         dvbstreamer5::media::ticker::TickerOverlay::instance().configure(config.tickerOverlays);
+    }
+
+    // One-time migration of V320/V321 inline ticker entries. Do not remove
+    // legacy settings until the separate file has been safely written.
+    if (!config.tickerOverlays.empty() &&
+        !std::filesystem::exists(configPath.parent_path() / "ticker-overlays.json")) {
+        std::string tickerError;
+        if (!saveTickerOverlays(config.tickerOverlays,tickerError)) {
+            std::cerr << "TICKER CONFIG migration failed: " << tickerError << std::endl;
+            return false;
+        }
+        std::cerr << "TICKER CONFIG migrated to ticker-overlays.json" << std::endl;
     }
 
     // Transparently migrate older plaintext configurations on the first load.
@@ -1124,6 +1160,27 @@ bool ConfigManager::save() {
         std::cerr << "UDP INPUT FILTER rebuild failed (fail-open): "
                   << firewallError << std::endl;
     }
+    return true;
+}
+
+bool ConfigManager::saveTickerOverlays(const Json::Value& entries, std::string& error) {
+    if (!dvbstreamer5::media::ticker::TickerOverlay::validate(entries,error))
+        return false;
+    Json::Value file(Json::objectValue);
+    file["version"] = 1;
+    file["entries"] = entries;
+    const auto target = configPath.parent_path() / "ticker-overlays.json";
+    {
+        std::lock_guard<std::mutex> lock(fileMutex);
+        if (!writeJsonAtomic(target,file,error)) {
+            std::cerr << "TICKER CONFIG write failed file=" << target
+                      << " error=" << error << std::endl;
+            return false;
+        }
+        config.tickerOverlays = entries;
+    }
+    std::cerr << "TICKER CONFIG saved file=" << target
+              << " entries=" << entries.size() << std::endl;
     return true;
 }
 
