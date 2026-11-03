@@ -830,7 +830,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 Json::CharReaderBuilder reader;
                 std::string parseError;
                 std::istringstream input(req.body());
-                if (req.body().size() > 128U*1024U ||
+                if (req.body().size() > 1024U*1024U ||
                     !Json::parseFromStream(reader, input, &payload, &parseError) ||
                     !payload.isObject() || !payload["entries"].isArray()) {
                     res.result(http::status::bad_request);
@@ -865,7 +865,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                             } else {
                                 dvbstreamer5::media::ticker::TickerOverlay::instance().configure(entries);
                                 response["result"] = "ok";
-                                response["note"] = "For a running hardware zero-copy stream, restart only that tile after first enabling a ticker. Requires active video transcoding.";
+                                response["note"] = "When enabling a ticker on hardware zero-copy, restart only affected tiles. Video transcoding is required.";
                             }
                         }
                     }
