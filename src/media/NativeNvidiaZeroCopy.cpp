@@ -1,4 +1,5 @@
 #include "media/NativeNvidiaZeroCopy.h"
+#include "media/NativeNvencQualityPolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1067,6 +1068,9 @@ private:
         }
 
         const GUID codecGuid = nvencCodecGuid(config_.outputCodec);
+        const auto qualityChoice = selectNvencQualityChoice(
+            config_.preset, outputWidth_, outputHeight_, config_.fps,
+            std::getenv("DVBSTREAMER5_NVENC_QUALITY"));
         if (!validateEncoderCapabilities(codecGuid, error)) {
             destroyEncoder();
             return false;
@@ -1088,7 +1092,7 @@ private:
             presetName = "p5";
             return NV_ENC_PRESET_P5_GUID;
         };
-        presetGuid = selectPreset(config_.preset);
+        presetGuid = selectPreset(qualityChoice.preset);
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -1154,7 +1158,8 @@ private:
             1ULL, static_cast<std::uint64_t>(encodeConfig.rcParams.averageBitRate) /
                 roundedFps);
         const std::uint64_t vbv = std::min<std::uint64_t>(
-            0xffffffffULL, frameBudget * 2ULL);
+            0xffffffffULL, frameBudget *
+                static_cast<std::uint64_t>(qualityChoice.vbvFrames));
         encodeConfig.rcParams.vbvBufferSize = static_cast<std::uint32_t>(vbv);
         encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
         if (config_.outputCodec == mpegts::ElementaryCodec::H264) {
@@ -1230,7 +1235,10 @@ private:
                   << " tuning="
                   << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr bframes=0 lookahead=0 reorder_delay=0"
-                  << " vbv_frames=2 spatial_aq=1 aq_strength=8"
+                  << " vbv_frames=" << qualityChoice.vbvFrames
+                  << " spatial_aq=1"
+                  << " nvenc_quality=" << (qualityChoice.enabled ? 1 : 0)
+                  << " requested_preset=" << config_.preset
                   << " gop_frames=" << gopFrames_
                   << std::endl;
         return true;
