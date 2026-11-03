@@ -154,6 +154,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeIntelHardwareDecoder.cpp
     src/media/NativeIntelZeroCopy.cpp
     src/media/NativeNvidiaZeroCopy.cpp
+    src/media/NativeTickerOverlay.cpp
     src/media/NativeVideoProcessing.cpp
     src/media/NativeTranscoderPipeline.cpp
     src/media/NativeTestPatternSource.cpp
@@ -194,6 +195,17 @@ target_link_libraries(dvbstreamer5_media_core PRIVATE
     ${CMAKE_DL_LIBS}
     m
 )
+# Optional FreeType rasterizer for the scheduled broadcast ticker.
+# When disabled, legacy transcoding builds and media paths remain unchanged.
+find_package(Freetype QUIET)
+if(FREETYPE_FOUND)
+    target_compile_definitions(dvbstreamer5_media_core PRIVATE DVBSTREAMER5_HAVE_FREETYPE=1)
+    target_link_libraries(dvbstreamer5_media_core PRIVATE Freetype::Freetype)
+    message(STATUS "Ticker overlay: FreeType enabled (system fonts via fontconfig)")
+else()
+    message(STATUS "Ticker overlay: disabled (install libfreetype-dev fontconfig)")
+endif()
+
 # Optional FFmpeg/libavcodec H.264 *decoder* for interlaced broadcast
 # AVC. This is a per-tile opt-in, and does not touch native encoders or
 # NVIDIA/Intel hardware backends. Builds without FFmpeg headers remain valid.
