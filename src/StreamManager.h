@@ -288,6 +288,7 @@ struct StreamState {
 
     std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector> epgCollector;
     std::shared_ptr<DvbSubtitlePassthrough> dvbSubtitleMonitor;
+    std::shared_ptr<DvbSubtitlePassthrough> outputMediaMonitor;
     std::string epgCacheKey;
     std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
@@ -384,6 +385,7 @@ public:
     Json::Value mptsSnapshot() const;
     Json::Value epgSnapshot(const std::string& id) const;
     Json::Value dvbSubtitleTracks(const std::string& id) const;
+    Json::Value mediaTracks(const std::string& id) const;
     // Passive NIT details from the already-running shared DVB full-TS reader.
     dvbstreamer5::media::network::DvbNitInfo dvbNitInfo(int adapter, int frontend) const;
     void persistAllDvbEpg();
