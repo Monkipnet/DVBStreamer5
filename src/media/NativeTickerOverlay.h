@@ -11,11 +11,13 @@ namespace dvbstreamer5::media::ticker {
 // One overlay per stream, with independently editable local-time intervals.
 // All drawing is performed before the encoder, never on the MPEG-TS/CBR path.
 struct TimeWindow {
+    bool enabled = true;       // temporarily pause without losing schedule
     std::string start;
     std::string end;
     std::vector<int> days;
 };
 struct Entry {
+    bool enabled = true;       // immediately show/hide without removing text
     std::string streamId;
     std::string text;
     std::string fontFile;
@@ -36,6 +38,8 @@ public:
     static bool validate(const Json::Value& value, std::string& error);
     void configure(const Json::Value& value);
     bool enabledFor(const std::string& streamId) const;
+    // Only true during an enabled interval; polled by the active video worker.
+    bool renderRequestedFor(const std::string& streamId) const;
     bool draw(const std::string& streamId, codec::RawVideoFrame& frame);
 private:
     TickerOverlay() = default;
