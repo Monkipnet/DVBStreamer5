@@ -9034,7 +9034,7 @@ async function openTickerModal() {
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'+
       '<h2 style="margin:0">'+lbl('Бегущая строка','Scrolling ticker','Pokretni tekst')+'</h2>'+
       '<button type="button" onclick="closeTickerModal()">✕</button></div>'+
-      '<p style="font-size:12px;opacity:.75">'+lbl('Расписание работает по местному времени сервера. Для наложения необходимо включённое видеотранскодирование; при первом включении на GPU zero-copy перезапустите только выбранную плитку.','Schedules use server-local time. Video transcoding must be enabled; restart only the selected tile when first enabling on GPU zero-copy.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
+      '<p style="font-size:12px;opacity:.75">'+lbl('Расписание использует время сервера. Для наложения необходимо видеотранскодирование; при первом включении на GPU zero-copy перезапустите только выбранные плитки.','Schedules use server-local time. Video transcoding is required; restart only affected tiles when first enabling on GPU zero-copy.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
       (data.available?'':'<p style="color:#ffc674">'+lbl('На сервере отсутствует поддержка FreeType — установите libfreetype-dev и пересоберите программу.','FreeType support missing; install libfreetype-dev and rebuild.','Nedostaje FreeType.')+'</p>')+
       '<section style="border:1px solid rgba(125,209,255,.17);padding:9px;border-radius:9px;margin-top:8px;background:rgba(255,255,255,.02)">'+
       '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
@@ -9078,7 +9078,7 @@ async function openTickerModal() {
       '<p id="tickerSaveStatus" style="color:#ffcb8b"></p>'+
       '<div style="display:flex;justify-content:flex-end;gap:8px">'+
       '<button type="button" onclick="closeTickerModal()">'+lbl('Отмена','Cancel','Odustani')+'</button>'+
-      '<button type="button" class="button-primary" onclick="tickerSave()">'+lbl('Сохранить','Save','Spremi')+'</button></div>'+
+      '<button type="button" class="button-primary" onclick="tickerSave()">'+lbl('Сохранить выбранные','Save selected','Spremi odabrano')+'</button></div>'+
       '</section>';
     render.addEventListener('mousedown',function(event){if(event.target===render)closeTickerModal();});
     document.body.append(render);
@@ -9157,7 +9157,7 @@ function tickerAddInterval(windowValue) {
     '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">'+
     '<label>'+l('Начало','Start','Početak')+'<input class="tickerBegin" type="time" value="'+tickerEsc(v.start)+'"></label>'+
     '<label>'+l('Конец','End','Kraj')+'<input class="tickerEnd" type="time" value="'+tickerEsc(v.end)+'"></label>'+
-    '<button type="button" onclick="this.closest(\'.tickerInterval\').remove()">'+l('Удалить','Delete','Izbriši')+'</button></div>'+
+    '<button type="button" onclick="this.closest(\'.tickerInterval\').remove();tickerEditor.dirty=true">'+l('Удалить','Delete','Izbriši')+'</button></div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
     days.map(function(name,i){const d=i+1;return '<label style="font-size:12px;white-space:nowrap">'+
       '<input type="checkbox" class="tickerDay" data-day="'+d+'" '+
