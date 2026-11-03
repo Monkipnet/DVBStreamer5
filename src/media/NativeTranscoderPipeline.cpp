@@ -215,10 +215,17 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     error.clear();
     reset();
     config_ = config;
-    tickerZeroCopyAllowed_ = !ticker::TickerOverlay::instance().enabledFor(config_.streamId);
-    if (!tickerZeroCopyAllowed_)
+    const bool tickerConfigured = ticker::TickerOverlay::instance().enabledFor(config_.streamId);
+    // The explicitly requested NVIDIA HW decoder produces no CPU frames.
+    // Preserve the working stream rather than causing it to fail on reboot;
+    // the UI explains that Auto/FFmpeg must be selected for burn-in.
+    const bool explicitNvidiaHw = config_.videoDecoder == "nvidia_hw";
+    tickerZeroCopyAllowed_ = !tickerConfigured || explicitNvidiaHw;
+    if (tickerConfigured)
         std::cerr << "NATIVE TICKER stream_id=" << config_.streamId
-                  << " zero_copy_bypass=1 encoder=unchanged" << std::endl;
+                  << " zero_copy_bypass=" << (tickerZeroCopyAllowed_ ? 0 : 1)
+                  << " renderer=" << (explicitNvidiaHw ? "unavailable-nvidia-hw-decoder" : "i420")
+                  << " encoder=unchanged" << std::endl;
     diagnosticI420Enabled_ = false;
     diagnosticColorI420Enabled_ = codec::forceOpenH264ForStream(
         std::getenv("DVBSTREAMER5_DIAG_COLOR_STREAM_ID"), config_.streamId);
