@@ -205,6 +205,7 @@ struct AppConfig {
     // Empty by default: upgrades cannot unexpectedly alter host packet filtering.
     std::vector<std::string> udpInputFilterInterfaces;
     StreamRestartSchedule restartSchedule; // all active stream tiles, never manually stopped ones
+    Json::Value tickerOverlays = Json::Value(Json::arrayValue); // per-channel timed video text
     std::vector<StreamConfig> streams;
     std::vector<MptsOutputConfig> mptsOutputs;
     std::vector<XmltvSourceConfig> xmltvSources;
