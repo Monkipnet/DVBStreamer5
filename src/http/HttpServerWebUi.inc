@@ -431,8 +431,9 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <div class="header-right">
 <button class="button-secondary" onclick="toggleLanguage()" id="languageButton">RU</button>
 <details class="system-menu" id="systemMenu">
-<summary class="button-secondary" data-i18n="system">System</summary>
+<summary class="button-secondary" data-i18n="system">Menu</summary>
 <div class="system-menu-list">
+<button class="system-menu-item" onclick="openPlaylistModal();closeSystemMenu()" data-i18n="playlist">VLC playlist</button>
 <button class="system-menu-item" onclick="openSystemLoadModal();closeSystemMenu()" data-i18n="systemLoad">System load</button>
 <button class="system-menu-item" onclick="openGlobalRestartScheduleModal();closeSystemMenu()" data-ui-ru="Расписание перезапуска потоков" data-ui-en="Stream restart schedule" data-ui-hr="Raspored ponovnog pokretanja tokova">Расписание перезапуска потоков</button>
 <button class="system-menu-item" onclick="openNetworkModal();closeSystemMenu()" data-i18n="network">Network</button>
@@ -448,7 +449,6 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
 </div>
 </details>
-<button class="button-secondary" onclick="openPlaylistModal()" data-i18n="playlist">VLC playlist</button>
 <button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>
 <button class="button-secondary" onclick="openAddChannelModal()" data-i18n="addChannel">+ Add channel</button>
 <button class="button-primary" onclick="openStreamModal()" data-i18n="addStream">+ Add stream</button>
@@ -464,7 +464,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <script>
 const translations = {
   en: {
-    subtitle:'Broadcast monitoring and stream control', total:'Total:', active:'Active:', network:'Network', system:'System', user:'User', addStream:'+ Add stream', addChannel:'+ Add channel',
+    subtitle:'Broadcast monitoring and stream control', total:'Total:', active:'Active:', network:'Network', system:'Menu', user:'User', addStream:'+ Add stream', addChannel:'+ Add channel',
     interfacesNotFound:'No interfaces found', output:'Output', activeInput:'Active input', primary:'Primary', backup:'Backup', sid:'SID', bitrateIn:'Bitrate In', payloadOut:'Payload Out', bitrateOut:'CBR Out', vbrOut:'Bitrate Out', status:'Status',
     online:'Online', backupOnline:'Backup', offline:'Offline', start:'Start', stop:'Stop', edit:'Edit', chart:'Chart', delete:'Delete stream', removeConfirm:'Delete stream',
     restartProgram:'Full program restart', restartConfirm:'Fully restart DVBStreamer5 service now?', restarting:'Restarting service...',
@@ -472,7 +472,7 @@ const translations = {
     about:'About', product:'Product', version:'Version', name:'Name', country:'Country', contactEmail:'Contact email', donate:'Donate', donateQr:'Donate QR code', donateWallet:'Telegram Wallet', cancel:'Cancel', save:'Save', userTitle:'User', telegram:'Telegram API', quality:'Stream quality', playlist:'VLC playlist', subscribers:'Subscribers', streams:'Streams', filtering:'Enable IP filtering', addSubscriber:'Add subscriber', primaryIp:'Primary IP', backupIp:'Backup IP', addedAt:'Added at', subscriberName:'Subscriber name', noSubscribers:'No subscribers added', noStreams:'No streams configured', enabled:'Enabled', disabled:'Disabled', exportSubscribers:'Export TXT', session:'Session', activeSession:'Online', offlineSession:'Offline', resetSession:'Reset', uptime:'Uptime', connectedFor:'Connected for', systemLoad:'System load', logout:'Logout', graphicsAdapters:'Graphics adapters', noGpu:'No GPU detected', unavailable:'N/A', memoryUsed:'Memory', satelliteCard:'Satellite card', satelliteInputs:'DVB adapters', satelliteNotSet:'Satellite not specified', networkStreams:'IPTV / network streams', cardActive:'active', logicalCores:'Logical CPU cores', gpuEngines:'GPU engines', appUsage:'DVBStreamer5 usage', totalUsage:'Entire system', busyLevels:'Load: green 0–39%, yellow 40–69%, orange 70–89%, red 90–100%', core:'Core', coreTraces:'CPU core lines', engineTraces:'GPU engine lines', cpuHostShare:'of host CPU capacity', showCharts:'Show charts', chart:'Chart', chartWindow:'Last 6 minutes · updated every 3 seconds', chartNow:'Now', gpuMemory:'GPU memory'
   },
   ru: {
-    subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Система', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
+    subtitle:'Мониторинг трансляций и управление потоками', total:'Всего:', active:'Активно:', network:'Сеть', system:'Меню', user:'Пользователь', addStream:'+ Добавить поток', addChannel:'+ Добавить канал',
     interfacesNotFound:'Интерфейсы не найдены', output:'Вывод', activeInput:'Активный вход', primary:'Основной', backup:'Резерв', sid:'SID', bitrateIn:'Bitrate In', payloadOut:'Payload Out', bitrateOut:'CBR Out', vbrOut:'Bitrate Out', status:'Статус',
     online:'Онлайн', backupOnline:'Резерв', offline:'Офлайн', start:'Старт', stop:'Стоп', edit:'Ред.', chart:'График', delete:'Удалить поток', removeConfirm:'Удалить поток',
     restartProgram:'Полный перезапуск программы', restartConfirm:'Полностью перезапустить DVBStreamer5 через systemd?', restarting:'Перезапуск программы...',
@@ -485,7 +485,7 @@ translations.hr = {
   "total": "Ukupno:",
   "active": "Aktivno:",
   "network": "Mreža",
-  "system": "Sustav",
+  "system": "Izbornik",
   "user": "Korisnik",
   "addStream": "+ Dodaj tok",
   "addChannel": "+ Dodaj kanal",
