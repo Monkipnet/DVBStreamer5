@@ -699,6 +699,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.videoBitrate = streamConfig.transcodeVideoBitrate;
         tc.fps = streamConfig.transcodeFps;
         tc.deinterlace = streamConfig.transcodeDeinterlace;
+        tc.deinterlaceMode = streamConfig.transcodeDeinterlaceMode;
         // The requested transcoding video bitrate (NOT MPEG-TS transport
         // CBR target) and chosen FPS/resolution drive automatic encoder tuning.
         // Preserve that input even when downstream CBR headroom limits the
