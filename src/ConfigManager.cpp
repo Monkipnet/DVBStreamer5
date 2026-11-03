@@ -525,6 +525,10 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.transcodeAudioBitrate = 192000;
     }
     config.audioPid = root.get("audio_pid", 0).asUInt();
+    config.inputAudioPid = root.get("input_audio_pid", 0).asUInt();
+    if (config.inputAudioPid != 0 &&
+        (config.inputAudioPid < 0x20U || config.inputAudioPid >= 0x1fffU))
+        config.inputAudioPid = 0;
     config.videoPid = root.get("video_pid", 0).asUInt();
     config.serviceId = root.get("service_id", 1).asUInt();
     // input_service_id=0 means automatic PAT-based service detection.
@@ -663,6 +667,7 @@ Json::Value StreamConfig::toJson() const {
     root["transcode_audio_codec"] = transcodeAudioCodec;
     root["transcode_audio_bitrate"] = Json::UInt64(transcodeAudioBitrate);
     root["audio_pid"] = audioPid;
+    root["input_audio_pid"] = inputAudioPid;
     root["video_pid"] = videoPid;
     root["input_service_id"] = inputServiceId;
     root["service_id"] = serviceId;
