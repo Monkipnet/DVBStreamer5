@@ -579,6 +579,15 @@ private:
                     index != static_cast<unsigned long long>(outputIndex_))
                     diagEnabled = false;
             }
+            // V316: optional PCR-vs-video-PTS/DTS telemetry on output TS.
+            // Requires V314 TS diagnostics and can be restricted by its INDEX.
+            const char* timingEnv = std::getenv("DVBSTREAMER5_WISI_PTS_PCR_DIAG");
+            const bool timingEnabled = diagEnabled && timingEnv &&
+                std::string(timingEnv) == "1";
+            std::uint64_t timingPtsSamples = 0, timingDtsSamples = 0;
+            std::uint64_t timingPtsNegative = 0, timingDtsNegative = 0;
+            std::int64_t timingPtsMinMs = 0, timingPtsMaxMs = 0;
+            std::int64_t timingDtsMinMs = 0, timingDtsMaxMs = 0;
             std::array<int, 8192> lastCc{};
             lastCc.fill(-1);
             std::array<std::uint64_t, 8192> lastPcr{};
@@ -734,6 +743,58 @@ private:
                             lastCc[pid] = -1;
                             havePcr[pid] = false;
                         }
+                        if (timingEnabled && payload &&
+                            (packet[1] & 0x40U) != 0 && havePcr[pid]) {
+                            std::size_t pos = 4;
+                            if (adaptation) pos += 1U + packet[4];
+                            // PES video stream (E0..EF), PTS/DTS in header,
+                            // with room for both five-byte timestamp fields.
+                            if (pos + 14U <= mpegts::kPacketSize &&
+                                packet[pos] == 0 && packet[pos + 1] == 0 &&
+                                packet[pos + 2] == 1 &&
+                                (packet[pos + 3] & 0xf0U) == 0xe0U) {
+                                const auto flags = packet[pos + 7];
+                                const auto headerLen = packet[pos + 8];
+                                const auto read90k = [&](std::size_t at) -> std::uint64_t {
+                                    return (std::uint64_t((packet[at] >> 1U) & 7U) << 30U) |
+                                        (std::uint64_t(packet[at + 1]) << 22U) |
+                                        (std::uint64_t(packet[at + 2] >> 1U) << 15U) |
+                                        (std::uint64_t(packet[at + 3]) << 7U) |
+                                        std::uint64_t(packet[at + 4] >> 1U);
+                                };
+                                constexpr std::uint64_t kWrap90k = 1ULL << 33U;
+                                const auto pcr90k = lastPcr[pid] / std::uint64_t{300};
+                                const auto relativeMs = [&](std::uint64_t ts) -> std::int64_t {
+                                    const auto diff = (ts + kWrap90k - pcr90k) % kWrap90k;
+                                    const auto signedDiff = diff > kWrap90k / 2ULL
+                                        ? static_cast<std::int64_t>(diff) -
+                                          static_cast<std::int64_t>(kWrap90k)
+                                        : static_cast<std::int64_t>(diff);
+                                    return signedDiff / 90;
+                                };
+                                if ((flags & 0x80U) && headerLen >= 5U) {
+                                    const auto delta = relativeMs(read90k(pos + 9U));
+                                    if (!timingPtsSamples) timingPtsMinMs = timingPtsMaxMs = delta;
+                                    else {
+                                        timingPtsMinMs = (std::min)(timingPtsMinMs, delta);
+                                        timingPtsMaxMs = (std::max)(timingPtsMaxMs, delta);
+                                    }
+                                    ++timingPtsSamples;
+                                    if (delta < 0) ++timingPtsNegative;
+                                }
+                                if ((flags & 0xc0U) == 0xc0U &&
+                                    headerLen >= 10U && pos + 19U <= mpegts::kPacketSize) {
+                                    const auto delta = relativeMs(read90k(pos + 14U));
+                                    if (!timingDtsSamples) timingDtsMinMs = timingDtsMaxMs = delta;
+                                    else {
+                                        timingDtsMinMs = (std::min)(timingDtsMinMs, delta);
+                                        timingDtsMaxMs = (std::max)(timingDtsMaxMs, delta);
+                                    }
+                                    ++timingDtsSamples;
+                                    if (delta < 0) ++timingDtsNegative;
+                                }
+                            }
+                        }
                         if (payload) {
                             const int cc = packet[3] & 0x0f;
                             if (lastCc[pid] >= 0 && cc != ((lastCc[pid] + 1) & 15))
@@ -774,6 +835,25 @@ private:
                         diagDatagrams = diagUseful = diagNull = diagCcErrors = diagTei = 0;
                         diagPcrCount = diagPcrBackwards = diagPcrGapMaxTicks = 0;
                         diagPcrOver100 = diagGapMaxNs = diagLateMaxNs = diagNullOnly = 0;
+                        if (timingEnabled) {
+                            std::cerr << "WISI VIDEO CLOCK DIAG worker=" << workerId_
+                                      << " index=" << outputIndex_
+                                      << " pts_samples=" << timingPtsSamples
+                                      << " pts_minus_pcr_min_ms=" << timingPtsMinMs
+                                      << " pts_minus_pcr_max_ms=" << timingPtsMaxMs
+                                      << " pts_before_pcr=" << timingPtsNegative
+                                      << " dts_samples=" << timingDtsSamples
+                                      << " dts_minus_pcr_min_ms=" << timingDtsMinMs
+                                      << " dts_minus_pcr_max_ms=" << timingDtsMaxMs
+                                      << " dts_before_pcr=" << timingDtsNegative
+                                      << " pcr_mode=" << (pacer_.sourcePllMode()
+                                          ? "preserved" : "restamped")
+                                      << std::endl;
+                            timingPtsSamples = timingDtsSamples = 0;
+                            timingPtsNegative = timingDtsNegative = 0;
+                            timingPtsMinMs = timingPtsMaxMs = 0;
+                            timingDtsMinMs = timingDtsMaxMs = 0;
+                        }
                     }
                 }
 
