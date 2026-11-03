@@ -500,7 +500,8 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/tickers") {
                 res.set(http::field::content_type, "application/json");
                 Json::Value response(Json::objectValue);
-                response["entries"] = configManager.config.tickerOverlays;
+                response["entries"] = configManager.tickerOverlaysSnapshot();
+                response["storage"] = "ticker-overlays.json";
                 response["fonts"] = dvbstreamer5::media::ticker::TickerOverlay::fontList();
                 response["available"] = dvbstreamer5::media::ticker::TickerOverlay::available();
                 Json::Value streams(Json::arrayValue);
