@@ -1,4 +1,5 @@
 #include "media/NativeTranscoderPipeline.h"
+#include "media/NativeTickerOverlay.h"
 
 #include "media/NativeVideoProcessing.h"
 #include "media/DiagnosticI420Frame.h"
@@ -2053,6 +2054,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         return false;
     }
     if (!explicitFrameDecoder && !abrRawFanout &&
+        !ticker::TickerOverlay::instance().enabledFor(config_.streamId) &&
         zeroCopyCodec && zeroCopyBackend) {
         if (!nvidiaZeroCopyAttempted_) {
             nvidiaZeroCopyAttempted_ = true;
@@ -2155,6 +2157,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     const bool intelZeroCopyBackend =
         config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
     if (!explicitFrameDecoder && !forceNvidiaHardwareAvc && !abrRawFanout && !nvidiaZeroCopy_ &&
+        !ticker::TickerOverlay::instance().enabledFor(config_.streamId) &&
         intelZeroCopyCodec && intelZeroCopyBackend) {
         if (!intelZeroCopyAttempted_) {
             intelZeroCopyAttempted_ = true;
@@ -2531,6 +2534,14 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
                 scaleEnd - scaleBegin).count());
     }
 
+    // Apply optional broadcast graphics on I420 only. The existing encoder,
+    // deinterlacer, PTS and transport scheduling remain untouched when disabled.
+    codec::RawVideoFrame tickerFrame;
+    if (ticker::TickerOverlay::instance().enabledFor(config_.streamId)) {
+        tickerFrame = *source;
+        (void)ticker::TickerOverlay::instance().draw(config_.streamId, tickerFrame);
+        source = &tickerFrame;
+    }
     std::vector<codec::EncodedVideoFrame> encoded;
     if (!videoEncoder_->encode(*source, encoded, error)) return false;
     for (const auto& frame : encoded)
