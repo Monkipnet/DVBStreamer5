@@ -1,3 +1,12 @@
+## V10.8.321 — ticker TXT/DOCX import, channel checkboxes and compact dark editor
+
+- **Menu → Scrolling ticker:** select one or more output channels using a searchable checkbox grid. The separate *Channel settings template* selector loads an existing channel's settings into the editor. Save applies the displayed text, schedule and styling to all checked channels **only**, preserving every unchecked channel's previous settings. Select All / Clear work on the currently filtered list.
+- **Load text from local files:** supports `.txt` (UTF-8, UTF-16 BOM and Windows-1251 fallback) and `.docx`. TXT is read in the browser. DOCX is sent only to the authenticated DVBStreamer5 server, where a bounded ZIP reader extracts `word/document.xml` with zlib and libxml2; no external conversion site, shell command or disk copy of the uploaded document is required. Paragraphs are joined into a single moving line with a separator.
+- **Limits and safety:** import file ≤2 MiB, text ≤8192 UTF-8 bytes (the UI announces truncation), up to 64 ticker entries and 32 schedule windows per entry. ZIP entry size, method, bounds and CRC are validated. Empty text removes ticker configuration from checked channels only, after confirmation.
+- **Appearance:** the modal uses the main DVBStreamer5 dark/blue palette, smaller inputs, a compact scrolling checkbox list, shorter preview and scrollable schedule windows. RU / EN / HR labels for new controls.
+- **Backend compatibility:** the existing `ticker_overlays` persistence and FreeType burn-in pipeline remain unchanged apart from the larger text limit. Normal `/api/tickers/save` calls are limited to 1 MiB to accommodate bulk updates; `/api/tickers/import-docx` is protected by existing panel authentication.
+- **Tests:** `ctest --test-dir build -R 'ticker_(smoke|docx_import)' --output-on-failure`. DOCX tests include stored and deflated ZIP entries, Unicode/Cyrillic extraction, damaged input and size rejection. Full Ubuntu compile and runtime streaming validation are required before production deployment.
+
 ## V10.8.320 — Scheduled scrolling ticker overlay
 
 - **Menu:** renamed System to Menu (RU / EN / HR) and moved VLC playlist into the dropdown.
