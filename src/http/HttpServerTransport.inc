@@ -799,6 +799,31 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/config/import") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleConfigImport(req.body());
+            } else if (target == "/api/tickers/import-docx") {
+                res.set(http::field::content_type, "application/json");
+                Json::Value response(Json::objectValue), payload;
+                Json::CharReaderBuilder reader;
+                std::string parseError;
+                std::istringstream input(req.body());
+                if (req.body().size() > 3U*1024U*1024U ||
+                    !Json::parseFromStream(reader,input,&payload,&parseError) ||
+                    !payload.isObject() || !payload["base64"].isString() ||
+                    payload["base64"].asString().size() > 2800000U) {
+                    res.result(http::status::bad_request);
+                    response["error"] = "Invalid or oversized DOCX upload (2 MiB maximum)";
+                } else {
+                    const std::string bytes=base64Decode(payload["base64"].asString());
+                    std::string imported,importError;
+                    if(bytes.empty() || !tickerImportDocx(bytes,imported,importError)) {
+                        res.result(http::status::unprocessable_entity);
+                        response["error"] = importError.empty() ? "Cannot read DOCX" : importError;
+                    } else {
+                        response["result"] = "ok";
+                        response["text"] = imported;
+                    }
+                }
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer,response);
             } else if (target == "/api/tickers/save") {
                 res.set(http::field::content_type, "application/json");
                 Json::Value response(Json::objectValue), payload;
