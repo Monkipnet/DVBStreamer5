@@ -497,6 +497,25 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     Json::StreamWriterBuilder writer;
                     res.body() = Json::writeString(writer, manifest);
                 }
+            } else if (target == "/api/tickers") {
+                res.set(http::field::content_type, "application/json");
+                Json::Value response(Json::objectValue);
+                response["entries"] = configManager.config.tickerOverlays;
+                response["fonts"] = dvbstreamer5::media::ticker::TickerOverlay::fontList();
+                response["available"] = dvbstreamer5::media::ticker::TickerOverlay::available();
+                Json::Value streams(Json::arrayValue);
+                for (const auto& cfg : configManager.config.streams) {
+                    Json::Value item(Json::objectValue);
+                    item["id"] = cfg.id;
+                    item["name"] = cfg.name;
+                    item["transcode_enabled"] = cfg.transcodeEnabled;
+                    item["video_codec"] = cfg.transcodeVideoCodec;
+                    item["video_decoder"] = cfg.transcodeVideoDecoder;
+                    streams.append(item);
+                }
+                response["streams"] = streams;
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer, response);
             } else if (target == "/api/interfaces") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listInterfaces();
@@ -780,6 +799,54 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/config/import") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleConfigImport(req.body());
+            } else if (target == "/api/tickers/save") {
+                res.set(http::field::content_type, "application/json");
+                Json::Value response(Json::objectValue), payload;
+                Json::CharReaderBuilder reader;
+                std::string parseError;
+                std::istringstream input(req.body());
+                if (req.body().size() > 128U*1024U ||
+                    !Json::parseFromStream(reader, input, &payload, &parseError) ||
+                    !payload.isObject() || !payload["entries"].isArray()) {
+                    res.result(http::status::bad_request);
+                    response["error"] = "Invalid ticker request";
+                } else {
+                    const auto& entries = payload["entries"];
+                    std::string error;
+                    if (!dvbstreamer5::media::ticker::TickerOverlay::validate(entries, error)) {
+                        res.result(http::status::bad_request);
+                        response["error"] = error;
+                    } else {
+                        for (const auto& entry : entries) {
+                            bool found = false;
+                            for (const auto& cfg : configManager.config.streams) {
+                                if (cfg.id == entry["stream_id"].asString()) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) { error = "Ticker references unknown stream"; break; }
+                        }
+                        if (!error.empty()) {
+                            res.result(http::status::bad_request);
+                            response["error"] = error;
+                        } else {
+                            const Json::Value previous = configManager.config.tickerOverlays;
+                            configManager.config.tickerOverlays = entries;
+                            if (!configManager.save()) {
+                                configManager.config.tickerOverlays = previous;
+                                res.result(http::status::internal_server_error);
+                                response["error"] = "Cannot save ticker configuration";
+                            } else {
+                                dvbstreamer5::media::ticker::TickerOverlay::instance().configure(entries);
+                                response["result"] = "ok";
+                                response["note"] = "For a running hardware zero-copy stream, restart only that tile after first enabling a ticker. Requires active video transcoding.";
+                            }
+                        }
+                    }
+                }
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer, response);
             } else if (target == "/api/save-config") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleSaveConfig(req.body());
