@@ -516,9 +516,9 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 #tickerOverlayModal>section{box-sizing:border-box;min-width:0}
 #tickerOverlayModal .ticker-main-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;align-items:end}
 #tickerOverlayModal .ticker-current-template{min-height:51px;box-sizing:border-box;justify-content:center}
-#tickerOverlayModal .ticker-settings-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;align-items:start}
+#tickerOverlayModal .ticker-settings-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:9px;align-items:start}
 #tickerOverlayModal .ticker-settings-grid>.ticker-setting{grid-column:span 2}
-#tickerOverlayModal .ticker-settings-grid>.ticker-speed-setting{grid-column:span 3}
+#tickerOverlayModal .ticker-settings-grid>.ticker-speed-setting{grid-column:span 4}
 #tickerOverlayModal .ticker-setting{display:flex;flex-direction:column;gap:5px;min-width:0;color:var(--settings-accent)!important;font-size:11px;font-weight:700;line-height:1.3}
 #tickerOverlayModal .ticker-setting> :is(input:not([type="checkbox"]),select,textarea){width:100%;max-width:100%;box-sizing:border-box}
 #tickerOverlayModal .ticker-setting small{color:#91a9c2;font-size:10px;font-weight:400}
