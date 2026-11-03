@@ -216,13 +216,14 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     reset();
     config_ = config;
     tickerLastDrawActive_ = false;
-    const bool tickerConfigured = ticker::TickerOverlay::instance().enabledFor(config_.streamId);
+    const bool tickerRequestedAtStart =
+        ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId);
     // The explicitly requested NVIDIA HW decoder produces no CPU frames.
-    // Preserve the working stream rather than causing it to fail on reboot;
-    // the UI explains that Auto/FFmpeg must be selected for burn-in.
+    // Never silently replace this explicit choice. For Auto, a scheduled
+    // overlay can switch the decoder/encoder route later without tile restart.
     const bool explicitNvidiaHw = config_.videoDecoder == "nvidia_hw";
-    tickerZeroCopyAllowed_ = !tickerConfigured || explicitNvidiaHw;
-    if (tickerConfigured)
+    tickerZeroCopyAllowed_ = !tickerRequestedAtStart || explicitNvidiaHw;
+    if (tickerRequestedAtStart)
         std::cerr << "NATIVE TICKER stream_id=" << config_.streamId
                   << " zero_copy_bypass=" << (tickerZeroCopyAllowed_ ? 0 : 1)
                   << " renderer=" << (explicitNvidiaHw ? "unavailable-nvidia-hw-decoder" : "i420")
@@ -2060,6 +2061,31 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         sample.stream.codec == mpegts::ElementaryCodec::H265;
     const bool zeroCopyBackend =
         config_.videoEncoder == "nvenc" || config_.videoEncoder == "auto";
+    // V322: an interval may become active after the tile has already started.
+    // Switch only this pipeline from GPU zero-copy to the frame-producing path.
+    // The transport/mux/audio workers and stream lifecycle are left running.
+    // The switch is one-way for the active tile (even when graphics are later
+    // disabled), avoiding repeated decoder teardown at schedule boundaries.
+    if (tickerZeroCopyAllowed_ && !forceNvidiaHardwareAvc &&
+        ticker::TickerOverlay::instance().renderRequestedFor(config_.streamId)) {
+        tickerZeroCopyAllowed_ = false;
+        if (nvidiaZeroCopy_ || intelZeroCopy_) {
+            nvidiaZeroCopy_.reset();
+            intelZeroCopy_.reset();
+            nvidiaZeroCopyActive_.store(false,std::memory_order_release);
+            intelZeroCopyActive_.store(false,std::memory_order_release);
+            std::cerr << "NATIVE TICKER LIVE SWITCH stream_id=" << config_.streamId
+                      << " from=gpu-zero-copy to=i420-frames"
+                      << " video_reinit=1 tile_restart=0"
+                      << " encoder_backend=" << config_.videoEncoder
+                      << std::endl;
+        } else {
+            std::cerr << "NATIVE TICKER LIVE READY stream_id=" << config_.streamId
+                      << " path=i420-frames tile_restart=0" << std::endl;
+        }
+        nvidiaZeroCopyAttempted_ = true;
+        intelZeroCopyAttempted_ = true;
+    }
     if (forceNvidiaHardwareAvc && !zeroCopyBackend) {
         error = "NVIDIA HW decoder requires video encoder=nvenc or auto because "
                 "the current NVIDIA decoder is the NVDEC/CUDA/NVENC zero-copy path";
