@@ -9035,13 +9035,25 @@ async function openTickerModal() {
       '<button type="button" onclick="closeTickerModal()">✕</button></div>'+
       '<p style="font-size:12px;opacity:.75">'+lbl('Расписание работает по местному времени сервера. Для наложения необходимо включённое видеотранскодирование; при первом включении на GPU zero-copy перезапустите только выбранную плитку.','Schedules use server-local time. Video transcoding must be enabled; restart only the selected tile when first enabling on GPU zero-copy.','Raspored koristi lokalno vrijeme poslužitelja. Potrebno je transkodiranje videa.')+'</p>'+
       (data.available?'':'<p style="color:#ffc674">'+lbl('На сервере отсутствует поддержка FreeType — установите libfreetype-dev и пересоберите программу.','FreeType support missing; install libfreetype-dev and rebuild.','Nedostaje FreeType.')+'</p>')+
+      '<section style="border:1px solid rgba(125,209,255,.17);padding:9px;border-radius:9px;margin-top:8px;background:rgba(255,255,255,.02)">'+
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
+      '<strong>'+lbl('Каналы для применения','Apply to channels','Odabir kanala')+' <span id="tickerSelectedCount"></span></strong>'+
+      '<input id="tickerChannelSearch" type="search" oninput="tickerSearchChannels(this.value)" placeholder="'+lbl('Поиск','Search','Pretraži')+'" style="flex:1;min-width:130px">'+
+      '<button type="button" onclick="tickerSelectAll(true)">'+lbl('Все','All','Svi')+'</button>'+
+      '<button type="button" onclick="tickerSelectAll(false)">'+lbl('Снять','Clear','Poništi')+'</button></div>'+
+      '<div class="ticker-channel-list" id="tickerChannelList"></div>'+
+      '<p>'+lbl('Галочки — каналы для сохранения. Выпадающий список ниже — какой канал загрузить как образец. Неотмеченные сохраняют свои настройки.','Checked channels receive these settings. The selector below loads a channel as a template. Unchecked channels are preserved.','Označeni kanali dobivaju ove postavke.')+'</p></section>'+
       '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'+
       '<label>'+lbl('Канал','Channel','Kanal')+'<select id="tickerStream" style="width:100%" onchange="tickerSwitch(this.value)">'+options+'</select></label>'+
       '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
       '</div>'+
       '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
       '<label style="display:block;margin:10px 0">'+lbl('Текст','Text','Tekst')+
-      '<textarea id="tickerText" rows="2" maxlength="512" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></label>'+
+      '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:5px 0">'+
+      '<button type="button" onclick="document.getElementById(\'tickerFileInput\').click()">↥ '+lbl('Загрузить TXT / DOCX','Import TXT / DOCX','Uvezi TXT / DOCX')+'</button>'+
+      '<input id="tickerFileInput" type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onchange="tickerImportFile(this.files[0])">'+
+      '<span class="ticker-file-status" id="tickerFileStatus"></span></div>'+
+      '<textarea id="tickerText" rows="3" maxlength="8192" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></label>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">'+
       '<label>'+lbl('Скорость (пикс./с)','Speed (px/s)','Brzina')+'<input id="tickerSpeed" type="number" min="10" max="600" value="100" style="width:100%"></label>'+
       '<label>'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
