@@ -215,6 +215,10 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     error.clear();
     reset();
     config_ = config;
+    tickerZeroCopyAllowed_ = !ticker::TickerOverlay::instance().enabledFor(config_.streamId);
+    if (!tickerZeroCopyAllowed_)
+        std::cerr << "NATIVE TICKER stream_id=" << config_.streamId
+                  << " zero_copy_bypass=1 encoder=unchanged" << std::endl;
     diagnosticI420Enabled_ = false;
     diagnosticColorI420Enabled_ = codec::forceOpenH264ForStream(
         std::getenv("DVBSTREAMER5_DIAG_COLOR_STREAM_ID"), config_.streamId);
@@ -2054,7 +2058,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         return false;
     }
     if (!explicitFrameDecoder && !abrRawFanout &&
-        !ticker::TickerOverlay::instance().enabledFor(config_.streamId) &&
+        tickerZeroCopyAllowed_ &&
         zeroCopyCodec && zeroCopyBackend) {
         if (!nvidiaZeroCopyAttempted_) {
             nvidiaZeroCopyAttempted_ = true;
@@ -2157,7 +2161,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     const bool intelZeroCopyBackend =
         config_.videoEncoder == "qsv" || config_.videoEncoder == "auto";
     if (!explicitFrameDecoder && !forceNvidiaHardwareAvc && !abrRawFanout && !nvidiaZeroCopy_ &&
-        !ticker::TickerOverlay::instance().enabledFor(config_.streamId) &&
+        tickerZeroCopyAllowed_ &&
         intelZeroCopyCodec && intelZeroCopyBackend) {
         if (!intelZeroCopyAttempted_) {
             intelZeroCopyAttempted_ = true;
