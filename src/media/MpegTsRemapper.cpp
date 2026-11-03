@@ -141,6 +141,7 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     };
     if (!validOutputPid(config.outputVideoPid) ||
         !validOutputPid(config.outputAudioPid) ||
+        !validOutputPid(config.inputAudioPid) ||
         (config.outputVideoPid != 0 && config.outputVideoPid == config.outputAudioPid)) {
         error = "native remap output PIDs must be distinct values from 32 to 8190";
         return false;
@@ -392,6 +393,8 @@ bool Remapper::processPatSection(
     if (selectedService != 0 &&
         (inputServiceId_ != selectedService || pmtPid_ != selectedPmtPid)) {
         inputServiceId_ = selectedService;
+        if (config_.preserveSourceServiceId)
+            config_.outputServiceId = selectedService;
         pmtPid_ = selectedPmtPid;
         inputVideoPid_ = 0;
         inputAudioPid_ = 0;
@@ -467,6 +470,8 @@ bool Remapper::processPmtSection(
 
     std::uint16_t inputVideo = 0;
     std::uint16_t inputAudio = 0;
+    bool preferredAudioFound = config_.inputAudioPid == 0;
+    std::vector<std::uint16_t> otherAudioPids;
     const std::size_t end = section.size() - 4;
     std::uint16_t pcrPid = readPid(section.data() + 8);
     if (pcrPid < 0x1fff) allowed[pcrPid] = true;
@@ -492,7 +497,27 @@ bool Remapper::processPmtSection(
         }
         if (pid < allowed.size()) allowed[pid] = true;
         if (inputVideo == 0 && isVideo(streamType)) inputVideo = pid;
-        if (inputAudio == 0 && isAudio(streamType)) inputAudio = pid;
+        // MPEG-TS private_type 0x06 can carry AC-3/E-AC-3 described
+        // by the DVB 0x6A/0x7A descriptors.
+        bool audioEs = isAudio(streamType);
+        if (streamType == 0x06U) {
+            for (std::size_t d = offset+5; d+2 <= offset+5+infoLength;) {
+                const auto length=static_cast<std::size_t>(section[d+1]);
+                if(d+2+length>offset+5+infoLength)break;
+                if(section[d]==0x6aU||section[d]==0x7aU)audioEs=true;
+                d+=2+length;
+            }
+        }
+        if (audioEs) {
+            if (config_.inputAudioPid != 0 && pid == config_.inputAudioPid) {
+                inputAudio = pid;
+                preferredAudioFound = true;
+            } else if (config_.inputAudioPid == 0 && inputAudio == 0) {
+                inputAudio = pid;
+            } else if (config_.inputAudioPid != 0) {
+                otherAudioPids.push_back(pid);
+            }
+        }
         if (!addCaPids(section.data() + offset + 5, infoLength, allowed)) {
             error = "native remap encountered malformed elementary stream descriptors";
             return false;
@@ -502,6 +527,40 @@ bool Remapper::processPmtSection(
     if (offset != end) {
         error = "native remap encountered trailing bytes in PMT";
         return false;
+    }
+    if (!preferredAudioFound || (config_.inputAudioPid != 0 && inputAudio == 0)) {
+        error = "selected input audio PID " + std::to_string(config_.inputAudioPid) +
+                " is absent from current PMT; choose Auto or refresh tracks";
+        return false;
+    }
+    if (config_.inputAudioPid != 0 && pcrPid != inputAudio &&
+        std::find(otherAudioPids.begin(),otherAudioPids.end(),pcrPid) != otherAudioPids.end()) {
+        error="cannot filter audio PID carrying program PCR; choose another track";
+        return false;
+    }
+    // Remove unused audio tracks from the PMT and the admission bitmap,
+    // so the output advertises exactly the selected audio PES.
+    if (config_.inputAudioPid != 0 && !otherAudioPids.empty()) {
+        std::vector<std::uint8_t> pruned(section.begin(),
+            section.begin()+static_cast<std::ptrdiff_t>(12U+programInfoLength));
+        for(std::size_t at=12U+programInfoLength;at<end;) {
+            const auto pid=readPid(section.data()+at+1U);
+            const auto size=5U+static_cast<std::size_t>(
+                ((section[at+3] & 15U)<<8U)|section[at+4]);
+            if(std::find(otherAudioPids.begin(),otherAudioPids.end(),pid) ==
+               otherAudioPids.end()) {
+                pruned.insert(pruned.end(),section.begin()+static_cast<std::ptrdiff_t>(at),
+                              section.begin()+static_cast<std::ptrdiff_t>(at+size));
+            } else {
+                allowed[pid]=false;
+            }
+            at+=size;
+        }
+        pruned.resize(pruned.size()+4U,0U);
+        const auto sectionLength=pruned.size()-3U;
+        pruned[1]=static_cast<std::uint8_t>((pruned[1]&0xf0U)|((sectionLength>>8U)&0x0fU));
+        pruned[2]=static_cast<std::uint8_t>(sectionLength&0xffU);
+        section=std::move(pruned);
     }
 
     if ((config_.outputVideoPid != 0 && inputVideo == 0) ||
@@ -536,7 +595,8 @@ bool Remapper::processPmtSection(
     writePid(section.data() + 8, pcrPid);
 
     offset = 12 + programInfoLength;
-    while (offset + 5 <= end) {
+    const std::size_t rewrittenEnd = section.size()-4U;
+    while (offset + 5 <= rewrittenEnd) {
         std::uint16_t pid = readPid(section.data() + offset + 1);
         if (pid == inputVideo && config_.outputVideoPid != 0) {
             pid = config_.outputVideoPid;
