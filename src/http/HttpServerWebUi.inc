@@ -482,6 +482,90 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .stream-media-codec-status>div{min-width:200px;flex:1}
 .stream-media-codec-status button{padding:4px 8px;flex:none}
 
+/* V327: uniform settings-dialog rhythm and high-contrast option titles.
+   Scopes deliberately exclude transport tiles, charts and global header. */
+.modal-content{
+  --settings-accent:#80cbff;
+  --settings-gap:10px;
+}
+.modal-content :is(.form-row,.edit-field,.sat-field){min-width:0}
+.modal-content :is(.form-row>label:not(.checkbox-inline),.edit-field-title,.sat-field>label,.about-donate-wallet-label){
+  color:var(--settings-accent);font-weight:700;font-size:.76rem;line-height:1.3;
+}
+.modal-content :is(.form-grid,.row-inline,.sat-form,.sat-output){gap:var(--settings-gap)}
+.modal-content :is(.form-row,.edit-field,.sat-field){gap:5px}
+.modal-content :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),select,textarea){box-sizing:border-box;min-width:0}
+.modal-content :is(input,select,textarea,button):focus-visible,
+#tickerOverlayModal :is(button,input,select,textarea):focus-visible{
+  outline:2px solid #7dd1ff;outline-offset:2px;
+}
+.modal-content .modal-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.modal-content :is(.edit-section,.quality-board,.mpts-row,.output-row){box-sizing:border-box}
+.modal-content .field-help{color:#92a7bd}
+.modal-content :is(.edit-section-head,.transcode-section-caption,.quality-card>strong){color:#bfe5ff}
+.modal-content :is(.form-row,.edit-field,.sat-field)>:is(input,select,textarea){max-width:100%}
+.system-menu-root-actions{display:grid;gap:5px;border-top:1px solid rgba(125,209,255,.18);margin-top:7px;padding:9px 4px 4px}
+.system-menu .system-menu-root-actions>.system-menu-item{display:flex;align-items:center;min-height:34px;padding:8px 10px;text-align:left;border-radius:8px}
+.system-menu .system-menu-root-actions>.restart-button{background:rgba(255,184,77,.1);color:#ffdf9d}
+.system-menu .system-menu-root-actions>.logout-button{background:rgba(255,95,95,.1);color:#ffc4c4}
+.system-menu .system-menu-root-actions>.system-menu-item:hover{filter:brightness(1.2)}
+.system-menu .system-menu-root-actions>.system-menu-item:focus-visible{outline:2px solid #7dd1ff;outline-offset:2px}
+
+/* V327: ticker inputs use the same label, column and toolbar standards. */
+#tickerOverlayModal{--settings-accent:#80cbff;--settings-gap:9px}
+#tickerOverlayModal>section{box-sizing:border-box;min-width:0}
+#tickerOverlayModal .ticker-main-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;align-items:end}
+#tickerOverlayModal .ticker-current-template{min-height:51px;box-sizing:border-box;justify-content:center}
+#tickerOverlayModal .ticker-settings-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;align-items:start}
+#tickerOverlayModal .ticker-settings-grid>.ticker-setting{grid-column:span 2}
+#tickerOverlayModal .ticker-settings-grid>.ticker-speed-setting{grid-column:span 3}
+#tickerOverlayModal .ticker-setting{display:flex;flex-direction:column;gap:5px;min-width:0;color:var(--settings-accent)!important;font-size:11px;font-weight:700;line-height:1.3}
+#tickerOverlayModal .ticker-setting> :is(input:not([type="checkbox"]),select,textarea){width:100%;max-width:100%;box-sizing:border-box}
+#tickerOverlayModal .ticker-setting small{color:#91a9c2;font-size:10px;font-weight:400}
+#tickerOverlayModal .ticker-enable-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:8px 10px;border:1px solid rgba(125,209,255,.19);border-radius:9px;margin:9px 0;background:rgba(31,139,255,.045);color:var(--settings-accent)}
+#tickerOverlayModal .ticker-enable-row small{color:#91a9c2;font-weight:400}
+#tickerOverlayModal .ticker-text-section{margin:10px 0;min-width:0}
+#tickerOverlayModal .ticker-text-section>label{display:block;color:var(--settings-accent);font-size:11px;font-weight:700}
+#tickerOverlayModal .ticker-text-section textarea{display:block;width:100%;resize:vertical}
+#tickerOverlayModal .ticker-upload-row,#tickerOverlayModal .ticker-position-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
+#tickerOverlayModal .ticker-position-row{padding:9px 10px;background:rgba(255,255,255,.025);border:1px solid rgba(125,209,255,.14);border-radius:9px}
+#tickerOverlayModal .ticker-position-row strong{color:var(--settings-accent)}
+#tickerOverlayModal .ticker-position-row button{min-width:36px;min-height:32px}
+#tickerOverlayModal .ticker-position-row #tickerOffsetLabel{color:#b7cfe7;font-size:11px}
+#tickerOverlayModal #tickerWindows{display:grid;gap:7px}
+#tickerOverlayModal .tickerInterval{box-sizing:border-box;min-width:0}
+#tickerOverlayModal .ticker-interval-fields{display:grid;grid-template-columns:minmax(88px,.6fr) repeat(2,minmax(120px,1fr)) auto;gap:9px;align-items:end}
+#tickerOverlayModal .ticker-interval-enabled{display:flex;align-items:center;gap:6px;min-height:34px;color:var(--settings-accent);font-weight:700}
+#tickerOverlayModal .ticker-interval-days{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+#tickerOverlayModal .ticker-day-label{display:inline-flex;align-items:center;gap:4px;padding:4px 6px;border:1px solid rgba(125,209,255,.12);border-radius:7px;color:#a9cce7;font-size:11px;cursor:pointer}
+#tickerOverlayModal .ticker-day-label:has(input:checked){background:rgba(31,139,255,.13);color:#e3f4ff}
+#tickerOverlayModal button{cursor:pointer!important;transition:background .13s ease,border-color .13s ease,transform .08s ease}
+#tickerOverlayModal button:active:not(:disabled){transform:translateY(1px);background:rgba(31,139,255,.26)!important}
+#tickerOverlayModal button:disabled{opacity:.45;cursor:not-allowed!important}
+#tickerOverlayModal .ticker-action-row{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
+#tickerOverlayModal .ticker-action-row button{min-height:34px}
+#tickerOverlayModal .ticker-channel-option:hover{background:rgba(31,139,255,.09)}
+#tickerOverlayModal .ticker-channel-check:focus-within{outline:1px solid #7dd1ff;outline-offset:2px;border-radius:4px}
+#tickerOverlayModal .ticker-channel-edit:hover{border-color:#80cbff!important}
+#tickerOverlayModal .ticker-settings-grid :is(input[type="color"]){height:34px;padding:3px!important;cursor:pointer}
+#tickerOverlayModal #tickerPreview.ticker-preview-disabled{opacity:.55}
+#tickerOverlayModal .ticker-add-interval{min-height:33px;margin:8px 0}
+@media(max-width:720px){
+  #tickerOverlayModal .ticker-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #tickerOverlayModal .ticker-settings-grid>.ticker-setting{grid-column:span 1}
+  #tickerOverlayModal .ticker-settings-grid>.ticker-speed-setting{grid-column:1/-1}
+  #tickerOverlayModal .ticker-interval-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #tickerOverlayModal .ticker-interval-fields>.ticker-interval-enabled{grid-column:1/-1}
+}
+@media(max-width:480px){
+  #tickerOverlayModal .ticker-main-grid,#tickerOverlayModal .ticker-settings-grid{grid-template-columns:1fr}
+  #tickerOverlayModal .ticker-settings-grid>.ticker-speed-setting{grid-column:1}
+  #tickerOverlayModal .ticker-interval-fields{grid-template-columns:1fr}
+  #tickerOverlayModal .ticker-interval-fields>.ticker-interval-enabled{grid-column:1}
+  #tickerOverlayModal .ticker-action-row>button{flex:1;min-width:0}
+  .modal-content .modal-actions button{flex:1;min-width:0}
+}
+
 </style>
 </head>
 <body>
@@ -540,10 +624,12 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <div class="system-submenu-list">
 <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()" data-ui-ru="Конфигурация" data-ui-en="Configuration" data-ui-hr="Konfiguracija">Конфигурация</button>
 <button class="system-menu-item" onclick="openAboutModal();closeSystemMenu()" data-i18n="about">About</button>
+</div>
+</details>
+<div class="system-menu-root-actions">
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
 <button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
 </div>
-</details>
 </div>
 </details>
 <button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>
@@ -9221,50 +9307,50 @@ async function openTickerModal() {
       '<p class="ticker-picker-hint">'+lbl('Отметьте каналы галочками. «Ред.» загружает настройки канала для редактирования, но не выбирает его автоматически.','Check channels to apply settings. Edit loads a channel template without selecting it.','Označite kanale; Uredi učitava postavke kanala.')+'</p>'+
       '</div></div>'+
 
-      '<div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">'+
+      '<div class="ticker-main-grid">'+
       '<div class="ticker-current-template">'+lbl('Редактируем настройки: ','Editing settings: ','Uređivanje postavki: ')+
       '<strong id="tickerCurrentTemplate"></strong></div>'+
-      '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
+      '<label class="ticker-setting">'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
       '</div>'+
       '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
-      '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid rgba(125,209,255,.19);border-radius:9px;margin:6px 0">'+
+      '<label class="ticker-enable-row">'+
       '<input id="tickerEnabled" type="checkbox" checked>'+
       '<strong>'+lbl('Бегущая строка включена','Enable scrolling ticker','Uključi pokretni tekst')+'</strong>'+
       '<small style="opacity:.7">'+lbl('Выключение сохраняет текст и интервалы','Disabling retains text and intervals','Isključivanje čuva tekst i intervale')+'</small></label>'+
-      '<div style="display:block;margin:10px 0"><label for="tickerText">'+lbl('Текст','Text','Tekst')+'</label>'+
-      '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:5px 0">'+
+      '<div class="ticker-text-section"><label for="tickerText">'+lbl('Текст','Text','Tekst')+'</label>'+
+      '<div class="ticker-upload-row">'+
       '<button type="button" onclick="document.getElementById(\'tickerFileInput\').click()">↥ '+lbl('Загрузить TXT / DOCX','Import TXT / DOCX','Uvezi TXT / DOCX')+'</button>'+
       '<input id="tickerFileInput" type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onchange="tickerImportFile(this.files[0])">'+
       '<span class="ticker-file-status" id="tickerFileStatus"></span></div>'+
       '<textarea id="tickerText" rows="3" maxlength="8192" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></div>'+
-      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">'+
-      '<label style="grid-column:span 2">'+lbl('Скорость движения, пикселей в секунду','Scroll speed, pixels per second','Brzina pomicanja, px/s')+
+      '<div class="ticker-settings-grid">'+
+      '<label class="ticker-setting ticker-speed-setting">'+lbl('Скорость движения, пикселей в секунду','Scroll speed, pixels per second','Brzina pomicanja, px/s')+
       '<div style="display:flex;align-items:center;gap:9px;min-width:0">'+
-      '<input id="tickerSpeedSlider" type="range" min="5" max="300" step="1" value="40" style="flex:1;min-width:70px;accent-color:#1f8bff">'+
+      '<input id="tickerSpeedSlider" type="range" min="5" max="600" step="1" value="40" style="flex:1;min-width:70px;accent-color:#1f8bff">'+
       '<input id="tickerSpeed" type="number" min="5" max="600" step="1" value="40" style="width:70px"></div>'+
       '<small id="tickerSpeedHint" style="opacity:.7">'+lbl('Рекомендуется 15–50 пикс./с для плавного движения','Recommended 15–50 px/s for smoother motion','Preporuka 15–50 px/s')+'</small></label>'+
-      '<label>'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
-      '<label>'+lbl('Цвет текста','Text color','Boja teksta')+'<input id="tickerForeground" type="color" value="#ffffff" style="width:100%"></label>'+
-      '<label>'+lbl('Цвет подложки','Background color','Boja podloge')+'<input id="tickerBackground" type="color" value="#000000" style="width:100%"></label>'+
-      '<label>'+lbl('Непрозрачность подложки, %','Background opacity, %','Neprozirnost, %')+
+      '<label class="ticker-setting">'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
+      '<label class="ticker-setting">'+lbl('Цвет текста','Text color','Boja teksta')+'<input id="tickerForeground" type="color" value="#ffffff" style="width:100%"></label>'+
+      '<label class="ticker-setting">'+lbl('Цвет подложки','Background color','Boja podloge')+'<input id="tickerBackground" type="color" value="#000000" style="width:100%"></label>'+
+      '<label class="ticker-setting">'+lbl('Непрозрачность подложки, %','Background opacity, %','Neprozirnost, %')+
       '<input id="tickerOpacity" type="range" min="0" max="100" value="70" oninput="document.getElementById(\'tickerOpacityValue\').textContent=this.value+\'%\'" style="width:100%"><span id="tickerOpacityValue">70%</span></label>'+
       '</div>'+
-      '<div style="margin:10px 0;display:flex;align-items:center;flex-wrap:wrap;gap:10px">'+
+      '<div class="ticker-position-row">'+
       '<strong>'+lbl('Положение строки','Ticker position','Položaj teksta')+'</strong>'+
-      '<button type="button" onclick="tickerMove(10)" aria-label="Up">↑</button>'+
-      '<button type="button" onclick="tickerMove(-10)" aria-label="Down">↓</button>'+
+      '<button type="button" onclick="tickerMove(10)" aria-label="'+lbl('Поднять строку','Raise ticker','Podigni tekst')+'">↑</button>'+
+      '<button type="button" onclick="tickerMove(-10)" aria-label="'+lbl('Опустить строку','Lower ticker','Spusti tekst')+'">↓</button>'+
       '<span id="tickerOffsetLabel"></span>'+
       '<input type="hidden" id="tickerOffset" value="0"></div>'+
       '<div style="background:#06111b;height:125px;position:relative;overflow:hidden;border:1px solid #506075;border-radius:6px" id="tickerPreview">'+
       '<div id="tickerPreviewBand" style="position:absolute;left:0;right:0;bottom:0;white-space:nowrap;padding:3px 8px;overflow:hidden"><span id="tickerPreviewText"></span></div></div>'+
       '<h3 style="margin:14px 0 6px">'+lbl('Временные интервалы','Time intervals','Vremenski intervali')+'</h3>'+
       '<div id="tickerWindows"></div>'+
-      '<button type="button" onclick="tickerAddInterval()" style="margin:7px 0">+ '+lbl('Добавить интервал','Add interval','Dodaj interval')+'</button>'+
+      '<button type="button" class="ticker-add-interval" onclick="tickerAddInterval()">+ '+lbl('Добавить интервал','Add interval','Dodaj interval')+'</button>'+
       '<p style="font-size:12px;opacity:.75">'+lbl('Пустое расписание отключает строку. Одинаковые начало и конец — круглосуточно в выбранные дни. Поддерживаются интервалы через полночь.','An empty schedule disables the ticker. Equal start/end means full day; overnight intervals are supported.','Prazan raspored isključuje tekst.')+'</p>'+
       '<p id="tickerSaveStatus" style="color:#ffcb8b"></p>'+
-      '<div style="display:flex;justify-content:flex-end;gap:8px">'+
+      '<div class="ticker-action-row">'+
       '<button type="button" onclick="closeTickerModal()">'+lbl('Отмена','Cancel','Odustani')+'</button>'+
-      '<button type="button" class="button-primary" onclick="tickerSave()">'+lbl('Сохранить выбранные','Save selected','Spremi odabrano')+'</button></div>'+
+      '<button type="button" id="tickerSaveButton" class="button-primary" onclick="tickerSave()">'+lbl('Сохранить выбранные','Save selected','Spremi odabrano')+'</button></div>'+
       '</section>';
     render.addEventListener('mousedown',function(event){if(event.target===render)closeTickerModal();});
     document.body.append(render);
@@ -9274,7 +9360,7 @@ async function openTickerModal() {
           document.getElementById('tickerSpeed').value=this.value;
         if(id==='tickerSpeed')
           document.getElementById('tickerSpeedSlider').value=
-            Math.max(5,Math.min(300,Number(this.value)||5));
+            Math.max(5,Math.min(600,Number(this.value)||5));
         tickerEditor.dirty=true;
         tickerPreviewUpdate();
       });});
@@ -9308,7 +9394,7 @@ function tickerSwitch(id) {
   val('tickerFont',entry.font_file||'');
   val('tickerFontSize',entry.font_size==null?32:entry.font_size);
   val('tickerSpeed',entry.speed==null?40:entry.speed);
-  val('tickerSpeedSlider',Math.max(5,Math.min(300,entry.speed==null?40:entry.speed)));
+  val('tickerSpeedSlider',Math.max(5,Math.min(600,entry.speed==null?40:entry.speed)));
   val('tickerForeground',entry.foreground||'#ffffff');
   val('tickerBackground',entry.background||'#000000');
   val('tickerOpacity',entry.background_opacity==null?70:entry.background_opacity);
@@ -9334,6 +9420,7 @@ function tickerPreviewUpdate() {
   const offset=Number(document.getElementById('tickerOffset').value||0);
   const label=document.getElementById('tickerOffsetLabel');
   label.textContent=tickerWord('Отступ снизу: ','Bottom offset: ')+offset+' px';
+  document.getElementById('tickerPreview').classList.toggle('ticker-preview-disabled',!document.getElementById('tickerEnabled').checked);
   const band=document.getElementById('tickerPreviewBand');
   const bg=document.getElementById('tickerBackground').value;
   const fg=document.getElementById('tickerForeground').value;
@@ -9368,14 +9455,14 @@ function tickerAddInterval(windowValue) {
   const days=[l('Пн','Mon','Pon'),l('Вт','Tue','Uto'),l('Ср','Wed','Sri'),
     l('Чт','Thu','Čet'),l('Пт','Fri','Pet'),l('Сб','Sat','Sub'),l('Вс','Sun','Ned')];
   wrap.innerHTML=
-    '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">'+
-    '<label style="display:flex;align-items:center;gap:4px"><input class="tickerWindowEnabled" type="checkbox" '+
+    '<div class="ticker-interval-fields">'+
+    '<label class="ticker-interval-enabled"><input class="tickerWindowEnabled" type="checkbox" '+
       (v.enabled===false?'':'checked')+'>'+l('Активен','Enabled','Aktivan')+'</label>'+
-    '<label>'+l('Начало','Start','Početak')+'<input class="tickerBegin" type="time" value="'+tickerEsc(v.start)+'"></label>'+
-    '<label>'+l('Конец','End','Kraj')+'<input class="tickerEnd" type="time" value="'+tickerEsc(v.end)+'"></label>'+
+    '<label class="ticker-setting">'+l('Начало','Start','Početak')+'<input class="tickerBegin" type="time" value="'+tickerEsc(v.start)+'"></label>'+
+    '<label class="ticker-setting">'+l('Конец','End','Kraj')+'<input class="tickerEnd" type="time" value="'+tickerEsc(v.end)+'"></label>'+
     '<button type="button" onclick="this.closest(\'.tickerInterval\').remove();tickerEditor.dirty=true">'+l('Удалить','Delete','Izbriši')+'</button></div>'+
-    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
-    days.map(function(name,i){const d=i+1;return '<label style="font-size:12px;white-space:nowrap">'+
+    '<div class="ticker-interval-days">'+
+    days.map(function(name,i){const d=i+1;return '<label class="ticker-day-label">'+
       '<input type="checkbox" class="tickerDay" data-day="'+d+'" '+
       ((v.days||[]).includes(d)?'checked':'')+'>'+name+'</label>';}).join('')+
     '</div>';
@@ -9407,7 +9494,7 @@ function tickerCollect() {
     windows:windows});
 }
 async function tickerSave() {
-  if(!tickerEditor)return;
+  if(!tickerEditor||tickerEditor.saving)return;
   const selectedIds=[...tickerEditor.checkedIds];
   if(!selectedIds.length){alert(tickerWord('Отметьте каналы галочками','Select at least one channel'));return;}
   if(selectedIds.length>64){alert(tickerWord('Максимум 64 канала','Maximum 64 channels'));return;}
@@ -9426,6 +9513,10 @@ async function tickerSave() {
         windows:(template.windows||[]).map(w=>({...w,days:[...(w.days||[])]}))})))
     : originalEntries;
   const status=document.getElementById('tickerSaveStatus');
+  const activeEditor=tickerEditor;
+  const saveButton=document.getElementById('tickerSaveButton');
+  activeEditor.saving=true;
+  if(saveButton){saveButton.disabled=true;saveButton.setAttribute('aria-busy','true');}
   status.textContent=tickerWord('Сохранение...','Saving...');
   try {
     const response=await fetch('/api/tickers/save',{method:'POST',credentials:'same-origin',
@@ -9437,6 +9528,10 @@ async function tickerSave() {
     alert(tickerWord('Настройки сохранены для отмеченных каналов: ','Saved to selected channels: ')+selectedIds.length+'. '+
       tickerWord('Изменения применены без перезапуска плиток. При переходе с GPU zero-copy на программный путь возможна краткая пауза видео.','Updated without tile restart; first GPU zero-copy to I420 switch may briefly pause video.'));
   }catch(e){status.textContent=tickerWord('Ошибка: ','Error: ')+e.message;}
+  finally {
+    activeEditor.saving=false;
+    if(tickerEditor===activeEditor && saveButton){saveButton.disabled=false;saveButton.removeAttribute('aria-busy');}
+  }
 }
 
 
