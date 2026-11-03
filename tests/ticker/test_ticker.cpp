@@ -1,8 +1,15 @@
 #include "media/NativeTickerOverlay.h"
-#include <cassert>
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
 #include <string>
+
+static void require(bool condition, const char* description) {
+    if (!condition) {
+        std::cerr << "Ticker test failed: " << description << "\n";
+        std::exit(1);
+    }
+}
 
 int main() {
     using dvbstreamer5::media::ticker::TickerOverlay;
@@ -26,36 +33,36 @@ int main() {
     Json::Value list(Json::arrayValue);
     list.append(entry);
     std::string error;
-    assert(TickerOverlay::validate(list,error));
+    require(TickerOverlay::validate(list,error), "TickerOverlay::validate(list,error)");
     auto malformed=list;
     malformed[0]["windows"][0]["start"] = "25:00";
-    assert(!TickerOverlay::validate(malformed,error));
+    require(!TickerOverlay::validate(malformed,error), "!TickerOverlay::validate(malformed,error)");
     malformed=list;
     malformed[0]["background"] = "red";
-    assert(!TickerOverlay::validate(malformed,error));
+    require(!TickerOverlay::validate(malformed,error), "!TickerOverlay::validate(malformed,error)");
     malformed=list;
     malformed[0]["font_size"] = 0;
-    assert(!TickerOverlay::validate(malformed,error));
+    require(!TickerOverlay::validate(malformed,error), "!TickerOverlay::validate(malformed,error)");
 
     auto& overlay=TickerOverlay::instance();
     overlay.configure(list);
-    assert(overlay.enabledFor("ticker-test"));
-    assert(!overlay.enabledFor("other-channel"));
+    require(overlay.enabledFor("ticker-test"), "overlay.enabledFor('ticker-test')");
+    require(!overlay.enabledFor("other-channel"), "!overlay.enabledFor('other-channel')");
     dvbstreamer5::media::codec::RawVideoFrame frame;
     frame.width=320;
     frame.height=180;
     frame.i420.assign(320*180*3/2,static_cast<std::uint8_t>(128));
     const auto pristine=frame.i420;
-    assert(!overlay.draw("other-channel",frame));
-    assert(frame.i420==pristine);
+    require(!overlay.draw("other-channel",frame), "!overlay.draw('other-channel',frame)");
+    require(frame.i420==pristine, "frame.i420==pristine");
     if (TickerOverlay::available() && TickerOverlay::fontList().size()>0) {
-        assert(overlay.draw("ticker-test",frame));
-        assert(frame.i420!=pristine);
+        require(overlay.draw("ticker-test",frame), "overlay.draw('ticker-test',frame)");
+        require(frame.i420!=pristine, "frame.i420!=pristine");
     } else {
         std::cout << "Ticker FreeType/fonts unavailable; render test skipped\n";
     }
     overlay.configure(Json::Value(Json::arrayValue));
-    assert(!overlay.enabledFor("ticker-test"));
+    require(!overlay.enabledFor("ticker-test"), "!overlay.enabledFor('ticker-test')");
     std::cout << "Ticker smoke tests OK\n";
     return 0;
 }
