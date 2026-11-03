@@ -9049,12 +9049,12 @@ async function openTickerModal() {
       '<label>'+lbl('Шрифт','Font','Font')+'<select id="tickerFont" style="width:100%">'+fontOptions+'</select></label>'+
       '</div>'+
       '<p id="tickerChannelHint" style="color:#ffc674;font-size:12px"></p>'+
-      '<label style="display:block;margin:10px 0">'+lbl('Текст','Text','Tekst')+
+      '<div style="display:block;margin:10px 0"><label for="tickerText">'+lbl('Текст','Text','Tekst')+'</label>'+
       '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:5px 0">'+
       '<button type="button" onclick="document.getElementById(\'tickerFileInput\').click()">↥ '+lbl('Загрузить TXT / DOCX','Import TXT / DOCX','Uvezi TXT / DOCX')+'</button>'+
       '<input id="tickerFileInput" type="file" accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onchange="tickerImportFile(this.files[0])">'+
       '<span class="ticker-file-status" id="tickerFileStatus"></span></div>'+
-      '<textarea id="tickerText" rows="3" maxlength="8192" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></label>'+
+      '<textarea id="tickerText" rows="3" maxlength="8192" style="width:100%;box-sizing:border-box" placeholder="'+lbl('Текст бегущей строки','Ticker text','Tekst')+'"></textarea></div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px">'+
       '<label>'+lbl('Скорость (пикс./с)','Speed (px/s)','Brzina')+'<input id="tickerSpeed" type="number" min="10" max="600" value="100" style="width:100%"></label>'+
       '<label>'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
