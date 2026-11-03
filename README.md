@@ -1,3 +1,10 @@
+## V10.8.331 — Show channel uptime in ONLINE tile status row
+
+- Move the per-channel live running-time clock out of the tile header center and directly next to the **ONLINE/BACKUP/OFFLINE** status badge. Works on desktop and mobile without overlaying the channel name or right-side actions.
+- The existing `running_seconds` / `running_started_mono_ms` time anchor, one-second local `elapsed-clock` updates, restart reset, tooltip translations (RU/EN/HR), and Offline `—` state are preserved.
+- Only the web UI markup and tile CSS change. No edits to encoder selection, Intel/CPU/NVENC quality, channel start/stop, stream runtime, CBR/TS, WISI output, OSCam or service control.
+- Static validation: embedded JavaScript parsed with `new Function`, exactly one uptime node appears beside the tile status badge. Actual browser responsiveness and C++ build require server-side confirmation. No service was restarted.
+
 ## V10.8.330 — NVIDIA NVENC quality A/B, without GPU-dependent default changes
 
 - **Purpose:** test lower-macroblock H.264/HEVC NVENC at the existing selected elementary video bitrate, targeted at up to **3500 kbps SD** and about **6500 kbps HD**. The user has no NVIDIA GPU available for real A/B validation. **No claim is made that live NVENC quality is fixed yet.**
