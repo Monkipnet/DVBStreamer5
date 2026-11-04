@@ -18,6 +18,7 @@
 #include "RestartScheduleClock.h"
 #include "media/NativeTsDemux.h"
 #include "media/HlsSegmentSettings.h"
+#include "media/HlsOnlyCbrRoutingPolicy.h"
 #include "media/OnDemandHlsStartupPolicy.h"
 
 #include <algorithm>
@@ -1153,8 +1154,25 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                   << " other_tiles=unchanged"
                   << std::endl;
     }
-    relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
-    relay.transcodedTransport = streamConfig.transcodeEnabled && relay.paceObservedTransport;
+    // V341: only transcoded HLS with NO other configured output bypasses
+    // network CBR pacing. The HLS segmenter receives the encoded MPEG-TS
+    // directly; otherwise overflowing the network observer queue stops HLS.
+    const bool transcodedHlsOnly =
+        dvbstreamer5::media::hls::bypassNetworkCbrForTranscodedHlsOnly(
+            streamConfig.transcodeEnabled, hasHlsOutput, hasHttpOutput,
+            nativeOutputs.size(), srtOutputSpecs.size(),
+            rtspOutputSpecs.size(), rtmpOutputSpecs.size());
+    relay.paceObservedTransport =
+        streamConfig.cbr && streamConfig.targetBitrate > 0 && !transcodedHlsOnly;
+    relay.transcodedTransport =
+        streamConfig.transcodeEnabled && relay.paceObservedTransport;
+    if (transcodedHlsOnly && streamConfig.cbr) {
+        std::cerr << "NATIVE HLS CBR OBSERVER BYPASS"
+                  << " stream_id=" << streamConfig.id
+                  << " reason=hls_only_no_network_cbr_output"
+                  << " source_ts=post_transcode"
+                  << std::endl;
+    }
 
     if (streamConfig.epgEnabled && streamConfig.epgEitOutput) {
         // A worker-local generator probes the final PAT/SDT for actual output
