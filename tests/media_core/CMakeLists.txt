@@ -112,3 +112,13 @@ add_executable(native_hls_source_switch_test
 target_include_directories(native_hls_source_switch_test PRIVATE ../../src)
 target_link_libraries(native_hls_source_switch_test PRIVATE OpenSSL::Crypto Threads::Threads)
 add_test(NAME native_hls_source_switch COMMAND native_hls_source_switch_test)
+
+# V354: a backup program named 'backup1' must keep the original channel
+# SID, PMT PID, video/audio PIDs and service name for already-open players.
+add_executable(native_failover_program_identity_test
+    test_native_failover_program_identity.cpp
+    ../../src/media/NativeMpegTsMux.cpp
+    ../../src/media/MpegTsRemapper.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(native_failover_program_identity_test PRIVATE ../../src)
+add_test(NAME native_failover_program_identity COMMAND native_failover_program_identity_test)
