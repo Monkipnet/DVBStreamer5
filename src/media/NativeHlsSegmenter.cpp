@@ -1043,7 +1043,27 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     SegmentInfo info;
     info.sequence = nextSequence_++;
     info.fileName = segmentPath_.filename().string();
-    info.duration = std::clamp(durationSeconds, 0.05, config_.targetDurationSeconds * 3.0);
+    // V337: a transcoded HLS segment must start on a decoder-safe IDR/
+    // random-access PES. If an encoder delays that keyframe, the segment may
+    // legitimately exceed three target durations. Do not advertise a shorter
+    // EXTINF than the actual PCR span: this shifts the HLS media timeline and
+    // can make players run out of buffered video at later segment boundaries.
+    // Bound obviously corrupt PCR jumps to 60 seconds; legacy passthrough
+    // retains its pre-existing duration cap.
+    const double durationCap = config_.independentSegments
+        ? 60.0 : config_.targetDurationSeconds * 3.0;
+    info.duration = std::clamp(durationSeconds, 0.05, durationCap);
+    if (config_.independentSegments && completedSegments_ > 0 &&
+        durationSeconds > config_.targetDurationSeconds * 1.5) {
+        std::cerr << "NATIVE HLS SEGMENT DELAY"
+                  << " sequence=" << info.sequence
+                  << " duration_s=" << durationSeconds
+                  << " advertised_s=" << info.duration
+                  << " target_s=" << config_.targetDurationSeconds
+                  << " mode=wait_idr"
+                  << " action=keep_decoder_safe_boundary"
+                  << std::endl;
+    }
     info.wallTime = programTime_;
     programTime_ += std::chrono::duration_cast<std::chrono::system_clock::duration>(
         std::chrono::duration<double>(info.duration));
