@@ -528,11 +528,8 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
             return false;
         };
 
-        // V10.8.179: do not pin an HTTP worker for the old 12-second cold-start
-        // budget. Warm DVB normally removes tuner lock time, so give the service
-        // pipeline up to three seconds to publish a decoder-safe first segment.
-        // If a copy-mode source has a longer GOP, return 503 + Retry-After and
-        // let the client retry while the background service keeps running.
+        // Passthrough OnDemand keeps the short 3-s probe and 503/Retry-After
+        // behavior, avoiding excessive HTTP worker occupancy for copy-mode.
         // V339: the first independent HLS segment of a transcoded OnDemand
         // service cannot be ready until decoder, encoder and an IDR-aligned
         // segment have all started. The old unconditional 3-s probe budget
