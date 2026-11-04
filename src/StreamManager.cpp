@@ -20,6 +20,9 @@
 #include "media/HlsSegmentSettings.h"
 #include "media/HlsOnlyCbrRoutingPolicy.h"
 #include "media/OnDemandHlsStartupPolicy.h"
+#include "NativeHttpClient.h"
+#include "media/UdpSocket.h"
+#include "media/TransportStream.h"
 
 #include <algorithm>
 #include <array>
@@ -474,11 +477,14 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
         }
     });
     onDemandMonitorThread = std::thread(&StreamManager::monitorOnDemandStreams, this);
+    failoverMonitorThread = std::thread(&StreamManager::monitorFailoverStreams, this);
     configureRestartSchedule();
     restartScheduleThread = std::thread(&StreamManager::monitorGlobalRestartSchedule, this);
 }
 
 StreamManager::~StreamManager() {
+    failoverMonitorStop.store(true, std::memory_order_release);
+    if (failoverMonitorThread.joinable()) failoverMonitorThread.join();
     restartScheduleStop.store(true, std::memory_order_release);
     restartScheduleCv.notify_all();
     if (restartScheduleThread.joinable()) restartScheduleThread.join();
@@ -647,6 +653,12 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::uint64_t effectivePrimaryVideoBitrate = streamConfig.transcodeVideoBitrate;
     state->config = streamConfig;
     state->activeInputUri = resolvedInputUri;
+    {
+        std::lock_guard<std::mutex> failLock(failoverMutex);
+        const auto it = failoverEntries.find(streamConfig.id);
+        if (it != failoverEntries.end() && it->second.switching)
+            state->usingBackup = it->second.backupActive;
+    }
     state->nativeHttpHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
@@ -1116,6 +1128,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
+    relay.fileInputLoop = state->usingBackup &&
+        toLower(streamConfig.backupInputType) == "file" &&
+        streamConfig.backupFileLoop;
     // V334: explicit per-tile setting, saved in the channel configuration.
     // No environmental stream selector is required. Guard the test against
     // all non-HTTP/SRT transports and transcoding. The physical CBR bitrate
@@ -1906,6 +1921,17 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (error) *error = std::string("native monitor thread failed: ") + ex.what();
         return false;
     }
+    // Only the stream that explicitly configured a replacement source is
+    // monitored for failover. Never auto-enable on unrelated live channels.
+    if (!streamConfig.backupInputUri.empty() &&
+        streamConfig.backupInputUri != streamConfig.inputUri) {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        if (!failoverEntries.count(streamConfig.id)) {
+            FailoverEntry entry;
+            entry.primary = streamConfig;
+            failoverEntries.emplace(streamConfig.id, std::move(entry));
+        }
+    }
     sendTelegramStreamState(
         telegramNotifier, configManager, streamConfig, "🟢",
         telegramText(configManager, "Поток запущен", "Stream started"),
@@ -2017,6 +2043,7 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const bool inputAdvanced = in > lastIn;
         const bool recoveredFromInputLoss = inputAdvanced && telegramInputUnavailable;
         if (inputAdvanced) {
+            state->inputStalled.store(false, std::memory_order_release);
             telegramNoInputSeconds = 0;
             if (recoveredFromInputLoss) {
                 sendTelegramStreamState(
@@ -2049,6 +2076,7 @@ void StreamManager::monitorNativeStream(StreamState* state) {
                 ++telegramNoInputSeconds;
             }
             const bool inputTimedOut = telegramNoInputSeconds >= kTelegramInputLossSeconds;
+            state->inputStalled.store(inputTimedOut, std::memory_order_release);
             if (!relayErrorNow.empty() || inputTimedOut) {
                 const std::string inputLossDetails = !relayErrorNow.empty()
                     ? relayErrorNow
@@ -2122,6 +2150,12 @@ bool StreamManager::restartStream(const StreamConfig& cfg, std::string* error) {
 }
 
 bool StreamManager::stopStream(const std::string& id) {
+    {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        const auto it = failoverEntries.find(id);
+        if (it != failoverEntries.end() && !it->second.switching)
+            failoverEntries.erase(it);
+    }
     std::unique_ptr<StreamState> state;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
