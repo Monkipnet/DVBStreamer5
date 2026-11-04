@@ -81,6 +81,9 @@ struct StreamConfig {
     std::string hlsAccessKeyValue;
     std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
     bool httpTsInputJitterEnabled = false;
+    // V334: opt-in, per-tile PCR timeline for HTTP/SRT passthrough to UDP-CBR.
+    // Stored independently of the legacy encoded CBR startup buffer setting.
+    bool ipSourcePcrPassthrough = false;
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.
