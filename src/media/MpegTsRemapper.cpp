@@ -582,20 +582,24 @@ bool Remapper::processPmtSection(
         section=std::move(pruned);
     }
 
-    if ((config_.outputVideoPid != 0 && inputVideo == 0) ||
-        (config_.outputAudioPid != 0 && inputAudio == 0)) {
+    if (((config_.outputVideoPid != 0 && inputVideo == 0) ||
+         (config_.outputAudioPid != 0 && inputAudio == 0)) &&
+        !config_.allowMissingOutputMedia) {
         error = "native remap requested an audio or video PID absent from the selected PMT";
         return false;
     }
+    // Do not remap or advertise a track absent from the backup PMT.
+    const std::uint16_t targetVideoPid = inputVideo ? config_.outputVideoPid : 0;
+    const std::uint16_t targetAudioPid = inputAudio ? config_.outputAudioPid : 0;
     if ((inputVideo != 0 && inputVideo < 0x20) ||
         (inputAudio != 0 && inputAudio < 0x20)) {
         error = "native remap encountered an invalid elementary stream PID";
         return false;
     }
-    if ((config_.outputVideoPid != 0 && allowed[config_.outputVideoPid] &&
-            config_.outputVideoPid != inputVideo) ||
-        (config_.outputAudioPid != 0 && allowed[config_.outputAudioPid] &&
-            config_.outputAudioPid != inputAudio)) {
+    if ((targetVideoPid != 0 && allowed[targetVideoPid] &&
+            targetVideoPid != inputVideo) ||
+        (targetAudioPid != 0 && allowed[targetAudioPid] &&
+            targetAudioPid != inputAudio)) {
         error = "native remap output PID conflicts with another selected-program PID";
         return false;
     }
@@ -605,36 +609,28 @@ bool Remapper::processPmtSection(
     section[3] = static_cast<std::uint8_t>(config_.outputServiceId >> 8);
     section[4] = static_cast<std::uint8_t>(config_.outputServiceId);
 
-    if (pcrPid == inputVideo && config_.outputVideoPid != 0) {
-        pcrPid = config_.outputVideoPid;
-    }
-    if (pcrPid == inputAudio && config_.outputAudioPid != 0) {
-        pcrPid = config_.outputAudioPid;
-    }
+    if (pcrPid == inputVideo && targetVideoPid) pcrPid = targetVideoPid;
+    if (pcrPid == inputAudio && targetAudioPid) pcrPid = targetAudioPid;
     writePid(section.data() + 8, pcrPid);
 
     offset = 12 + programInfoLength;
     const std::size_t rewrittenEnd = section.size()-4U;
     while (offset + 5 <= rewrittenEnd) {
         std::uint16_t pid = readPid(section.data() + offset + 1);
-        if (pid == inputVideo && config_.outputVideoPid != 0) {
-            pid = config_.outputVideoPid;
-        }
-        if (pid == inputAudio && config_.outputAudioPid != 0) {
-            pid = config_.outputAudioPid;
-        }
+        if (pid == inputVideo && targetVideoPid) pid = targetVideoPid;
+        if (pid == inputAudio && targetAudioPid) pid = targetAudioPid;
         writePid(section.data() + offset + 1, pid);
         offset += 5 + static_cast<std::size_t>(
             ((section[offset + 3] & 0x0fU) << 8) | section[offset + 4]);
     }
     writeCrc(section.data(), section.size());
 
-    if (config_.outputVideoPid != 0 && config_.outputVideoPid != inputVideo) {
-        allowed[config_.outputVideoPid] = true;
+    if (targetVideoPid != 0 && targetVideoPid != inputVideo) {
+        allowed[targetVideoPid] = true;
         allowed[inputVideo] = false;
     }
-    if (config_.outputAudioPid != 0 && config_.outputAudioPid != inputAudio) {
-        allowed[config_.outputAudioPid] = true;
+    if (targetAudioPid != 0 && targetAudioPid != inputAudio) {
+        allowed[targetAudioPid] = true;
         allowed[inputAudio] = false;
     }
 

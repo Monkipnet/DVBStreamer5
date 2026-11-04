@@ -1434,6 +1434,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.remapEnabled = true;
         relay.remapConfig.inputServiceId = 0; // backup program auto-select
         relay.remapConfig.inputAudioPid = 0;   // backup audio PID independent
+        relay.remapConfig.allowMissingOutputMedia = true;
         relay.remapConfig.outputServiceId = outputSid;
         relay.remapConfig.preserveSourceServiceId = false;
         relay.remapConfig.outputPmtPid = primary.hasProgram()
