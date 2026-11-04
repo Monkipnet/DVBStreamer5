@@ -263,6 +263,8 @@ struct StreamState {
     // a fresh StreamState with a fresh monotonic launch time.
     std::chrono::steady_clock::time_point startedAt{};
     bool usingBackup = false;
+    // Written by the 1-s stream monitor, polled by a separate failover worker.
+    std::atomic<bool> inputStalled{false};
     std::string statusMessage = "stopped";
     std::string activeInputUri;
     StreamConfig config;
@@ -400,6 +402,8 @@ public:
 
 private:
     void monitorNativeStream(StreamState* state);
+    void monitorFailoverStreams();
+    bool primaryStreamHealthy(const StreamConfig& primary);
     void monitorOnDemandStreams();
     void monitorGlobalRestartSchedule();
     bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
@@ -427,6 +431,17 @@ private:
         std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector>>> dormantEpg_;
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
+    struct FailoverEntry {
+        StreamConfig primary;
+        bool backupActive = false;
+        bool switching = false;
+        unsigned healthyChecks = 0;
+        std::chrono::steady_clock::time_point nextProbe{};
+    };
+    std::mutex failoverMutex;
+    std::map<std::string, FailoverEntry> failoverEntries;
+    std::atomic<bool> failoverMonitorStop{false};
+    std::thread failoverMonitorThread;
     struct HttpClientSession {
         HttpClientSession() = default;
         HttpClientSession(std::string streamIdValue,
