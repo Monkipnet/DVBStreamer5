@@ -1094,21 +1094,23 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
-    // V333: A/B the PCR timing domain for ONE explicitly selected HTTP/SRT
-    // passthrough tile. Both incoming transports share the same UDP-CBR
-    // shaper. Keeping provider PCR next to untouched PTS/DTS can prevent
-    // periodic player speed changes when fixed-slot PCR drifts out of phase.
-    // Safe default: no change to any stream without an exact ID match.
+    // V334: explicit per-tile setting, saved in the channel configuration.
+    // No environmental stream selector is required. Guard the test against
+    // all non-HTTP/SRT transports and transcoding. The physical CBR bitrate
+    // can carry existing private startup-buffer encoding in its last 3 digits.
     const bool hasUdpCbrOutput = std::any_of(
         nativeOutputs.begin(), nativeOutputs.end(),
         [](const auto& output) { return output.outputType == "udp-cbr"; });
+    const auto physicalTargetBitrate =
+        dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(
+            streamConfig.targetBitrate);
     const bool ipSourceClockAb =
-        dvbstreamer5::media::network::enableIpCbrSourceClockAb(
-            std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_STREAM_ID"),
-            streamConfig.id, toLower(normalizedInput),
+        dvbstreamer5::media::network::enableIpCbrSourceClock(
+            streamConfig.ipSourcePcrPassthrough, toLower(normalizedInput),
             streamConfig.transcodeEnabled, streamConfig.cbr,
-            hasUdpCbrOutput, streamConfig.targetBitrate > 0 &&
-                streamConfig.targetBitrate % 1000ULL == 0ULL);
+            hasUdpCbrOutput, physicalTargetBitrate >= 100000ULL &&
+                physicalTargetBitrate % 1000ULL == 0ULL,
+            testInput, hlsInput);
     relay.wisiSourcePcrStrict = ipSourceClockAb;
     // Existing opt-in for *transcoded* WISI profiles remains unchanged.
     const bool transcodePcrAb = streamConfig.transcodeEnabled &&
@@ -1118,12 +1120,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (ipSourceClockAb) {
         std::cerr << "NATIVE WISI SOURCE PCR AB"
                   << " stream_id=" << streamConfig.id
+                  << " selected_by=stream_config"
                   << " input=" << (srtInput ? "srt" : "http")
                   << " video=passthrough"
                   << " pcr=preserve"
                   << " media_clock=source_pcr"
-                  << " udp_cbr_bitrate_kbps=" << streamConfig.targetBitrate / 1000ULL
-                  << " startup_buffer_ms=3000"
+                  << " udp_cbr_bitrate_kbps=" << physicalTargetBitrate / 1000ULL
+                  << " startup_buffer_ms="
+                  << dvbstreamer5::media::mpegts::CbrTsPacer::startupBufferMilliseconds(
+                         streamConfig.targetBitrate)
                   << " other_tiles=unchanged"
                   << std::endl;
     }
