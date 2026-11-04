@@ -217,8 +217,13 @@ void StreamManager::monitorFailoverStreams() {
                 now-candidate.entry.firstStartedAt < std::chrono::seconds(5))
                 continue;
             bool restore=false;
+            bool retryBackup=false;
             if(candidate.entry.backupActive){
                 if(now<candidate.entry.nextProbe)continue;
+                // A crashed replacement source must not leave the channel
+                // offline forever if its primary is also unavailable.
+                // Probe primary first. Otherwise retry only the backup tile
+                // (bounded to one attempt per probe interval).
                 const bool healthy=primaryStreamHealthy(candidate.entry.primary);
                 std::lock_guard<std::mutex> lock(failoverMutex);
                 const auto it=failoverEntries.find(candidate.id);
@@ -226,8 +231,9 @@ void StreamManager::monitorFailoverStreams() {
                     !it->second.backupActive)continue;
                 it->second.healthyChecks=healthy?it->second.healthyChecks+1:0;
                 it->second.nextProbe=std::chrono::steady_clock::now()+kProbeInterval;
-                if(it->second.healthyChecks<2)continue;
-                restore=true;
+                restore=it->second.healthyChecks>=2;
+                if (!restore && !active) retryBackup=true;
+                if (!restore && !retryBackup) continue;
             }else{
                 if((active && !stalled) || now<candidate.entry.nextProbe)
                     continue;
@@ -256,9 +262,10 @@ void StreamManager::monitorFailoverStreams() {
             }
             std::cerr << "NATIVE INPUT FAILOVER"
                       << " stream_id=" << candidate.id
-                      << " from=" << (restore?"backup":"primary")
+                      << " from=" << (candidate.entry.backupActive?"backup":"primary")
                       << " to=" << (restore?"primary":"backup")
-                      << " cause=" << (restore?"media_probe_healthy_twice":"input_no_media_5s")
+                      << " cause=" << (restore?"media_probe_healthy_twice":
+                          (retryBackup?"backup_relay_stopped_retry":"input_no_media_5s"))
                       << std::endl;
             // The transition itself is serialized against explicit user
             // Stop/Restart, not merely its registry update. If Stop won this
