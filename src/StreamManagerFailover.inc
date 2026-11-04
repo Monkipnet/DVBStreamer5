@@ -92,7 +92,7 @@ bool StreamManager::primaryStreamHealthy(const StreamConfig& primary) {
         cfg.latencyMs = primary.srtInputLatencyMs;
         if (!primary.srtInputPassphrase.empty()) cfg.passphrase=primary.srtInputPassphrase;
         if (!primary.srtInputStreamId.empty()) cfg.streamId=primary.srtInputStreamId;
-        cfg.pbkeylen=primary.srtInputPbKeylen;
+        cfg.pbkeylen=primary.srtInputPbKeyLen;
         cfg.connectTimeoutMs=2000;
         cfg.ioTimeoutMs=500;
         dvbstreamer5::media::srt::NativeSrtInput input;
