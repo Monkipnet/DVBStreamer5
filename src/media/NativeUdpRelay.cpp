@@ -1017,9 +1017,32 @@ void NativeUdpRelay::run() {
                 for (const auto& packet : observedPackets) {
                     if (!observedCbrPacer->enqueue(packet)) {
                         std::lock_guard<std::mutex> errorLock(errorMutex_);
+                        // V341: the old error string said 2 MiB even though
+                        // the current CbrTsPacer limit is 8 MiB. Record the
+                        // exact queue and physical target so a persistent
+                        // encoded bitrate > transport CBR is distinguishable
+                        // from a short encoder/decoder burst.
                         lastError_ =
-                            "observed CBR input exceeded the bounded 2 MiB pacing queue; "
-                            "increase target bitrate";
+                            "observed CBR pacing queue overflow (queued_bytes=" +
+                            std::to_string(observedCbrPacer->queuedBytes()) +
+                            ", limit_bytes=" +
+                            std::to_string(
+                                dvbstreamer5::media::mpegts::CbrTsPacer::maximumQueuedBytes()) +
+                            ", target_kbps=" +
+                            std::to_string(observedCbrPacer->targetBitrate() / 1000ULL) +
+                            ", measured_useful_kbps=" +
+                            std::to_string(observedCbrPacer->sourcePayloadBitrate() / 1000ULL) +
+                            "); increase network CBR headroom or lower encoder bitrate";
+                        std::cerr << "NATIVE OBSERVED CBR OVERFLOW"
+                                  << " stream_id=" << config_.streamId
+                                  << " queued_bytes=" << observedCbrPacer->queuedBytes()
+                                  << " limit_bytes="
+                                  << dvbstreamer5::media::mpegts::CbrTsPacer::maximumQueuedBytes()
+                                  << " target_kbps="
+                                  << observedCbrPacer->targetBitrate() / 1000ULL
+                                  << " measured_useful_kbps="
+                                  << observedCbrPacer->sourcePayloadBitrate() / 1000ULL
+                                  << std::endl;
                         running_.store(false, std::memory_order_release);
                         httpQueueCondition_.notify_all();
                         return false;
