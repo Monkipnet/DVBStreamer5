@@ -149,7 +149,14 @@ bool StreamManager::primaryStreamHealthy(const StreamConfig& primary) {
                 multicast?host:std::string(),cleanInterface(primary.inputInterfaceAddress),
                 256*1024,error))return false;
         std::array<std::uint8_t,65536> packet{};
-        for(int i=0;i<8;++i){
+        // V358: 8 UDP datagrams may cover less than one complete video frame
+        // and falsely report a recovered multicast as still dead. Scan for
+        // up to 1.5 s / 256 datagrams, stopping immediately on playable PES.
+        // A silent source still exits after the first 300-ms receive timeout.
+        const auto probeDeadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(1500);
+        for(unsigned i=0;i<256U &&
+            std::chrono::steady_clock::now()<probeDeadline;++i){
             if(failoverMonitorStop.load(std::memory_order_acquire))break;
             std::size_t n=0;
             if(!probe.receive(packet.data(),packet.size(),n,300,error))break;
