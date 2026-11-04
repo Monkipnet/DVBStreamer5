@@ -66,6 +66,8 @@ public:
     ~NativeCmafSegmenter();
     bool start(const SegmenterConfig& config, std::string& error);
     bool push(const std::uint8_t* data, std::size_t size);
+    // Keep live media sequence and old init maps when switching MPEG-TS input.
+    bool sourceSwitched();
     void stop() noexcept;
     bool isRunning() const noexcept;
     std::string lastError() const;
@@ -77,7 +79,7 @@ private:
         std::uint64_t pts90k=0,dts90k=0;
         bool key=false;
     };
-    struct SegmentInfo { std::uint64_t sequence=0;std::string fileName;double duration=0;std::chrono::system_clock::time_point wallTime; };
+    struct SegmentInfo { std::uint64_t sequence=0;std::string fileName;double duration=0;std::chrono::system_clock::time_point wallTime;bool discontinuity=false;std::string initName="init.mp4"; };
     void onSample(mpegts::DemuxSample&& sample);
     bool maybeInitialize(std::string& error);
     bool rotate(std::string& error, bool force=false);
@@ -94,6 +96,11 @@ private:
     std::deque<SegmentInfo> live_;
     std::uint64_t sequence_=0;
     std::uint64_t completed_=0;
+    std::uint64_t discontinuitySequence_=0;
+    std::uint64_t sourceGeneration_=0;
+    bool markNextDiscontinuity_=false;
+    bool awaitNewKeyframe_=false;
+    std::string currentInitName_="init.mp4";
     std::uint64_t segmentStartPts_=0;
     bool haveSegmentStart_=false;
     bool initialized_=false;

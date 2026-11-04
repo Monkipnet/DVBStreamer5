@@ -897,7 +897,17 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 variant->muxBitrate = profile.videoBitrate + tc.audioBitrate +
                     std::max<std::uint64_t>(300000ULL, profile.videoBitrate / 20ULL);
                 variant->transcoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
-                variant->segmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
+                if (configuredFailover) {
+                    std::lock_guard<std::mutex> lock(managerMutex);
+                    auto& saved = failoverHlsAbrOutputs[streamConfig.id][variant->name];
+                    if (!saved)
+                        saved = std::make_shared<
+                            dvbstreamer5::media::hls::NativeHlsSegmenter>();
+                    variant->segmenter = saved;
+                } else {
+                    variant->segmenter = std::make_shared<
+                        dvbstreamer5::media::hls::NativeHlsSegmenter>();
+                }
                 auto abrTc = tc;
                 abrTc.width = variant->width;
                 abrTc.height = variant->height;
@@ -1169,8 +1179,31 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         state->nativeRtmpOutputs.push_back(std::move(output));
     }
     if (hasHlsOutput) {
-        if(toLower(streamConfig.hlsContainer)=="cmaf") state->nativeCmafSegmenter=std::make_unique<dvbstreamer5::media::cmaf::NativeCmafSegmenter>();
-        else state->nativeHlsSegmenter = std::make_unique<dvbstreamer5::media::hls::NativeHlsSegmenter>();
+        if (toLower(streamConfig.hlsContainer) == "cmaf") {
+            if (configuredFailover) {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                auto& saved = failoverCmafOutputs[streamConfig.id];
+                if (!saved)
+                    saved = std::make_shared<
+                        dvbstreamer5::media::cmaf::NativeCmafSegmenter>();
+                state->nativeCmafSegmenter = saved;
+            } else {
+                state->nativeCmafSegmenter = std::make_shared<
+                    dvbstreamer5::media::cmaf::NativeCmafSegmenter>();
+            }
+        } else {
+            if (configuredFailover) {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                auto& saved = failoverHlsOutputs[streamConfig.id];
+                if (!saved)
+                    saved = std::make_shared<
+                        dvbstreamer5::media::hls::NativeHlsSegmenter>();
+                state->nativeHlsSegmenter = saved;
+            } else {
+                state->nativeHlsSegmenter = std::make_shared<
+                    dvbstreamer5::media::hls::NativeHlsSegmenter>();
+            }
+        }
     }
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
@@ -1725,17 +1758,26 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         hlsConfig.keyUri = streamConfig.hlsEncryptionKeyUri;
         hlsConfig.hasKey = dvbstreamer5::media::hls::parseHexKey16(streamConfig.hlsEncryptionKeyHex, hlsConfig.key);
         std::string hlsError;
-        if (!state->nativeHlsSegmenter->start(hlsConfig, hlsError)) {
+        const bool reuseHls = automaticSourceSwitch &&
+            state->nativeHlsSegmenter->isRunning();
+        if (!(reuseHls ? state->nativeHlsSegmenter->sourceSwitched()
+                       : state->nativeHlsSegmenter->start(hlsConfig, hlsError))) {
             for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = hlsError.empty() ? "native HLS output failed" : hlsError;
             return false;
         }
 
+        if (reuseHls) {
+            std::cerr << "NATIVE HLS FAILOVER PRESERVE stream_id="
+                      << streamConfig.id
+                      << " container=mpegts action=retain_playlist_and_sequence"
+                      << std::endl;
+        }
         if (!state->hlsAbrVariants.empty()) {
             const auto baseDir = hlsConfig.directory;
             std::error_code abrEc;
-            if (!streamConfig.hlsArchiveEnabled) {
+            if (!streamConfig.hlsArchiveEnabled && !automaticSourceSwitch) {
                 std::filesystem::remove_all(baseDir / "abr", abrEc);
                 abrEc.clear();
                 std::filesystem::remove(baseDir / "master.m3u8", abrEc);
@@ -1745,7 +1787,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 auto variantCfg = hlsConfig;
                 variantCfg.directory = baseDir / "abr" / variant->name;
                 std::string variantError;
-                if (!variant->segmenter->start(variantCfg, variantError)) {
+                const bool reuseVariant = automaticSourceSwitch &&
+                    variant->segmenter->isRunning();
+                if (!(reuseVariant ? variant->segmenter->sourceSwitched()
+                                   : variant->segmenter->start(variantCfg, variantError))) {
                     for (auto& started : state->hlsAbrVariants) {
                         if (started && started->segmenter) started->segmenter->stop();
                     }
@@ -1806,7 +1851,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         cfg.keyUri = streamConfig.hlsEncryptionKeyUri;
         cfg.hasKey = dvbstreamer5::media::hls::parseHexKey16(streamConfig.hlsEncryptionKeyHex, cfg.key);
         std::string e;
-        if (!state->nativeCmafSegmenter->start(cfg, e)) {
+        const bool reuseCmaf = automaticSourceSwitch &&
+            state->nativeCmafSegmenter->isRunning();
+        if (!(reuseCmaf ? state->nativeCmafSegmenter->sourceSwitched()
+                        : state->nativeCmafSegmenter->start(cfg, e))) {
             CardManager::instance().releaseService(streamConfig.id);
             if (error) *error = e.empty() ? "native CMAF output failed" : e;
             return false;
@@ -2200,9 +2248,16 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         lastPayloadOut = payloadOut;
         lastCc = cc;
         if (!relay->isRunning()) {
-            if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
-            for (auto& variant : state->hlsAbrVariants) {
-                if (variant && variant->segmenter) variant->segmenter->stop();
+            // V349: a crashed input with a configured backup must not write
+            // EXT-X-ENDLIST before the asynchronous failover worker recovers.
+            const bool canFailover =
+                !state->config.backupInputUri.empty() &&
+                state->config.backupInputUri != state->config.inputUri;
+            if (!canFailover) {
+                if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+                for (auto& variant : state->hlsAbrVariants) {
+                    if (variant && variant->segmenter) variant->segmenter->stop();
+                }
             }
             state->running.store(false);
             state->active.store(false);
@@ -2324,15 +2379,20 @@ bool StreamManager::stopStream(const std::string& id) {
     for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtspOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtmpOutputs) if (output) output->stop();
-    if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
-    for (auto& variant : state->hlsAbrVariants) {
-        if (variant && variant->segmenter) variant->segmenter->stop();
-    }
-    if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
     if (!automaticFailoverTransition) {
+        // Only explicit Stop/Restart ends a live playlist; input failover
+        // leaves the exact same segmenter alive until the new source starts.
+        if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
+        for (auto& variant : state->hlsAbrVariants) {
+            if (variant && variant->segmenter) variant->segmenter->stop();
+        }
+        if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
         std::lock_guard<std::mutex> lock(managerMutex);
         failoverHttpHubs.erase(id);
         failoverOutputClocks.erase(id);
+        failoverHlsOutputs.erase(id);
+        failoverCmafOutputs.erase(id);
+        failoverHlsAbrOutputs.erase(id);
     }
     if (state->monitorThread.joinable()) state->monitorThread.join();
     // Persist the last complete EPG before this stopped/restarted/OnDemand

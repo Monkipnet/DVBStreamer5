@@ -43,6 +43,9 @@ public:
 
     bool start(const NativeHlsSegmenterConfig& config, std::string& error);
     bool push(const std::uint8_t* data, std::size_t size);
+    // End the old media segment without ENDLIST or resetting sequence.
+    // The next complete segment is announced with EXT-X-DISCONTINUITY.
+    bool sourceSwitched();
     void stop() noexcept;
 
     bool isRunning() const noexcept;
@@ -57,6 +60,7 @@ private:
         std::string fileName;
         double duration = 0.0;
         std::chrono::system_clock::time_point wallTime;
+        bool discontinuity = false;
     };
 
     bool appendPacket(const mpegts::Packet& packet);
@@ -95,6 +99,8 @@ private:
     // scanning all 8192 PID slots there multiplied CPU cost by every HLS stream.
     bool hasH26xVideo_ = false;
     std::uint64_t nextSequence_ = 0;
+    std::uint64_t discontinuitySequence_ = 0;
+    bool markNextDiscontinuity_ = false;
     std::uint64_t completedSegments_ = 0;
     std::uint64_t completedMediaBytes_ = 0;
     // V340: bounded, read-only cold-start diagnostics. No media timing changes.

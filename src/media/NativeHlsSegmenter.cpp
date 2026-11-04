@@ -366,6 +366,8 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     elementaryStreamType_.fill(0);
     hasH26xVideo_ = false;
     nextSequence_ = 0;
+    discontinuitySequence_ = 0;
+    markNextDiscontinuity_ = false;
     completedSegments_ = 0;
     completedMediaBytes_ = 0;
     startupReportAt_ = std::chrono::steady_clock::now();
@@ -1073,6 +1075,8 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     SegmentInfo info;
     info.sequence = nextSequence_++;
     info.fileName = segmentPath_.filename().string();
+    info.discontinuity = markNextDiscontinuity_;
+    markNextDiscontinuity_ = false;
     // V337: a transcoded HLS segment must start on a decoder-safe IDR/
     // random-access PES. If an encoder delays that keyframe, the segment may
     // legitimately exceed three target durations. Do not advertise a shorter
@@ -1137,11 +1141,13 @@ bool NativeHlsSegmenter::writePlaylist(bool endList) {
     if (config_.independentSegments) out << "#EXT-X-INDEPENDENT-SEGMENTS\n";
     out << "#EXT-X-TARGETDURATION:" << static_cast<unsigned>(std::ceil(maxDuration)) << "\n";
     out << "#EXT-X-MEDIA-SEQUENCE:" << mediaSequence << "\n";
+    out << "#EXT-X-DISCONTINUITY-SEQUENCE:" << discontinuitySequence_ << "\n";
     if (config_.encryption != "none") {
         out << "#EXT-X-KEY:METHOD=" << (config_.encryption == "sample-aes" ? "SAMPLE-AES" : "AES-128")
             << ",URI=\"" << (config_.keyUri.empty()?"key.bin":config_.keyUri) << "\"\n";
     }
     for (const auto& item : liveSegments_) {
+        if (item.discontinuity) out << "#EXT-X-DISCONTINUITY\n";
         out << "#EXT-X-PROGRAM-DATE-TIME:" << programDateTime(item.wallTime) << "\n";
         out << "#EXTINF:" << std::fixed << std::setprecision(3) << item.duration << ",\n";
         out << item.fileName << "\n";
@@ -1159,6 +1165,7 @@ void NativeHlsSegmenter::prune() {
     while (liveSegments_.size() > config_.liveWindowSegments) {
         const SegmentInfo old = liveSegments_.front();
         liveSegments_.pop_front();
+        if (old.discontinuity) ++discontinuitySequence_;
         if (!config_.archiveEnabled) {
             retiredSegments_.push_back(old);
         }
@@ -1191,6 +1198,65 @@ void NativeHlsSegmenter::prune() {
         if (st < cutoff) std::filesystem::remove(entry.path(), ec);
         ec.clear();
     }
+}
+
+bool NativeHlsSegmenter::sourceSwitched() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_) return false;
+
+    // Finalize the previous partial segment while the playlist remains live.
+    // Unfinished H26x cut candidates may contain only part of a PES and must
+    // never leak across a source switch to the replacement's new program.
+    h26xBoundaryPending_ = false;
+    h26xBoundaryPackets_.clear();
+    h26xBoundaryElementary_.clear();
+    if (segmentHasPackets_ && segment_.is_open()) {
+        const double seconds = haveFirstPcr_
+            ? std::max(0.05, pcrDeltaSeconds(firstPcr_, lastPcr_))
+            : config_.targetDurationSeconds;
+        if (!rotate(seconds)) return false;
+    }
+    if (segment_.is_open()) {
+        segment_.close();
+        if (!segmentHasPackets_) {
+            std::error_code ec;
+            std::filesystem::remove(segmentPath_, ec);
+        }
+    }
+
+    // Keep existing liveSegments_, retiredSegments_, nextSequence_,
+    // completedSegments_, and encryption key; discard codec/PSI from the
+    // outgoing source. New packets must begin at clean new-source PAT/PMT.
+    framer_.reset();
+    patCollecting_.clear();
+    patPrefix_.clear();
+    pmtCollecting_.clear();
+    pmtPrefix_.clear();
+    pmtPid_ = mpegts::kNullPid;
+    elementaryStreamType_.fill(0);
+    hasH26xVideo_ = false;
+    waitingForIndependentStart_ = config_.independentSegments;
+    waitingForCleanStart_ = !config_.independentSegments;
+    firstSegmentPidStarted_.fill(false);
+    segmentHasPackets_ = false;
+    haveFirstPcr_ = false;
+    firstPcr_ = lastPcr_ = 0;
+    h26xCutArmed_ = false;
+    h26xBoundaryPid_ = mpegts::kNullPid;
+    h26xConfigPid_ = mpegts::kNullPid;
+    h26xConfigStreamType_ = 0;
+    h26xParameterSets_.clear();
+    h26xConfigProbeActive_ = false;
+    h26xConfigProbePid_ = mpegts::kNullPid;
+    h26xConfigProbeStreamType_ = 0;
+    h26xConfigProbeElementary_.clear();
+    markNextDiscontinuity_ = true;
+    programTime_ = std::max(programTime_, std::chrono::system_clock::now());
+    std::cerr << "NATIVE HLS SOURCE SWITCH directory=" << config_.directory.string()
+              << " next_sequence=" << nextSequence_
+              << " discontinuity_sequence=" << discontinuitySequence_
+              << " action=wait_fresh_psi_idr_no_endlist" << std::endl;
+    return true;
 }
 
 void NativeHlsSegmenter::stop() noexcept {

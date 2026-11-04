@@ -309,7 +309,7 @@ struct StreamState {
         bool failed = false;
         std::string lastError;
         std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> transcoder;
-        std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> segmenter;
+        std::shared_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> segmenter;
     };
     std::vector<std::unique_ptr<HlsAbrVariantRuntime>> hlsAbrVariants;
     mutable std::mutex hlsAbrMutex;
@@ -317,8 +317,8 @@ struct StreamState {
     int hlsAbrPrimaryWidth = 0;
     int hlsAbrPrimaryHeight = 0;
     std::unique_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
-    std::unique_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
-    std::unique_ptr<dvbstreamer5::media::cmaf::NativeCmafSegmenter> nativeCmafSegmenter;
+    std::shared_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
+    std::shared_ptr<dvbstreamer5::media::cmaf::NativeCmafSegmenter> nativeCmafSegmenter;
     std::unique_ptr<dvbstreamer5::media::rtsp::NativeRtspInput> nativeRtspInput;
     std::vector<std::unique_ptr<dvbstreamer5::media::rtsp::NativeRtspOutput>> nativeRtspOutputs;
     std::unique_ptr<dvbstreamer5::media::rtmp::NativeRtmpInput> nativeRtmpInput;
@@ -437,6 +437,14 @@ private:
         dvbstreamer5::media::network::NativePreviewHub>> failoverHttpHubs;
     std::map<std::string, std::shared_ptr<
         dvbstreamer5::media::srt::NativeSrtSwitchClock>> failoverOutputClocks;
+    // V349: keep the same live playlist, media sequence, encryption key and
+    // segmenter across primary/backup source changes. Cleared on manual Stop.
+    std::map<std::string, std::shared_ptr<
+        dvbstreamer5::media::hls::NativeHlsSegmenter>> failoverHlsOutputs;
+    std::map<std::string, std::shared_ptr<
+        dvbstreamer5::media::cmaf::NativeCmafSegmenter>> failoverCmafOutputs;
+    std::map<std::string, std::map<std::string, std::shared_ptr<
+        dvbstreamer5::media::hls::NativeHlsSegmenter>>> failoverHlsAbrOutputs;
     // V346: keep the same SRT sockets/peers through automatic input failover.
     // Protected by managerMutex; never stop/destroy outputs while holding it.
     std::map<std::string, std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>>>

@@ -292,18 +292,48 @@ bool NativeCmafSegmenter::start(const SegmenterConfig& c, std::string& error) {
         k.write(reinterpret_cast<const char*>(config_.key.data()), static_cast<std::streamsize>(config_.key.size()));
     }
     pending_.clear(); tracks_.clear(); live_.clear(); sequence_ = completed_ = 0;
+    discontinuitySequence_ = sourceGeneration_ = 0;
+    markNextDiscontinuity_ = awaitNewKeyframe_ = false;
+    currentInitName_ = "init.mp4";
     haveSegmentStart_ = initialized_ = false; programTime_ = std::chrono::system_clock::now();
     lastError_.clear(); running_ = true; demux_.reset();
     if (!writePlaylist(false, error)) { running_ = false; return false; }
     return true;
 }
 
+bool NativeCmafSegmenter::sourceSwitched(){
+    std::lock_guard<std::mutex> lock(mutex_);
+    if(!running_)return false;
+    // Finish the old codec generation without ENDLIST and keep sequence_.
+    demux_.flush();
+    std::string error;
+    if(initialized_&&!pending_.empty()&&!rotate(error,true)){fail(error);return false;}
+    pending_.clear();
+    tracks_.clear();
+    demux_.reset();
+    initialized_=false;
+    haveSegmentStart_=false;
+    awaitNewKeyframe_=true;
+    markNextDiscontinuity_=true;
+    currentInitName_="init"+std::to_string(++sourceGeneration_)+".mp4";
+    programTime_=std::max(programTime_,std::chrono::system_clock::now());
+    std::cerr<<"NATIVE CMAF SOURCE SWITCH directory="<<config_.directory.string()
+             <<" next_sequence="<<sequence_
+             <<" init="<<currentInitName_
+             <<" action=preserve_manifest_new_init_on_idr"<<std::endl;
+    return true;
+}
 bool NativeCmafSegmenter::push(const std::uint8_t*d,std::size_t n){std::lock_guard<std::mutex>l(mutex_);if(!running_)return false;std::string e;if(!demux_.push(d,n,e)){fail(e);return false;}return true;}
-void NativeCmafSegmenter::onSample(mpegts::DemuxSample&&s){if(!running_)return;Sample v;v.stream=s.stream;v.data=std::move(s.data);v.pts90k=s.hasPts?s.pts90k:s.dts90k;v.dts90k=s.hasDts?s.dts90k:v.pts90k;v.key=s.randomAccess;if(!haveSegmentStart_){segmentStartPts_=v.pts90k;haveSegmentStart_=true;}const double elapsed=static_cast<double>(v.pts90k>=segmentStartPts_?v.pts90k-segmentStartPts_:0)/90000.0;if(v.stream.kind==mpegts::ElementaryKind::Video&&v.key&&elapsed>=config_.targetDurationSeconds&&!pending_.empty()){std::string e;if(!rotate(e)){fail(e);return;}segmentStartPts_=v.pts90k;}pending_.push_back(std::move(v));std::string e;if(!initialized_)maybeInitialize(e);}
+void NativeCmafSegmenter::onSample(mpegts::DemuxSample&&s){if(!running_)return;
+    if(awaitNewKeyframe_){
+        if(s.stream.kind!=mpegts::ElementaryKind::Video||!s.randomAccess)return;
+        awaitNewKeyframe_=false;
+    }
+    Sample v;v.stream=s.stream;v.data=std::move(s.data);v.pts90k=s.hasPts?s.pts90k:s.dts90k;v.dts90k=s.hasDts?s.dts90k:v.pts90k;v.key=s.randomAccess;if(!haveSegmentStart_){segmentStartPts_=v.pts90k;haveSegmentStart_=true;}const double elapsed=static_cast<double>(v.pts90k>=segmentStartPts_?v.pts90k-segmentStartPts_:0)/90000.0;if(v.stream.kind==mpegts::ElementaryKind::Video&&v.key&&elapsed>=config_.targetDurationSeconds&&!pending_.empty()){std::string e;if(!rotate(e)){fail(e);return;}segmentStartPts_=v.pts90k;}pending_.push_back(std::move(v));std::string e;if(!initialized_)maybeInitialize(e);}
 bool NativeCmafSegmenter::maybeInitialize(std::string&error){std::map<std::uint16_t,TrackInfo>byPid;for(const auto&s:pending_){auto&t=byPid[s.stream.pid];t.kind=s.stream.kind;t.codec=s.stream.codec;t.timescale=s.stream.kind==mpegts::ElementaryKind::Video?90000:48000;t.width=config_.width;t.height=config_.height;if(s.stream.kind==mpegts::ElementaryKind::Video){for(auto[p,n]:nals(s.data)){const auto type=s.stream.codec==mpegts::ElementaryCodec::H264?(p[0]&31):((p[0]>>1)&63);if((s.stream.codec==mpegts::ElementaryCodec::H264&&(type==7||type==8))||(s.stream.codec==mpegts::ElementaryCodec::H265&&(type==32||type==33||type==34))){t.parameterSets.insert(t.parameterSets.end(),{0,0,0,1});t.parameterSets.insert(t.parameterSets.end(),p,p+n);}}}else if(s.stream.codec==mpegts::ElementaryCodec::AacAdts){std::size_t h=0,f=0;int rate=0,ch=0;std::vector<std::uint8_t>asc;if(adtsInfo(s.data,h,f,rate,ch,asc)){t.sampleRate=t.timescale=rate;t.channels=ch;t.codecConfig=asc;}}}
     bool haveVideo=false;for(auto&[pid,t]:byPid){(void)pid;if(t.kind==mpegts::ElementaryKind::Video){haveVideo=true;t.codecConfig=t.codec==mpegts::ElementaryCodec::H264?avcC(t.parameterSets):hvcC(t.parameterSets);if(t.codecConfig.empty())return true;}}
     if(!haveVideo&&byPid.empty())return true;tracks_.clear();std::uint32_t id=1;for(auto&[pid,t]:byPid){(void)pid;if(t.kind==mpegts::ElementaryKind::Audio&&t.codecConfig.empty())continue;t.id=id++;tracks_.push_back(std::move(t));}if(tracks_.empty())return true;if(!writeInit(error))return false;initialized_=true;return true;}
-bool NativeCmafSegmenter::writeInit(std::string&error){return atomicFile(config_.directory/"init.mp4",makeInit(tracks_,config_.encryption=="sample-aes",config_.key),error);}
+bool NativeCmafSegmenter::writeInit(std::string&error){return atomicFile(config_.directory/currentInitName_,makeInit(tracks_,config_.encryption=="sample-aes",config_.key),error);}
 
 bool NativeCmafSegmenter::rotate(std::string& error, bool force) {
     if (pending_.empty()) return true;
@@ -467,7 +497,9 @@ bool NativeCmafSegmenter::rotate(std::string& error, bool force) {
         auto mm = std::minmax_element(samples.begin(), samples.end(), [](const Sample& a, const Sample& b){ return a.pts90k < b.pts90k; });
         dur = std::max(0.05, static_cast<double>(mm.second->pts90k - mm.first->pts90k) / 90000.0);
     }
-    live_.push_back({sequence_++, name.str(), dur, programTime_});
+    live_.push_back({sequence_++, name.str(), dur, programTime_,
+                     markNextDiscontinuity_, currentInitName_});
+    markNextDiscontinuity_=false;
     programTime_ += std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::duration<double>(dur));
     ++completed_;
     prune();
@@ -556,14 +588,21 @@ bool NativeCmafSegmenter::writePlaylist(bool end, std::string& error) {
     for (auto& s : live_) mx = std::max(mx, s.duration);
     o << "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n"
       << "#EXT-X-TARGETDURATION:" << static_cast<unsigned>(std::ceil(mx)) << "\n"
-      << "#EXT-X-MEDIA-SEQUENCE:" << (live_.empty() ? sequence_ : live_.front().sequence) << "\n";
+      << "#EXT-X-MEDIA-SEQUENCE:" << (live_.empty() ? sequence_ : live_.front().sequence) << "\n"
+      << "#EXT-X-DISCONTINUITY-SEQUENCE:" << discontinuitySequence_ << "\n";
     if (config_.encryption == "sample-aes") {
         o << "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\""
           << (config_.keyUri.empty() ? "key.bin" : config_.keyUri)
           << "\",KEYFORMAT=\"identity\"\n";
     }
-    o << "#EXT-X-MAP:URI=\"init.mp4\"\n";
+    if(live_.empty())o << "#EXT-X-MAP:URI=\"" << currentInitName_ << "\"\n";
+    std::string lastInit;
     for (auto& s : live_) {
+        if(s.discontinuity)o << "#EXT-X-DISCONTINUITY\n";
+        if(lastInit!=s.initName){
+            o << "#EXT-X-MAP:URI=\"" << s.initName << "\"\n";
+            lastInit=s.initName;
+        }
         o << "#EXT-X-PROGRAM-DATE-TIME:" << pdt(s.wallTime) << "\n"
           << "#EXTINF:" << std::fixed << std::setprecision(3) << s.duration << ",\n"
           << s.fileName << "\n";
@@ -576,7 +615,7 @@ bool NativeCmafSegmenter::writePlaylist(bool end, std::string& error) {
     return true;
 }
 
-void NativeCmafSegmenter::prune(){while(live_.size()>config_.liveWindowSegments){auto old=live_.front();live_.pop_front();if(!config_.archiveEnabled){std::error_code ec;std::filesystem::remove(config_.directory/old.fileName,ec);}}}
+void NativeCmafSegmenter::prune(){while(live_.size()>config_.liveWindowSegments){auto old=live_.front();live_.pop_front();if(old.discontinuity)++discontinuitySequence_;if(!config_.archiveEnabled){std::error_code ec;std::filesystem::remove(config_.directory/old.fileName,ec);}}}
 void NativeCmafSegmenter::fail(const std::string&e){lastError_=e;running_=false;}
 void NativeCmafSegmenter::stop()noexcept{std::lock_guard<std::mutex>l(mutex_);if(!running_)return;demux_.flush();std::string e;rotate(e,true);writePlaylist(true,e);running_=false;}
 bool NativeCmafSegmenter::isRunning()const noexcept{std::lock_guard<std::mutex>l(mutex_);return running_;}std::string NativeCmafSegmenter::lastError()const{std::lock_guard<std::mutex>l(mutex_);return lastError_;}std::uint64_t NativeCmafSegmenter::segmentCount()const noexcept{std::lock_guard<std::mutex>l(mutex_);return completed_;}
