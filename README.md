@@ -1,3 +1,9 @@
+## V10.8.338 — Build fix for V337 HLS segment delay diagnostic
+
+- Fix Ubuntu/GCC compilation error `NativeHlsSegmenter.cpp: std::cerr is not a member of std` by including the standard `<iostream>` header used by the V337 `NATIVE HLS SEGMENT DELAY` log.
+- No change to HLS timing, HTTP fan-out, SRT or transcoding logic. Retains all V337 behavior.
+- Rebuild from current `main` and run `ctest --test-dir build --output-on-failure` before deployment; full on-server build/runtime tests remain to be confirmed.
+
 ## V10.8.337 — Fix HTTP/HLS freezes after transcoding without changing working SRT
 
 - **Reported behavior:** after transcoding, SRT is smooth but HTTP MPEG-TS and HLS periodically freeze. Preserve the working codec/mux/SRT transport and investigate these delivery-specific outputs independently.
