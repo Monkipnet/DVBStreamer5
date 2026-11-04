@@ -140,8 +140,12 @@ struct NativeUdpRelayConfig {
     // Pace observeTransport consumers (SRT/RTSP/RTMP/HLS/HTTP) at the
     // configured CBR instead of delivering mux bursts immediately.
     bool paceObservedTransport = false;
-    // Experimental UDP-CBR PCR timeline A/B for transcoded streams only.
+    // Existing opt-in for transcoded WISI output; also enabled by the exact
+    // V333 HTTP/SRT passthrough test stream ID when requested.
     bool wisiPreserveSourcePcr = false;
+    // V333: +777 source-PCR profile with no legacy reservoir-rate correction,
+    // and the existing 3-s startup buffer. Never enabled automatically.
+    bool wisiSourcePcrStrict = false;
     std::vector<NativeUdpRelayOutputConfig> outputs;
     bool allowNoNetworkOutput = false;
 };
