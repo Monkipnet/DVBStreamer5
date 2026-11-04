@@ -194,6 +194,45 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
 #endif
 }
 
+// V337: published bytes can remain queued in this hub when the encoded
+// producer pauses. The HTTP writer drives an additional nonblocking drain
+// after consuming a datagram. This never waits for TCP, copies no new input
+// and preserves packet order within this subscriber.
+void NativePreviewHub::flushPending(int readFd) {
+#if !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_) return;
+    auto it = subscribers_.find(readFd);
+    if (it == subscribers_.end()) return;
+    auto& client = it->second;
+    while (!client.pending.empty()) {
+        const auto& packet = client.pending.front();
+        const ssize_t sent = ::send(client.sendFd, packet.data(), packet.size(),
+                                    MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK ||
+                         errno == ENOBUFS)) break;
+        if (sent != static_cast<ssize_t>(packet.size())) {
+            const int failedErrno = sent < 0 ? errno : 0;
+            std::cerr << "NATIVE HTTP TS HUB detach"
+                      << " hub_fd=" << readFd
+                      << " reason=pending_flush_error"
+                      << " errno=" << failedErrno
+                      << " pending_bytes=" << client.pendingBytes
+                      << std::endl;
+            ::close(client.sendFd);
+            subscribers_.erase(it);
+            return;
+        }
+        client.pendingBytes -= packet.size();
+        client.pending.pop_front();
+    }
+    if (client.pendingBytes < (1U * 1024U * 1024U))
+        client.backlogWarningLogged = false;
+#else
+    (void)readFd;
+#endif
+}
+
 std::size_t NativePreviewHub::subscriberCount() {
     std::lock_guard<std::mutex> lock(mutex_);
     return closed_ ? 0U : subscribers_.size();
