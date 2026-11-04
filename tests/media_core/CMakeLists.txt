@@ -106,6 +106,8 @@ add_executable(native_hls_source_switch_test
     test_native_hls_source_switch.cpp
     ../../src/media/NativeHlsSegmenter.cpp
     ../../src/media/NativeSampleAes.cpp
+    ../../src/media/NativeTsDemux.cpp
+    ../../src/media/NativeMpegTsMux.cpp
     ../../src/media/TransportStream.cpp)
 target_include_directories(native_hls_source_switch_test PRIVATE ../../src)
 target_link_libraries(native_hls_source_switch_test PRIVATE OpenSSL::Crypto Threads::Threads)
