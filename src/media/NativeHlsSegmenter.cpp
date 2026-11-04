@@ -367,6 +367,8 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     hasH26xVideo_ = false;
     nextSequence_ = 0;
     completedSegments_ = 0;
+    startupReportAt_ = std::chrono::steady_clock::now();
+    startupReceivedPackets_ = 0;
     haveFirstPcr_ = false;
     segmentHasPackets_ = false;
     waitingForIndependentStart_ = config_.independentSegments;
@@ -404,6 +406,23 @@ bool NativeHlsSegmenter::push(const std::uint8_t* data, std::size_t size) {
     std::vector<mpegts::Packet> packets;
     framer_.push(data, size, packets);
     for (const auto& packet : packets) if (!appendPacket(packet)) return false;
+    if (completedSegments_ == 0) {
+        startupReceivedPackets_ += packets.size();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - startupReportAt_ >= std::chrono::seconds(5)) {
+            std::cerr << "NATIVE HLS STARTUP WAIT"
+                      << " directory=" << config_.directory.string()
+                      << " stage=" << (waitingForIndependentStart_
+                          ? "first_random_access" : (haveFirstPcr_
+                          ? "next_keyframe_to_finalize" : "first_pcr"))
+                      << " packets=" << startupReceivedPackets_
+                      << " first_pcr=" << (haveFirstPcr_ ? 1 : 0)
+                      << " segment_open=" << (segmentHasPackets_ ? 1 : 0)
+                      << " target_s=" << config_.targetDurationSeconds
+                      << std::endl;
+            startupReportAt_ = now;
+        }
+    }
     return true;
 }
 
@@ -511,6 +530,11 @@ bool NativeHlsSegmenter::appendPacket(const mpegts::Packet& packet) {
         // PES with both PCR and random_access_indicator.
         if (!(info.hasPcr && info.randomAccess)) return true;
         waitingForIndependentStart_ = false;
+        std::cerr << "NATIVE HLS FIRST RANDOM ACCESS"
+                  << " directory=" << config_.directory.string()
+                  << " video_pid=" << info.pid
+                  << " pcr90k=" << info.pcrBase90k
+                  << std::endl;
         firstPcr_ = info.pcrBase90k;
         lastPcr_ = info.pcrBase90k;
         haveFirstPcr_ = true;
@@ -1063,6 +1087,14 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
                   << " target_s=" << config_.targetDurationSeconds
                   << " mode=wait_idr"
                   << " action=keep_decoder_safe_boundary"
+                  << std::endl;
+    }
+    if (completedSegments_ == 0) {
+        std::cerr << "NATIVE HLS FIRST SEGMENT"
+                  << " directory=" << config_.directory.string()
+                  << " sequence=" << info.sequence
+                  << " duration_s=" << info.duration
+                  << " target_s=" << config_.targetDurationSeconds
                   << std::endl;
     }
     info.wallTime = programTime_;
