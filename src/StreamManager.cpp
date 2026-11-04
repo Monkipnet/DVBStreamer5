@@ -5,6 +5,7 @@
 #include "DvbSatellite.h"
 #include "TranscoderModule.h"
 #include "AutoTranscodePolicy.h"
+#include "media/IpCbrSourceClockPolicy.h"
 #include "mpts/MptsOutputManager.h"
 #include "protocols/SrtVpsProfile.h"
 #include "protocols/stream/inputs/StreamVdrInputProtocol.h"
@@ -1093,10 +1094,39 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
-    // Opt-in A/B via service environment; never change passthrough or HTTP CBR.
-    relay.wisiPreserveSourcePcr = streamConfig.transcodeEnabled &&
+    // V333: A/B the PCR timing domain for ONE explicitly selected HTTP/SRT
+    // passthrough tile. Both incoming transports share the same UDP-CBR
+    // shaper. Keeping provider PCR next to untouched PTS/DTS can prevent
+    // periodic player speed changes when fixed-slot PCR drifts out of phase.
+    // Safe default: no change to any stream without an exact ID match.
+    const bool hasUdpCbrOutput = std::any_of(
+        nativeOutputs.begin(), nativeOutputs.end(),
+        [](const auto& output) { return output.outputType == "udp-cbr"; });
+    const bool ipSourceClockAb =
+        dvbstreamer5::media::network::enableIpCbrSourceClockAb(
+            std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_STREAM_ID"),
+            streamConfig.id, toLower(normalizedInput),
+            streamConfig.transcodeEnabled, streamConfig.cbr,
+            hasUdpCbrOutput, streamConfig.targetBitrate > 0 &&
+                streamConfig.targetBitrate % 1000ULL == 0ULL);
+    relay.wisiSourcePcrStrict = ipSourceClockAb;
+    // Existing opt-in for *transcoded* WISI profiles remains unchanged.
+    const bool transcodePcrAb = streamConfig.transcodeEnabled &&
         streamConfig.cbr && std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB") &&
         std::string(std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB")) == "1";
+    relay.wisiPreserveSourcePcr = transcodePcrAb || ipSourceClockAb;
+    if (ipSourceClockAb) {
+        std::cerr << "NATIVE WISI SOURCE PCR AB"
+                  << " stream_id=" << streamConfig.id
+                  << " input=" << (srtInput ? "srt" : "http")
+                  << " video=passthrough"
+                  << " pcr=preserve"
+                  << " media_clock=source_pcr"
+                  << " udp_cbr_bitrate_kbps=" << streamConfig.targetBitrate / 1000ULL
+                  << " startup_buffer_ms=3000"
+                  << " other_tiles=unchanged"
+                  << std::endl;
+    }
     relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
 
     if (streamConfig.epgEnabled && streamConfig.epgEitOutput) {
