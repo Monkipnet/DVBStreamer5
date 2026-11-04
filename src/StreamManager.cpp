@@ -1411,6 +1411,23 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.remapConfig.preserveSourceServiceId = !streamConfig.remapEnabled;
         relay.remapConfig.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
         relay.remapConfig.serviceProvider = streamConfig.serviceProvider;
+        // Live IP program composition can change upstream when another tile
+        // switches to a replacement MP4. Do not stop a downstream SRT/UDP/
+        // HTTP relay just because its previous selected A/V track disappears.
+        // Leave satellite DVB service/track filtering STRICT.
+        const std::string liveInput = toLower(configuredInputUri);
+        const bool dynamicNetworkSource =
+            startsWith(liveInput, "srt://") ||
+            startsWith(liveInput, "udp://") ||
+            startsWith(liveInput, "rtp://") ||
+            startsWith(liveInput, "http://") ||
+            startsWith(liveInput, "https://") ||
+            startsWith(liveInput, "rtsp://") ||
+            startsWith(liveInput, "rtmp://") ||
+            startsWith(liveInput, "rtmps://") ||
+            startsWith(liveInput, "hls://");
+        if (dynamicNetworkSource)
+            relay.remapConfig.allowMissingOutputMedia = true;
     }
 
     // Only backup source metadata is rewritten. Primary TS remains unchanged.

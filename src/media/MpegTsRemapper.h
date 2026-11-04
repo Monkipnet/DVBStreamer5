@@ -16,7 +16,7 @@ struct RemapConfig {
     std::uint16_t outputVideoPid = 0;
     std::uint16_t outputAudioPid = 0;
     std::uint16_t outputPmtPid = 0; // 0=source; backup uses primary's PMT PID
-    // Only backup failover may omit an expected video or audio track.
+    // A backup or downstream live-IP remap may omit a previously expected track.
     bool allowMissingOutputMedia = false;
     std::uint16_t inputAudioPid = 0; // optional explicit input track
     bool preserveSourceServiceId = false; // for track-only filtering

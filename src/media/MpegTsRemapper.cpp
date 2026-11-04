@@ -547,7 +547,21 @@ bool Remapper::processPmtSection(
         otherAudioPids.erase(std::remove(otherAudioPids.begin(),
             otherAudioPids.end(),firstSourceAudioPid),otherAudioPids.end());
     }
-    if (!preferredAudioFound || (config_.inputAudioPid != 0 && inputAudio == 0)) {
+    // When upstream switches sources, the original audio PID may disappear
+    // even though the channel remains playable. An IP relay can follow the
+    // first available replacement track or temporarily become video-only.
+    // For DVB selected-track remapping the same error stays fatal.
+    if (!preferredAudioFound && config_.allowMissingOutputMedia) {
+        if (firstSourceAudioPid != 0) {
+            inputAudio = firstSourceAudioPid;
+            otherAudioPids.erase(std::remove(otherAudioPids.begin(),
+                otherAudioPids.end(), firstSourceAudioPid), otherAudioPids.end());
+        }
+        preferredAudioFound = true;
+    }
+    if ((!preferredAudioFound ||
+         (config_.inputAudioPid != 0 && inputAudio == 0)) &&
+        !config_.allowMissingOutputMedia) {
         error = "selected input audio PID " + std::to_string(config_.inputAudioPid) +
                 " is absent from current PMT; choose Auto or refresh tracks";
         return false;
