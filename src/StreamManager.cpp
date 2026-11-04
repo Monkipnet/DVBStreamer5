@@ -798,7 +798,27 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.serviceId = static_cast<std::uint16_t>(streamConfig.serviceId > 0 && streamConfig.serviceId <= 0xffff ? streamConfig.serviceId : 1);
         tc.videoPid = static_cast<std::uint16_t>(streamConfig.videoPid > 0 && streamConfig.videoPid <= 0x1ffe ? streamConfig.videoPid : 0x0100);
         tc.audioPid = static_cast<std::uint16_t>(streamConfig.audioPid > 0 && streamConfig.audioPid <= 0x1ffe ? streamConfig.audioPid : 0x0101);
-        tc.muxBitrate = streamConfig.cbr ? streamConfig.targetBitrate : 0;
+        // V336: the final CBR transport clock and NULL stuffing are owned
+        // exclusively by NativeUdpRelay's WISI/observed CBR pacer. The
+        // transcoder mux must emit only PSI + actual A/V PES packets.
+        // Previously a CBR tile generated media-clock NULL bursts here,
+        // then the output shaper discarded and regenerated those NULLs.
+        // On live HTTP/SRT inputs that extra work ran on the media pipeline
+        // and could delay the next encoded frame across *all* output types.
+        // A zero bitrate does NOT disable final UDP/SRT/HTTP CBR: relay below
+        // still gets the saved targetBitrate and paceObservedTransport flag.
+        tc.muxBitrate = 0;
+        if (streamConfig.cbr && streamConfig.targetBitrate > 0) {
+            std::cerr << "NATIVE TRANSCODER CBR SINGLE SHAPER"
+                      << " stream_id=" << streamConfig.id
+                      << " mux_null_stuffing=disabled"
+                      << " output_cbr=enabled"
+                      << " target_kbps="
+                      << (dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(
+                              streamConfig.targetBitrate) / 1000ULL)
+                      << " pcr_preroll_ms=500"
+                      << std::endl;
+        }
         tc.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
         tc.serviceProvider = streamConfig.serviceProvider;
         // V10.8.102: keep configured display geometry for HLS ABR. Anamorphic
