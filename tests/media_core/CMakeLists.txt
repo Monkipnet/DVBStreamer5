@@ -42,3 +42,8 @@ add_executable(nvenc_quality_policy_test test_nvenc_quality_policy.cpp)
 target_include_directories(nvenc_quality_policy_test PRIVATE ../../src)
 add_test(NAME nvenc_quality_policy COMMAND nvenc_quality_policy_test)
 
+# V332: GPU-free, tuner-free Unicable startup compatibility policy regression.
+add_executable(unicable_tuning_policy_test test_unicable_tuning_policy.cpp)
+target_include_directories(unicable_tuning_policy_test PRIVATE ../../src)
+add_test(NAME unicable_tuning_policy COMMAND unicable_tuning_policy_test)
+
