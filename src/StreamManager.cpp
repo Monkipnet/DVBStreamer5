@@ -2499,6 +2499,13 @@ void StreamManager::monitorOnDemandStreams() {
                           << " reason=no-clients idle_s=30"
                           << " hls_startup_expired=" << (hlsStartupExpired ? 1 : 0)
                           << std::endl;
+                // An OnDemand idle Stop is authoritative even if an input
+                // failover probe is about to complete.
+                std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+                {
+                    std::lock_guard<std::mutex> lock(failoverMutex);
+                    failoverEntries.erase(id);
+                }
                 stopStream(id);
             }
         }
