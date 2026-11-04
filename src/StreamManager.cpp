@@ -2521,6 +2521,10 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                         totalSentBytes += static_cast<std::uint64_t>(n);
                         ++totalSentChunks;
                         reportBytes += static_cast<std::uint64_t>(n);
+                        // V337: wake the local hub backlog without needing
+                        // another callback from the live transcoder. Flush
+                        // is nonblocking and keeps the original TS order.
+                        hub->flushPending(upstreamFd);
                     } else {
                         disconnectReason = "tcp_send_error";
                         disconnectErrno = errno;
