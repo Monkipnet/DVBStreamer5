@@ -52,7 +52,8 @@ public:
         std::atomic<std::uint64_t>* outputBytes,
         std::atomic<bool>* relayRunning,
         Observer observer,
-        ErrorCallback errorCallback)
+        ErrorCallback errorCallback,
+        std::atomic<std::uint64_t>* perOutputBytes = nullptr)
         : socket_(socket),
           outputIndex_(outputIndex),
           workerId_(nextWorkerId_.fetch_add(1ULL, std::memory_order_relaxed)),
@@ -61,6 +62,7 @@ public:
               mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
           startupBuffer_(effectiveStartupBuffer(targetBitrate)),
           outputBytes_(outputBytes),
+          perOutputBytes_(perOutputBytes),
           relayRunning_(relayRunning),
           observer_(std::move(observer)),
           errorCallback_(std::move(errorCallback)) {
@@ -683,6 +685,9 @@ private:
                     return;
                 }
                 outputBytes_->fetch_add(kDatagramBytes, std::memory_order_relaxed);
+                if (perOutputBytes_) {
+                    perOutputBytes_->fetch_add(kDatagramBytes, std::memory_order_relaxed);
+                }
                 queueObserverDatagram(bytes, kDatagramBytes);
 
                 const std::uint64_t gapNs = lastSendNs_ > 0 && sendNs >= lastSendNs_
@@ -912,6 +917,8 @@ private:
     const std::chrono::milliseconds requestedStartupBuffer_;
     const std::chrono::milliseconds startupBuffer_;
     std::atomic<std::uint64_t>* outputBytes_ = nullptr;
+    // V342: counter for quality graph only, not a transport control.
+    std::atomic<std::uint64_t>* perOutputBytes_ = nullptr;
     std::atomic<bool>* relayRunning_ = nullptr;
     Observer observer_;
     ErrorCallback errorCallback_;
