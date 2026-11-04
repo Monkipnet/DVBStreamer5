@@ -167,6 +167,8 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     pmtSection_ = {};
     sdtSection_ = {};
     pmtOutputSection_.clear();
+    outputPmtVersion_ = 0;
+    outputPmtVersionValid_ = false;
     nextPatPmtAt_ = {};
     nextSdtAt_ = {};
     allowedPids_.fill(false);
@@ -637,6 +639,30 @@ bool Remapper::processPmtSection(
         offset += 5 + static_cast<std::size_t>(
             ((section[offset + 3] & 0x0fU) << 8) | section[offset + 4]);
     }
+    // Never reuse one PMT version when the ES list changes across
+    // source generations: VLC and other receivers may otherwise keep the
+    // cached video+audio PMT and reject the video-only backup (or vice versa).
+    // Ignore source version and CRC while comparing actual table content.
+    bool pmtChanged = section.size() != pmtOutputSection_.size();
+    if (!pmtChanged) {
+        for (std::size_t i = 0; i + 4U < section.size(); ++i) {
+            if (i == 5U) continue; // source/version metadata
+            if (section[i] != pmtOutputSection_[i]) {
+                pmtChanged = true;
+                break;
+            }
+        }
+    }
+    if (!outputPmtVersionValid_) {
+        outputPmtVersion_ = static_cast<std::uint8_t>(
+            (section[5] >> 1U) & 0x1fU);
+        outputPmtVersionValid_ = true;
+    } else if (pmtChanged) {
+        outputPmtVersion_ = static_cast<std::uint8_t>(
+            (outputPmtVersion_ + 1U) & 0x1fU);
+    }
+    section[5] = static_cast<std::uint8_t>(
+        (section[5] & 0xc1U) | (outputPmtVersion_ << 1U));
     writeCrc(section.data(), section.size());
 
     if (targetVideoPid != 0 && targetVideoPid != inputVideo) {
@@ -666,7 +692,9 @@ bool Remapper::processPmtSection(
     pmtOutputSection_ = std::move(section);
     const bool becameReady = !remapReady_;
     remapReady_ = true;
-    if (becameReady) {
+    if (becameReady || pmtChanged) {
+        // Publish PMT changes immediately, including video-only/audio-return
+        // transitions; don't leave downstream VLC with stale stream info.
         // Emit a complete PSI/SI set on the very next TS packet, then keep
         // repeating it from our own monotonic clock. This avoids long gaps
         // when the provider repeats PAT/PMT/SDT irregularly.

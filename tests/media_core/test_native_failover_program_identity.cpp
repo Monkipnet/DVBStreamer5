@@ -130,7 +130,61 @@ int main() {
         check(videoOnlyProgram.serviceId==sid&&videoOnlyProgram.pmtPid==pmt&&
               videoOnlyProgram.videoPid==video&&videoOnlyProgram.audioPid==0,
               "video-only backup must preserve SID/PMT/video and omit audio");
-        std::cout<<"PASS: primary SID/PMT/PIDs plus video-only backup without audio\n";
+        // Simulate the third tile: its SRT input is the second tile's
+        // video-only backup, yet its saved input audio PID came from the
+        // original primary. Once primary returns, PMT must change version.
+        RemapConfig downstream{};
+        downstream.inputServiceId = sid;
+        downstream.outputServiceId = 800;
+        downstream.outputPmtPid = 0x1300;
+        downstream.outputVideoPid = 0x0400;
+        downstream.outputAudioPid = 0x0401;
+        downstream.inputAudioPid = audio;
+        downstream.allowMissingOutputMedia = true;
+        downstream.serviceName = "shanson3";
+        Remapper downstreamRemap;
+        check(downstreamRemap.initialize(downstream,error),
+              "downstream SRT remapper init failed");
+        std::vector<Packet> downstreamBackup;
+        for(const auto& packet:preserved)
+            check(downstreamRemap.process(packet,downstreamBackup,error),
+                  "SRT downstream video-only PMT must not kill channel");
+        NativeFailoverProgramIdentity downstreamIdentity;
+        downstreamIdentity.observe(downstreamBackup);
+        const auto downstreamSaved = downstreamIdentity.snapshot();
+        check(downstreamSaved.serviceId == 800 &&
+              downstreamSaved.pmtPid == 0x1300 &&
+              downstreamSaved.videoPid == 0x0400 &&
+              downstreamSaved.audioPid == 0,
+              "downstream SRT remap did not retain video-only service");
+        auto currentPmtVersion=[](const std::vector<Packet>& pkts) -> int {
+            for(const auto& packet:pkts) {
+                if(pidOf(packet)==0x1300 && (packet[1]&0x40U) &&
+                   packet[4]==0U && packet[5]==0x02U)
+                    return (packet[10]>>1U)&0x1fU;
+            }
+            return -1;
+        };
+        const int backupVersion=currentPmtVersion(downstreamBackup);
+        check(backupVersion>=0, "missing downstream backup PMT");
+        std::vector<Packet> downstreamRestored;
+        for(const auto& packet:original)
+            check(downstreamRemap.process(packet,downstreamRestored,error),
+                  "SRT downstream cannot accept restored primary");
+        // pmt version is emitted during the next TS packet after PMT arrival.
+        std::vector<Packet> nextPsi;
+        downstreamRemap.tick(nextPsi);
+        downstreamRestored.insert(downstreamRestored.end(),nextPsi.begin(),nextPsi.end());
+        const int restoredVersion=currentPmtVersion(downstreamRestored);
+        check(restoredVersion>=0 && restoredVersion!=backupVersion,
+              "downstream PMT version not advanced after audio restored");
+        NativeFailoverProgramIdentity restoredIdentity;
+        restoredIdentity.observe(downstreamRestored);
+        const auto restored=restoredIdentity.snapshot();
+        check(restored.serviceId==800 && restored.pmtPid==0x1300 &&
+              restored.videoPid==0x0400 && restored.audioPid==0x0401,
+              "downstream remapper did not resume audio after primary return");
+        std::cout<<"PASS: three-tile primary/backup SRT PMT transitions and recovery\n";
         return 0;
     } catch(const std::exception& e) {
         std::cerr<<"FAIL: "<<e.what()<<"\n";

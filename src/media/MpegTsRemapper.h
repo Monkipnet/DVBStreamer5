@@ -100,6 +100,10 @@ private:
     PsiSectionState pmtSection_;
     PsiSectionState sdtSection_;
     std::vector<std::uint8_t> pmtOutputSection_;
+    // Output PMT version must advance when upstream changes its ES layout,
+    // even if primary and backup both claim the same source PMT version.
+    std::uint8_t outputPmtVersion_ = 0;
+    bool outputPmtVersionValid_ = false;
     std::chrono::steady_clock::time_point nextPatPmtAt_ {};
     std::chrono::steady_clock::time_point nextSdtAt_ {};
     bool initialized_ = false;
