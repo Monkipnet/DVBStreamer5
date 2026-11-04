@@ -52,3 +52,13 @@ add_test(NAME unicable_tuning_policy COMMAND unicable_tuning_policy_test)
 add_executable(ip_cbr_source_clock_policy_test test_ip_cbr_source_clock_policy.cpp)
 target_include_directories(ip_cbr_source_clock_policy_test PRIVATE ../../src)
 add_test(NAME ip_cbr_source_clock_policy COMMAND ip_cbr_source_clock_policy_test)
+
+# V336: one CBR stuffing stage for live transcode; physical output shaper
+# remains responsible for 7x188 NULL filling in normal and Source-PCR modes.
+add_executable(transcode_cbr_single_shaper_test
+    test_transcode_cbr_single_shaper.cpp
+    ../../src/media/NativeMpegTsMux.cpp
+    ../../src/media/CbrTsPacer.cpp
+)
+target_include_directories(transcode_cbr_single_shaper_test PRIVATE ../../src)
+add_test(NAME transcode_cbr_single_shaper COMMAND transcode_cbr_single_shaper_test)
