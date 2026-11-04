@@ -2148,6 +2148,11 @@ void StreamManager::monitorNativeStream(StreamState* state) {
 
 bool StreamManager::restartStream(const StreamConfig& cfg, std::string* error) {
     std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+    // Explicit UI/scheduled restart supersedes any automatic failover plan.
+    {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        failoverEntries.erase(cfg.id);
+    }
     stopStream(cfg.id);
     return startStream(cfg, error);
 }
@@ -2224,6 +2229,10 @@ bool StreamManager::stopStream(const std::string& id) {
 
 bool StreamManager::stopStreamAsync(const std::string& id) {
     std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+    {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        failoverEntries.erase(id);
+    }
     // This entry point is used by the control-panel /api/stop-stream action.
     // Internal teardown/restart paths call stopStream() directly and therefore
     // do not generate a misleading "stopped by user" Telegram notification.
@@ -2251,6 +2260,10 @@ bool StreamManager::stopStreamAsync(const std::string& id) {
 void StreamManager::stopAll() {
     // A scheduled/manual global stop must not race a single-tile failover.
     std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+    {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        failoverEntries.clear();
+    }
     std::vector<std::string> ids;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
