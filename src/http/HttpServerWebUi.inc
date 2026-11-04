@@ -3286,6 +3286,8 @@ let satelliteSignalTimer = null;
 let satelliteSignalPending = false;
 let satelliteSignalController = null;
 let satelliteScanning = false;
+let satelliteDiscoverRunning = false;
+let satelliteDiscoverCancel = false;
 let satelliteTuneGeneration = 0;
 let satelliteServices = [];
 let satelliteLastScan = null;
@@ -6623,6 +6625,7 @@ function updateSatelliteMeters(data={}) {
   }
 }
 function stopSatelliteSignalPolling() {
+  satelliteDiscoverCancel = true;
   clearInterval(satelliteSignalTimer);
   satelliteSignalTimer = null;
   ++satelliteTuneGeneration;
@@ -6768,7 +6771,160 @@ function renderSatelliteServices() {
 function toggleAllSatelliteServices(checked) {
   document.querySelectorAll('.sat-service-check:not(:disabled)').forEach(input => { input.checked = checked; });
 }
+// V10.8.363: identify connected SCR satellite positions without ever
+// retuning a frontend reserved by a configured DVB stream.
+async function discoverSatelliteLnbs() {
+  if (satelliteScanning || satelliteDiscoverRunning) return;
+  const base = satelliteTunePayload();
+  const status = document.getElementById('satDiscoverStatus');
+  const button = document.getElementById('satDiscoverButton');
+  const cancel = document.getElementById('satDiscoverCancel');
+  const holder = document.getElementById('satDiscoverResults');
+  const mode = base.unicable_mode;
+  const tr = (ru,en) => uiBiText(ru,en);
+  if (mode !== 'en50494' && mode !== 'en50607') {
+    if (status) status.textContent = tr('Выберите Unicable I или II.', 'Select Unicable I or II.');
+    return;
+  }
+  // The backend independently enforces these checks on every probe.
+  const frontend = dvbAdapters.find(a => Number(a.adapter) === base.adapter &&
+    Number(a.frontend) === base.frontend);
+  if (!frontend) {
+    if (status) status.textContent = tr('Тюнер не найден.', 'Frontend not found.');
+    return;
+  }
+  if (frontend.in_use || Number(frontend.configured_streams || 0) > 0) {
+    if (status) status.textContent = tr(
+      'Тюнер занят каналами. Поиск запрещён: выберите свободный DVB frontend.',
+      'Frontend is assigned to channels. Select an unassigned DVB frontend.');
+    return;
+  }
+  const probes = [
+    {name:'Astra 19.2°E', frequency_mhz:11993, symbol_rate:27500, polarity:'H', delivery_system:'dvb-s', modulation:'qpsk', fec:'3/4'},
+    {name:'Hot Bird 13°E', frequency_mhz:10992, symbol_rate:27500, polarity:'V', delivery_system:'dvb-s', modulation:'qpsk', fec:'2/3'},
+    {name:'Astra 23.5°E', frequency_mhz:11739, symbol_rate:29900, polarity:'V', delivery_system:'dvb-s2', modulation:'8psk', fec:'3/4'},
+    {name:'Astra 28.2°E', frequency_mhz:10773, symbol_rate:23000, polarity:'H', delivery_system:'dvb-s2', modulation:'8psk', fec:'3/4'}
+  ];
+  const results = [];
+  const positions = mode === 'en50494' ? 2 : 4;
+  const lockedControls = ['satAdapter','satFrontend','satUnicableMode',
+    'satUnicableUserBand','satUnicableFrequency','satUnicablePin',
+    'satLof1','satLof2','satSlof'];
+  const setLocked = locked => lockedControls.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = locked;
+  });
+  const render = () => {
+    if (!holder) return;
+    holder.innerHTML = '';
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%;border-collapse:collapse;text-align:left;font-size:12px';
+    const head = document.createElement('tr');
+    for (const text of [tr('Позиция','Position'),tr('Статус','Status'),
+      tr('Спутник / NIT','Satellite / NIT'),tr('Сервисы','Services')]) {
+      const th = document.createElement('th');
+      th.textContent = text;
+      th.style.padding = '6px';
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+    for (const item of results) {
+      const trEl = document.createElement('tr');
+      const values = [String(item.position + 1) + ' / ' + item.position,
+        item.status, item.satellite, String(item.services)];
+      for (const value of values) {
+        const td = document.createElement('td');
+        td.textContent = value;
+        td.style.cssText = 'padding:6px;border-top:1px solid var(--border,#343d4c)';
+        trEl.appendChild(td);
+      }
+      table.appendChild(trEl);
+    }
+    holder.appendChild(table);
+  };
+  satelliteDiscoverRunning = true;
+  satelliteDiscoverCancel = false;
+  satelliteScanning = true;
+  clearInterval(satelliteSignalTimer);
+  satelliteSignalTimer = null;
+  ++satelliteTuneGeneration;
+  if (satelliteSignalController) satelliteSignalController.abort();
+  satelliteSignalController = null;
+  satelliteSignalPending = false;
+  if (button) button.disabled = true;
+  if (cancel) cancel.style.display = '';
+  setLocked(true);
+  try {
+    for (let position = 0; position < positions && !satelliteDiscoverCancel; ++position) {
+      let match = null;
+      let errorMessage = '';
+      for (const probe of probes) {
+        if (satelliteDiscoverCancel) break;
+        if (status) status.textContent =
+          tr('Проверка LNB ', 'Checking LNB ') + (position + 1) +
+          ' / ' + probe.name + ' — ' + probe.frequency_mhz + ' MHz';
+        const payload = {...base, ...probe, unicable_position:position,
+          discover_lnb:true, hold_lock:false};
+        try {
+          const response = await fetch('/api/dvb-scan', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          const data = await response.json();
+          const count = Number(data.service_count || 0);
+          if (data.error && !data.locked) {
+            errorMessage = String(data.error);
+            if (/assigned|not available|User Band|requires|invalid/i.test(errorMessage))
+              throw new Error(errorMessage);
+          }
+          if (data.locked && count > 0) {
+            const nit = String(data.nit_orbital_position || '').trim();
+            const network = String(data.nit_network_name || '').trim();
+            match = {position,
+              status:tr('LOCK + DVB таблицы','LOCK + DVB tables'),
+              satellite:(nit ? nit + ' (NIT)' : probe.name + ' (TP)') +
+                (network ? ' · ' + network : ''),
+              services:count};
+            break;
+          }
+        } catch (error) {
+          errorMessage = String(error.message || error);
+          if (/assigned|not available|User Band|requires|invalid/i.test(errorMessage))
+            throw error;
+        }
+      }
+      if (satelliteDiscoverCancel) break;
+      results.push(match || {position, status:tr('Не определено','Not identified'),
+        satellite:errorMessage && !/did not lock|No satellite signal/i.test(errorMessage)
+          ? errorMessage : tr('Нет LOCK на проверенных TP', 'No lock on tested TPs'),
+        services:0});
+      render();
+    }
+    if (status) status.textContent = satelliteDiscoverCancel
+      ? tr('Поиск остановлен.', 'Discovery stopped.')
+      : tr('Поиск завершён. Пустые позиции не подтверждены.', 'Discovery finished. Empty positions are not proven.');
+  } catch (error) {
+    if (status) status.textContent = tr('Поиск остановлен: ', 'Discovery stopped: ') +
+      String(error.message || error);
+  } finally {
+    satelliteDiscoverCancel = true;
+    satelliteDiscoverRunning = false;
+    satelliteScanning = false;
+    setLocked(false);
+    if (button) button.disabled = false;
+    if (cancel) cancel.style.display = 'none';
+    // Never resume background retune polling after discovery.
+    clearInterval(satelliteSignalTimer);
+    satelliteSignalTimer = null;
+  }
+}
+function cancelSatelliteDiscovery() {
+  satelliteDiscoverCancel = true;
+  const status = document.getElementById('satDiscoverStatus');
+  if (status) status.textContent = uiBiText(
+    'Остановка после текущей проверки...', 'Stopping after the current probe...');
+}
 async function startSatelliteScan() {
+  if (satelliteDiscoverRunning) return;
   const button = document.getElementById('satScanButton');
   const status = document.getElementById('satScanStatus');
   satelliteScanning = true;
@@ -6988,6 +7144,16 @@ function openAddChannelModal() {
       <button id="satScanButton" class="button-primary" onclick="startSatelliteScan()">Сканировать каналы</button>
       <span id="satScanStatus" class="sat-scan-status">Найдено: <span id="satFoundCount">0</span></span>
     </div>
+    <div class="sat-actions" style="margin-top:8px;align-items:center;flex-wrap:wrap">
+      <button id="satDiscoverButton" class="button-secondary" type="button" onclick="discoverSatelliteLnbs()">
+        ${subtitleUiTriText('Найти подключённые LNB','Discover connected LNBs','Otkrij povezane LNB-ove')}
+      </button>
+      <button id="satDiscoverCancel" class="button-secondary" type="button" style="display:none" onclick="cancelSatelliteDiscovery()">
+        ${subtitleUiTriText('Остановить','Stop','Zaustavi')}
+      </button>
+      <span id="satDiscoverStatus" class="sat-scan-status">${subtitleUiTriText('Только свободный frontend. Работающие потоки не прерываются.','Free frontend only. Active streams will not be interrupted.','Samo slobodan frontend. Aktivni tokovi se ne prekidaju.')}</span>
+    </div>
+    <div id="satDiscoverResults" class="sat-services" style="margin-top:6px"></div>
     <div id="satServices" class="sat-services"><div class="sat-empty">Нажмите «Сканировать каналы».</div></div>
     <div class="sat-output">
       <div class="sat-field"><label>Выходной протокол</label><select id="satOutputType" onchange="updateSatelliteOutputHints(true)">${outputTypeOptions('udp-vbr')}</select></div>

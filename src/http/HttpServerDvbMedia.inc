@@ -213,6 +213,58 @@ std::string HttpServer::handleDvbTune(const std::string& body, bool scan) {
     std::istringstream input(body);
     if (!Json::parseFromStream(readerBuilder, input, &request, &errors)) {
         response["error"] = "invalid DVB request: " + errors;
+    } else if (scan && request.get("discover_lnb", false).asBool()) {
+        // Discovery must never retune a configured frontend, including
+        // idle OnDemand streams. An SCR User Band is exclusive on a shared coax.
+        const int adapter = request.get("adapter", -1).asInt();
+        const int frontend = request.get("frontend", -1).asInt();
+        const int userBand = request.get("unicable_user_band", -1).asInt();
+        const std::string mode = request.get("unicable_mode", "none").asString();
+        const int position = request.get("unicable_position", -1).asInt();
+        if (adapter < 0 || adapter > 31 || frontend < 0 || frontend > 31 ||
+            userBand < 0 || (mode != "en50494" && mode != "en50607") ||
+            position < 0 || position >= (mode == "en50494" ? 2 : 4)) {
+            response["error"] = "LNB discovery requires a valid Unicable frontend, UB and position 0..3";
+        } else {
+            bool present = false;
+            const Json::Value available = DvbSatellite::adapters();
+            for (const auto& item : available["adapters"]) {
+                if (item.get("adapter", -1).asInt() == adapter &&
+                    item.get("frontend", -1).asInt() == frontend) {
+                    present = true;
+                    break;
+                }
+            }
+            if (!present) {
+                response["error"] = "Selected DVB frontend is not available";
+            } else {
+                std::string conflict;
+                auto checkInput = [&](const std::string& uri) {
+                    DvbSatelliteParams existing;
+                    std::string parseError;
+                    if (!conflict.empty() ||
+                        !DvbSatellite::parseUri(uri, existing, parseError)) return;
+                    if (existing.adapter == adapter && existing.frontend == frontend) {
+                        conflict = "Frontend is assigned to streams; discovery cannot interrupt them";
+                    } else if (existing.unicableMode != "none" &&
+                               existing.unicableUserBand == userBand) {
+                        conflict = "User Band is assigned to another stream; choose a free UB";
+                    }
+                };
+                for (const auto& stream : configManager.config.streams)
+                    checkInput(stream.inputUri);
+                const auto snap = streamManager.snapshot();
+                for (const auto& [id, state] : snap) {
+                    if (state && state->running.load()) checkInput(state->config.inputUri);
+                }
+                if (!conflict.empty()) {
+                    response["error"] = conflict;
+                } else {
+                    response = DvbSatellite::scan(request);
+                    response["discover_lnb"] = true;
+                }
+            }
+        }
     } else {
         response = scan ? DvbSatellite::scan(request) : DvbSatellite::signal(request);
     }

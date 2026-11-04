@@ -459,6 +459,18 @@ public:
         if (offset) remainder.erase(remainder.begin(), remainder.begin() + static_cast<std::ptrdiff_t>(offset));
     }
 
+    // NIT actual (PID 0x10): only trust orbital data for the SDT-actual TS.
+    std::string nitNetworkName() const { return nitNetworkName_; }
+    std::string actualOrbitalPosition() const {
+        if (actualTransportStreamId_ < 0 || actualOriginalNetworkId_ < 0) return {};
+        const auto it = nitSatellitePositions_.find({
+            static_cast<std::uint16_t>(actualTransportStreamId_),
+            static_cast<std::uint16_t>(actualOriginalNetworkId_)});
+        return it == nitSatellitePositions_.end() ? std::string{} : it->second;
+    }
+    int transportStreamId() const { return actualTransportStreamId_; }
+    int originalNetworkId() const { return actualOriginalNetworkId_; }
+
     std::vector<DvbService> services() const {
         std::vector<DvbService> result;
         for (const auto& [sid, pmt] : programMap) {
@@ -519,7 +531,7 @@ private:
         const uint8_t scrambling = static_cast<uint8_t>((packet[3] >> 6) & 0x03);
         if (scrambling != 0) markPacketScrambled(pid);
 
-        if (pid != 0x0000 && pid != 0x0001 && pid != 0x0011 && !isPmtPid(pid)) return;
+        if (pid != 0x0000 && pid != 0x0001 && pid != 0x0010 && pid != 0x0011 && !isPmtPid(pid)) return;
         const bool payloadStart = (packet[1] & 0x40) != 0;
         const uint8_t adaptation = static_cast<uint8_t>((packet[3] >> 4) & 0x03);
         if (adaptation == 0 || adaptation == 2) return;
@@ -606,8 +618,70 @@ private:
     void parseSection(uint16_t pid, const uint8_t* section, size_t size) {
         if (pid == 0x0000) parsePat(section, size);
         else if (pid == 0x0001) parseCat(section, size);
+        else if (pid == 0x0010) parseNit(section, size);
         else if (pid == 0x0011) parseSdt(section, size);
         else if (isPmtPid(pid)) parsePmt(section, size);
+    }
+
+    // Satellite delivery descriptor 0x43 carries the orbital position in
+    // packed BCD (tenths of a degree) and the east/west flag.
+    static std::string satellitePositionFromDescriptor(const uint8_t* d, size_t length) {
+        if (length < 11) return {};
+        const int digits[4] = {d[4] >> 4, d[4] & 15, d[5] >> 4, d[5] & 15};
+        for (int digit : digits) if (digit > 9) return {};
+        const int tenths = digits[0] * 1000 + digits[1] * 100 +
+            digits[2] * 10 + digits[3];
+        std::ostringstream text;
+        text << tenths / 10 << '.' << tenths % 10
+             << ((d[6] & 0x80) ? " E" : " W");
+        return text.str();
+    }
+
+    void parseNit(const uint8_t* section, size_t size) {
+        // Only NIT actual (0x40). NIT other would misidentify the tuned satellite.
+        if (size < 16 || section[0] != 0x40) return;
+        const size_t end = size - 4; // exclude MPEG-2 CRC
+        const size_t descriptorLength =
+            static_cast<size_t>(((section[8] & 0x0F) << 8) | section[9]);
+        if (10 + descriptorLength + 2 > end) return;
+        size_t pos = 10;
+        const size_t descriptorEnd = pos + descriptorLength;
+        while (pos + 2 <= descriptorEnd) {
+            const size_t length = section[pos + 1];
+            if (pos + 2 + length > descriptorEnd) break;
+            if (section[pos] == 0x40) {
+                nitNetworkName_ = decodeDvbText(section + pos + 2, length);
+            }
+            pos += 2 + length;
+        }
+        pos = descriptorEnd;
+        const size_t transportLength =
+            static_cast<size_t>(((section[pos] & 0x0F) << 8) | section[pos + 1]);
+        pos += 2;
+        if (pos + transportLength > end) return;
+        const size_t transportEnd = pos + transportLength;
+        while (pos + 6 <= transportEnd) {
+            const std::uint16_t tsid = static_cast<std::uint16_t>(
+                (section[pos] << 8) | section[pos + 1]);
+            const std::uint16_t onid = static_cast<std::uint16_t>(
+                (section[pos + 2] << 8) | section[pos + 3]);
+            const size_t descriptors = static_cast<size_t>(
+                ((section[pos + 4] & 0x0F) << 8) | section[pos + 5]);
+            pos += 6;
+            if (pos + descriptors > transportEnd) break;
+            const size_t tsEnd = pos + descriptors;
+            while (pos + 2 <= tsEnd) {
+                const size_t length = section[pos + 1];
+                if (pos + 2 + length > tsEnd) break;
+                if (section[pos] == 0x43) {
+                    const std::string orbital = satellitePositionFromDescriptor(
+                        section + pos + 2, length);
+                    if (!orbital.empty()) nitSatellitePositions_[{tsid, onid}] = orbital;
+                }
+                pos += 2 + length;
+            }
+            pos = tsEnd;
+        }
     }
 
     void parsePat(const uint8_t* section, size_t size) {
@@ -703,6 +777,10 @@ private:
 
     void parseSdt(const uint8_t* section, size_t size) {
         if (size < 15 || (section[0] != 0x42 && section[0] != 0x46)) return;
+        if (section[0] == 0x42) {
+            actualTransportStreamId_ = (section[3] << 8) | section[4];
+            actualOriginalNetworkId_ = (section[8] << 8) | section[9];
+        }
         const size_t end = size >= 4 ? size - 4 : 0;
         size_t pos = 11;
         while (pos + 5 <= end) {
@@ -748,6 +826,10 @@ private:
     std::map<uint16_t, uint16_t> programMap;
     std::map<uint16_t, DvbService> serviceMap;
     std::set<uint16_t> catCaPids;
+    std::string nitNetworkName_;
+    int actualTransportStreamId_ = -1;
+    int actualOriginalNetworkId_ = -1;
+    std::map<std::pair<std::uint16_t, std::uint16_t>, std::string> nitSatellitePositions_;
 };
 
 std::string servicePidsString(const DvbService& service) {
@@ -976,6 +1058,10 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         }
         result["services"] = services;
         result["service_count"] = services.size();
+        result["nit_network_name"] = scanner.nitNetworkName();
+        result["nit_orbital_position"] = scanner.actualOrbitalPosition();
+        result["transport_stream_id"] = scanner.transportStreamId();
+        result["original_network_id"] = scanner.originalNetworkId();
     }
     return result;
 }
