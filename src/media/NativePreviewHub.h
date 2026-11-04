@@ -25,6 +25,10 @@ public:
     int subscribe(std::string& error);
     void unsubscribe(int readFd);
     void publish(const std::uint8_t* data, std::size_t size);
+    // V337: after the HTTP TCP reader consumes a hub datagram, flush any
+    // queued upstream packets even when a live encoder is momentarily idle.
+    // Nonblocking, bounded and scoped to this subscriber.
+    void flushPending(int readFd);
     std::size_t subscriberCount();
     void close();
 
