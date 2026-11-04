@@ -7672,13 +7672,7 @@ function openStreamForm(stream) {
             <label class="checkbox-inline"><input type="checkbox" id="streamHttpTsJitterEnabled" ${stream.http_ts_input_jitter_enabled===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить','Enable','Uključi')}>${subtitleUiTriText('Включить','Enable','Uključi')}</span></label>
           </div>
         </div>
-        <div class="form-row full edit-section" id="streamIpSourcePcrRow" style="display:none">
-          <div class="edit-toggle">
-            <div class="edit-field-title" ${subtitleUiTriAttrs('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}>${subtitleUiTriText('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}</div>
-            <small class="field-help" ${subtitleUiTriAttrs('Для A/B отключите общий Source-PCR в CBR. Сохраните и вручную перезапустите только эту плитку.','For a valid A/B test, disable the general CBR Source-PCR switch. Save and manually restart only this tile.','Za valjani A/B test isključite opći CBR Source-PCR. Spremite i ručno ponovno pokrenite samo ovu karticu.')}>${subtitleUiTriText('Для A/B отключите общий Source-PCR в CBR. Сохраните и вручную перезапустите только эту плитку.','For a valid A/B test, disable the general CBR Source-PCR switch. Save and manually restart only this tile.','Za valjani A/B test isključite opći CBR Source-PCR. Spremite i ručno ponovno pokrenite samo ovu karticu.')}</small>
-            <label class="checkbox-inline"><input id="streamIpSourcePcrEnabled" type="checkbox" ${stream.ip_source_pcr_passthrough===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}>${subtitleUiTriText('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}</span></label>
-          </div>
-        </div>
+
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
         <div class="form-row full edit-section">
           <div class="edit-section-head"><span ${uiBiAttrs('Условный доступ / CAM','Conditional Access / CAM')}>${uiBiText('Условный доступ / CAM','Conditional Access / CAM')}</span><small ${uiBiAttrs('режим задаётся отдельно для канала','configured per channel')}>${uiBiText('режим задаётся отдельно для канала','configured per channel')}</small></div>
@@ -7754,6 +7748,14 @@ function openStreamForm(stream) {
         <div class="form-row"><label>SID выхода</label><input class="compact" id="streamServiceId" type="number" min="1" max="65535" value="${stream.service_id||1}" placeholder="1" /></div>
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
         <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.round((stream.target_bitrate||2000000)/1000)}" placeholder="2000" /></div>
+        <div class="form-row full edit-section" id="streamIpSourcePcrRow">
+          <div class="edit-toggle">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}>${subtitleUiTriText('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Для A/B отключите общий Source-PCR в CBR. Сохраните и вручную перезапустите только эту плитку.','For a valid A/B test, disable the general CBR Source-PCR switch. Save and manually restart only this tile.','Za valjani A/B test isključite opći CBR Source-PCR. Spremite i ručno ponovno pokrenite samo ovu karticu.')}>${subtitleUiTriText('Для A/B отключите общий Source-PCR в CBR. Сохраните и вручную перезапустите только эту плитку.','For a valid A/B test, disable the general CBR Source-PCR switch. Save and manually restart only this tile.','Za valjani A/B test isključite opći CBR Source-PCR. Spremite i ručno ponovno pokrenite samo ovu karticu.')}</small>
+            <label class="checkbox-inline"><input id="streamIpSourcePcrEnabled" type="checkbox" ${stream.ip_source_pcr_passthrough===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}>${subtitleUiTriText('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}</span></label>
+            <small id="streamIpSourcePcrStatus" class="field-help" aria-live="polite"></small>
+          </div>
+        </div>
         <div class="form-row full edit-section">
           <div class="edit-toggle"><div class="edit-field-title" ${uiBiAttrs('DVB-субтитры','DVB subtitles')}>${uiBiText('DVB-субтитры','DVB subtitles')}</div><small class="field-help" ${subtitleUiTriAttrs('Передавать DVB-субтитры с транскодированием или без; CMAF не поддерживается.','Pass DVB subtitles with or without transcoding; CMAF unsupported.','Prenesi DVB titlove s transkodiranjem ili bez njega; CMAF nije podržan.')}>${subtitleUiTriText('Передавать DVB-субтитры с транскодированием или без; CMAF не поддерживается.','Pass DVB subtitles with or without transcoding; CMAF unsupported.','Prenesi DVB titlove s transkodiranjem ili bez njega; CMAF nije podržan.')}</small><label class="checkbox-inline"><input id="streamDvbSubtitlesEnabled" type="checkbox" ${stream.dvb_subtitles_enabled===true?'checked':''} onchange="updateDvbSubtitleLanguageControls()"/><span ${uiBiAttrs('Включить','Enable')}>${uiBiText('Включить','Enable')}</span></label></div>
         </div>
@@ -8092,12 +8094,15 @@ function syncUdpCbrModeFromCheckbox() {
   updateOutputHints();
 }
 
-// V334: the A/B preference is per channel and meaningful only for a
-// non-transcoded MPEG-TS HTTP(S)/SRT source with an actual UDP-CBR output.
-// Hide without resetting its stored value if the user edits other fields.
+// V335: always show the per-stream PCR option beside the CBR bitrate and
+// startup buffer. When it cannot apply, disable it and explain the exact
+// reason rather than silently hiding the preference from the operator.
+// Disabled inputs retain their saved value; the runtime also guards eligibility.
 function updateIpSourcePcrVisibility() {
   const row=document.getElementById('streamIpSourcePcrRow');
   if(!row)return;
+  const toggle=document.getElementById('streamIpSourcePcrEnabled');
+  const status=document.getElementById('streamIpSourcePcrStatus');
   const uri=String(document.getElementById('streamInput')?.value||'').trim().toLowerCase();
   const mode=document.getElementById('streamInputMode')?.value||'auto';
   const isHls=mode==='hls'||uri.includes('.m3u8')||uri.startsWith('hls://');
@@ -8107,7 +8112,22 @@ function updateIpSourcePcrVisibility() {
   const transcode=document.getElementById('streamTranscodeEnabled')?.checked===true;
   const testPattern=document.getElementById('streamTestPattern')?.checked===true;
   const cbr=document.getElementById('streamCbr')?.checked===true;
-  row.style.display=ipTs&&!isHls&&hasUdpCbr&&cbr&&!transcode&&!testPattern?'':'none';
+  const bitrate=Number(document.getElementById('streamBitrate')?.value||0);
+  const reason = !ipTs || isHls
+    ? subtitleUiTriText('Требуется HTTP MPEG-TS или SRT вход.','Requires HTTP MPEG-TS or SRT input.','Potreban je HTTP MPEG-TS ili SRT ulaz.')
+    : !hasUdpCbr || !cbr
+    ? subtitleUiTriText('Требуется выход UDP-CBR с включённым CBR.','Requires UDP-CBR output with CBR enabled.','Potreban je UDP-CBR izlaz s uključenim CBR.')
+    : transcode
+    ? subtitleUiTriText('Отключите транскодирование для проверки PCR.','Disable transcoding to test PCR.','Isključite transkodiranje za PCR test.')
+    : testPattern
+    ? subtitleUiTriText('Отключите тестовую таблицу.','Disable the test pattern.','Isključite testni uzorak.')
+    : !Number.isFinite(bitrate) || !Number.isInteger(bitrate) || bitrate<100
+    ? subtitleUiTriText('Укажите CBR bitrate, кбит/с (от 100).','Set CBR bitrate, kbps (100 or more).','Postavite CBR bitrate, kb/s (najmanje 100).')
+    : '';
+  row.style.display='';
+  if(toggle) toggle.disabled=Boolean(reason);
+  if(status) status.textContent=reason ||
+    subtitleUiTriText('Доступно. После сохранения перезапустите только эту плитку.','Available. After saving, restart only this tile.','Dostupno. Nakon spremanja ponovno pokrenite samo ovu karticu.');
 }
 
 function updateOutputHints() {
