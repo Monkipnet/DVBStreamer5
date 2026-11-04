@@ -161,7 +161,8 @@ struct NativeUdpRelayConfig {
 
 class NativeUdpRelay {
 public:
-    NativeUdpRelay() = default;
+    // Defined out-of-line: unique_ptr<mp4::NativeMp4Replacement> must be complete.
+    NativeUdpRelay();
     ~NativeUdpRelay();
 
     NativeUdpRelay(const NativeUdpRelay&) = delete;

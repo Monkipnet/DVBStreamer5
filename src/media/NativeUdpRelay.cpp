@@ -219,6 +219,11 @@ std::string inputInterfaceFor(const NativeUdpRelayConfig& config, bool multicast
 
 } // namespace
 
+// V345: the constructor must be compiled here where NativeMp4Replacement is
+// complete; an inline defaulted constructor triggers unique_ptr's sizeof(T)
+// static assertion in StreamManager.cpp with GCC 13.
+NativeUdpRelay::NativeUdpRelay() = default;
+
 NativeUdpRelay::~NativeUdpRelay() {
     stop();
 }

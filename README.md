@@ -1,3 +1,10 @@
+## V10.8.345 — GCC 13 MP4 relay constructor build fix + GitHub Linux CI
+
+- Fixed GCC 13 failure in StreamManager.cpp: std::make_unique<NativeUdpRelay>() previously instantiated the inline-defaulted NativeUdpRelay constructor while std::unique_ptr<mp4::NativeMp4Replacement> still held an incomplete type. The constructor is now declared in NativeUdpRelay.h and defined out-of-line in NativeUdpRelay.cpp after including the complete native MP4 type. The destructor and existing MPEG-TS/MP4 implementation remain unchanged.
+- New `.github/workflows/build-main-linux.yml` builds on every push to main and on manual workflow_dispatch, using Ubuntu 24.04, the repository's pinned SRT and native codec build scripts, OpenSSL and system headers. NVENC, VAAPI and QSV are compiled when their native headers/libraries are available; GPU runtime is not tested on GitHub-hosted runners. FFmpeg/libavcodec is disabled.
+- The workflow runs native media-core regressions and the full Linux build before producing a portable `DVBStreamer5-<version>-linux-x86_64.tar.gz` archive, raw executable and SHA256SUMS, all attached to the GitHub Actions run for 30 days. No production server restarts are initiated by this workflow.
+- Verify: GitHub → Actions → "DVBStreamer5 main Linux build + portable" → latest run → Artifacts. A green build and tested playback on the destination host are both required before production deployment.
+
 ## V10.8.344 — native MP4 backup and strict primary failback (no FFmpeg)
 
 - Backup file .mp4/.m4v/.mov (non-fragmented ISO-BMFF) is demultiplexed with the built-in native reader. H.264/H.265 video samples become Annex-B, AAC-LC frames receive ADTS, and NativeMpegTsMux emits MPEG-TS PAT/PMT/PCR/PES without FFmpeg, libavformat or external processes.
