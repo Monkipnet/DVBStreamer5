@@ -1153,6 +1153,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                   << std::endl;
     }
     relay.paceObservedTransport = streamConfig.cbr && streamConfig.targetBitrate > 0;
+    relay.transcodedTransport = streamConfig.transcodeEnabled && relay.paceObservedTransport;
 
     if (streamConfig.epgEnabled && streamConfig.epgEitOutput) {
         // A worker-local generator probes the final PAT/SDT for actual output
