@@ -9271,6 +9271,29 @@ window.dvbstreamerPreviewController = window.DVBStreamerPreview.install({
 // V10.8.320: schedule-driven burn-in ticker editor. Uses the dedicated
 // metadata-only API: editing does not restart unrelated streams.
 let tickerEditor = null;
+// V332: discrete, repeatable motion speeds; keep older custom stored speeds
+// intact until the operator explicitly chooses a new preset.
+const tickerSpeedSteps = [5,8,10,12,15,18,20,24,30,36,40,45,50,60,75,90,120,150,200,300,450,600];
+function tickerSetSpeed(value) {
+  const select = document.getElementById('tickerSpeed');
+  const slider = document.getElementById('tickerSpeedSlider');
+  if (!select || !slider) return;
+  const speed = Math.max(5,Math.min(600,Math.round(Number(value)||40)));
+  select.querySelectorAll('option[data-custom-speed]').forEach(opt=>opt.remove());
+  if (!tickerSpeedSteps.includes(speed)) {
+    const option = document.createElement('option');
+    option.dataset.customSpeed='1';
+    option.value=String(speed);
+    option.textContent=speed+' px/s ('+tickerWord('сохранено','saved','spremljeno')+')';
+    select.append(option);
+  }
+  select.value=String(speed);
+  let nearest=0;
+  tickerSpeedSteps.forEach((step,i)=>{
+    if (Math.abs(step-speed)<Math.abs(tickerSpeedSteps[nearest]-speed)) nearest=i;
+  });
+  slider.value=String(nearest);
+}
 function tickerEsc(value) {
   return String(value == null ? '' : value).replace(/&/g,'&amp;')
     .replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -9345,9 +9368,10 @@ async function openTickerModal() {
       '<div class="ticker-settings-grid">'+
       '<label class="ticker-setting ticker-speed-setting">'+lbl('Скорость движения, пикселей в секунду','Scroll speed, pixels per second','Brzina pomicanja, px/s')+
       '<div style="display:flex;align-items:center;gap:9px;min-width:0">'+
-      '<input id="tickerSpeedSlider" type="range" min="5" max="600" step="1" value="40" style="flex:1;min-width:70px;accent-color:#1f8bff">'+
-      '<input id="tickerSpeed" type="number" min="5" max="600" step="1" value="40" style="width:70px"></div>'+
-      '<small id="tickerSpeedHint" style="opacity:.7">'+lbl('Рекомендуется 15–50 пикс./с для плавного движения','Recommended 15–50 px/s for smoother motion','Preporuka 15–50 px/s')+'</small></label>'+
+      '<input id="tickerSpeedSlider" type="range" min="0" max="'+(tickerSpeedSteps.length-1)+'" step="1" value="'+tickerSpeedSteps.indexOf(40)+'" style="flex:1;min-width:70px;accent-color:#1f8bff">'+
+      '<select id="tickerSpeed" style="width:115px;flex:none">'+tickerSpeedSteps.map(speed=>
+        '<option value="'+speed+'"'+(speed===40?' selected':'')+'>'+speed+' px/s</option>').join('')+'</select></div>'+
+      '<small id="tickerSpeedHint" style="opacity:.7">'+lbl('Ступени скорости • 10–40 пикс./с для плавного PAL 25 FPS','Speed steps • 10–40 px/s for smooth PAL 25 FPS','Koraci brzine • 10–40 px/s za 25 FPS')+'</small></label>'+
       '<label class="ticker-setting">'+lbl('Размер шрифта','Font size','Veličina fonta')+'<input id="tickerFontSize" type="number" min="12" max="96" value="32" style="width:100%"></label>'+
       '<label class="ticker-setting">'+lbl('Цвет текста','Text color','Boja teksta')+'<input id="tickerForeground" type="color" value="#ffffff" style="width:100%"></label>'+
       '<label class="ticker-setting">'+lbl('Цвет подложки','Background color','Boja podloge')+'<input id="tickerBackground" type="color" value="#000000" style="width:100%"></label>'+
@@ -9376,10 +9400,9 @@ async function openTickerModal() {
     ['tickerText','tickerSpeed','tickerSpeedSlider','tickerFontSize','tickerForeground','tickerBackground','tickerOpacity','tickerFont','tickerEnabled']
       .forEach(function(id){document.getElementById(id).addEventListener('input',function(){
         if(id==='tickerSpeedSlider')
-          document.getElementById('tickerSpeed').value=this.value;
+          tickerSetSpeed(tickerSpeedSteps[Math.max(0,Math.min(tickerSpeedSteps.length-1,Number(this.value)))]);
         if(id==='tickerSpeed')
-          document.getElementById('tickerSpeedSlider').value=
-            Math.max(5,Math.min(600,Number(this.value)||5));
+          tickerSetSpeed(this.value);
         tickerEditor.dirty=true;
         tickerPreviewUpdate();
       });});
@@ -9412,8 +9435,7 @@ function tickerSwitch(id) {
   document.getElementById('tickerEnabled').checked=entry.enabled!==false;
   val('tickerFont',entry.font_file||'');
   val('tickerFontSize',entry.font_size==null?32:entry.font_size);
-  val('tickerSpeed',entry.speed==null?40:entry.speed);
-  val('tickerSpeedSlider',Math.max(5,Math.min(600,entry.speed==null?40:entry.speed)));
+  tickerSetSpeed(entry.speed==null?40:entry.speed);
   val('tickerForeground',entry.foreground||'#ffffff');
   val('tickerBackground',entry.background||'#000000');
   val('tickerOpacity',entry.background_opacity==null?70:entry.background_opacity);
@@ -9462,7 +9484,8 @@ function tickerPreviewUpdate() {
   document.getElementById('tickerOpacityValue').textContent=Math.round(opacity*100)+'%';
   document.getElementById('tickerSpeedHint').textContent=
     speed+' '+tickerWord('пикс./с','px/s')+' • '+
-    tickerWord('рекомендуется 15–50 для плавности','15–50 recommended for smooth motion');
+    (speed/25).toFixed(2)+' '+tickerWord('пикс./кадр при 25 FPS','px/frame at 25 FPS')+
+    ' • '+tickerWord('10–40 рекомендуется','10–40 recommended','preporuka 10–40');
 }
 function tickerAddInterval(windowValue) {
   const v=windowValue && windowValue.days?windowValue:
