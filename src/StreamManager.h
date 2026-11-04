@@ -436,6 +436,7 @@ private:
         bool backupActive = false;
         bool switching = false;
         unsigned healthyChecks = 0;
+        std::chrono::steady_clock::time_point firstStartedAt{};
         std::chrono::steady_clock::time_point nextProbe{};
     };
     std::mutex failoverMutex;
