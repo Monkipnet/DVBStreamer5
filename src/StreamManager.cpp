@@ -2235,6 +2235,10 @@ bool StreamManager::stopStream(const std::string& id) {
     // transponder reader. The last subscriber closes dvr0 and the demux filter.
     if (state->nativeRelay) state->nativeRelay->stop();
     sharedDvbInputs.unsubscribe(id);
+    // V347: the monitor can sample nativeSrtOutputs while the old relay
+    // winds down. Join it before moving those unique_ptrs into the parked
+    // failover socket pool, avoiding a concurrent vector move/read race.
+    if (state->monitorThread.joinable()) state->monitorThread.join();
     if (state->nativePreviewTranscoder) {
         state->nativePreviewTranscoder->reset();
     }
