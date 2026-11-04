@@ -918,7 +918,10 @@ void NativeUdpRelay::run() {
                 (std::min)(requestedObserverBufferMs, observerSafeBufferMs);
             const auto observerStartupBuffer =
                 std::chrono::milliseconds(observerStartupMs);
-            observedCbrWorker = std::thread([&] {
+            // Capture the delay by value: the setup block ends before the
+            // observer thread's lifetime. All other referenced objects live
+            // until this thread is joined by run().
+            observedCbrWorker = std::thread([&, observerStartupBuffer] {
                 bool startupBuffered = observerStartupBuffer.count() == 0;
                 auto firstReadyAt = std::chrono::steady_clock::time_point{};
                 while (true) {
