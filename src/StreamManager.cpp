@@ -18,6 +18,7 @@
 #include "RestartScheduleClock.h"
 #include "media/NativeTsDemux.h"
 #include "media/HlsSegmentSettings.h"
+#include "media/OnDemandHlsStartupPolicy.h"
 
 #include <algorithm>
 #include <array>
@@ -2228,8 +2229,27 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
     if (toLower(cfg.activationMode) != "ondemand") return true;
 
     std::lock_guard<std::mutex> demandLock(onDemandMutex);
-    onDemandLastActivity[id] = std::chrono::steady_clock::now();
-    if (isStreamActive(id)) return true;
+    const auto now = std::chrono::steady_clock::now();
+    onDemandLastActivity[id] = now;
+    const bool activeAlready = isStreamActive(id);
+    if (!activeAlready) {
+        // A fresh generation must never inherit the prior player's HLS state.
+        onDemandHlsStartupAt.erase(id);
+        onDemandHlsFirstMediaServed.erase(id);
+    }
+    if (source == "hls" && cfg.transcodeEnabled &&
+        !onDemandHlsFirstMediaServed.count(id) &&
+        !onDemandHlsStartupAt.count(id) &&
+        (!activeAlready || onDemandStartedStreams.count(id))) {
+        onDemandHlsStartupAt[id] = now;
+        std::cerr << "ONDEMAND HLS STARTUP GRACE"
+                  << " stream=" << id
+                  << " grace_s="
+                  << dvbstreamer5::media::ondemand::kHlsColdStartGrace.count()
+                  << " condition=until_first_media_fetch"
+                  << std::endl;
+    }
+    if (activeAlready) return true;
 
     std::string startError;
     if (!startStream(cfg, &startError)) {
@@ -2238,6 +2258,7 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
         if (error) *error = startError.empty() ? "failed to start on-demand stream" : startError;
         std::cerr << "ONDEMAND ACTIVATE FAILED stream=" << id
                   << " source=" << source << std::endl;
+        onDemandHlsStartupAt.erase(id);
         return false;
     }
     onDemandStartedStreams.insert(id);
@@ -2246,6 +2267,24 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
               << " ca=" << (cfg.conditionalAccessClient.empty() ? "fta" : "managed")
               << std::endl;
     return true;
+}
+
+void StreamManager::markOnDemandHlsFirstMedia(const std::string& id) {
+    if (id.empty()) return;
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(onDemandMutex);
+    const auto startup = onDemandHlsStartupAt.find(id);
+    if (startup == onDemandHlsStartupAt.end()) return;
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now - startup->second).count();
+    onDemandHlsFirstMediaServed.insert(id);
+    onDemandHlsStartupAt.erase(startup);
+    onDemandLastActivity[id] = now;
+    std::cerr << "ONDEMAND HLS FIRST MEDIA"
+              << " stream=" << id
+              << " elapsed_ms=" << elapsedMs
+              << " action=restore_normal_30s_idle"
+              << std::endl;
 }
 
 void StreamManager::configureRestartSchedule() {
@@ -2340,6 +2379,8 @@ void StreamManager::monitorOnDemandStreams() {
             }
             if (!stillOnDemand) {
                 onDemandLastActivity.erase(id);
+                onDemandHlsStartupAt.erase(id);
+                onDemandHlsFirstMediaServed.erase(id);
                 it = onDemandStartedStreams.erase(it);
                 continue;
             }
@@ -2358,16 +2399,35 @@ void StreamManager::monitorOnDemandStreams() {
             const auto activity = onDemandLastActivity.find(id);
             const bool recentActivity = activity != onDemandLastActivity.end() &&
                 now - activity->second < kIdleGrace;
-            if (hasHttpClient || recentActivity) {
+            // V340: HLS has no persistent TCP connection while waiting for
+            // its first IDR-aligned segment. The player may stop retrying
+            // 503s before media is ready, then the normal 30-s inactivity
+            // check would tear down the transcoder before it can warm up.
+            // Retain the stream for at most 120 s from its FIRST HLS request,
+            // ending the grace immediately after the first .ts/.m4s fetch.
+            const auto hlsStartup = onDemandHlsStartupAt.find(id);
+            const bool pendingFirstHlsMedia =
+                hlsStartup != onDemandHlsStartupAt.end() &&
+                dvbstreamer5::media::ondemand::keepTranscodedHlsOnDemandStarting(
+                    hlsStartup->second, now,
+                    onDemandHlsFirstMediaServed.count(id) != 0);
+            if (hasHttpClient || recentActivity || pendingFirstHlsMedia) {
                 ++it;
                 continue;
             }
 
+            const bool hlsStartupExpired =
+                hlsStartup != onDemandHlsStartupAt.end() &&
+                onDemandHlsFirstMediaServed.count(id) == 0;
             it = onDemandStartedStreams.erase(it);
             onDemandLastActivity.erase(id);
+            onDemandHlsStartupAt.erase(id);
+            onDemandHlsFirstMediaServed.erase(id);
             if (isStreamActive(id)) {
                 std::cerr << "ONDEMAND DEACTIVATE stream=" << id
-                          << " reason=no-clients idle_s=30" << std::endl;
+                          << " reason=no-clients idle_s=30"
+                          << " hls_startup_expired=" << (hlsStartupExpired ? 1 : 0)
+                          << std::endl;
                 stopStream(id);
             }
         }
