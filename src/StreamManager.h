@@ -437,6 +437,10 @@ private:
         dvbstreamer5::media::network::NativePreviewHub>> failoverHttpHubs;
     std::map<std::string, std::shared_ptr<
         dvbstreamer5::media::srt::NativeSrtSwitchClock>> failoverOutputClocks;
+    // Primary program metadata retained across automatic source switches.
+    std::map<std::string, std::shared_ptr<
+        dvbstreamer5::media::mpegts::NativeFailoverProgramIdentity>>
+        failoverPrimaryPrograms;
     // V349: keep the same live playlist, media sequence, encryption key and
     // segmenter across primary/backup source changes. Cleared on manual Stop.
     std::map<std::string, std::shared_ptr<

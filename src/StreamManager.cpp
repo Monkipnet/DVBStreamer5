@@ -1210,6 +1210,15 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.streamId = streamConfig.id;
     if (configuredFailover) {
         std::lock_guard<std::mutex> lock(managerMutex);
+        auto& saved = failoverPrimaryPrograms[streamConfig.id];
+        if (!saved)
+            saved = std::make_shared<
+                dvbstreamer5::media::mpegts::NativeFailoverProgramIdentity>();
+        relay.primaryProgramIdentity = saved;
+        relay.capturePrimaryProgram = !state->usingBackup;
+    }
+    if (configuredFailover) {
+        std::lock_guard<std::mutex> lock(managerMutex);
         auto& clock = failoverOutputClocks[streamConfig.id];
         if (!clock)
             clock = std::make_shared<
@@ -1402,6 +1411,52 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.remapConfig.preserveSourceServiceId = !streamConfig.remapEnabled;
         relay.remapConfig.serviceName = streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
         relay.remapConfig.serviceProvider = streamConfig.serviceProvider;
+    }
+
+    // Only backup source metadata is rewritten. Primary TS remains unchanged.
+    // The backup's SID/PMT/media PIDs and SDT name may be unrelated to
+    // the original tile; keep the original output identity for existing players.
+    if (state->usingBackup && configuredFailover) {
+        const auto primary = relay.primaryProgramIdentity
+            ? relay.primaryProgramIdentity->snapshot()
+            : dvbstreamer5::media::mpegts::NativeFailoverProgramSnapshot{};
+        const auto validPid = [](std::uint32_t p) {
+            return p >= 0x20U && p < 0x1fffU;
+        };
+        const std::uint32_t preferredSid = streamConfig.remapEnabled
+            ? streamConfig.serviceId
+            : (streamConfig.inputServiceId ? streamConfig.inputServiceId
+                                           : streamConfig.serviceId);
+        const std::uint16_t outputSid = primary.serviceId
+            ? primary.serviceId
+            : static_cast<std::uint16_t>(
+                preferredSid >= 1U && preferredSid <= 0xffffU ? preferredSid : 1U);
+        relay.remapEnabled = true;
+        relay.remapConfig.inputServiceId = 0; // backup program auto-select
+        relay.remapConfig.inputAudioPid = 0;   // backup audio PID independent
+        relay.remapConfig.outputServiceId = outputSid;
+        relay.remapConfig.preserveSourceServiceId = false;
+        relay.remapConfig.outputPmtPid = primary.hasProgram()
+            ? primary.pmtPid : 0;
+        relay.remapConfig.outputVideoPid = primary.videoPid
+            ? primary.videoPid
+            : (streamConfig.remapEnabled && validPid(streamConfig.videoPid)
+               ? static_cast<std::uint16_t>(streamConfig.videoPid) : 0);
+        relay.remapConfig.outputAudioPid = primary.audioPid
+            ? primary.audioPid
+            : (streamConfig.remapEnabled && validPid(streamConfig.audioPid)
+               ? static_cast<std::uint16_t>(streamConfig.audioPid) : 0);
+        relay.remapConfig.serviceName =
+            streamConfig.serviceName.empty() ? streamConfig.name : streamConfig.serviceName;
+        relay.remapConfig.serviceProvider = streamConfig.serviceProvider;
+        std::cerr << "NATIVE BACKUP SERVICE IDENTITY"
+                  << " stream_id=" << streamConfig.id
+                  << " name=" << relay.remapConfig.serviceName
+                  << " primary_sid=" << outputSid
+                  << " primary_pmt_pid=" << relay.remapConfig.outputPmtPid
+                  << " primary_video_pid=" << relay.remapConfig.outputVideoPid
+                  << " primary_audio_pid=" << relay.remapConfig.outputAudioPid
+                  << " input_sid=auto" << std::endl;
     }
 
     std::shared_ptr<SharedDvbServicePrefilter> sharedDvbPrefilter;
@@ -2390,6 +2445,7 @@ bool StreamManager::stopStream(const std::string& id) {
         std::lock_guard<std::mutex> lock(managerMutex);
         failoverHttpHubs.erase(id);
         failoverOutputClocks.erase(id);
+        failoverPrimaryPrograms.erase(id);
         failoverHlsOutputs.erase(id);
         failoverCmafOutputs.erase(id);
         failoverHlsAbrOutputs.erase(id);

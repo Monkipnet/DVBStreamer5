@@ -141,8 +141,12 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     };
     if (!validOutputPid(config.outputVideoPid) ||
         !validOutputPid(config.outputAudioPid) ||
+        !validOutputPid(config.outputPmtPid) ||
         !validOutputPid(config.inputAudioPid) ||
-        (config.outputVideoPid != 0 && config.outputVideoPid == config.outputAudioPid)) {
+        (config.outputVideoPid != 0 && config.outputVideoPid == config.outputAudioPid) ||
+        (config.outputPmtPid != 0 &&
+         (config.outputPmtPid == config.outputVideoPid ||
+          config.outputPmtPid == config.outputAudioPid))) {
         error = "native remap output PIDs must be distinct values from 32 to 8190";
         return false;
     }
@@ -688,7 +692,8 @@ void Remapper::emitPeriodicPsi(std::vector<Packet>& output) {
         patOutputContinuity_ =
             static_cast<std::uint8_t>((patOutputContinuity_ + 1U) & 0x0fU);
         packetizeSection(
-            pmtPid_, pmtOutputSection_, pmtOutputContinuity_, output);
+            config_.outputPmtPid ? config_.outputPmtPid : pmtPid_,
+            pmtOutputSection_, pmtOutputContinuity_, output);
         nextPatPmtAt_ = now + kPatPmtInterval;
     }
 
@@ -728,8 +733,10 @@ Packet Remapper::makePat(std::uint8_t continuity) const {
     section[7] = 0;
     section[8] = static_cast<std::uint8_t>(config_.outputServiceId >> 8);
     section[9] = static_cast<std::uint8_t>(config_.outputServiceId);
-    section[10] = static_cast<std::uint8_t>(0xe0U | ((pmtPid_ >> 8) & 0x1fU));
-    section[11] = static_cast<std::uint8_t>(pmtPid_);
+    const std::uint16_t pmtOut = config_.outputPmtPid
+        ? config_.outputPmtPid : pmtPid_;
+    section[10] = static_cast<std::uint8_t>(0xe0U | ((pmtOut >> 8) & 0x1fU));
+    section[11] = static_cast<std::uint8_t>(pmtOut);
     writeCrc(section, 16);
     return packet;
 }

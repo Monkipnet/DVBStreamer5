@@ -1758,6 +1758,9 @@ void NativeUdpRelay::run() {
             for (auto& packet : packets)
                 config_.outputSwitchClock->apply(packet.data(), packet.size());
         }
+        if (!packets.empty() && config_.capturePrimaryProgram &&
+            config_.primaryProgramIdentity)
+            config_.primaryProgramIdentity->observe(packets);
         if (!packets.empty()) {
             // Count the real MPEG-TS payload produced by the pipeline before
             // CBR null-packet stuffing and before duplicating it to outputs.

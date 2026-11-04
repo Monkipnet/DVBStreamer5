@@ -5,6 +5,7 @@
 #include "media/MpegTsRemapper.h"
 #include "media/NativePreviewHub.h"
 #include "media/NativeSrtSwitchClock.h"
+#include "media/NativeFailoverProgramIdentity.h"
 #include "media/UdpSocket.h"
 
 #include <algorithm>
@@ -94,6 +95,9 @@ struct NativeUdpRelayConfig {
     std::string streamId;  // diagnostic identity; never included in transport
     // Applied post-remap/post-transform before all output protocols.
     std::shared_ptr<dvbstreamer5::media::srt::NativeSrtSwitchClock> outputSwitchClock;
+    std::shared_ptr<dvbstreamer5::media::mpegts::NativeFailoverProgramIdentity>
+        primaryProgramIdentity;
+    bool capturePrimaryProgram = false;
     std::string inputUri;
     bool externallyFedInput = false;
     bool httpTsInputJitterEnabled = false;
