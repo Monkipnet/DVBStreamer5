@@ -1517,7 +1517,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     std::vector<dvbstreamer5::media::rtmp::NativeRtmpOutput*> rtmpOutputs; for (auto& output : state->nativeRtmpOutputs) rtmpOutputs.push_back(output.get());
     const std::string streamId = streamConfig.id;
     StreamState* outputStatsState = state.get();
-    relay.observeTransport = [httpHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState, outputMediaMonitor](const uint8_t* data, std::size_t size) {
+    const auto hlsPushFailureReported = std::make_shared<std::atomic<bool>>(false);
+    relay.observeTransport = [httpHub, hlsSegmenter, cmafSegmenter, mpts, srtOutputs, rtspOutputs, rtmpOutputs, streamId, outputStatsState, outputMediaMonitor, hlsPushFailureReported](const uint8_t* data, std::size_t size) {
         // Passive output PMT capture: the editor displays actual emitted codecs,
         // including native decoder fallback and audio copy, not a guess from settings.
         if (outputMediaMonitor) outputMediaMonitor->observe(data,size);
@@ -1576,17 +1577,25 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             outputStatsState->outputTsClearPesStarts.fetch_add(
                 clearPesStarts, std::memory_order_relaxed);
         }
-        if (hlsSegmenter) hlsSegmenter->push(data, size);
-        if (cmafSegmenter) cmafSegmenter->push(data, size);
+        // V337: feed network transports first. MPEG-TS HLS segment rotation
+        // closes files, encrypts them and atomically replaces the manifest;
+        // this disk I/O must not hold up a live HTTP/SRT output fan-out.
+        // The bytes and order for every individual output remain unchanged.
         for (auto* output : srtOutputs) if (output) output->push(data, size);
         for (auto* output : rtspOutputs) if (output) output->push(data, size);
         for (auto* output : rtmpOutputs) if (output) output->push(data, size);
         // Normal HTTP MPEG-TS clients consume the finished production transport.
-        // Browser preview is fed earlier from the post-remap/post-CA input tap:
-        // compatible H.264/AAC goes straight to the browser, while unsupported
-        // codecs use the lazy H.264/AAC preview transcoder.
+        // Browser preview is fed earlier from the post-remap/post-CA input tap.
         if (httpHub) httpHub->publish(data, size);
         if (mpts) mpts->pushBytes(streamId, data, size);
+        if (hlsSegmenter && !hlsSegmenter->push(data, size) &&
+            !hlsPushFailureReported->exchange(true, std::memory_order_relaxed)) {
+            std::cerr << "NATIVE HLS OUTPUT FAILED"
+                      << " stream_id=" << streamId
+                      << " error=" << hlsSegmenter->lastError()
+                      << std::endl;
+        }
+        if (cmafSegmenter) cmafSegmenter->push(data, size);
     };
 
     if (state->nativeHlsSegmenter) {
