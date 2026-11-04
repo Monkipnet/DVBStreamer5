@@ -6,6 +6,7 @@
 #include "media/WisiCbrOutputWorker.h"
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
+#include "media/NativeFileLoopClock.h"
 
 #include <algorithm>
 #include <array>
@@ -290,15 +291,6 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     }
     if (config_.remapEnabled &&
         !remapper_.initialize(config_.remapConfig, error)) {
-        return false;
-    }
-    if (fileInputSource_ &&
-        std::any_of(config_.outputs.begin(), config_.outputs.end(),
-            [](const NativeUdpRelayOutputConfig& output) {
-                return output.outputType != "udp-cbr";
-            })) {
-        fileInputSource_ = false;
-        error = "native file input currently supports only UDP CBR outputs";
         return false;
     }
     for (const auto& output : config_.outputs) {
