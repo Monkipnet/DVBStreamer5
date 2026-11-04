@@ -48,6 +48,8 @@ public:
     bool isRunning() const noexcept;
     std::string lastError() const;
     std::uint64_t segmentCount() const noexcept;
+    // Total bytes of finalized on-disk .ts segments, not source TS input.
+    std::uint64_t completedMediaBytes() const noexcept;
 
 private:
     struct SegmentInfo {
@@ -94,6 +96,7 @@ private:
     bool hasH26xVideo_ = false;
     std::uint64_t nextSequence_ = 0;
     std::uint64_t completedSegments_ = 0;
+    std::uint64_t completedMediaBytes_ = 0;
     // V340: bounded, read-only cold-start diagnostics. No media timing changes.
     std::chrono::steady_clock::time_point startupReportAt_{};
     std::uint64_t startupReceivedPackets_ = 0;
