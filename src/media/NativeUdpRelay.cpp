@@ -2,6 +2,7 @@
 
 #include "NativeHttpClient.h"
 #include "media/CbrTsPacer.h"
+#include "media/IpCbrSourceClockPolicy.h"
 #include "media/WisiCbrOutputWorker.h"
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
@@ -827,11 +828,13 @@ void NativeUdpRelay::run() {
                     std::make_unique<dvbstreamer5::media::network::WisiCbrOutputWorker>(
                         output.socket,
                         index,
-                        config_.wisiPreserveSourcePcr &&
-                            config_.targetBitrate % 1000ULL == 0ULL
-                            ? config_.targetBitrate +
-                                (config_.wisiSourcePcrStrict ? 777ULL : 809ULL)
-                            : config_.targetBitrate,
+                        config_.wisiSourcePcrStrict
+                            ? sourcePcrCbrTargetKeepingStartupBuffer(
+                                  config_.targetBitrate)
+                            : (config_.wisiPreserveSourcePcr &&
+                               config_.targetBitrate % 1000ULL == 0ULL
+                               ? config_.targetBitrate + 809ULL
+                               : config_.targetBitrate),
                         &outputBytes_,
                         &running_,
                         std::move(observer),
