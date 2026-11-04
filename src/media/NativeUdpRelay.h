@@ -140,6 +140,10 @@ struct NativeUdpRelayConfig {
     // Pace observeTransport consumers (SRT/RTSP/RTMP/HLS/HTTP) at the
     // configured CBR instead of delivering mux bursts immediately.
     bool paceObservedTransport = false;
+    // V336: native transcoder feeds this relay. The observer-only CBR path
+    // uses a bounded start reservoir for bursty encoded frames; UDP-CBR
+    // already has its own startup buffer and is not changed.
+    bool transcodedTransport = false;
     // Existing opt-in for transcoded WISI output; also enabled by the exact
     // V333 HTTP/SRT passthrough test stream ID when requested.
     bool wisiPreserveSourcePcr = false;
