@@ -412,7 +412,16 @@ bool TickerOverlay::draw(const std::string& streamId,codec::RawVideoFrame& frame
                 constexpr std::uint64_t kPtsMask=(1ULL<<33U)-1ULL;
                 const std::uint64_t delta=(frame.pts90k-motion.lastPts90k)&kPtsMask;
                 if(delta==0)deltaSeconds=0.0;
-                else if(delta<=22500U)deltaSeconds=static_cast<double>(delta)/90000.0;
+                else if(delta<=22500U) {
+                    // V332: preserve true PTS velocity for normal 25/50-fps
+                    // cadence, but cap a one-off late PTS jump to 1.5 output
+                    // frames. It avoids an eye-catching text teleport after
+                    // brief input jitter without changing video PTS or FPS.
+                    // Fractional positions remain subpixel-interpolated below.
+                    deltaSeconds=std::min(
+                        static_cast<double>(delta)/90000.0,
+                        fallbackStep*1.5);
+                }
                 // Discontinuities >250ms do not have drawable intermediate
                 // frames, so never skip a large visible portion of the text.
             }
