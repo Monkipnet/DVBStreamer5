@@ -52,6 +52,11 @@ private:
         std::size_t expected = 0;
         std::uint8_t continuity = 0;
         bool continuityValid = false;
+        // The same CC may legitimately restart on primary/backup switch.
+        // Discard only byte-for-byte duplicate PSI packets, not a new PMT
+        // with a changed audio/video stream layout and a restarted CC.
+        Packet lastPacket {};
+        bool lastPacketValid = false;
     };
 
     bool collectSections(

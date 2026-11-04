@@ -203,9 +203,15 @@ bool Remapper::collectSections(
         const std::uint8_t expected =
             static_cast<std::uint8_t>((state.continuity + 1U) & 0x0fU);
         if (info.continuityCounter == state.continuity) {
-            // Duplicate PSI packet. Keep the existing partial section and do
-            // not append the same bytes twice.
-            return true;
+            // V361: after an upstream primary/backup restart, PAT/PMT can
+            // reuse the previous CC even though the service's ES list changed.
+            // Skipping that DIFFERENT packet leaves the old PMT cached and
+            // prevents downstream audio restoration. Ignore ONLY identical
+            // retransmissions. Treat same-CC changed PSI as a new generation.
+            if (state.lastPacketValid && input == state.lastPacket)
+                return true;
+            state.bytes.clear();
+            state.expected = 0;
         }
         if (info.continuityCounter != expected) {
             // A lost PSI packet invalidates only the partial table. The next
@@ -216,6 +222,8 @@ bool Remapper::collectSections(
     }
     state.continuity = info.continuityCounter;
     state.continuityValid = true;
+    state.lastPacket = input;
+    state.lastPacketValid = true;
 
     const std::uint8_t* payload = input.data() + info.payloadOffset;
     std::size_t size = kPacketSize - info.payloadOffset;
