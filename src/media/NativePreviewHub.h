@@ -27,6 +27,8 @@ public:
     void publish(const std::uint8_t* data, std::size_t size);
     std::size_t subscriberCount();
     void close();
+    // Keep subscribers open, but discard old media queued by slow consumers.
+    void flushPending();
 
 private:
     std::mutex mutex_;

@@ -431,6 +431,12 @@ private:
         std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector>>> dormantEpg_;
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
+    // V348: the same public HTTP hub/client socket and TS clock survive
+    // automatic primary/backup switching. Clean up on explicit Stop/Restart.
+    std::map<std::string, std::shared_ptr<
+        dvbstreamer5::media::network::NativePreviewHub>> failoverHttpHubs;
+    std::map<std::string, std::shared_ptr<
+        dvbstreamer5::media::srt::NativeSrtSwitchClock>> failoverOutputClocks;
     // V346: keep the same SRT sockets/peers through automatic input failover.
     // Protected by managerMutex; never stop/destroy outputs while holding it.
     std::map<std::string, std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>>>

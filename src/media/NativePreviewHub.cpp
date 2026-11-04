@@ -194,6 +194,19 @@ void NativePreviewHub::publish(const std::uint8_t* data, std::size_t size) {
 #endif
 }
 
+void NativePreviewHub::flushPending() {
+#if !defined(_WIN32)
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (closed_) return;
+    for (auto& [fd, client] : subscribers_) {
+        (void)fd;
+        client.pending.clear();
+        client.pendingBytes = 0;
+        client.backlogWarningLogged = false;
+    }
+#endif
+}
+
 std::size_t NativePreviewHub::subscriberCount() {
     std::lock_guard<std::mutex> lock(mutex_);
     return closed_ ? 0U : subscribers_.size();

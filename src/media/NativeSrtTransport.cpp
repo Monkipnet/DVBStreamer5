@@ -318,15 +318,15 @@ void NativeSrtOutput::enableFailoverClock() {
     std::lock_guard<std::mutex> lock(queueMutex_);
     failoverClockEnabled_ = true;
 }
-void NativeSrtOutput::sourceSwitched() {
+void NativeSrtOutput::sourceSwitched(bool outputNormalizedUpstream) {
     std::lock_guard<std::mutex> lock(queueMutex_);
-    failoverClockEnabled_ = true;
+    failoverClockEnabled_ = !outputNormalizedUpstream;
     const auto discarded = queuedBytes_;
-    for (const auto& packet : queue_) (void)packet;
     queue_.clear();
     queuedBytes_ = 0;
     droppedBytes_.fetch_add(discarded, std::memory_order_relaxed);
-    failoverClock_.sourceSwitched();
+    if (!outputNormalizedUpstream)
+        failoverClock_.sourceSwitched();
     sourceGeneration_.fetch_add(1, std::memory_order_release);
     queueCondition_.notify_all();
     std::cerr << "NATIVE SRT SOURCE SWITCH port=" << config_.port

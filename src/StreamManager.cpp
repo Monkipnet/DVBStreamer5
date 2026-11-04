@@ -662,7 +662,28 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (it != failoverEntries.end() && it->second.switching)
             state->usingBackup = it->second.backupActive;
     }
-    state->nativeHttpHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
+    // V348: reuse one public HTTP MPEG-TS hub across input transitions.
+    // Private preview keeps its own fresh, per-source hub.
+    const bool configuredFailover = !streamConfig.backupInputUri.empty() &&
+        streamConfig.backupInputUri != streamConfig.inputUri;
+    bool automaticSourceSwitch = false;
+    {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        const auto it = failoverEntries.find(streamConfig.id);
+        automaticSourceSwitch =
+            it != failoverEntries.end() && it->second.switching;
+    }
+    if (configuredFailover) {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        auto& hub = failoverHttpHubs[streamConfig.id];
+        if (!hub)
+            hub = std::make_shared<
+                dvbstreamer5::media::network::NativePreviewHub>();
+        state->nativeHttpHub = hub;
+    } else {
+        state->nativeHttpHub = std::make_shared<
+            dvbstreamer5::media::network::NativePreviewHub>();
+    }
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
     state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
 
@@ -1055,7 +1076,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     obsoleteFailoverSrt.clear();
     if (reusedFailoverSrt) {
         for (auto& output : state->nativeSrtOutputs)
-            output->sourceSwitched();
+            output->sourceSwitched(true);
         std::cerr << "NATIVE SRT FAILOVER PRESERVE"
                   << " stream_id=" << streamConfig.id
                   << " outputs=" << state->nativeSrtOutputs.size()
@@ -1121,9 +1142,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             if (error) *error = srtError.empty() ? "native SRT output failed" : srtError;
             return false;
         }
-        if (!streamConfig.backupInputUri.empty() &&
-            streamConfig.backupInputUri != streamConfig.inputUri)
-            output->enableFailoverClock();
+        // The shared relay now normalizes MPEG-TS before every output;
+        // do not apply a second SRT-only clock transformation.
         state->nativeSrtOutputs.push_back(std::move(output));
     }
     for (const auto& spec : rtspOutputSpecs) {
@@ -1155,6 +1175,22 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
     dvbstreamer5::media::network::NativeUdpRelayConfig relay;
     relay.streamId = streamConfig.id;
+    if (configuredFailover) {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        auto& clock = failoverOutputClocks[streamConfig.id];
+        if (!clock)
+            clock = std::make_shared<
+                dvbstreamer5::media::srt::NativeSrtSwitchClock>();
+        if (automaticSourceSwitch) {
+            clock->sourceSwitched();
+            std::cerr << "NATIVE OUTPUT TS SOURCE SWITCH"
+                      << " stream_id=" << streamConfig.id
+                      << " transitions=" << clock->transitions()
+                      << " outputs=udp,http,srt,hls,cmaf"
+                      << std::endl;
+        }
+        relay.outputSwitchClock = clock;
+    }
     relay.inputUri = testInput ? "external://test" : (hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput))));
     relay.externallyFedInput = testInput || hlsInput || srtInput || rtspInput || rtmpInput;
     relay.httpTsInputJitterEnabled = streamConfig.httpTsInputJitterEnabled;
@@ -2202,9 +2238,12 @@ bool StreamManager::restartStream(const StreamConfig& cfg, std::string* error) {
 }
 
 bool StreamManager::stopStream(const std::string& id) {
+    bool automaticFailoverTransition = false;
     {
         std::lock_guard<std::mutex> lock(failoverMutex);
         const auto it = failoverEntries.find(id);
+        automaticFailoverTransition =
+            it != failoverEntries.end() && it->second.switching;
         if (it != failoverEntries.end() && !it->second.switching)
             failoverEntries.erase(it);
     }
@@ -2217,6 +2256,10 @@ bool StreamManager::stopStream(const std::string& id) {
         streams.erase(it);
         for (const auto& [fd, session] : httpClients) {
             if (session.streamId == id) {
+                // Keep public HTTP TS playback on the original TCP socket.
+                // Browser preview belongs to the old input generation.
+                if (automaticFailoverTransition && session.previewSession.empty())
+                    continue;
                 ::shutdown(fd, SHUT_RDWR);
                 if (session.upstreamFd >= 0) ::shutdown(session.upstreamFd, SHUT_RDWR);
             }
@@ -2224,7 +2267,17 @@ bool StreamManager::stopStream(const std::string& id) {
     }
     state->monitorStop.store(true);
     state->testPatternStop.store(true);
-    if (state->nativeHttpHub) state->nativeHttpHub->close();
+    if (state->nativeHttpHub) {
+        if (automaticFailoverTransition) {
+            state->nativeHttpHub->flushPending();
+            std::cerr << "NATIVE HTTP FAILOVER PRESERVE"
+                      << " stream_id=" << id
+                      << " action=retain_tcp_sessions"
+                      << std::endl;
+        } else {
+            state->nativeHttpHub->close();
+        }
+    }
     if (state->nativePreviewHub) state->nativePreviewHub->close();
     if (state->nativeHlsInput) state->nativeHlsInput->stop();
     if (state->nativeSrtInput) state->nativeSrtInput->stop();
@@ -2253,13 +2306,6 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->testPatternThread.joinable()) state->testPatternThread.join();
     // Automatic input transitions must NOT disconnect the SRT player. Once
     // the relay is stopped, park its output workers before destroying state.
-    bool automaticFailoverTransition = false;
-    {
-        std::lock_guard<std::mutex> lock(failoverMutex);
-        const auto it = failoverEntries.find(id);
-        automaticFailoverTransition =
-            it != failoverEntries.end() && it->second.switching;
-    }
     if (automaticFailoverTransition && !state->nativeSrtOutputs.empty()) {
         std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>>
             replaced;
@@ -2283,6 +2329,11 @@ bool StreamManager::stopStream(const std::string& id) {
         if (variant && variant->segmenter) variant->segmenter->stop();
     }
     if (state->nativeCmafSegmenter) state->nativeCmafSegmenter->stop();
+    if (!automaticFailoverTransition) {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        failoverHttpHubs.erase(id);
+        failoverOutputClocks.erase(id);
+    }
     if (state->monitorThread.joinable()) state->monitorThread.join();
     // Persist the last complete EPG before this stopped/restarted/OnDemand
     // collector is destroyed. Never perform file I/O under managerMutex.

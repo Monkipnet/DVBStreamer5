@@ -1753,6 +1753,11 @@ void NativeUdpRelay::run() {
         if (!packets.empty() && config_.injectDvbEit)
             config_.injectDvbEit(packets);
 
+        if (!packets.empty() && config_.outputSwitchClock) {
+            // One timeline and consistent PID CC for UDP, SRT, HTTP and HLS.
+            for (auto& packet : packets)
+                config_.outputSwitchClock->apply(packet.data(), packet.size());
+        }
         if (!packets.empty()) {
             // Count the real MPEG-TS payload produced by the pipeline before
             // CBR null-packet stuffing and before duplicating it to outputs.

@@ -86,7 +86,7 @@ public:
     // Apply only to outputs with configured primary/backup failover.
     void enableFailoverClock();
     // Retain SRT sockets/clients while discarding old-source queued TS.
-    void sourceSwitched();
+    void sourceSwitched(bool outputNormalizedUpstream = false);
     void stop() noexcept;
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }

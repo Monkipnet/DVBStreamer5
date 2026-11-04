@@ -4,6 +4,7 @@
 #include "media/LinuxDvbInput.h"
 #include "media/MpegTsRemapper.h"
 #include "media/NativePreviewHub.h"
+#include "media/NativeSrtSwitchClock.h"
 #include "media/UdpSocket.h"
 
 #include <algorithm>
@@ -91,6 +92,8 @@ private:
 
 struct NativeUdpRelayConfig {
     std::string streamId;  // diagnostic identity; never included in transport
+    // Applied post-remap/post-transform before all output protocols.
+    std::shared_ptr<dvbstreamer5::media::srt::NativeSrtSwitchClock> outputSwitchClock;
     std::string inputUri;
     bool externallyFedInput = false;
     bool httpTsInputJitterEnabled = false;
