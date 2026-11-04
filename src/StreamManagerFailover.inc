@@ -159,7 +159,21 @@ bool StreamManager::primaryStreamHealthy(const StreamConfig& primary) {
             if(failoverMonitorStop.load(std::memory_order_acquire))break;
             std::size_t n=0;
             if(!probe.receive(packet.data(),packet.size(),n,300,error))break;
-            if(validTs(packet.data(),n)) return true;
+            if (startsWith(lower, "rtp://")) {
+                dvbstreamer5::media::rtp::PacketView rtp;
+                if (dvbstreamer5::media::rtp::parsePacket(
+                        packet.data(), n, rtp)) {
+                    std::vector<dvbstreamer5::media::mpegts::Packet> packets;
+                    if (dvbstreamer5::media::rtp::decodeMpegTsPayload(
+                            rtp, packets)) {
+                        for (const auto& ts : packets) {
+                            if (validTs(ts.data(), ts.size())) return true;
+                        }
+                    }
+                }
+            } else if (validTs(packet.data(), n)) {
+                return true;
+            }
         }
         return false;
     }
