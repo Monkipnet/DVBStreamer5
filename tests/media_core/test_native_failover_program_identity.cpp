@@ -178,6 +178,27 @@ int main() {
         const int restoredVersion=currentPmtVersion(downstreamRestored);
         check(restoredVersion>=0 && restoredVersion!=backupVersion,
               "downstream PMT version not advanced after audio restored");
+        // The downstream video decoder also needs an elementary PID
+        // discontinuity, not only a PMT version change. Assert the marker
+        // comes before the first restored video payload and is TS-valid.
+        bool sawVideoMarker=false;
+        bool firstVideoPayloadAfterMarker=false;
+        for (const auto& ts : downstreamRestored) {
+            if (pidOf(ts) != 0x0400) continue;
+            PacketInfo info{};
+            check(inspectPacket(ts.data(),ts.size(),info),
+                  "invalid video TS packet after downstream failback");
+            if (!info.hasPayload && info.discontinuity) {
+                sawVideoMarker = true;
+                continue;
+            }
+            if (info.hasPayload && sawVideoMarker) {
+                firstVideoPayloadAfterMarker = true;
+                break;
+            }
+        }
+        check(sawVideoMarker && firstVideoPayloadAfterMarker,
+              "missing video discontinuity before restored primary PES");
         NativeFailoverProgramIdentity restoredIdentity;
         restoredIdentity.observe(downstreamRestored);
         const auto restored=restoredIdentity.snapshot();

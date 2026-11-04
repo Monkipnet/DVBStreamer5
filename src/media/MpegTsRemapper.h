@@ -95,6 +95,12 @@ private:
     std::uint16_t pmtPid_ = 0x1fff;
     std::uint16_t inputVideoPid_ = 0;
     std::uint16_t inputAudioPid_ = 0;
+    // A changed upstream PMT may preserve PID numbers while switching codecs
+    // or removing audio. Mark the first payload of each new media generation
+    // with a TS adaptation-only discontinuity packet so live VLC decoders
+    // flush their stale elementary stream references without reconnecting.
+    std::uint16_t pendingVideoDiscontinuityInputPid_ = 0;
+    std::uint16_t pendingAudioDiscontinuityInputPid_ = 0;
     std::uint16_t transportStreamId_ = 1;
     std::uint16_t originalNetworkId_ = 1;
     std::uint8_t patOutputContinuity_ = 0;

@@ -156,6 +156,8 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     pmtPid_ = 0x1fff;
     inputVideoPid_ = 0;
     inputAudioPid_ = 0;
+    pendingVideoDiscontinuityInputPid_ = 0;
+    pendingAudioDiscontinuityInputPid_ = 0;
     excludedInputAudioPids_.fill(false);
     transportStreamId_ = 1;
     originalNetworkId_ = 1;
@@ -413,6 +415,8 @@ bool Remapper::processPatSection(
         pmtPid_ = selectedPmtPid;
         inputVideoPid_ = 0;
         inputAudioPid_ = 0;
+        pendingVideoDiscontinuityInputPid_ = 0;
+        pendingAudioDiscontinuityInputPid_ = 0;
         excludedInputAudioPids_.fill(false);
         pmtSection_ = {};
         pmtOutputSection_.clear();
@@ -697,6 +701,14 @@ bool Remapper::processPmtSection(
     if (inputAudioPid_ < inputAdmissionPids_.size()) {
         inputAdmissionPids_[inputAudioPid_] = true;
     }
+    // Dynamic SRT/IP relay PMT transitions are decoder generations, not
+    // merely a refreshed service listing. One discontinuity packet on the
+    // first video/audio PID of each new generation tells VLC to drop stale
+    // reference frames. The packet is emitted BEFORE that PID's next payload.
+    if (pmtChanged && remapReady_ && config_.allowMissingOutputMedia) {
+        pendingVideoDiscontinuityInputPid_ = inputVideo;
+        pendingAudioDiscontinuityInputPid_ = inputAudio;
+    }
     pmtOutputSection_ = std::move(section);
     const bool becameReady = !remapReady_;
     remapReady_ = true;
@@ -937,6 +949,30 @@ bool Remapper::processValidated(
     }
     if (info.pid != mappedPid) {
         rewritePid(packet.data(), packet.size(), mappedPid);
+    }
+    const bool videoGenerationStart =
+        pendingVideoDiscontinuityInputPid_ != 0 &&
+        info.pid == pendingVideoDiscontinuityInputPid_;
+    const bool audioGenerationStart =
+        pendingAudioDiscontinuityInputPid_ != 0 &&
+        info.pid == pendingAudioDiscontinuityInputPid_;
+    if (videoGenerationStart || audioGenerationStart) {
+        // adaptation_field_control=2, length=183, discontinuity_indicator=1.
+        // No payload is consumed or changed; the next PES payload stays intact.
+        // Use the preceding CC so the adaptation-only packet does not create
+        // a new continuity gap before the already-numbered media packet.
+        Packet marker{};
+        marker.fill(0xff);
+        marker[0] = kSyncByte;
+        marker[1] = static_cast<std::uint8_t>((mappedPid >> 8U) & 0x1fU);
+        marker[2] = static_cast<std::uint8_t>(mappedPid & 0xffU);
+        marker[3] = static_cast<std::uint8_t>(
+            0x20U | ((static_cast<unsigned>(input[3] & 0x0fU) + 15U) & 0x0fU));
+        marker[4] = 183U;
+        marker[5] = 0x80U;
+        output.push_back(std::move(marker));
+        if (videoGenerationStart) pendingVideoDiscontinuityInputPid_ = 0;
+        if (audioGenerationStart) pendingAudioDiscontinuityInputPid_ = 0;
     }
     output.push_back(std::move(packet));
     return true;
