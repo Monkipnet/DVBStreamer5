@@ -246,8 +246,18 @@ void StreamManager::monitorFailoverStreams() {
                       << " to=" << (restore?"primary":"backup")
                       << " cause=" << (restore?"media_probe_healthy_twice":"input_no_media_5s")
                       << std::endl;
+            // The transition itself is serialized against explicit user
+            // Stop/Restart, not merely its registry update. If Stop won this
+            // race, it removed the entry and we must never resurrect the tile.
+            std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+            {
+                std::lock_guard<std::mutex> lock(failoverMutex);
+                const auto it=failoverEntries.find(candidate.id);
+                if(it==failoverEntries.end() || !it->second.switching) continue;
+            }
+            stopStream(candidate.id);
             std::string error;
-            const bool ok=restartStream(next,&error);
+            const bool ok=startStream(next,&error);
             if(!ok){
                 std::cerr << "NATIVE INPUT FAILOVER FAILED"
                           << " stream_id=" << candidate.id
