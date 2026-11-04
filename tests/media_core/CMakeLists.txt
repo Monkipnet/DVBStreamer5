@@ -68,3 +68,8 @@ add_test(NAME transcode_cbr_single_shaper COMMAND transcode_cbr_single_shaper_te
 add_executable(ondemand_hls_startup_policy_test test_ondemand_hls_startup_policy.cpp)
 target_include_directories(ondemand_hls_startup_policy_test PRIVATE ../../src)
 add_test(NAME ondemand_hls_startup_policy COMMAND ondemand_hls_startup_policy_test)
+
+# V341: HLS-only passthrough vs network CBR mixed-output gating.
+add_executable(hls_only_cbr_routing_policy_test test_hls_only_cbr_routing_policy.cpp)
+target_include_directories(hls_only_cbr_routing_policy_test PRIVATE ../../src)
+add_test(NAME hls_only_cbr_routing_policy COMMAND hls_only_cbr_routing_policy_test)
