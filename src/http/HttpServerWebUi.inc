@@ -3296,6 +3296,7 @@ let caManagerState = {clients:[]};
 let streamActionBusy = new Set();
 let mptsState = {outputs:[]};
 let xmltvModalSources = [];
+let xmltvSavePending = false;
 let xmltvCatalog = [];
 let xmltvRefreshPollTimer = null;
 let xmltvRefreshPollToken = 0;
@@ -4390,7 +4391,7 @@ function renderXmltvModal() {
     uiBiText('+ Добавить XMLTV','Add XMLTV source') + '</button>' +
     '<button class="button-secondary" type="button" onclick="closeModal()">' +
     t('cancel') + '</button>' +
-    '<button class="button-primary" type="button" onclick="saveXmltvSources()">' +
+    '<button id="xmltvSaveButton" class="button-primary" type="button" onclick="saveXmltvSources()">' +
     t('save') + '</button></div>');
 }
 async function openXmltvModal() {
@@ -4466,11 +4467,29 @@ async function persistXmltvSources() {
   return result;
 }
 async function saveXmltvSources() {
+  // V332: a successful Save closes the XMLTV dialog. Keep unsaved fields
+  // visible on failure and prevent duplicate simultaneous POST requests.
+  if (xmltvSavePending) return;
   syncXmltvModalFields();
+  const button = document.getElementById('xmltvSaveButton');
+  xmltvSavePending = true;
+  if (button) {
+    button.disabled = true;
+    button.textContent = uiBiText('Сохранение…', 'Saving…');
+  }
   try {
     await persistXmltvSources();
-    await openXmltvModal();
-  } catch (error) { uiError(error?.message || error); }
+    // Do not close a different dialog if the user navigated away during POST.
+    if (button && button.isConnected) closeModal();
+  } catch (error) {
+    uiError(error?.message || error);
+  } finally {
+    xmltvSavePending = false;
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = t('save');
+    }
+  }
 }
 async function pollXmltvRefresh(sourceId, requestId, token, attempt=0) {
   if (token !== xmltvRefreshPollToken ||
