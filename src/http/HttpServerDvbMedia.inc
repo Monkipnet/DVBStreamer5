@@ -600,6 +600,14 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
     if (!endpointError && !clientIp.empty()) {
         streamManager.addStreamSession(id, clientIp, "hls");
     }
+    // V340: a successful media response (not merely a startup playlist)
+    // proves HLS playback has reached its first real segment. End the cold
+    // OnDemand grace; normal no-client inactivity applies from this point.
+    // No effect on HTTP MPEG-TS, other protocols or online HLS.
+    if (cfg->activationMode == "ondemand" &&
+        (filePath.extension() == ".ts" || filePath.extension() == ".m4s")) {
+        streamManager.markOnDemandHlsFirstMedia(id);
+    }
     if (filePath.extension() == ".m3u8") res.set(http::field::content_type, "application/vnd.apple.mpegurl");
     else if (filePath.extension() == ".m4s") res.set(http::field::content_type, "video/iso.segment");
     else if (filePath.extension() == ".mp4") res.set(http::field::content_type, "video/mp4");
