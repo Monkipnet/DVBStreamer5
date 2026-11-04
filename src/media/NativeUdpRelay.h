@@ -137,6 +137,9 @@ struct NativeUdpRelayConfig {
     std::string outputHost;
     int outputPort = 0;
     std::uint64_t targetBitrate = 2000000;
+    // Only set for the explicitly selected replacement .ts file. On EOF
+    // reopen it and preserve monotonic PCR/PTS/DTS/CC while repeating.
+    bool fileInputLoop = false;
     // Pace observeTransport consumers (SRT/RTSP/RTMP/HLS/HTTP) at the
     // configured CBR instead of delivering mux bursts immediately.
     bool paceObservedTransport = false;
