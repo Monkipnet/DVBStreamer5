@@ -18,6 +18,14 @@ static Packet makePacket(std::uint64_t pcr,unsigned cc) {
  p[24]=pts>>7;p[25]=static_cast<unsigned char>(((pts&127)<<1)|1);
  return p;
 }
+static std::uint64_t pts(const Packet& p) {
+ const auto* s = p.data()+21;
+ return (static_cast<std::uint64_t>((s[0]>>1)&7) << 30) |
+        (static_cast<std::uint64_t>(s[1]) << 22) |
+        (static_cast<std::uint64_t>(s[2]>>1) << 15) |
+        (static_cast<std::uint64_t>(s[3]) << 7) |
+        (static_cast<std::uint64_t>(s[4]>>1));
+}
 int main(){
  NativeFileLoopClock clock;
  auto p1=makePacket(90000,0),p2=makePacket(180000,1);
@@ -30,6 +38,10 @@ int main(){
  assert(inspectPacket(p3.data(),188,c)&&inspectPacket(p4.data(),188,d));
  assert(a.pcrBase90k==90000 && b.pcrBase90k==180000);
  assert(c.pcrBase90k>b.pcrBase90k && d.pcrBase90k>c.pcrBase90k);
+ // The decoder's presentation timeline must not jump backwards when the
+ // replacement file loops, not just the PCR transport clock.
+ assert(pts(p1) == 135000 && pts(p2) == 225000);
+ assert(pts(p3) > pts(p2) && pts(p4) > pts(p3));
  assert((p3[3]&15)==2 && (p4[3]&15)==3);
  assert(clock.loops()==1);
  std::cout<<"file loop PCR CC stable\n";
