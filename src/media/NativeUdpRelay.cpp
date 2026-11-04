@@ -262,6 +262,12 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     httpReceivedBytes_.store(0, std::memory_order_relaxed);
     selectedInputBytes_.store(0, std::memory_order_relaxed);
     outputBytes_.store(0, std::memory_order_relaxed);
+    perOutputTransportBytes_.clear();
+    perOutputTransportBytes_.reserve(config_.outputs.size());
+    for (std::size_t i = 0; i < config_.outputs.size(); ++i) {
+        perOutputTransportBytes_.push_back(
+            std::make_shared<std::atomic<std::uint64_t>>(0ULL));
+    }
     payloadOutputBytes_.store(0, std::memory_order_relaxed);
     continuityErrors_.store(0, std::memory_order_relaxed);
     {
@@ -451,6 +457,17 @@ std::uint64_t NativeUdpRelay::selectedInputBytes() const noexcept {
 
 std::uint64_t NativeUdpRelay::outputBytes() const noexcept {
     return outputBytes_.load(std::memory_order_relaxed);
+}
+
+std::vector<std::uint64_t> NativeUdpRelay::outputTransportBytesByIndex() const {
+    // The vector is fixed for the entire running stream; only atomic values
+    // change on output worker threads.
+    std::vector<std::uint64_t> bytes;
+    bytes.reserve(perOutputTransportBytes_.size());
+    for (const auto& counter : perOutputTransportBytes_) {
+        bytes.push_back(counter ? counter->load(std::memory_order_relaxed) : 0ULL);
+    }
+    return bytes;
 }
 
 std::uint64_t NativeUdpRelay::payloadOutputBytes() const noexcept {
@@ -758,6 +775,7 @@ void NativeUdpRelay::run() {
         bool rtp = false;
         bool firstSendLogged = false;
         std::uint64_t datagramsSent = 0;
+        std::shared_ptr<std::atomic<std::uint64_t>> sentTsBytes;
         std::unique_ptr<dvbstreamer5::media::rtp::MpegTsPacketizer> packetizer;
         std::unique_ptr<dvbstreamer5::media::network::WisiCbrOutputWorker> cbrWorker;
     };
@@ -809,6 +827,8 @@ void NativeUdpRelay::run() {
         output.socket = outputSockets_[index].get();
         output.index = index;
         output.type = config_.outputs[index].outputType;
+        if (index < perOutputTransportBytes_.size())
+            output.sentTsBytes = perOutputTransportBytes_[index];
         output.rtp = output.type == "rtp";
         if (output.rtp) {
             const auto outputSeed = seed + index;
@@ -845,7 +865,8 @@ void NativeUdpRelay::run() {
                             }
                             running_.store(false, std::memory_order_release);
                             httpQueueCondition_.notify_all();
-                        });
+                        },
+                        output.sentTsBytes ? output.sentTsBytes.get() : nullptr);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();
@@ -1607,6 +1628,11 @@ void NativeUdpRelay::run() {
                     lastError_ = error.empty() ? "UDP output send failed" : error;
                     break;
                 } else {
+                    if (output.sentTsBytes) {
+                        output.sentTsBytes->fetch_add(
+                            packets.size() * dvbstreamer5::media::mpegts::kPacketSize,
+                            std::memory_order_relaxed);
+                    }
                     ++output.datagramsSent;
                     if (!output.firstSendLogged) {
                         output.firstSendLogged = true;
