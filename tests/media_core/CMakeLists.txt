@@ -100,3 +100,13 @@ add_executable(native_srt_switch_clock_test
     ../../src/media/TransportStream.cpp)
 target_include_directories(native_srt_switch_clock_test PRIVATE ../../src)
 add_test(NAME native_srt_switch_clock COMMAND native_srt_switch_clock_test)
+
+# V350: HLS source transitions must retain the live manifest and media sequence.
+add_executable(native_hls_source_switch_test
+    test_native_hls_source_switch.cpp
+    ../../src/media/NativeHlsSegmenter.cpp
+    ../../src/media/NativeSampleAes.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(native_hls_source_switch_test PRIVATE ../../src)
+target_link_libraries(native_hls_source_switch_test PRIVATE OpenSSL::Crypto Threads::Threads)
+add_test(NAME native_hls_source_switch COMMAND native_hls_source_switch_test)

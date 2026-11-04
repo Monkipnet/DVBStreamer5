@@ -17,6 +17,7 @@ public:
     void sourceSwitched() noexcept {
         pendingAnchor_ = true;
         rewriteContinuity_ = true;
+        pendingDiscontinuity_ = true;
         ++transitions_;
     }
     std::uint64_t transitions() const noexcept { return transitions_; }
@@ -64,6 +65,14 @@ public:
             else
                 offset90k_ = 0;
             pendingAnchor_ = false;
+        }
+        if (pendingDiscontinuity_ && info.hasPcr &&
+            info.hasAdaptationField && data[4] >= 1U) {
+            // A new MPEG-TS program/decoder generation starts here.
+            // The first PCR-carrying packet already has an adaptation field,
+            // so flagging it does not consume or corrupt a single PES byte.
+            data[5] = static_cast<std::uint8_t>(data[5] | 0x80U);
+            pendingDiscontinuity_ = false;
         }
         if (info.hasPcr) {
             const std::uint64_t out =
@@ -118,6 +127,7 @@ private:
     bool haveOutputClock_ = false;
     bool pendingAnchor_ = false;
     bool rewriteContinuity_ = false;
+    bool pendingDiscontinuity_ = false;
 };
 
 } // namespace dvbstreamer5::media::srt

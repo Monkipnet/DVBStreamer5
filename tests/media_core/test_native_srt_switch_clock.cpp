@@ -56,6 +56,7 @@ int main() {
     clock.sourceSwitched();
     auto backup=makePacket(90000,135000,0);
     clock.apply(backup.data(),backup.size());
+    assert((backup[5]&0x80U)!=0U); // MPEG-TS decoder reset hint
     assert((backup[3]&15U)==7U); // preserve CC across primary->backup
     assert(pcrOf(backup)>pcrOf(b));
     assert(decodeStamp(backup.data()+21)>decodeStamp(b.data()+21));
@@ -67,6 +68,7 @@ int main() {
     clock.sourceSwitched();
     auto restored=makePacket(1000,46000,2);
     clock.apply(restored.data(),restored.size());
+    assert((restored[5]&0x80U)!=0U); // failback also signals change
     assert(pcrOf(restored)>pcrOf(repeat));
     assert(decodeStamp(restored.data()+21)>decodeStamp(repeat.data()+21));
     assert((restored[3]&15U)==9U);
