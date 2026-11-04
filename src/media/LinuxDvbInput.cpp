@@ -1,4 +1,5 @@
 #include "media/LinuxDvbInput.h"
+#include "media/DvbUnicableTunePolicy.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -455,7 +456,8 @@ void drainFrontendEvents(int fd) {
     std::clog << "NATIVE DVB TUNE event_queue_drained count=" << drained << '\n';
 }
 
-bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) {
+bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, int tuneAttempt,
+                  std::string& error) {
     if (config.adapter < 0 || config.adapter > 31 ||
         config.frontend < 0 || config.frontend > 31 ||
         config.frequencyKHz < 900000 || config.frequencyKHz > 14000000 ||
@@ -493,10 +495,11 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
     const bool stid135 = module == "stid135";
     const bool cx23885Compat = module == "cx23885";
     const bool saa716xTbsCompat = module == "saa716x_tbs_dvb";
-    const bool unicableEarlyTuneCompat =
-        cx23885Compat || saa716xTbsCompat;
-    const int effectiveLockTimeoutMs = unicableEarlyTuneCompat
-        ? std::max(config.lockTimeoutMs, 8000)
+    const auto unicablePolicy =
+        selectDvbUnicableTuneDecision(module, tuneAttempt);
+    const bool unicableEarlyTuneCompat = useUnicable && unicablePolicy.earlyPrime;
+    const int effectiveLockTimeoutMs = useUnicable
+        ? std::max(config.lockTimeoutMs, unicablePolicy.minimumLockTimeoutMs)
         : config.lockTimeoutMs;
 
     std::clog
@@ -515,6 +518,9 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         << " ub_khz=" << config.unicableFrequencyKHz
         << " position=" << config.unicablePosition
         << " stream_id=" << config.streamId
+        << " tune_attempt=" << tuneAttempt
+        << " unicable_recovery_prime="
+        << (useUnicable && unicablePolicy.optionalPrime ? 1 : 0)
         << " lock_timeout_ms=" << effectiveLockTimeoutMs
         << '\n';
 
@@ -526,13 +532,21 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
                "reason=stid135_unicable_parameters_missing\n";
         return false;
     }
-    if (stid135 && mode != 2 && useUnicable) {
+    if (stid135 && mode >= 0 && mode != 2 && useUnicable) {
         error = "STiD135 Unicable tuning requires driver mode=2; current mode=" +
             std::to_string(mode);
         std::clog
             << "NATIVE DVB TUNE reject reason=stid135_unicable_driver_mode"
             << " mode=" << mode << '\n';
         return false;
+    }
+
+    if (stid135 && mode < 0 && useUnicable) {
+        // Some third-party STiD135 driver builds do not export /sys/.../mode.
+        // Do not reject the frontend solely because its sysfs parameter is
+        // unavailable; the actual SEC/S2API ioctls still determine support.
+        std::clog << "NATIVE DVB UNICABLE stid135_mode_unknown"
+                  << " action=attempt_driver_tune" << '\n';
     }
 
     const fe_sec_voltage voltage =
@@ -546,25 +560,39 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
             // one S2API setup/tune before the first SCR transaction after a
             // cold start or after changing User Band/frequency. This replaces
             // the external "start Astra first" priming step.
-            const char* compatName =
-                saa716xTbsCompat ? "saa716x_tbs_dvb" : "cx23885";
+            const char* compatName = saa716xTbsCompat
+                ? "saa716x_tbs_dvb" : cx23885Compat ? "cx23885"
+                : "generic-lock-retry";
+            const bool optionalPrime = unicablePolicy.optionalPrime;
+            bool primeOk = true;
             if (!setTone(fd, SEC_TONE_OFF,
                          "Unicable cold-start tone off", error)) {
-                return false;
+                if (!optionalPrime) return false;
+                primeOk = false;
+                std::clog << "NATIVE DVB UNICABLE retry_prime_warning"
+                          << " phase=tone error=" << error << '\n';
+                error.clear();
             }
-            if (!setVoltage(fd, SEC_VOLTAGE_13,
+            if (primeOk &&
+                !setVoltage(fd, SEC_VOLTAGE_13,
                             "Unicable cold-start 13V baseline", error)) {
-                return false;
+                if (!optionalPrime) return false;
+                primeOk = false;
+                std::clog << "NATIVE DVB UNICABLE retry_prime_warning"
+                          << " phase=voltage error=" << error << '\n';
+                error.clear();
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
 
             std::vector<dtv_property> clearProperties(1);
             clearProperties[0].cmd = DTV_CLEAR;
-            if (!setFrontendProperties(fd, clearProperties, error)) {
+            if (primeOk && !setFrontendProperties(fd, clearProperties, error)) {
                 std::clog
                     << "NATIVE DVB UNICABLE early_tune clear_error error="
                     << error << '\n';
-                return false;
+                if (!optionalPrime) return false;
+                primeOk = false;
+                error.clear();
             }
 
             std::vector<dtv_property> primeProperties(
@@ -597,16 +625,21 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
             ++primeCount;
             primeProperties.resize(primeCount);
 
-            if (!setFrontendProperties(fd, primeProperties, error)) {
+            if (primeOk && !setFrontendProperties(fd, primeProperties, error)) {
                 std::clog
                     << "NATIVE DVB UNICABLE early_tune property_error error="
                     << error << '\n';
-                return false;
+                if (!optionalPrime) return false;
+                primeOk = false;
+                error.clear();
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(150));
-            drainFrontendEvents(fd);
+            if (primeOk) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                drainFrontendEvents(fd);
+            }
             std::clog
                 << "NATIVE DVB UNICABLE early_tune"
+                << " completed=" << (primeOk ? 1 : 0)
                 << " compat=" << compatName
                 << " frontend_khz=" << config.unicableFrequencyKHz
                 << " baseline_13v_ms=250"
@@ -625,7 +658,7 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
         // interval so a newly selected UB/frequency is established by
         // DVBStreamer5 itself. The command is identical and serialized by the
         // shared Unicable mutex, so it remains safe on a shared coax.
-        if (saa716xTbsCompat) {
+        if (unicablePolicy.repeatScr) {
             std::this_thread::sleep_for(std::chrono::milliseconds(120));
             std::uint32_t repeatedFrontendFrequency = frontendFrequency;
             if (!configureUnicable(
@@ -637,7 +670,8 @@ bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) 
             frontendFrequency = repeatedFrontendFrequency;
             std::clog
                 << "NATIVE DVB UNICABLE command_repeat"
-                << " compat=saa716x_tbs_dvb"
+                << " compat=" << (saa716xTbsCompat ? "saa716x_tbs_dvb"
+                        : "generic-lock-retry")
                 << " standard=" << config.unicableMode
                 << " ub=" << config.unicableUserBand
                 << " ub_khz=" << config.unicableFrequencyKHz
@@ -955,7 +989,7 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
                 openErrno == EINTR || openErrno == ENODEV ||
                 openErrno == ENOENT;
         } else {
-            const bool tuned = tuneFrontend(config, candidateFd, error);
+            const bool tuned = tuneFrontend(config, candidateFd, attempt, error);
             const int tuneErrno = errno;
             if (tuned) {
                 frontendFd = candidateFd;
