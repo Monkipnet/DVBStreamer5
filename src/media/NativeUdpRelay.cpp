@@ -787,6 +787,60 @@ void NativeUdpRelay::run() {
     const bool rtpInput = networkInput && inputEndpoint.scheme == "rtp";
     bool fileInputEof = false;
     bool fileHadTsPackets = false;
+    dvbstreamer5::media::mpegts::NativeFileLoopClock fileLoopClock;
+    auto fileNextRead = std::chrono::steady_clock::time_point{};
+    std::uint64_t fileReadBps = config_.targetBitrate > 0
+        ? dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(config_.targetBitrate)
+        : 4000000ULL;
+    if (fileInputSource_ && config_.fileInputLoop) {
+        // Estimate the real playback rate from the file's own PCR and byte
+        // offsets. A user-selected network CBR rate is not its media clock.
+        // Bound scanning to 4 MiB and never read the whole replacement file.
+        const auto fileStart = fileInput_.tellg();
+        std::array<char, 188 * 7> block{};
+        std::uint64_t firstPcr = 0, lastPcr = 0;
+        std::uint64_t firstOffset = 0, lastOffset = 0;
+        bool haveFirst = false;
+        std::uint64_t scanned = 0;
+        while (scanned < 4ULL * 1024ULL * 1024ULL && fileInput_) {
+            fileInput_.read(block.data(), block.size());
+            const auto bytes = fileInput_.gcount();
+            if (bytes <= 0) break;
+            for (std::streamsize pos = 0;
+                 pos + 188 <= bytes; pos += 188) {
+                dvbstreamer5::media::mpegts::PacketInfo info;
+                if (!dvbstreamer5::media::mpegts::inspectPacket(
+                        reinterpret_cast<const std::uint8_t*>(block.data() + pos),
+                        188, info) || !info.hasPcr) continue;
+                if (!haveFirst) {
+                    haveFirst = true;
+                    firstPcr = info.pcrBase90k;
+                    firstOffset = scanned + static_cast<std::uint64_t>(pos);
+                }
+                lastPcr = info.pcrBase90k;
+                lastOffset = scanned + static_cast<std::uint64_t>(pos);
+            }
+            scanned += static_cast<std::uint64_t>(bytes);
+        }
+        if (haveFirst && lastOffset > firstOffset) {
+            const auto pcrDelta = (lastPcr - firstPcr) &
+                dvbstreamer5::media::mpegts::NativeFileLoopClock::kMask;
+            if (pcrDelta >= 90000 && pcrDelta <= 90000ULL * 60ULL) {
+                const auto measured = (lastOffset - firstOffset) * 8ULL * 90000ULL /
+                    pcrDelta;
+                if (measured >= 100000ULL && measured <= 60000000ULL) {
+                    fileReadBps = measured;
+                }
+            }
+        }
+        fileInput_.clear();
+        fileInput_.seekg(fileStart);
+        std::cerr << "NATIVE BACKUP FILE LOOP enabled"
+                  << " stream_id=" << config_.streamId
+                  << " media_kbps=" << fileReadBps / 1000ULL
+                  << " pts_pcr_cc=continuous"
+                  << std::endl;
+    }
     // V10.3: keep the source/input MPEG-TS framer completely separate from
     // the post-transform/output framer. HTTP reads are not guaranteed to end
     // on 188-byte packet boundaries, so inputFramer can legitimately retain a
@@ -1129,13 +1183,42 @@ void NativeUdpRelay::run() {
         std::size_t received = 0;
         packets.clear();
         if (fileInputSource_) {
-            const bool needsFileData = std::any_of(
+            if (fileInputEof && config_.fileInputLoop && fileHadTsPackets) {
+                fileInput_.clear();
+                fileInput_.seekg(0, std::ios::beg);
+                if (!fileInput_) {
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_ = "replacement TS file seek to start failed";
+                    break;
+                }
+                inputFramer.reset();
+                fileLoopClock.nextLoop();
+                fileInputEof = false;
+                std::cerr << "NATIVE BACKUP FILE REWIND"
+                          << " stream_id=" << config_.streamId
+                          << " loops=" << fileLoopClock.loops()
+                          << std::endl;
+            }
+            const bool dedicatedCbrSender = std::any_of(
+                outputs.begin(), outputs.end(), [](const OutputWorker& output) {
+                    return static_cast<bool>(output.cbrWorker);
+                });
+            const bool needsFileData = !dedicatedCbrSender || std::any_of(
                 outputs.begin(), outputs.end(), [](const OutputWorker& output) {
                     return output.cbrWorker &&
                         output.cbrWorker->queuedPackets() <
                             dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram;
                 });
             if (!fileInputEof && needsFileData) {
+                if (!dedicatedCbrSender) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (fileNextRead > now) {
+                        std::this_thread::sleep_until(fileNextRead);
+                    } else if (fileNextRead == std::chrono::steady_clock::time_point{} ||
+                               now - fileNextRead > std::chrono::seconds(1)) {
+                        fileNextRead = now;
+                    }
+                }
                 constexpr std::size_t kFileReadSize =
                     dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
                     dvbstreamer5::media::mpegts::kPacketSize;
@@ -1153,9 +1236,18 @@ void NativeUdpRelay::run() {
                     inputBytes_.fetch_add(received, std::memory_order_relaxed);
                     inputFramer.push(datagram.data(), received, packets);
                     fileHadTsPackets = fileHadTsPackets || !packets.empty();
+                    if (config_.fileInputLoop) {
+                        for (auto& packet : packets) fileLoopClock.apply(packet);
+                    }
+                    if (!dedicatedCbrSender && fileReadBps > 0) {
+                        const auto intervalNs = static_cast<std::uint64_t>(received) *
+                            8ULL * 1000000000ULL / fileReadBps;
+                        fileNextRead += std::chrono::nanoseconds(intervalNs);
+                    }
                 }
             }
-            if (fileInputEof && packets.empty() && std::all_of(
+            if (fileInputEof && packets.empty() &&
+                !(config_.fileInputLoop && fileHadTsPackets) && std::all_of(
                     outputs.begin(), outputs.end(), [](const OutputWorker& output) {
                         return !output.cbrWorker || output.cbrWorker->queuedPackets() == 0;
                     })) {
