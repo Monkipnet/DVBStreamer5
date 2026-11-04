@@ -651,7 +651,11 @@ bool sameStreamConfig(const StreamConfig& left, const StreamConfig& right) {
     // Editing XMLTV assignment or priority must not restart DVB/HLS/CA.
     auto leftJson = left.toJson();
     auto rightJson = right.toJson();
-    for (const char* key : {"epg_mode", "xmltv_source_id", "xmltv_channel_id"}) {
+    // V334: saving only this per-tile PCR preference is metadata-only.
+    // Applying the transport clock requires a fresh WISI CBR worker, so keep
+    // the current channel alive until the operator restarts that tile manually.
+    for (const char* key : {"epg_mode", "xmltv_source_id", "xmltv_channel_id",
+                            "ip_source_pcr_passthrough"}) {
         leftJson.removeMember(key);
         rightJson.removeMember(key);
     }
