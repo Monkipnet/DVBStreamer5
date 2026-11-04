@@ -2079,6 +2079,15 @@ void StreamManager::monitorNativeStream(StreamState* state) {
             state->active.store(false);
             const std::string relayError = relay->lastError();
             state->statusMessage = relayError.empty() ? "native input stopped" : relayError;
+            // V339: a failed output observer or encoder can otherwise be
+            // mistaken for an HTTP-client disconnect. Record the root relay
+            // failure alongside the tile ID before any OnDemand teardown.
+            std::cerr << "NATIVE STREAM RELAY STOP"
+                      << " stream_id=" << state->config.id
+                      << " transcode=" << (state->config.transcodeEnabled ? 1 : 0)
+                      << " cbr=" << (state->config.cbr ? 1 : 0)
+                      << " reason=" << state->statusMessage
+                      << std::endl;
             sendTelegramStreamState(
                 telegramNotifier, configManager, state->config, "🔴",
                 telegramText(configManager, "Поток аварийно остановлен", "Stream stopped unexpectedly"),
