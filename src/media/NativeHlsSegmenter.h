@@ -94,6 +94,9 @@ private:
     bool hasH26xVideo_ = false;
     std::uint64_t nextSequence_ = 0;
     std::uint64_t completedSegments_ = 0;
+    // V340: bounded, read-only cold-start diagnostics. No media timing changes.
+    std::chrono::steady_clock::time_point startupReportAt_{};
+    std::uint64_t startupReceivedPackets_ = 0;
     bool running_ = false;
     bool segmentHasPackets_ = false;
     bool waitingForIndependentStart_ = false;
