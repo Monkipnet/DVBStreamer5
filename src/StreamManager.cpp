@@ -2249,6 +2249,8 @@ bool StreamManager::stopStreamAsync(const std::string& id) {
 }
 
 void StreamManager::stopAll() {
+    // A scheduled/manual global stop must not race a single-tile failover.
+    std::lock_guard<std::mutex> actionLock(failoverActionMutex);
     std::vector<std::string> ids;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
