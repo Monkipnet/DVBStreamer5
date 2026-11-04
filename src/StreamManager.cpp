@@ -23,6 +23,7 @@
 #include "NativeHttpClient.h"
 #include "media/UdpSocket.h"
 #include "media/TransportStream.h"
+#include "media/RtpMpegTs.h"
 
 #include <algorithm>
 #include <array>
@@ -1943,6 +1944,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
 void StreamManager::monitorNativeStream(StreamState* state) {
     uint64_t lastIn = 0, lastOut = 0, lastPayloadOut = 0, lastCc = 0;
+    // Use actual selected, non-NULL TS progress for failover, not merely
+    // transport socket byte reception (which may contain NULL or bad RTP).
+    uint64_t lastUsefulInput = 0;
     uint64_t lastTsPayloadPackets = 0;
     uint64_t lastTsScrambledPackets = 0;
     uint64_t lastTsClearPesStarts = 0;
@@ -2042,7 +2046,8 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         // counter progress is treated as an outage; an explicit relay error is
         // reported immediately.  Any later byte progress is a recovery.
         const std::string relayErrorNow = relay->lastError();
-        const bool inputAdvanced = in > lastIn;
+        const uint64_t usefulInput = relay->selectedInputBytes();
+        const bool inputAdvanced = usefulInput > lastUsefulInput;
         const bool recoveredFromInputLoss = inputAdvanced && telegramInputUnavailable;
         if (inputAdvanced) {
             state->inputStalled.store(false, std::memory_order_release);
@@ -2116,6 +2121,7 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         lastTsClearPesStarts = tsClearPesStarts;
 
         lastIn = in;
+        lastUsefulInput = relay->selectedInputBytes();
         lastOut = out;
         lastPayloadOut = payloadOut;
         lastCc = cc;
