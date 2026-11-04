@@ -59,6 +59,7 @@ add_executable(transcode_cbr_single_shaper_test
     test_transcode_cbr_single_shaper.cpp
     ../../src/media/NativeMpegTsMux.cpp
     ../../src/media/CbrTsPacer.cpp
+    ../../src/media/TransportStream.cpp
 )
 target_include_directories(transcode_cbr_single_shaper_test PRIVATE ../../src)
 add_test(NAME transcode_cbr_single_shaper COMMAND transcode_cbr_single_shaper_test)
