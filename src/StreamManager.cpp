@@ -1577,17 +1577,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             outputStatsState->outputTsClearPesStarts.fetch_add(
                 clearPesStarts, std::memory_order_relaxed);
         }
-        // V337: feed network transports first. MPEG-TS HLS segment rotation
-        // closes files, encrypts them and atomically replaces the manifest;
-        // this disk I/O must not hold up a live HTTP/SRT output fan-out.
-        // The bytes and order for every individual output remain unchanged.
-        for (auto* output : srtOutputs) if (output) output->push(data, size);
-        for (auto* output : rtspOutputs) if (output) output->push(data, size);
-        for (auto* output : rtmpOutputs) if (output) output->push(data, size);
-        // Normal HTTP MPEG-TS clients consume the finished production transport.
-        // Browser preview is fed earlier from the post-remap/post-CA input tap.
-        if (httpHub) httpHub->publish(data, size);
-        if (mpts) mpts->pushBytes(streamId, data, size);
+        // V339: restore pre-V337 output ordering after OnDemand regression.
+        // Keep the one-shot HLS failure diagnostic; it never stops the stream.
         if (hlsSegmenter && !hlsSegmenter->push(data, size) &&
             !hlsPushFailureReported->exchange(true, std::memory_order_relaxed)) {
             std::cerr << "NATIVE HLS OUTPUT FAILED"
@@ -1596,6 +1587,12 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                       << std::endl;
         }
         if (cmafSegmenter) cmafSegmenter->push(data, size);
+        for (auto* output : srtOutputs) if (output) output->push(data, size);
+        for (auto* output : rtspOutputs) if (output) output->push(data, size);
+        for (auto* output : rtmpOutputs) if (output) output->push(data, size);
+        // HTTP MPEG-TS clients consume the finished production transport.
+        if (httpHub) httpHub->publish(data, size);
+        if (mpts) mpts->pushBytes(streamId, data, size);
     };
 
     if (state->nativeHlsSegmenter) {
@@ -2530,10 +2527,6 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                         totalSentBytes += static_cast<std::uint64_t>(n);
                         ++totalSentChunks;
                         reportBytes += static_cast<std::uint64_t>(n);
-                        // V337: wake the local hub backlog without needing
-                        // another callback from the live transcoder. Flush
-                        // is nonblocking and keeps the original TS order.
-                        hub->flushPending(upstreamFd);
                     } else {
                         disconnectReason = "tcp_send_error";
                         disconnectErrno = errno;
