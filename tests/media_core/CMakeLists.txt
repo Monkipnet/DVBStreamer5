@@ -47,3 +47,8 @@ add_executable(unicable_tuning_policy_test test_unicable_tuning_policy.cpp)
 target_include_directories(unicable_tuning_policy_test PRIVATE ../../src)
 add_test(NAME unicable_tuning_policy COMMAND unicable_tuning_policy_test)
 
+
+# V333: no-GPU, no-hardware test for single-stream HTTP/SRT CBR source clock.
+add_executable(ip_cbr_source_clock_policy_test test_ip_cbr_source_clock_policy.cpp)
+target_include_directories(ip_cbr_source_clock_policy_test PRIVATE ../../src)
+add_test(NAME ip_cbr_source_clock_policy COMMAND ip_cbr_source_clock_policy_test)
