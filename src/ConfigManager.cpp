@@ -416,6 +416,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.hlsAccessKeyValue = root.get("hls_access_key_value", "").asString();
     config.hlsUserAgent = root.get("hls_user_agent", "Mozilla/5.0 DVBStreamer5").asString();
     config.httpTsInputJitterEnabled = root.get("http_ts_input_jitter_enabled", false).asBool();
+    config.ipSourcePcrPassthrough = root.get("ip_source_pcr_passthrough", false).asBool();
     config.testPattern = root.get("test_pattern", false).asBool();
     config.activationMode = toLower(root.get("activation_mode", "online").asString());
     if (config.activationMode != "ondemand") config.activationMode = "online";
@@ -620,6 +621,7 @@ Json::Value StreamConfig::toJson() const {
     root["hls_access_key_value"] = hlsAccessKeyValue;
     root["hls_user_agent"] = hlsUserAgent;
     root["http_ts_input_jitter_enabled"] = httpTsInputJitterEnabled;
+    root["ip_source_pcr_passthrough"] = ipSourcePcrPassthrough;
     root["test_pattern"] = testPattern;
     root["activation_mode"] = activationMode == "ondemand" ? "ondemand" : "online";
     root["auto_start"] = autoStart;
