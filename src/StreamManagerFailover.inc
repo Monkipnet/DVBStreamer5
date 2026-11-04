@@ -48,18 +48,27 @@ bool StreamManager::primaryStreamHealthy(const StreamConfig& primary) {
             }
             dvbstreamer5::http::Response response;
             std::string error;
-            std::vector<std::uint8_t> prefix;
-            prefix.reserve(16384);
+            dvbstreamer5::media::mpegts::PacketFramer framer;
+            std::vector<dvbstreamer5::media::mpegts::Packet> packets;
             unsigned validPackets = 0;
             (void)dvbstreamer5::http::get(
                 location, options, response, error,
                 [&](const std::uint8_t* bytes, std::size_t size) {
-                    const auto n = (std::min)(size, 16384U - prefix.size());
-                    prefix.insert(prefix.end(), bytes, bytes + n);
-                    if (n > 0 && validTs(prefix.data(), prefix.size())) ++validPackets;
-                    return validPackets < 2U && prefix.size() < 16384U;
+                    packets.clear();
+                    framer.push(bytes,size,packets);
+                    for (const auto& packet : packets) {
+                        dvbstreamer5::media::mpegts::PacketInfo info;
+                        if (dvbstreamer5::media::mpegts::inspectPacket(
+                                packet.data(), packet.size(), info) &&
+                            info.hasPayload &&
+                            info.pid != dvbstreamer5::media::mpegts::kNullPid)
+                            ++validPackets;
+                    }
+                    // Quit the probe as soon as enough real MPEG-TS packets
+                    // arrive; do not pin the origin with a long-running client.
+                    return validPackets < 10U;
                 });
-            return validPackets >= 2U && response.status >= 200 &&
+            return validPackets >= 10U && response.status >= 200 &&
                 response.status < 300;
         }
     }
