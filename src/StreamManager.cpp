@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <sstream>
 #include <poll.h>
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <linux/tcp.h>
 #include <sys/ioctl.h>
@@ -3198,3 +3199,7 @@ Json::Value StreamManager::queueMemorySnapshot() const {
     root["stream_count"] = Json::UInt64(streams.size());
     return root;
 }
+
+
+// V342: source restoration probes and background per-channel failover worker.
+#include "StreamManagerFailover.inc"
