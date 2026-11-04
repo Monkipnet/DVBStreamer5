@@ -1,3 +1,12 @@
+## V10.8.343 — Failover health and recovery corrections
+
+- **RTP recovery probe fixed:** the V342 network probe treated an RTP datagram as raw 188-byte MPEG-TS and could never recognize real RTP payload. V343 parses the RTP envelope, decodes the contained MPEG-TS packets, and only then accepts valid non-NULL TS payload when deciding to restore the primary.
+- **Five-second input loss:** the stream monitor now tracks progress of the *selected, non-NULL MPEG-TS transport* instead of raw socket bytes. UDP/HTTP sources that stay connected but deliver only NULL packets or malformed RTP frames no longer suppress backup selection indefinitely. The normal tile input-bitrate meter remains unchanged.
+- **Backup crash retry:** if the backup relay itself exits unexpectedly while the primary probe still fails, the supervisor restarts only that backup tile with a bounded retry interval. It never starts a channel after an explicit user Stop/Restart, and it does not rewrite saved configuration. A retry is logged as `NATIVE INPUT FAILOVER from=backup to=backup cause=backup_relay_stopped_retry`.
+- **Test extended:** the `native_file_loop_clock` regression now verifies monotonic PES PTS across a file rewind in addition to PCR and PID continuity counters. File-loop PCR/PTS/DTS correction remains opt-in through `backup_file_loop`.
+- **No changes to existing HTTP/SRT/HLS/UDP output encoders or clock pacing.** The failover process is limited to a stream with a configured `backup_input_uri`. Primary DVB tuner automatic recovery remains unsupported by the independent media probe and is intentionally never reported as recovered merely because of a frontend lock. Test one non-production tile using a real MPEG-TS file, a primary IP endpoint and client playback before production deployment.
+- **Build:** `cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 2`; `cmake -S tests/media_core -B build-test-media && cmake --build build-test-media --parallel 2 && ctest --test-dir build-test-media --output-on-failure`. No live server install/restart or full binary compilation has been performed by this GitHub edit.
+
 ## V10.8.342 — automatic primary/backup input switch and looped MPEG-TS replacement
 
 - Fixed missing failover wiring: prior backup_input_uri, backup_input_type and backup_file_loop fields were saved by UI but the five-second input-loss detector only warned. V342 adds a dedicated channel-scoped failover supervisor; no backup setting means no new behavior.
