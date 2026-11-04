@@ -440,6 +440,8 @@ private:
         std::chrono::steady_clock::time_point nextProbe{};
     };
     std::mutex failoverMutex;
+    // Serializes explicit UI Stop/Restart with automatic channel failover.
+    std::mutex failoverActionMutex;
     std::map<std::string, FailoverEntry> failoverEntries;
     std::atomic<bool> failoverMonitorStop{false};
     std::thread failoverMonitorThread;
