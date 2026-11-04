@@ -7247,6 +7247,7 @@ function updateInputModeVisibility() {
   const srtRow = document.getElementById('streamSrtInputRow');
   const isSrt = mode?.value === 'caller' || mode?.value === 'listener' || String(document.getElementById('streamInput')?.value || '').toLowerCase().startsWith('srt://');
   if (srtRow) srtRow.style.display = isSrt ? '' : 'none';
+  updateIpSourcePcrVisibility();
 }
 
 function streamCaModeFor(stream={}) {
@@ -7620,7 +7621,7 @@ function openStreamForm(stream) {
       </div>
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${escapeHtmlValue(stream.name||'')}" data-default-name="${uiEscapeAttr(stream.id)}" placeholder="Belarus 5" oninput="document.getElementById('streamEditChannelName').textContent=this.value||this.dataset.defaultName" /></div>
-        <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} oninput="updateDvbTunerVisibility()" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility();if(this.value==='vdr'){const ca=document.getElementById('streamCaMode');if(ca){ca.value='ciplus';updateStreamCaMode();}}"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
+        <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} oninput="updateDvbTunerVisibility();updateIpSourcePcrVisibility()" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility();if(this.value==='vdr'){const ca=document.getElementById('streamCaMode');if(ca){ca.value='ciplus';updateStreamCaMode();}}"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
         <details class="form-row full edit-section edit-collapsible" id="streamDvbTunerPanel" style="display:${String(stream.input_uri||'').toLowerCase().startsWith('dvb://')?'':'none'}">
           <summary class="edit-section-head"><span ${uiBiAttrs('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}>${uiBiText('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
           <div class="edit-collapse-body">
@@ -7669,6 +7670,13 @@ function openStreamForm(stream) {
             <div class="edit-field-title" ${subtitleUiTriAttrs('HTTP TS Jitter Buffer','HTTP TS Jitter Buffer','HTTP TS Jitter Buffer')}>${subtitleUiTriText('HTTP TS Jitter Buffer','HTTP TS Jitter Buffer','HTTP TS Jitter Buffer')}</div>
             <small class="field-help" ${subtitleUiTriAttrs('Сглаживает входной HTTP MPEG-TS, предбуфер 1200 мс.','Smooths incoming HTTP MPEG-TS with a 1200 ms prebuffer.','Izravnava ulazni HTTP MPEG-TS uz međuspremnik 1200 ms.')}>${subtitleUiTriText('Сглаживает входной HTTP MPEG-TS, предбуфер 1200 мс.','Smooths incoming HTTP MPEG-TS with a 1200 ms prebuffer.','Izravnava ulazni HTTP MPEG-TS uz međuspremnik 1200 ms.')}</small>
             <label class="checkbox-inline"><input type="checkbox" id="streamHttpTsJitterEnabled" ${stream.http_ts_input_jitter_enabled===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить','Enable','Uključi')}>${subtitleUiTriText('Включить','Enable','Uključi')}</span></label>
+          </div>
+        </div>
+        <div class="form-row full edit-section" id="streamIpSourcePcrRow" style="display:none">
+          <div class="edit-toggle">
+            <div class="edit-field-title" ${subtitleUiTriAttrs('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}>${subtitleUiTriText('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}</div>
+            <small class="field-help" ${subtitleUiTriAttrs('Проверка плавности видео без транскодирования. После сохранения вручную перезапустите только эту плитку.','Test smooth playback without transcoding. Save, then manually restart only this tile.','Test glatkoće bez transkodiranja. Spremite pa ručno ponovno pokrenite samo ovu karticu.')}>${subtitleUiTriText('Проверка плавности видео без транскодирования. После сохранения вручную перезапустите только эту плитку.','Test smooth playback without transcoding. Save, then manually restart only this tile.','Test glatkoće bez transkodiranja. Spremite pa ručno ponovno pokrenite samo ovu karticu.')}</small>
+            <label class="checkbox-inline"><input id="streamIpSourcePcrEnabled" type="checkbox" ${stream.ip_source_pcr_passthrough===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}>${subtitleUiTriText('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}</span></label>
           </div>
         </div>
         <div class="form-row full"><label>HTTP / HLS доступ</label><div class="row-inline compact-row"><select id="streamHlsAccessKeyMode"><option value="none" ${(!stream.hls_access_key_mode||stream.hls_access_key_mode==='none')?'selected':''}>Без ключа</option><option value="header" ${stream.hls_access_key_mode==='header'?'selected':''}>HTTP Header</option><option value="query" ${stream.hls_access_key_mode==='query'?'selected':''}>Query parameter</option></select><input id="streamHlsAccessKeyName" value="${stream.hls_access_key_name||'Authorization'}" placeholder="Authorization или token" /><input id="streamHlsAccessKeyValue" value="${stream.hls_access_key_value||''}" autocomplete="off" placeholder="Bearer TOKEN / значение ключа" /></div><div class="row-inline compact-row" style="margin-top:8px"><input id="streamHlsUserAgent" value="${stream.hls_user_agent||'Mozilla/5.0 DVBStreamer5'}" placeholder="User-Agent" /></div><small>Ключ индивидуален для этого канала. Auto: URL *.m3u8 открывается как HLS, остальные HTTP/HTTPS URL — как single-request MPEG-TS. Для HLS без .m3u8 выбери режим HLS вручную. Для HTTP MPEG-TS ключ применяется к единственному запросу; для HLS — к manifest, variant playlist, сегментам и EXT-X-KEY. Если ключ уже находится в URL, оставь «Без ключа». Для Authorization указывай полное значение, например Bearer xxxxx.</small></div>
@@ -7726,7 +7734,7 @@ function openStreamForm(stream) {
         </details>
         <div class="form-row full"><label>Резерв / файл замены</label><div class="backup-source"><select id="streamBackupInputType" onchange="updateBackupInputMode()"><option value="url" ${(!stream.backup_input_type || stream.backup_input_type==='url')?'selected':''}>URL резерва</option><option value="file" ${stream.backup_input_type==='file'?'selected':''}>Файл замены</option></select><input id="streamBackupInput" value="${stream.backup_input_uri||''}" placeholder="http://192.168.1.2/..." /><div class="backup-library" id="streamBackupLibrary"><button class="backup-library-button" id="streamBackupLibraryButton" type="button" onclick="toggleBackupFileLibrary()">Выбрать ранее загруженный файл</button><div class="backup-library-menu" id="streamBackupLibraryMenu"></div></div><div class="backup-file-row" id="streamBackupFileRow"><input id="streamBackupFilePicker" type="file" accept="video/*,.ts,.mts,.m2ts,.mp4,.mov,.m4v" onchange="uploadBackupReplacementFile('${stream.id}', this)" /><span id="streamBackupUploadStatus"></span></div></div></div>
         <div class="form-row full" id="streamBackupFileLoopRow"><label>Зациклить файл замены</label><div class="checkbox-inline"><input id="streamBackupFileLoop" type="checkbox" ${stream.backup_file_loop ? 'checked' : ''} /><span>Повторять до появления основного потока</span></div></div>
-        <div class="form-row full"><label>Тестовая таблица</label><div class="checkbox-inline"><input id="streamTestPattern" type="checkbox" ${stream.test_pattern ? 'checked' : ''} /><span>Использовать вместо входных потоков</span></div></div>
+        <div class="form-row full"><label>Тестовая таблица</label><div class="checkbox-inline"><input id="streamTestPattern" type="checkbox" ${stream.test_pattern ? 'checked' : ''} onchange="updateIpSourcePcrVisibility()" /><span>Использовать вместо входных потоков</span></div></div>
         <div class="form-row full"><label>Интерфейс вывода</label><select class="compact" id="streamInterface" onchange="syncOutputHostWithInterface()"><option value="">Auto / все интерфейсы</option>${outputOptions}</select></div>
         <div class="form-row full"><label>Выходные форматы</label><div id="streamOutputs" class="output-list">${renderOutputRows(outputs, links)}</div><button class="button-secondary" type="button" onclick="addStreamOutput()">+ Добавить формат</button></div>
         <div class="form-row full edit-section">
@@ -8084,6 +8092,24 @@ function syncUdpCbrModeFromCheckbox() {
   updateOutputHints();
 }
 
+// V334: the A/B preference is per channel and meaningful only for a
+// non-transcoded MPEG-TS HTTP(S)/SRT source with an actual UDP-CBR output.
+// Hide without resetting its stored value if the user edits other fields.
+function updateIpSourcePcrVisibility() {
+  const row=document.getElementById('streamIpSourcePcrRow');
+  if(!row)return;
+  const uri=String(document.getElementById('streamInput')?.value||'').trim().toLowerCase();
+  const mode=document.getElementById('streamInputMode')?.value||'auto';
+  const isHls=mode==='hls'||uri.includes('.m3u8')||uri.startsWith('hls://');
+  const ipTs=uri.startsWith('http://')||uri.startsWith('https://')||uri.startsWith('srt://');
+  const hasUdpCbr=[...document.querySelectorAll('.output-row')]
+    .some(output=>output.querySelector('[data-output-field="output_type"]')?.value==='udp-cbr');
+  const transcode=document.getElementById('streamTranscodeEnabled')?.checked===true;
+  const testPattern=document.getElementById('streamTestPattern')?.checked===true;
+  const cbr=document.getElementById('streamCbr')?.checked===true;
+  row.style.display=ipTs&&!isHls&&hasUdpCbr&&cbr&&!transcode&&!testPattern?'':'none';
+}
+
 function updateOutputHints() {
   const rows = [...document.querySelectorAll('.output-row')];
   const cbrRow = document.getElementById('streamCbrRow');
@@ -8162,6 +8188,7 @@ function updateOutputHints() {
       ? 'CBR MPEG-TS для HTTP/HLS/SRT: NULL stuffing + PAT/PMT/PCR; HTTP/SRT дополнительно синхронизируются по PCR.'
       : (udpMode ? 'UDP CBR использует StableUdpOutput; UDP VBR следует входному битрейту.' : 'CBR для этого типа выхода не применяется.');
   }
+  updateIpSourcePcrVisibility();
   syncOutputHostWithInterface();
 }
 function outputInterfaceChanged(select) {
@@ -8365,6 +8392,7 @@ function saveStream(id) {
     video_pid: Number(document.getElementById('streamVideoPid').value),
     input_service_id: Number(document.getElementById('streamInputServiceId').value),
     http_ts_input_jitter_enabled: document.getElementById('streamHttpTsJitterEnabled')?.checked === true,
+    ip_source_pcr_passthrough: document.getElementById('streamIpSourcePcrEnabled')?.checked === true,
     service_id: Number(document.getElementById('streamServiceId').value),
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,
