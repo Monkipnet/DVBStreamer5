@@ -1930,6 +1930,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (!failoverEntries.count(streamConfig.id)) {
             FailoverEntry entry;
             entry.primary = streamConfig;
+            entry.firstStartedAt = std::chrono::steady_clock::now();
             failoverEntries.emplace(streamConfig.id, std::move(entry));
         }
     }
