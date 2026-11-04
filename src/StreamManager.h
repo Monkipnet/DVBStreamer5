@@ -350,6 +350,9 @@ public:
                               std::string* error = nullptr);
     bool ensureOnDemandStreamParallel(const std::string& id, const std::string& source,
                                       std::string* error = nullptr);
+    // Called only after an actual HLS .ts/.m4s response has been prepared.
+    // Ends the extra OnDemand startup grace, restoring normal 30-s idle.
+    void markOnDemandHlsFirstMedia(const std::string& id);
     void prewarmOnDemandDvbInputs();
 
     // V10.8.179: preview uses the same per-stream OnDemand gate as public media.
@@ -460,6 +463,11 @@ private:
     mutable std::mutex onDemandMutex;
     std::map<std::string, std::shared_ptr<std::mutex>> onDemandStartMutexes;
     std::map<std::string, std::chrono::steady_clock::time_point> onDemandLastActivity;
+    // V340: per-stream HLS cold-start guard, armed by the first real HLS
+    // request and removed after first .ts/.m4s response or bounded expiry.
+    // Both collections are protected by onDemandMutex.
+    std::map<std::string, std::chrono::steady_clock::time_point> onDemandHlsStartupAt;
+    std::set<std::string> onDemandHlsFirstMediaServed;
     std::set<std::string> onDemandStartedStreams;
     std::atomic<bool> onDemandMonitorStop{false};
     std::thread onDemandMonitorThread;
