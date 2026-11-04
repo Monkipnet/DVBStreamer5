@@ -63,3 +63,8 @@ add_executable(transcode_cbr_single_shaper_test
 )
 target_include_directories(transcode_cbr_single_shaper_test PRIVATE ../../src)
 add_test(NAME transcode_cbr_single_shaper COMMAND transcode_cbr_single_shaper_test)
+
+# V340: pure no-GPU/no-DVB regression for HLS OnDemand cold-start grace.
+add_executable(ondemand_hls_startup_policy_test test_ondemand_hls_startup_policy.cpp)
+target_include_directories(ondemand_hls_startup_policy_test PRIVATE ../../src)
+add_test(NAME ondemand_hls_startup_policy COMMAND ondemand_hls_startup_policy_test)
