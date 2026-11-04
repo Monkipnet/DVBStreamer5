@@ -73,3 +73,10 @@ add_test(NAME ondemand_hls_startup_policy COMMAND ondemand_hls_startup_policy_te
 add_executable(hls_only_cbr_routing_policy_test test_hls_only_cbr_routing_policy.cpp)
 target_include_directories(hls_only_cbr_routing_policy_test PRIVATE ../../src)
 add_test(NAME hls_only_cbr_routing_policy COMMAND hls_only_cbr_routing_policy_test)
+
+# V342: replacement-file repeated TS must retain monotonic PCR and PID CC.
+add_executable(native_file_loop_clock_test
+    test_native_file_loop_clock.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(native_file_loop_clock_test PRIVATE ../../src)
+add_test(NAME native_file_loop_clock COMMAND native_file_loop_clock_test)
