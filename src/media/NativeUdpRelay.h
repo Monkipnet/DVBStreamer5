@@ -174,6 +174,9 @@ public:
     // For shared DVB this is the selected channel bitrate, not the whole mux.
     std::uint64_t selectedInputBytes() const noexcept;
     std::uint64_t outputBytes() const noexcept;
+    // Per-network-output TS byte counters in config_.outputs order.
+    // Used for quality history only; no impact on sender clock.
+    std::vector<std::uint64_t> outputTransportBytesByIndex() const;
     std::uint64_t payloadOutputBytes() const noexcept;
     std::uint64_t continuityErrors() const noexcept;
     std::string lastError() const;
@@ -219,6 +222,7 @@ private:
     std::atomic<std::uint64_t> httpReceivedBytes_{0};
     std::atomic<std::uint64_t> selectedInputBytes_{0};
     std::atomic<std::uint64_t> outputBytes_{0};
+    std::vector<std::shared_ptr<std::atomic<std::uint64_t>>> perOutputTransportBytes_;
     std::atomic<std::uint64_t> payloadOutputBytes_{0};
     std::atomic<std::uint64_t> continuityErrors_{0};
     mutable std::mutex errorMutex_;
