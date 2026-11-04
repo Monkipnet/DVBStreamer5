@@ -10,11 +10,8 @@ bool StreamManager::primaryStreamHealthy(const StreamConfig& primary) {
             if (data[offset] != 0x47U) continue;
             if (size >= offset + 376U && data[offset + 188U] != 0x47U)
                 continue;
-            dvbstreamer5::media::mpegts::PacketInfo info;
-            if (dvbstreamer5::media::mpegts::inspectPacket(
-                    data + offset, 188U, info) &&
-                info.pid != dvbstreamer5::media::mpegts::kNullPid &&
-                info.hasPayload) return true;
+            if (dvbstreamer5::media::mpegts::isPlayablePesStart(
+                    data + offset, 188U)) return true;
         }
         return false;
     };
@@ -57,18 +54,15 @@ bool StreamManager::primaryStreamHealthy(const StreamConfig& primary) {
                     packets.clear();
                     framer.push(bytes,size,packets);
                     for (const auto& packet : packets) {
-                        dvbstreamer5::media::mpegts::PacketInfo info;
-                        if (dvbstreamer5::media::mpegts::inspectPacket(
-                                packet.data(), packet.size(), info) &&
-                            info.hasPayload &&
-                            info.pid != dvbstreamer5::media::mpegts::kNullPid)
+                        if (dvbstreamer5::media::mpegts::isPlayablePesStart(
+                                packet.data(), packet.size()))
                             ++validPackets;
                     }
                     // Quit the probe as soon as enough real MPEG-TS packets
                     // arrive; do not pin the origin with a long-running client.
-                    return validPackets < 10U;
+                    return validPackets < 2U;
                 });
-            return validPackets >= 10U && response.status >= 200 &&
+            return validPackets >= 2U && response.status >= 200 &&
                 response.status < 300;
         }
     }
@@ -229,9 +223,18 @@ void StreamManager::monitorFailoverStreams() {
                 const auto it=failoverEntries.find(candidate.id);
                 if(it==failoverEntries.end()||it->second.switching||
                     !it->second.backupActive)continue;
-                it->second.healthyChecks=healthy?it->second.healthyChecks+1:0;
+                it->second.healthyChecks=dvbstreamer5::media::mpegts::
+                    successivePrimaryMediaChecks(it->second.healthyChecks,healthy);
                 it->second.nextProbe=std::chrono::steady_clock::now()+kProbeInterval;
-                restore=it->second.healthyChecks>=2;
+                restore=dvbstreamer5::media::mpegts::primaryMediaRestored(
+                    it->second.healthyChecks);
+                std::cerr << "NATIVE INPUT FAILBACK PROBE"
+                          << " stream_id=" << candidate.id
+                          << " media=" << (healthy ? 1 : 0)
+                          << " consecutive=" << it->second.healthyChecks
+                          << " required=2"
+                          << " action=" << (restore ? "restore_primary" : "keep_backup")
+                          << std::endl;
                 if (!restore && !active) retryBackup=true;
                 if (!restore && !retryBackup) continue;
             }else{

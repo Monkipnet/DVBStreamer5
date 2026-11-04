@@ -1,3 +1,14 @@
+## V10.8.344 — native MP4 backup and strict primary failback (no FFmpeg)
+
+- Backup file .mp4/.m4v/.mov (non-fragmented ISO-BMFF) is demultiplexed with the built-in native reader. H.264/H.265 video samples become Annex-B, AAC-LC frames receive ADTS, and NativeMpegTsMux emits MPEG-TS PAT/PMT/PCR/PES without FFmpeg, libavformat or external processes.
+- Backup files repeat until the actual primary recovers, regardless of the legacy backup_file_loop checkbox. Native MP4 keeps TS mux state, continuity and monotonic media clock on rewind.
+- Primary HTTP, HLS, SRT, UDP/RTP, RTSP and RTMP probes require playable audio/video PES starts instead of non-NULL PSI-only packets. Restore only after two successive successful checks roughly five seconds apart. If a probe fails, remain on backup; if backup crashes retry that tile. DVB tuner primary probing is not yet supported.
+- New logs: NATIVE BACKUP MP4 REMUX, NATIVE BACKUP MP4 REWIND, NATIVE INPUT FAILBACK PROBE media=0|1 consecutive=N action=keep_backup|restore_primary.
+- This is a source-only change; it does not change or restart installed services. Before production run full build, media-core CTest and isolated live MP4 failover playback with real player; C++ compilation on the actual server is pending.
+- Run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDVBSTREAMER5_ENABLE_FFMPEG_AVC=OFF && cmake --build build --parallel 2
+- Tests: cmake -S tests/media_core -B build-test-media && cmake --build build-test-media --parallel 2 && ctest --test-dir build-test-media --output-on-failure.
+- Limitation: unsupported MP4 codec, fragmented MP4, incorrect AVC/AAC sample tables or unknown sample descriptions are rejected rather than silently producing corrupt transport. Do not deploy to all channels before testing one backup tile.
+
 ## V10.8.343 — Failover health and recovery corrections
 
 - **RTP recovery probe fixed:** the V342 network probe treated an RTP datagram as raw 188-byte MPEG-TS and could never recognize real RTP payload. V343 parses the RTP envelope, decodes the contained MPEG-TS packets, and only then accepts valid non-NULL TS payload when deciding to restore the primary.

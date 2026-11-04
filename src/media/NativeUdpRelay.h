@@ -19,6 +19,8 @@
 #include <thread>
 #include <vector>
 
+namespace dvbstreamer5::media::mp4 { class NativeMp4Replacement; }
+
 namespace dvbstreamer5::media::network {
 
 namespace detail {
@@ -198,6 +200,7 @@ private:
     UdpSocket inputSocket_;
     std::vector<std::unique_ptr<UdpSocket>> outputSockets_;
     std::ifstream fileInput_;
+    std::unique_ptr<dvbstreamer5::media::mp4::NativeMp4Replacement> mp4Input_;
     bool fileInputSource_ = false;
     bool httpInputSource_ = false;
     // Optional per-channel pacing of a bursty live HTTP MPEG-TS input.

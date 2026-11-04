@@ -23,6 +23,7 @@
 #include "NativeHttpClient.h"
 #include "media/UdpSocket.h"
 #include "media/TransportStream.h"
+#include "media/NativeFailoverHealth.h"
 #include "media/RtpMpegTs.h"
 
 #include <algorithm>
@@ -1130,9 +1131,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
+    // V344: keep a replacement file repeating until the primary recovers.
     relay.fileInputLoop = state->usingBackup &&
-        toLower(streamConfig.backupInputType) == "file" &&
-        streamConfig.backupFileLoop;
+        toLower(streamConfig.backupInputType) == "file";
     // V334: explicit per-tile setting, saved in the channel configuration.
     // No environmental stream selector is required. Guard the test against
     // all non-HTTP/SRT transports and transcoding. The physical CBR bitrate

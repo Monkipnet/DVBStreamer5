@@ -7,6 +7,7 @@
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
 #include "media/NativeFileLoopClock.h"
+#include "media/NativeMp4Replacement.h"
 
 #include <algorithm>
 #include <array>
@@ -247,6 +248,7 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     }
     fileInput_.close();
     fileInput_.clear();
+    mp4Input_.reset();
     fileInputSource_ = false;
     httpInputSource_ = false;
     externalInputSource_ = false;
@@ -289,6 +291,22 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
         error = "native relay requires a valid UDP/RTP, HTTP(S), externally-fed, DVB, or local file input";
         return false;
     }
+    // MP4 is ISO-BMFF, not MPEG-TS. Remux only local MP4/MOV files;
+    // all network inputs keep the existing transport and media pipelines.
+    bool mp4Replacement = false;
+    if (fileInputSource_) {
+        auto lower = filePath;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        mp4Replacement = (lower.size() >= 4 &&
+            (lower.compare(lower.size()-4,4,".mp4") == 0 ||
+             lower.compare(lower.size()-4,4,".m4v") == 0 ||
+             lower.compare(lower.size()-4,4,".mov") == 0));
+    }
+    if (mp4Replacement && config_.remapEnabled) {
+        // A primary MPEG-TS audio PID is unrelated to an MP4 media track.
+        config_.remapConfig.inputAudioPid = 0;
+    }
     if (config_.remapEnabled &&
         !remapper_.initialize(config_.remapConfig, error)) {
         return false;
@@ -306,11 +324,30 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     }
 
     if (fileInputSource_) {
-        fileInput_.open(filePath, std::ios::binary);
-        if (!fileInput_.is_open()) {
-            fileInputSource_ = false;
-            error = "native file input could not be opened: " + filePath;
-            return false;
+        if (mp4Replacement) {
+            mp4Input_ = std::make_unique<dvbstreamer5::media::mp4::NativeMp4Replacement>();
+            const auto service = config_.remapConfig.inputServiceId != 0
+                ? config_.remapConfig.inputServiceId : std::uint16_t{1};
+            if (!mp4Input_->open(filePath, config_.fileInputLoop, service,
+                config_.remapConfig.serviceName, config_.remapConfig.serviceProvider,
+                error)) {
+                mp4Input_.reset();
+                fileInputSource_ = false;
+                return false;
+            }
+            std::cerr << "NATIVE BACKUP MP4 REMUX stream_id=" << config_.streamId
+                      << " video_samples=" << mp4Input_->videoSamples()
+                      << " audio_samples=" << mp4Input_->audioSamples()
+                      << " mode=remux_no_ffmpeg"
+                      << " loop=" << (config_.fileInputLoop ? 1 : 0)
+                      << std::endl;
+        } else {
+            fileInput_.open(filePath, std::ios::binary);
+            if (!fileInput_.is_open()) {
+                fileInputSource_ = false;
+                error = "native file input could not be opened: " + filePath;
+                return false;
+            }
         }
     } else if (!httpInputSource_ && !externalInputSource_ && !dvbInputSource_) {
         const bool multicastInput = isMulticastIpv4(input.host);
@@ -411,6 +448,7 @@ void NativeUdpRelay::stop() noexcept {
     }
     inputSocket_.close();
     fileInput_.close();
+    mp4Input_.reset();
     fileInputSource_ = false;
     httpInputSource_ = false;
     externalInputSource_ = false;
@@ -789,10 +827,13 @@ void NativeUdpRelay::run() {
     bool fileHadTsPackets = false;
     dvbstreamer5::media::mpegts::NativeFileLoopClock fileLoopClock;
     auto fileNextRead = std::chrono::steady_clock::time_point{};
+    auto mp4WallOrigin = std::chrono::steady_clock::time_point{};
+    std::uint64_t mp4MediaOrigin90k = 0;
+    std::uint64_t mp4PreviousLoops = 0;
     std::uint64_t fileReadBps = config_.targetBitrate > 0
         ? dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(config_.targetBitrate)
         : 4000000ULL;
-    if (fileInputSource_ && config_.fileInputLoop) {
+    if (fileInputSource_ && !mp4Input_ && config_.fileInputLoop) {
         // Estimate the real playback rate from the file's own PCR and byte
         // offsets. A user-selected network CBR rate is not its media clock.
         // Bound scanning to 4 MiB and never read the whole replacement file.
@@ -1183,6 +1224,47 @@ void NativeUdpRelay::run() {
         std::size_t received = 0;
         packets.clear();
         if (fileInputSource_) {
+            if (mp4Input_) {
+                const bool cbrSenderReady = std::all_of(outputs.begin(),outputs.end(),
+                    [](const OutputWorker& o) {
+                        return !o.cbrWorker || o.cbrWorker->queuedPackets() <
+                            dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram;
+                    });
+                if (!cbrSenderReady) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
+                std::uint64_t mediaClock90k = 0;
+                if (!mp4Input_->next(packets, mediaClock90k, error)) {
+                    std::lock_guard<std::mutex> lock(errorMutex_);
+                    lastError_ = "native MP4 replacement: " + error;
+                    break;
+                }
+                if (mp4WallOrigin == std::chrono::steady_clock::time_point{}) {
+                    mp4WallOrigin = std::chrono::steady_clock::now();
+                    mp4MediaOrigin90k = mediaClock90k;
+                }
+                const auto elapsed90k = mediaClock90k >= mp4MediaOrigin90k
+                    ? mediaClock90k - mp4MediaOrigin90k : 0ULL;
+                const auto deadline = mp4WallOrigin +
+                    std::chrono::nanoseconds(elapsed90k * 1000000000ULL / 90000ULL);
+                while (running_.load(std::memory_order_acquire)) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now >= deadline) break;
+                    std::this_thread::sleep_for(std::min(
+                        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now),
+                        std::chrono::milliseconds(20)));
+                }
+                if (mp4Input_->loops() != mp4PreviousLoops) {
+                    mp4PreviousLoops = mp4Input_->loops();
+                    std::cerr << "NATIVE BACKUP MP4 REWIND stream_id="
+                              << config_.streamId << " loops=" << mp4PreviousLoops
+                              << " pts_pcr_cc=continuous" << std::endl;
+                }
+                inputBytes_.fetch_add(packets.size() *
+                    dvbstreamer5::media::mpegts::kPacketSize,
+                    std::memory_order_relaxed);
+            } else {
             if (fileInputEof && config_.fileInputLoop && fileHadTsPackets) {
                 fileInput_.clear();
                 fileInput_.seekg(0, std::ios::beg);
@@ -1262,6 +1344,7 @@ void NativeUdpRelay::run() {
                 // The dedicated WISI sender owns all CBR deadlines. The input
                 // relay must not wake once per UDP slot merely to watch them.
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
             }
         } else if (httpInput) {
             std::unique_lock<std::mutex> lock(httpQueueMutex_);

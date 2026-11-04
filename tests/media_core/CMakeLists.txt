@@ -80,3 +80,16 @@ add_executable(native_file_loop_clock_test
     ../../src/media/TransportStream.cpp)
 target_include_directories(native_file_loop_clock_test PRIVATE ../../src)
 add_test(NAME native_file_loop_clock COMMAND native_file_loop_clock_test)
+
+# V344: native ISO-BMFF to MPEG-TS without FFmpeg, plus primary media recovery.
+add_executable(native_mp4_replacement_test
+    test_native_mp4_replacement.cpp
+    ../../src/media/NativeMpegTsMux.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(native_mp4_replacement_test PRIVATE ../../src)
+add_test(NAME native_mp4_replacement COMMAND native_mp4_replacement_test)
+
+add_executable(native_failover_health_test test_native_failover_health.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(native_failover_health_test PRIVATE ../../src)
+add_test(NAME native_failover_health COMMAND native_failover_health_test)
