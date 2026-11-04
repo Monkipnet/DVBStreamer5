@@ -1470,7 +1470,9 @@ void testNativePreviewHubBackpressureIntegrity() {
     assert(flags >= 0);
     assert(::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
 
-    constexpr int kPackets = 4096;
+    // Force the kernel seqpacket socket to fill and exercise the hub's
+    // user-space backlog. The producer will not publish again after this.
+    constexpr int kPackets = 16000;
     for (int i = 0; i < kPackets; ++i) {
         Packet source = packet(0x0123, static_cast<std::uint8_t>(i & 15));
         source[4] = static_cast<std::uint8_t>(i & 0xff);
@@ -1479,15 +1481,14 @@ void testNativePreviewHubBackpressureIntegrity() {
     }
 
     std::array<std::uint8_t, 188> received {};
-    Packet heartbeat = packet(0x1fff, 0);
     int consumed = 0;
     int flushes = 0;
-    while (consumed < kPackets && flushes < 1000) {
+    while (consumed < kPackets && flushes < 10000) {
         const ssize_t size = ::read(fd, received.data(), received.size());
         if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            // Each publish attempts to drain pending packets before sending
-            // this extra tail packet. It must never overtake original data.
-            hub.publish(heartbeat.data(), heartbeat.size());
+            // V337: no heartbeat publish is allowed. Pending TS must still
+            // drain after consumer progress with no new producer callback.
+            hub.flushPending(fd);
             ++flushes;
             continue;
         }
@@ -1497,6 +1498,7 @@ void testNativePreviewHubBackpressureIntegrity() {
         assert(received[5] ==
                static_cast<std::uint8_t>((consumed >> 8) & 0xff));
         ++consumed;
+        hub.flushPending(fd);
     }
     assert(consumed == kPackets);
     hub.unsubscribe(fd);
