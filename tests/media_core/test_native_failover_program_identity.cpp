@@ -17,7 +17,7 @@ static void check(bool ok, const char* why) {
 
 static std::vector<Packet> muxProgram(std::uint16_t sid,
         std::uint16_t pmtPid, std::uint16_t videoPid,
-        std::uint16_t audioPid, const std::string& name) {
+        std::uint16_t audioPid, const std::string& name, bool hasAudio=true) {
     NativeMpegTsMux mux;
     NativeMuxConfig cfg;
     cfg.serviceId=sid;cfg.pmtPid=pmtPid;
@@ -26,8 +26,9 @@ static std::vector<Packet> muxProgram(std::uint16_t sid,
     check(mux.initialize(cfg,error),"init TS mux failed");
     check(mux.setCodec(ElementaryKind::Video,ElementaryCodec::H264,error),
         "H264 mux failed");
-    check(mux.setCodec(ElementaryKind::Audio,ElementaryCodec::AacAdts,error),
-        "AAC mux failed");
+    if (hasAudio)
+        check(mux.setCodec(ElementaryKind::Audio,ElementaryCodec::AacAdts,error),
+            "AAC mux failed");
     const std::uint8_t video[]={0,0,0,1,0x65,0x88,0x44};
     const std::uint8_t audio[]={0xff,0xf1,0x50,0x80,0x01,0x1f,0xfc};
     std::vector<Packet> packets;
@@ -40,7 +41,8 @@ static std::vector<Packet> muxProgram(std::uint16_t sid,
     a.data=audio;a.size=sizeof(audio);
     a.pts90k=90000;a.dts90k=90000;
     a.hasPts=true;a.hasDts=true;
-    check(mux.write(ElementaryKind::Audio,a,packets,error),"write audio failed");
+    if (hasAudio)
+        check(mux.write(ElementaryKind::Audio,a,packets,error),"write audio failed");
     return packets;
 }
 
@@ -102,7 +104,33 @@ int main() {
             check(bytes.find("backup1")==std::string::npos,
                   "backup1 leaked through SDT");
         }
-        std::cout<<"PASS: primary SID/PMT/PIDs and service identity retained with backup1 source\n";
+        // The configured primary contains video and audio. A video-only MP4
+        // replacement must NOT terminate the stream because audio is absent.
+        const auto videoOnly=muxProgram(9,0x1000,0x100,0x101,"backup1",false);
+        RemapConfig strictConfig=cfg;
+        Remapper strict;
+        check(strict.initialize(strictConfig,error),"strict remap init");
+        bool strictFailed=false;
+        for(const auto& packet:videoOnly){
+            std::vector<Packet> ignored;
+            if(!strict.process(packet,ignored,error)){strictFailed=true;break;}
+        }
+        check(strictFailed,"ordinary remaps must still reject missing tracks");
+        RemapConfig backupConfig=cfg;
+        backupConfig.allowMissingOutputMedia=true;
+        Remapper backupRemap;
+        check(backupRemap.initialize(backupConfig,error),"backup remap init");
+        std::vector<Packet> preserved;
+        for(const auto& packet:videoOnly)
+            check(backupRemap.process(packet,preserved,error),
+                "video-only backup must not kill remapper");
+        NativeFailoverProgramIdentity videoOnlyObserved;
+        videoOnlyObserved.observe(preserved);
+        const auto videoOnlyProgram=videoOnlyObserved.snapshot();
+        check(videoOnlyProgram.serviceId==sid&&videoOnlyProgram.pmtPid==pmt&&
+              videoOnlyProgram.videoPid==video&&videoOnlyProgram.audioPid==0,
+              "video-only backup must preserve SID/PMT/video and omit audio");
+        std::cout<<"PASS: primary SID/PMT/PIDs plus video-only backup without audio\n";
         return 0;
     } catch(const std::exception& e) {
         std::cerr<<"FAIL: "<<e.what()<<"\n";

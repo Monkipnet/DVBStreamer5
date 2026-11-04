@@ -2122,6 +2122,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
 
 void StreamManager::monitorNativeStream(StreamState* state) {
     uint64_t lastIn = 0, lastOut = 0, lastPayloadOut = 0, lastCc = 0;
+    // Existing SRT peers and their lifetime sent-byte counters survive
+    // automatic failover. Never count historical bytes as a new 1-s bitrate.
+    for (const auto& output : state->nativeSrtOutputs)
+        if (output) lastOut += output->sentBytes();
+    for (const auto& output : state->nativeRtspOutputs)
+        if (output) lastOut += output->sentBytes();
+    for (const auto& output : state->nativeRtmpOutputs)
+        if (output) lastOut += output->sentBytes();
     // Use actual selected, non-NULL TS progress for failover, not merely
     // transport socket byte reception (which may contain NULL or bad RTP).
     uint64_t lastUsefulInput = 0;
@@ -2173,7 +2181,9 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const uint64_t inputRate = (inputWindowBytes * 8U) / rateWindowSamples;
         const uint64_t payloadRate = (payloadWindowBytes * 8U) / rateWindowSamples;
         state->inputBitrate.store(inputRate);
-        const uint64_t outRate = (out - lastOut) * 8;
+        // Connection counters may reset on reconnect. Do not let unsigned
+        // subtraction turn a counter reset into a fake multi-Gbit/s bitrate.
+        const uint64_t outRate = out >= lastOut ? (out - lastOut) * 8U : 0U;
         // V10.8.106: CBR for HTTP/SRT is produced by the observer pacer and is
         // independent of whether an HTTP client or SRT peer is currently
         // connected.  sentBytes therefore is not a valid stream-level CBR
