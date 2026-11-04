@@ -367,6 +367,7 @@ bool NativeHlsSegmenter::start(const NativeHlsSegmenterConfig& config, std::stri
     hasH26xVideo_ = false;
     nextSequence_ = 0;
     completedSegments_ = 0;
+    completedMediaBytes_ = 0;
     startupReportAt_ = std::chrono::steady_clock::now();
     startupReceivedPackets_ = 0;
     haveFirstPcr_ = false;
@@ -1065,6 +1066,10 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
             : encryptAes128File(segmentPath_, config_.key, iv, cryptError);
         if (!ok) { fail(cryptError); return false; }
     }
+    // Passive quality statistic only; no change to segment timing/content.
+    std::error_code sizeError;
+    const auto bytes = std::filesystem::file_size(segmentPath_, sizeError);
+    if (!sizeError) completedMediaBytes_ += static_cast<std::uint64_t>(bytes);
     SegmentInfo info;
     info.sequence = nextSequence_++;
     info.fileName = segmentPath_.filename().string();
@@ -1220,6 +1225,7 @@ void NativeHlsSegmenter::stop() noexcept {
 bool NativeHlsSegmenter::isRunning() const noexcept { std::lock_guard<std::mutex> lock(mutex_); return running_; }
 std::string NativeHlsSegmenter::lastError() const { std::lock_guard<std::mutex> lock(mutex_); return lastError_; }
 std::uint64_t NativeHlsSegmenter::segmentCount() const noexcept { std::lock_guard<std::mutex> lock(mutex_); return completedSegments_; }
+std::uint64_t NativeHlsSegmenter::completedMediaBytes() const noexcept { std::lock_guard<std::mutex> lock(mutex_); return completedMediaBytes_; }
 void NativeHlsSegmenter::fail(const std::string& error) { lastError_ = error; running_ = false; }
 
 double NativeHlsSegmenter::pcrDeltaSeconds(std::uint64_t first, std::uint64_t last) {
