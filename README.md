@@ -1,3 +1,10 @@
+## V10.8.335 — Fix missing Source-PCR A/B switch in channel editor
+
+- **User-reported bug:** V334 hid the `HTTP/SRT → UDP-CBR Source PCR` checkbox altogether whenever UI eligibility failed. This included SRT channel editing screenshots showing `HTTP TS Jitter Buffer` directly followed by `HTTP / HLS access`, leaving no reason for the absent control.
+- **Fix:** move the control next to `Target bitrate (CBR)` and the existing server-injected `CBR startup buffer` / `Source-PCR media timeline` controls. It is **always visible** in the tile edit modal, including on mobile. When ineligible, its checkbox is disabled and an RU/EN/HR message explains whether the cause is input type/HLS, missing UDP-CBR output, CBR disabled, transcoding, test pattern or invalid bitrate. Changing relevant inputs or output options updates the message without losing the saved checkbox value.
+- **No streaming change:** the underlying V334 opt-in runtime gate, default OFF, per-stream JSON persistence and no-auto-restart-on-switch-save behaviour remain untouched. After saving the eligible experiment, the operator manually restarts only the selected tile; no other active streams are restarted.
+- **Validation:** one `streamIpSourcePcrRow` and one `streamIpSourcePcrEnabled`, next to the CBR bitrate; embedded JavaScript syntax parsed successfully. Browser/runtime verification on the installed V335 binary remains necessary; editing sources alone does not update the running service.
+
 ## V10.8.334 — Per-channel GUI switch for HTTP/SRT → UDP-CBR Source-PCR A/B
 
 - **Menu → edit stream tile:** a new per-tile **Source PCR for HTTP/SRT → UDP-CBR** checkbox appears for direct HTTP(S)/SRT MPEG-TS inputs with at least one UDP-CBR output, CBR enabled, test pattern disabled and no transcoding. It is OFF by default; stored as `ip_source_pcr_passthrough` in `/etc/dvbstreamer5/dvbstreamer5-config.json`. Labels and short help are localized RU/EN/HR. The UI preserves an existing preference when other fields make the option temporarily inapplicable; runtime guards still prevent it from activating in that case.
