@@ -186,8 +186,13 @@ void StreamManager::monitorFailoverStreams() {
                     stalled=it->second->inputStalled.load(std::memory_order_acquire);
                 }
             }
-            if(!active)continue;
+            // A genuine source/relay crash can make the tile inactive before
+            // the 5-second silence counter fires. The original registration
+            // survives unexpected failure, but not a manual Stop.
             const auto now=std::chrono::steady_clock::now();
+            if(!active && !candidate.entry.backupActive &&
+                now-candidate.entry.firstStartedAt < std::chrono::seconds(5))
+                continue;
             bool restore=false;
             if(candidate.entry.backupActive){
                 if(now<candidate.entry.nextProbe)continue;
@@ -201,7 +206,8 @@ void StreamManager::monitorFailoverStreams() {
                 if(it->second.healthyChecks<2)continue;
                 restore=true;
             }else{
-                if(!stalled||now<candidate.entry.nextProbe)continue;
+                if((active && !stalled) || now<candidate.entry.nextProbe)
+                    continue;
             }
 
             // Mark the channel as transitioning before stopping its old
