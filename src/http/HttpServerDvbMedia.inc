@@ -533,9 +533,16 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
         // pipeline up to three seconds to publish a decoder-safe first segment.
         // If a copy-mode source has a longer GOP, return 503 + Retry-After and
         // let the client retry while the background service keeps running.
+        // V339: the first independent HLS segment of a transcoded OnDemand
+        // service cannot be ready until decoder, encoder and an IDR-aligned
+        // segment have all started. The old unconditional 3-s probe budget
+        // returned 503 while a valid 4-s segment was still being assembled.
+        // Only these transcoded OnDemand HLS requests get a 12-s cold-start
+        // allowance. Passthrough HLS and all online streams keep the 3-s path.
+        const int maxStartupAttempts = cfg->transcodeEnabled ? 120 : 30;
         bool ready = livePlaylistReady();
         int startupAttempts = 0;
-        for (; startupAttempts < 30 && !ready; ++startupAttempts) {
+        for (; startupAttempts < maxStartupAttempts && !ready; ++startupAttempts) {
             if ((startupAttempts % 10) == 0) {
                 std::string startupKeepaliveError;
                 if (!streamManager.ensureOnDemandStreamParallel(
@@ -561,7 +568,9 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
             std::cerr << "HLS STARTUP PENDING stream=" << id
                       << " activation_ms=" << activationMs
                       << " coherent_wait_ms=" << coherentMs
-                      << " attempts=" << startupAttempts;
+                      << " attempts=" << startupAttempts
+                      << " max_wait_ms=" << maxStartupAttempts * 100
+                      << " transcode=" << (cfg->transcodeEnabled ? 1 : 0);
             if (!demandError.empty()) std::cerr << " error=" << demandError;
             std::cerr << std::endl;
             return true;
