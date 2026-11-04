@@ -897,7 +897,30 @@ void NativeUdpRelay::run() {
                     config_.targetBitrate % 1000ULL == 0ULL
                         ? config_.targetBitrate + 799ULL
                         : config_.targetBitrate);
+            // V336: an observer-only SRT/HTTP CBR output has no WISI sender
+            // startup reservoir to absorb the async encoder's first IDR and
+            // audio bursts. Honour the existing per-tile CBR buffer control
+            // for *transcoded* media only. Cap its size to 70% of the same
+            // 8 MiB pacer queue, leaving room for live input jitter.
+            const auto requestedObserverBufferMs = config_.transcodedTransport
+                ? dvbstreamer5::media::mpegts::CbrTsPacer::startupBufferMilliseconds(
+                    config_.targetBitrate)
+                : 0ULL;
+            const auto observerPhysicalBps =
+                dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(
+                    config_.targetBitrate);
+            const auto observerSafeBufferMs = observerPhysicalBps == 0
+                ? 0ULL
+                : static_cast<std::uint64_t>(
+                    dvbstreamer5::media::mpegts::CbrTsPacer::maximumQueuedBytes())
+                    * 8ULL * 1000ULL * 70ULL / (observerPhysicalBps * 100ULL);
+            const auto observerStartupMs =
+                (std::min)(requestedObserverBufferMs, observerSafeBufferMs);
+            const auto observerStartupBuffer =
+                std::chrono::milliseconds(observerStartupMs);
             observedCbrWorker = std::thread([&] {
+                bool startupBuffered = observerStartupBuffer.count() == 0;
+                auto firstReadyAt = std::chrono::steady_clock::time_point{};
                 while (true) {
                     dvbstreamer5::media::mpegts::CbrDatagram cbrDatagram;
                     bool ready = false;
@@ -908,6 +931,25 @@ void NativeUdpRelay::run() {
                                 (observedCbrPacer && observedCbrPacer->started());
                         });
                         if (observedCbrStop) break;
+
+                        // Delay only the initial packet clock; do not move
+                        // PCR/PTS/DTS or throttle the media producer. A fresh
+                        // transport anchor prevents a catch-up burst at start.
+                        if (!startupBuffered) {
+                            if (firstReadyAt ==
+                                std::chrono::steady_clock::time_point{}) {
+                                firstReadyAt = std::chrono::steady_clock::now();
+                            }
+                            if (observedCbrCondition.wait_until(
+                                    lock, firstReadyAt + observerStartupBuffer,
+                                    [&] { return observedCbrStop; })) {
+                                break;
+                            }
+                            if (observedCbrStop) break;
+                            observedCbrPacer->reanchorDeadline(
+                                std::chrono::steady_clock::now());
+                            startupBuffered = true;
+                        }
 
                         const auto deadline = observedCbrPacer->nextDeadline();
                         if (observedCbrCondition.wait_until(
@@ -937,7 +979,13 @@ void NativeUdpRelay::run() {
                 }
             });
             std::cerr << "NATIVE OBSERVED CBR start target_kbps="
-                      << (config_.targetBitrate / 1000ULL) << std::endl;
+                      << (observerPhysicalBps / 1000ULL)
+                      << " transcoded=" << (config_.transcodedTransport ? 1 : 0)
+                      << " requested_startup_ms=" << requestedObserverBufferMs
+                      << " effective_startup_ms=" << observerStartupMs
+                      << " source_pcr="
+                      << (observedCbrPacer->sourcePllMode() ? 1 : 0)
+                      << std::endl;
         } catch (const std::exception& exception) {
             {
                 std::lock_guard<std::mutex> lock(errorMutex_);
