@@ -1,4 +1,5 @@
 #pragma once
+#include "media/NativeSrtSwitchClock.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -82,6 +83,10 @@ public:
                PeerStateCallback onConnected, PeerStateCallback onDisconnected,
                std::string& error);
     bool push(const std::uint8_t* data, std::size_t size);
+    // Apply only to outputs with configured primary/backup failover.
+    void enableFailoverClock();
+    // Retain SRT sockets/clients while discarding old-source queued TS.
+    void sourceSwitched();
     void stop() noexcept;
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
     bool connected() const noexcept { return connected_.load(std::memory_order_acquire); }
@@ -125,6 +130,9 @@ private:
     std::condition_variable queueCondition_;
     std::deque<std::vector<std::uint8_t>> queue_;
     std::size_t queuedBytes_ = 0;
+    bool failoverClockEnabled_ = false;
+    NativeSrtSwitchClock failoverClock_;
+    std::atomic<std::uint64_t> sourceGeneration_{0};
     std::thread worker_;
 };
 

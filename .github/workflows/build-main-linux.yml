@@ -59,6 +59,11 @@ jobs:
           cmake -S tests/media_core -B build-test-media-ci -DCMAKE_BUILD_TYPE=Release
           cmake --build build-test-media-ci --parallel 2
           ctest --test-dir build-test-media-ci --output-on-failure
+          cmake --build build-main-ci --parallel 2 --target \
+            dvbstreamer5_audio_track_test \
+            dvbstreamer5_video_cadence_test \
+            dvbstreamer5_ticker_test \
+            dvbstreamer5_docx_import_test
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums

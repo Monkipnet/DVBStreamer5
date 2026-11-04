@@ -1029,7 +1029,41 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     if (srtInput) state->nativeSrtInput = std::make_unique<dvbstreamer5::media::srt::NativeSrtInput>();
     if (rtspInput) state->nativeRtspInput = std::make_unique<dvbstreamer5::media::rtsp::NativeRtspInput>();
     if (rtmpInput) state->nativeRtmpInput = std::make_unique<dvbstreamer5::media::rtmp::NativeRtmpInput>();
+    // V346: on automatic primary/backup transitions, reuse the existing SRT
+    // outputs and their connected peers. stopStream parked them after draining
+    // the old relay; no new port bind or client reconnect is required.
+    bool reusedFailoverSrt = false;
+    std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>>
+        obsoleteFailoverSrt;
+    {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        auto parked = parkedFailoverSrtOutputs.find(streamConfig.id);
+        if (parked != parkedFailoverSrtOutputs.end()) {
+            if (parked->second.size() == srtOutputSpecs.size() &&
+                std::all_of(parked->second.begin(), parked->second.end(),
+                    [](const auto& output) { return output && output->running(); })) {
+                state->nativeSrtOutputs = std::move(parked->second);
+                reusedFailoverSrt = true;
+            } else {
+                obsoleteFailoverSrt = std::move(parked->second);
+            }
+            parkedFailoverSrtOutputs.erase(parked);
+        }
+    }
+    // Destroy any obsolete outputs outside managerMutex: their peer-state
+    // callbacks acquire managerMutex via removeStreamSession().
+    obsoleteFailoverSrt.clear();
+    if (reusedFailoverSrt) {
+        for (auto& output : state->nativeSrtOutputs)
+            output->sourceSwitched();
+        std::cerr << "NATIVE SRT FAILOVER PRESERVE"
+                  << " stream_id=" << streamConfig.id
+                  << " outputs=" << state->nativeSrtOutputs.size()
+                  << " action=reuse_connected_sockets_and_rebase_ts"
+                  << std::endl;
+    }
     for (const auto& spec : srtOutputSpecs) {
+        if (reusedFailoverSrt) break;
         auto output = std::make_unique<dvbstreamer5::media::srt::NativeSrtOutput>();
         dvbstreamer5::media::srt::EndpointConfig srtConfig;
         std::string host = spec.host.empty() ? std::string("0.0.0.0") : spec.host;
@@ -1087,6 +1121,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             if (error) *error = srtError.empty() ? "native SRT output failed" : srtError;
             return false;
         }
+        if (!streamConfig.backupInputUri.empty() &&
+            streamConfig.backupInputUri != streamConfig.inputUri)
+            output->enableFailoverClock();
         state->nativeSrtOutputs.push_back(std::move(output));
     }
     for (const auto& spec : rtspOutputSpecs) {
@@ -2210,6 +2247,30 @@ bool StreamManager::stopStream(const std::string& id) {
         if (variant && variant->transcoder) variant->transcoder->reset();
     }
     if (state->testPatternThread.joinable()) state->testPatternThread.join();
+    // Automatic input transitions must NOT disconnect the SRT player. Once
+    // the relay is stopped, park its output workers before destroying state.
+    bool automaticFailoverTransition = false;
+    {
+        std::lock_guard<std::mutex> lock(failoverMutex);
+        const auto it = failoverEntries.find(id);
+        automaticFailoverTransition =
+            it != failoverEntries.end() && it->second.switching;
+    }
+    if (automaticFailoverTransition && !state->nativeSrtOutputs.empty()) {
+        std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>>
+            replaced;
+        {
+            std::lock_guard<std::mutex> lock(managerMutex);
+            auto& parked = parkedFailoverSrtOutputs[id];
+            replaced = std::move(parked);
+            parked = std::move(state->nativeSrtOutputs);
+        }
+        replaced.clear();
+        std::cerr << "NATIVE SRT FAILOVER PARK"
+                  << " stream_id=" << id
+                  << " action=preserve_peers"
+                  << std::endl;
+    }
     for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtspOutputs) if (output) output->stop();
     for (auto& output : state->nativeRtmpOutputs) if (output) output->stop();

@@ -431,6 +431,10 @@ private:
         std::shared_ptr<dvbstreamer5::media::epg::DvbEpgCollector>>> dormantEpg_;
     mutable std::mutex managerMutex;
     std::map<std::string, std::unique_ptr<StreamState>> streams;
+    // V346: keep the same SRT sockets/peers through automatic input failover.
+    // Protected by managerMutex; never stop/destroy outputs while holding it.
+    std::map<std::string, std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>>>
+        parkedFailoverSrtOutputs;
     struct FailoverEntry {
         StreamConfig primary;
         bool backupActive = false;

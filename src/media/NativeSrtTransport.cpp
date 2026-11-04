@@ -314,6 +314,27 @@ void NativeSrtInput::run() {
 
 NativeSrtOutput::~NativeSrtOutput(){stop();}
 bool NativeSrtOutput::start(const EndpointConfig& c,PeerAllowedCallback allow,PeerStateCallback con,PeerStateCallback dis,std::string& err){stop();if(!runtimeAvailable(&err))return false;config_=c;peerAllowed_=std::move(allow);onConnected_=std::move(con);onDisconnected_=std::move(dis);stopRequested_=false;running_=true;connected_=false;sentBytes_=0;droppedBytes_=0;queueOverrunBytes_=0;noPeerDiscardBytes_=0;reconnects_=0;setError({});clearQueuedData();try{worker_=std::thread(&NativeSrtOutput::run,this);}catch(const std::exception&e){running_=false;err=e.what();return false;}err.clear();return true;}
+void NativeSrtOutput::enableFailoverClock() {
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    failoverClockEnabled_ = true;
+}
+void NativeSrtOutput::sourceSwitched() {
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    failoverClockEnabled_ = true;
+    const auto discarded = queuedBytes_;
+    for (const auto& packet : queue_) (void)packet;
+    queue_.clear();
+    queuedBytes_ = 0;
+    droppedBytes_.fetch_add(discarded, std::memory_order_relaxed);
+    failoverClock_.sourceSwitched();
+    sourceGeneration_.fetch_add(1, std::memory_order_release);
+    queueCondition_.notify_all();
+    std::cerr << "NATIVE SRT SOURCE SWITCH port=" << config_.port
+              << " old_queued_discarded=" << discarded
+              << " transitions=" << failoverClock_.transitions()
+              << " action=keep_peer_flush_and_rebase"
+              << std::endl;
+}
 bool NativeSrtOutput::push(const std::uint8_t* data, std::size_t size) {
     if (!data || !size || !running_) return false;
     constexpr std::size_t kTsPacket = 188;
@@ -337,6 +358,12 @@ bool NativeSrtOutput::push(const std::uint8_t* data, std::size_t size) {
     for (std::size_t offset = 0; offset < size;) {
         const std::size_t chunk = std::min(kChunk, size - offset);
         queue_.emplace_back(data + offset, data + offset + chunk);
+        if (failoverClockEnabled_ && chunk % kTsPacket == 0) {
+            auto& ts = queue_.back();
+            for (std::size_t packetOffset = 0; packetOffset < chunk;
+                 packetOffset += kTsPacket)
+                failoverClock_.apply(ts.data() + packetOffset, kTsPacket);
+        }
         queuedBytes_ += chunk;
         offset += chunk;
     }
@@ -373,11 +400,18 @@ void NativeSrtOutput::run(){
         struct Peer{SrtSocket socket=kInvalidSocket;std::string ip;};
         Socket listener;std::string e;if(!createListenerSocket(config_,listener,e)){setError(e);running_=false;connected_=false;return;}
         std::vector<Peer> peers;std::vector<std::uint8_t> pending;bool first=true;
+        std::uint64_t observedGeneration=sourceGeneration_.load(std::memory_order_acquire);
         std::size_t payload=static_cast<std::size_t>(std::max(188,config_.payloadSize));payload-=payload%188;if(!payload)payload=188;
         auto removePeer=[&](std::size_t i,const std::string& reason){if(i>=peers.size())return;const std::string ip=peers[i].ip;if(peers[i].socket!=kInvalidSocket)api().close(peers[i].socket);peers.erase(peers.begin()+static_cast<std::ptrdiff_t>(i));connected_=!peers.empty();if(!reason.empty())setError(reason);if(onDisconnected_)onDisconnected_(ip);};
         while(!stopRequested_){
             for(;;){sockaddr_storage remote{};int len=sizeof(remote);SrtSocket client=api().accept(listener.s,reinterpret_cast<sockaddr*>(&remote),&len);if(client==kInvalidSocket)break;std::string peer=peerIp(remote);if(peerAllowed_&&!peerAllowed_(peer)){api().close(client);setError("SRT peer rejected: "+peer);continue;}if(!first)++reconnects_;first=false;peers.push_back({client,peer});connected_=true;setError({});if(onConnected_)onConnected_(peer);}
             std::vector<std::uint8_t> c;if(!popChunk(c))break;
+            const auto currentGeneration=sourceGeneration_.load(std::memory_order_acquire);
+            if(currentGeneration!=observedGeneration){
+                pending.clear();
+                observedGeneration=currentGeneration;
+                c.clear();
+            }
             for(std::size_t i=0;i<peers.size();){if(api().state(peers[i].socket)==SRTS_CONNECTED){++i;continue;}removePeer(i,"SRT listener peer disconnected");}
             if(peers.empty()){const auto discarded=c.size()+pending.size();droppedBytes_+=discarded;noPeerDiscardBytes_+=discarded;pending.clear();continue;}
             if(c.empty())continue;
@@ -387,7 +421,14 @@ void NativeSrtOutput::run(){
         }
         for(auto& peer:peers){if(peer.socket!=kInvalidSocket)api().close(peer.socket);if(onDisconnected_)onDisconnected_(peer.ip);}connected_=false;droppedBytes_+=pending.size();clearQueuedData();running_=false;return;
     }
-    bool first=true;std::vector<std::uint8_t>pending;while(!stopRequested_){Socket s;std::string peer,e;if(!establishConnection(config_,true,s,peer,stopRequested_,e)){if(stopRequested_)break;setError(e);++reconnects_;clearQueuedData();pause(stopRequested_);continue;}if(peerAllowed_&&!peerAllowed_(peer)){setError("SRT peer rejected: "+peer);clearQueuedData();pause(stopRequested_);continue;}if(!first)++reconnects_;first=false;connected_=true;setError({});if(onConnected_)onConnected_(peer);bool lost=false;pending.clear();while(!stopRequested_&&!lost){std::vector<std::uint8_t>c;if(!popChunk(c))break;if(c.empty()){if(api().state(s.s)!=SRTS_CONNECTED)lost=true;continue;}pending.insert(pending.end(),c.begin(),c.end());std::size_t payload=static_cast<std::size_t>(std::max(188,config_.payloadSize));payload-=payload%188;if(!payload)payload=188;std::size_t off=0;while(pending.size()-off>=payload){int n=api().send(s.s,reinterpret_cast<const char*>(pending.data()+off),static_cast<int>(payload),-1,1);if(n!=static_cast<int>(payload)){setError(n<=0?"SRT send disconnected: "+api().lastError():"partial SRT MPEG-TS message");lost=true;break;}sentBytes_+=static_cast<std::uint64_t>(n);off+=payload;}if(off)pending.erase(pending.begin(),pending.begin()+static_cast<std::ptrdiff_t>(off));}connected_=false;if(onDisconnected_)onDisconnected_(peer);droppedBytes_+=pending.size();pending.clear();clearQueuedData();if(!stopRequested_)pause(stopRequested_);}running_=false;connected_=false;
+    bool first=true;std::vector<std::uint8_t>pending;
+    std::uint64_t observedGeneration=sourceGeneration_.load(std::memory_order_acquire);
+    while(!stopRequested_){Socket s;std::string peer,e;if(!establishConnection(config_,true,s,peer,stopRequested_,e)){if(stopRequested_)break;setError(e);++reconnects_;clearQueuedData();pause(stopRequested_);continue;}if(peerAllowed_&&!peerAllowed_(peer)){setError("SRT peer rejected: "+peer);clearQueuedData();pause(stopRequested_);continue;}if(!first)++reconnects_;first=false;connected_=true;setError({});if(onConnected_)onConnected_(peer);bool lost=false;pending.clear();while(!stopRequested_&&!lost){std::vector<std::uint8_t>c;if(!popChunk(c))break;
+        const auto currentGeneration=sourceGeneration_.load(std::memory_order_acquire);
+        if(currentGeneration!=observedGeneration){
+            pending.clear();observedGeneration=currentGeneration;c.clear();
+        }
+        if(c.empty()){if(api().state(s.s)!=SRTS_CONNECTED)lost=true;continue;}pending.insert(pending.end(),c.begin(),c.end());std::size_t payload=static_cast<std::size_t>(std::max(188,config_.payloadSize));payload-=payload%188;if(!payload)payload=188;std::size_t off=0;while(pending.size()-off>=payload){int n=api().send(s.s,reinterpret_cast<const char*>(pending.data()+off),static_cast<int>(payload),-1,1);if(n!=static_cast<int>(payload)){setError(n<=0?"SRT send disconnected: "+api().lastError():"partial SRT MPEG-TS message");lost=true;break;}sentBytes_+=static_cast<std::uint64_t>(n);off+=payload;}if(off)pending.erase(pending.begin(),pending.begin()+static_cast<std::ptrdiff_t>(off));}connected_=false;if(onDisconnected_)onDisconnected_(peer);droppedBytes_+=pending.size();pending.clear();clearQueuedData();if(!stopRequested_)pause(stopRequested_);}running_=false;connected_=false;
 }
 
 } // namespace dvbstreamer5::media::srt

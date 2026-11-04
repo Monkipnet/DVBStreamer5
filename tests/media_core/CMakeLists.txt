@@ -93,3 +93,10 @@ add_executable(native_failover_health_test test_native_failover_health.cpp
     ../../src/media/TransportStream.cpp)
 target_include_directories(native_failover_health_test PRIVATE ../../src)
 add_test(NAME native_failover_health COMMAND native_failover_health_test)
+
+# V346: retain SRT MPEG-TS PCR/PTS/DTS and CC across both failover directions.
+add_executable(native_srt_switch_clock_test
+    test_native_srt_switch_clock.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(native_srt_switch_clock_test PRIVATE ../../src)
+add_test(NAME native_srt_switch_clock COMMAND native_srt_switch_clock_test)
