@@ -1,3 +1,9 @@
+## V10.8.370 — multicast TTL compatibility with TVStreamerSat5
+
+- Sets IPv4 multicast TTL to 32 in the common UDP socket, matching TVStreamerSat5. Previously it inherited the OS default, observed as TTL=1 on Linux. Applies to both legacy and new UDP-CBR/VBR engines and RTP multicast.
+- Logs `multicast_ttl=32` when opening a multicast destination. TS bytes, 1316-byte CBR datagrams, pacing, PCR/PTS/DTS and unicast TTL are preserved.
+- A regression test checks the actual received IP TTL and exact payload through both blocking and nonblocking sends. This corrects a confirmed difference in routed-multicast behavior; receiver/network and WISI playback verification remain required.
+
 ## V10.8.369 — new UDP-CBR / UDP-VBR output engine and loopback interface
 
 - Adds a separately implemented UDP packetizer, shared absolute-deadline schedulers, nonblocking per-destination retry queues and common CBR fanout. Existing configs retain the legacy engine; select the new engine per tile for controlled testing.

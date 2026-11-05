@@ -93,6 +93,7 @@ bool parseIpv4(const std::string& address, in_addr& result) noexcept {
 
 struct UdpSocket::Destination {
     sockaddr_in address {};
+    int multicastTtl = 0;
 };
 
 UdpSocket::UdpSocket() noexcept = default;
@@ -294,12 +295,27 @@ bool UdpSocket::openSender(
 
     auto destination = std::make_unique<Destination>();
     std::memcpy(&destination->address, addresses->ai_addr, sizeof(destination->address));
+    const bool multicast = IN_MULTICAST(ntohl(destination->address.sin_addr.s_addr));
 
     NativeSocket socket = ::socket(
         addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
     if (socket == kInvalidSocket) {
         setSocketError(error, "UDP sender socket");
         return false;
+    }
+
+    if (multicast) {
+        // TVStreamerSat5 sets 32 on both native UDP and GStreamer senders.
+        // Leaving the OS default (1 on Linux) prevents normal multicast
+        // routing beyond the directly attached subnet. This is independent
+        // of TS packetization, CBR timing and the selected output engine.
+        const int ttl = 32;
+        if (setSocketOption(socket, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) != 0) {
+            setSocketError(error, "IP_MULTICAST_TTL");
+            closeSocket(socket);
+            return false;
+        }
+        destination->multicastTtl = ttl;
     }
 
     if (!interfaceAddress.empty()) {
@@ -311,7 +327,7 @@ bool UdpSocket::openSender(
             closeSocket(socket);
             return false;
         }
-        if (IN_MULTICAST(ntohl(destination->address.sin_addr.s_addr)) &&
+        if (multicast &&
             setSocketOption(
                 socket, IPPROTO_IP, IP_MULTICAST_IF, &localInterface, sizeof(localInterface)) != 0) {
             setSocketError(error, "IP_MULTICAST_IF");
@@ -464,6 +480,10 @@ UdpSocket::SendResult UdpSocket::trySend(const std::uint8_t* data, std::size_t s
 
 std::uint16_t UdpSocket::localPort() const noexcept {
     return localPort_;
+}
+
+int UdpSocket::multicastTtl() const noexcept {
+    return destination_ ? destination_->multicastTtl : 0;
 }
 
 void UdpSocket::close() noexcept {

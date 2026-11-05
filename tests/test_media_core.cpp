@@ -19,6 +19,7 @@
 #include <chrono>
 #include <climits>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -795,6 +796,80 @@ void testUdpLoopback() {
     assert(receiver.receive(buffer.data(), buffer.size(), received, 5, error));
     assert(received == 0);
     assert(!sender.send(nullptr, 0, error));
+}
+
+void testUdpMulticastTtlCompatibility() {
+#ifdef __linux__
+    // Inspect the IP TTL delivered with real UDP datagrams, rather than a
+    // constant in the sender. Both classic send() and native trySend() share it.
+    using dvbstreamer5::media::network::UdpSocket;
+    const int receiver = ::socket(AF_INET, SOCK_DGRAM, 0);
+    assert(receiver >= 0);
+    const int enabled = 1;
+    assert(::setsockopt(receiver, IPPROTO_IP, IP_RECVTTL, &enabled, sizeof(enabled)) == 0);
+    const timeval timeout {2, 0};
+    assert(::setsockopt(receiver, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+    sockaddr_in local {};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    assert(::bind(receiver, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0);
+    socklen_t localSize = sizeof(local);
+    assert(::getsockname(receiver, reinterpret_cast<sockaddr*>(&local), &localSize) == 0);
+    ip_mreq membership {};
+    assert(::inet_pton(AF_INET, "239.255.66.7", &membership.imr_multiaddr) == 1);
+    assert(::inet_pton(AF_INET, "127.0.0.1", &membership.imr_interface) == 1);
+    assert(::setsockopt(receiver, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof(membership)) == 0);
+
+    int defaultUnicastTtl = 0;
+    socklen_t ttlSize = sizeof(defaultUnicastTtl);
+    assert(::getsockopt(receiver, IPPROTO_IP, IP_TTL, &defaultUnicastTtl, &ttlSize) == 0);
+    std::array<std::uint8_t, 1316> expected {};
+    for (unsigned n = 0; n < 7; ++n) {
+        const auto ts = packet(0x0100, n);
+        std::copy(ts.begin(), ts.end(), expected.begin() + n * 188);
+    }
+    const auto receiveTtl = [&] {
+        std::array<std::uint8_t, 2048> data {};
+        alignas(cmsghdr) std::array<std::uint8_t, CMSG_SPACE(sizeof(int))> control {};
+        iovec vector {data.data(), data.size()};
+        msghdr message {};
+        message.msg_iov = &vector;
+        message.msg_iovlen = 1;
+        message.msg_control = control.data();
+        message.msg_controllen = control.size();
+        assert(::recvmsg(receiver, &message, 0) == static_cast<ssize_t>(expected.size()));
+        assert(!(message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)));
+        assert(std::equal(expected.begin(), expected.end(), data.begin()));
+        for (auto* c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message, c)) {
+            if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_TTL) {
+                assert(c->cmsg_len >= CMSG_LEN(sizeof(int)));
+                int ttl = 0;
+                std::memcpy(&ttl, CMSG_DATA(c), sizeof(ttl));
+                return ttl;
+            }
+        }
+        assert(false && "missing IP_TTL ancillary data");
+        return -1;
+    };
+    UdpSocket sender;
+    std::string error;
+    assert(sender.openSender("239.255.66.7", ntohs(local.sin_port), "127.0.0.1", error));
+    assert(sender.multicastTtl() == 32);
+    assert(sender.send(expected.data(), expected.size(), error));
+    const auto blockingTtl = receiveTtl();
+    if (blockingTtl != 32) std::cerr << "Expected TVStreamerSat5 multicast TTL=32, received " << blockingTtl << '\n';
+    assert(blockingTtl == 32);
+    int effective = 0;
+    assert(sender.configureOutputBuffer(1024 * 1024, effective, error));
+    assert(sender.trySend(expected.data(), expected.size(), error) == UdpSocket::SendResult::Sent);
+    assert(receiveTtl() == 32);
+    // Multicast scope must not change the normal unicast IP_TTL policy.
+    assert(sender.openSender("127.0.0.1", ntohs(local.sin_port), "127.0.0.1", error));
+    assert(sender.multicastTtl() == 0);
+    assert(sender.send(expected.data(), expected.size(), error));
+    assert(receiveTtl() == defaultUnicastTtl);
+    ::close(receiver);
+#endif
 }
 
 void testLinuxDvbPidListParsing() {
@@ -1618,6 +1693,7 @@ int main() {
     testRtpParsingAndPayload();
     testRtpPacketizerRoundTrip();
     testUdpLoopback();
+    testUdpMulticastTtlCompatibility();
     testCbrTsPacer();
     for (const bool native : {false,true}) {
         nativeUdpUnderTest=native;

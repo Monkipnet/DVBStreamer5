@@ -404,8 +404,10 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
                   << " destination=" << outputHost << ":" << parsedOutputPort
                   << " interface="
                   << (output.interfaceAddress.empty() ? std::string("auto")
-                                                      : output.interfaceAddress)
-                  << " target_kbps=" << (config_.targetBitrate / 1000ULL)
+                                                      : output.interfaceAddress);
+        if (outputSocket->multicastTtl() > 0)
+            std::cerr << " multicast_ttl=" << outputSocket->multicastTtl();
+        std::cerr << " target_kbps=" << (config_.targetBitrate / 1000ULL)
                   << std::endl;
         outputSockets_.push_back(std::move(outputSocket));
     }

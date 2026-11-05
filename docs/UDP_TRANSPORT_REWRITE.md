@@ -1,4 +1,4 @@
-# UDP-CBR / UDP-VBR transport rewrite (10.8.369)
+# UDP-CBR / UDP-VBR transport rewrite (10.8.369+, current 10.8.370)
 
 Branch: `rewrite/udp-transport`. This replaces the UDP output implementation,
 not the DVB reader, CA backend, remapper, codec, EPG/subtitles or failover logic.
@@ -66,7 +66,8 @@ Loopback carries traffic within the same host.
 
 1. Build the branch, then install the test version in the usual way.
 2. In one affected channel choose **UDP output engine -> New UDP-CBR / UDP-VBR**.
-   Leave Source PCR / 4500 ms / 3000 kbit/s unchanged for the first comparison.
+   Leave the existing PCR mode, startup buffer and target bitrate unchanged
+   for the first comparison.
 3. Save and restart only that tile. The startup log must contain
    `UDP TS OUTPUT engine=native` and the expected destination count.
 4. Compare the exact multicast group at the server and at WISI over multiple
@@ -82,6 +83,26 @@ budgets for a mixed SD/HD lineup; this estimate is not a measurement of the NIC.
 send retries, maximum scheduling lateness, clock resets, source/pending/observer
 queue bytes, source queue peak, effective send buffer and NULL-only datagrams.
 These are sender-side observations, not confirmation of receiver delivery.
+
+## Multicast routing compatibility (10.8.370)
+
+Comparison with [TVStreamerSat5 at f9af8f6](https://github.com/Monkipnet/Tvstreamer_sat/tree/f9af8f699455c9f16076734785b224d73eea5b23)
+found an explicit TTL of 32 in `StableUdpOutput.cpp`, `UdpTsOutput.cpp`, and the
+GStreamer UDP sink (`ttl-mc=32`). DVBStreamer5 had not set `IP_MULTICAST_TTL`;
+a real Linux receive-side test observed TTL=1 before the fix.
+
+The common `UdpSocket::openSender` now sets multicast TTL=32, including both
+legacy/new UDP engines and RTP multicast. Opening fails with an explicit error
+if setting the option fails. The per-destination startup log includes
+`multicast_ttl=32`. Unicast IP TTL and TS contents/timing are not modified.
+A real multicast receive test verifies TTL=32 and exact 1316-byte payload for
+blocking and nonblocking sends, then verifies normal unicast TTL separately.
+
+This removes the sender's one-hop multicast restriction. Router multicast
+forwarding/membership configuration is still required. It is not proof that the
+previous partial losses or WISI picture artifacts were caused by TTL, since a
+normal router TTL expiry drops traffic rather than repairing TS packets.
+Compare the same channel, group/port, interface and CBR rate before/after.
 
 ## Verification
 
@@ -137,7 +158,7 @@ ctest --test-dir "$BUILD" --output-on-failure
 cmake -S tests/media_core -B "${BUILD}-media" -DCMAKE_BUILD_TYPE=Release
 cmake --build "${BUILD}-media" --parallel 2
 ctest --test-dir "${BUILD}-media" --output-on-failure
-OUT="$PWD/dist/DVBStreamer5-10.8.369-udp-native-linux-x86_64"
+OUT="$PWD/dist/DVBStreamer5-10.8.370-udp-native-linux-x86_64"
 bash scripts/make_portable_linux_bundle.sh --build-dir "$BUILD" \
   --binary "$BUILD/DVBStreamer5" --output-dir "$OUT" --with-oscam --archive
 sha256sum "${OUT}.tar.gz" > "${OUT}.tar.gz.sha256"
