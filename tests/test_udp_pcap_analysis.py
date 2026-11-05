@@ -22,15 +22,15 @@ def ts(index, discontinuity=False):
     return bytes(packet)
 
 
-def ip_udp(payload, sport=45000, fragments=0):
+def ip_udp(payload, sport=45000, fragments=0, ttl=64, tos=0):
     udp = struct.pack('!HHHH', sport, 56444, len(payload) + 8, 0) + payload
-    ip = struct.pack('!BBHHHBBH4s4s', 0x45, 0, len(udp) + 20, 1, fragments, 64, 17, 0,
+    ip = struct.pack('!BBHHHBBH4s4s', 0x45, tos, len(udp) + 20, 1, fragments, ttl, 17, 0,
                      bytes((192, 0, 2, 10)), bytes((227, 9, 9, 1)))
     return ip + udp
 
 
-def frame(payload, link=276, interface=2, sport=45000, vlan=False, fragments=0):
-    ip = ip_udp(payload, sport, fragments)
+def frame(payload, link=276, interface=2, sport=45000, vlan=False, fragments=0, ttl=64, tos=0):
+    ip = ip_udp(payload, sport, fragments, ttl, tos)
     protocol = 0x8100 if vlan else 0x0800
     if vlan:
         ip = struct.pack('!HH', 42, 0x0800) + ip
@@ -75,6 +75,22 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(flow['cc_errors'], 0)
         self.assertEqual(flow['pids'][0]['pcr_backwards'], 0)
         self.assertEqual(flow['pids'][0]['pcr_count'], 70)
+        self.assertEqual(flow['ip_ttl_counts'], {64: 10})
+        self.assertEqual(flow['null_percent'], 0)
+
+    def test_ipv4_transport_parameters_and_null_budget(self):
+        null = bytearray(ts(99)); null[1] = 0x1f; null[2] = 0xff
+        records = [(0, frame(ts(0), ttl=1), None),
+                   (2105600, frame(ts(1) + bytes(null), ttl=4, tos=(34 << 2) | 2, fragments=0x4000), None)]
+        flow = self.analyse(capture(records))['flows'][0]
+        self.assertEqual(flow['ip_ttl_counts'], {1: 1, 4: 1})
+        self.assertEqual(flow['ip_dscp_counts'], {0: 1, 34: 1})
+        self.assertEqual(flow['ip_ecn_counts'], {0: 1, 2: 1})
+        self.assertEqual(flow['ip_dont_fragment_datagrams'], 1)
+        self.assertEqual(flow['ts_packets'], 3)
+        self.assertEqual(flow['null_packets'], 1)
+        self.assertAlmostEqual(flow['null_percent'], 100 / 3, places=5)
+        self.assertEqual(flow['cc_errors'], 0)
 
     def test_dropped_datagram_is_a_cc_error(self):
         records = self.records()

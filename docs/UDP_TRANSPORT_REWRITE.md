@@ -201,7 +201,10 @@ python3 scripts/analyze_udp_pcap.py /tmp/udp-out.pcap.gz \
 ```
 
 It reports each interface/source socket separately, datagram sizes/rate/gaps,
-and per-PID CC, duplication, TEI, scrambling, discontinuities and PCR. Keeping
+IPv4 TTL/DSCP/ECN/DF, the NULL packet share, and per-PID CC, duplication, TEI,
+scrambling, discontinuities and PCR. These fields help compare a known-good
+sender with DVBStreamer5 on the same path and at the same transport bitrate.
+Keeping
 interfaces separate prevents copies observed on a bridge/bond from creating
 false CC alarms. Malformed/truncated records and IPv4 fragments are reported;
 fragmented datagrams are not reassembled. A port-based capture filter may omit

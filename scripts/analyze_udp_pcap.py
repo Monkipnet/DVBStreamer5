@@ -98,11 +98,15 @@ class Flow:
         self.first = self.last = None
         self.datagrams = self.payload_bytes = self.first_payload_size = 0
         self.lengths = Counter()
+        self.ttl_counts = Counter()
+        self.dscp_counts = Counter()
+        self.ecn_counts = Counter()
+        self.dont_fragment = 0
         self.gaps = []
         self.backwards_timestamps = self.invalid_ts = 0
         self.pids = {}
 
-    def push(self, timestamp, payload):
+    def push(self, timestamp, payload, ttl, tos, dont_fragment):
         if self.first is None:
             self.first = timestamp
             self.first_payload_size = len(payload)
@@ -116,6 +120,10 @@ class Flow:
         self.datagrams += 1
         self.payload_bytes += len(payload)
         self.lengths[len(payload)] += 1
+        self.ttl_counts[ttl] += 1
+        self.dscp_counts[tos >> 2] += 1
+        self.ecn_counts[tos & 3] += 1
+        self.dont_fragment += bool(dont_fragment)
         if not payload or len(payload) % 188 or any(payload[p] != 0x47 for p in range(0, len(payload), 188)):
             self.invalid_ts += 1
             return
@@ -130,10 +138,18 @@ class Flow:
         interface, direction, source, sport, dest, dport = self.key
         duration = (self.last - self.first) / 1e9
         gaps = sorted(self.gaps)
+        ts_packets = sum(p.packets for p in self.pids.values())
+        null_packets = self.pids[0x1fff].packets if 0x1fff in self.pids else 0
         return dict(interface_index=interface, packet_type=direction,
                     source_ip=source, source_port=sport, destination_ip=dest, destination_port=dport,
                     datagrams=self.datagrams, payload_bytes=self.payload_bytes,
                     payload_lengths=dict(sorted(self.lengths.items())),
+                    ip_ttl_counts=dict(sorted(self.ttl_counts.items())),
+                    ip_dscp_counts=dict(sorted(self.dscp_counts.items())),
+                    ip_ecn_counts=dict(sorted(self.ecn_counts.items())),
+                    ip_dont_fragment_datagrams=self.dont_fragment,
+                    ts_packets=ts_packets, null_packets=null_packets,
+                    null_percent=round(100 * null_packets / ts_packets, 6) if ts_packets else None,
                     first_utc=utc(self.first), last_utc=utc(self.last),
                     span_seconds=round(duration, 9),
                     # Exclude the first datagram, which precedes this measured interval.
@@ -255,7 +271,8 @@ def analyze(path, destination=None, port=None):
                 key = (interface, direction, source, sport, dest, dport)
                 if key not in flows:
                     flows[key] = Flow(key)
-                flows[key].push(seconds * 1000000000 + fraction * ns_per_unit, payload)
+                flows[key].push(seconds * 1000000000 + fraction * ns_per_unit,
+                                payload, ip[8], ip[1], fragments & 0x4000)
                 counts['selected_udp_records'] += 1
             except ValueError as error:
                 counts['malformed_or_truncated_records'] += 1
@@ -288,6 +305,7 @@ def main():
     for flow in result['flows']:
         print(f"\nInterface={flow['interface_index']} packet_type={flow['packet_type']} {flow['source_ip']}:{flow['source_port']} -> {flow['destination_ip']}:{flow['destination_port']}")
         print(f"Datagrams={flow['datagrams']} span_s={flow['span_seconds']} TS_Mbps={flow['payload_mbps']} lengths={flow['payload_lengths']}")
+        print(f"IP_TTL={flow['ip_ttl_counts']} DSCP={flow['ip_dscp_counts']} ECN={flow['ip_ecn_counts']} DF_datagrams={flow['ip_dont_fragment_datagrams']} NULL_percent={flow['null_percent']}")
         print('Datagram gaps (us):', flow['gap_us'], 'gaps over ms:', flow['gaps_over_ms'])
         print(f"CC_errors={flow['cc_errors']} invalid_TS_datagrams={flow['invalid_ts_datagrams']} backwards_capture_timestamps={flow['backwards_capture_timestamps']}")
         print('PID      Packets     CC    Dup    TEI    PCR   PCR_gap_ms  PCR_backwards')
