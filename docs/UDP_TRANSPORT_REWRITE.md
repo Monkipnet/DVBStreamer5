@@ -181,3 +181,29 @@ lost data. PCR timestamp gaps are media-clock measurements, not a measurement
 of UDP network jitter. Zero CC errors do not establish that the payload is good.
 For intermittent failures, increase `-DurationSeconds` to 300 or more and capture
 an actual breakup, rather than drawing conclusions from a clean short window.
+
+## Analyse the server's outgoing packet capture
+
+`scripts/analyze_udp_pcap.py` reads an existing classic `.pcap` / `.pcap.gz`
+using Python 3's standard library. It supports Linux cooked SLL/SLL2, Ethernet
+with VLAN tags, and raw IPv4, with microsecond or nanosecond capture timestamps.
+
+```bash
+python3 scripts/analyze_udp_pcap.py /tmp/udp-out.pcap.gz \
+  --destination 239.10.10.1 --port 1234 --json /tmp/udp-out-analysis.json
+```
+
+It reports each interface/source socket separately, datagram sizes/rate/gaps,
+and per-PID CC, duplication, TEI, scrambling, discontinuities and PCR. Keeping
+interfaces separate prevents copies observed on a bridge/bond from creating
+false CC alarms. Malformed/truncated records and IPv4 fragments are reported;
+fragmented datagrams are not reassembled. A port-based capture filter may omit
+non-initial IP fragments. Keep the `tcpdump` drop statistics alongside the file.
+TX checksum offload is not treated as payload damage. Software capture timing
+does not establish wire-level PCR accuracy or downstream delivery.
+
+Standalone regression checks:
+
+```bash
+python3 -m unittest discover -s tests -p test_udp_pcap_analysis.py -v
+```
