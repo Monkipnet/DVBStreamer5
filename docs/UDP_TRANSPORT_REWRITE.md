@@ -142,3 +142,42 @@ bash scripts/make_portable_linux_bundle.sh --build-dir "$BUILD" \
   --binary "$BUILD/DVBStreamer5" --output-dir "$OUT" --with-oscam --archive
 sha256sum "${OUT}.tar.gz" > "${OUT}.tar.gz.sha256"
 ```
+
+## Compare UDP and SRT on Windows
+
+Run `scripts/compare_udp_srt.ps1` in Windows PowerShell 5.1 or PowerShell 7,
+with `ffmpeg` and `ffprobe` on PATH. Enable both outputs on the same tile before
+recording. No DVBStreamer5 rebuild or service restart is needed for this tool.
+
+```powershell
+.\scripts\compare_udp_srt.ps1 `
+  -UdpUrl 'udp://@239.10.10.1:1234' `
+  -SrtUrl 'srt://192.0.2.10:34000?mode=caller&latency=1500000' `
+  -DurationSeconds 90
+```
+
+Use the actual multicast group and SRT endpoint. FFmpeg interprets the SRT URL
+`latency` in microseconds, so `1500000` means 1500 ms. Add
+`-InterfaceIP '192.0.2.20'` to select the Windows NIC if multicast arrives via
+a specific interface. Custom executable locations can be passed with `-Ffmpeg`
+and `-Ffprobe`. Existing captures can be analysed with `-UdpFile` and `-SrtFile`.
+
+The two FFmpeg processes capture raw data concurrently with `-f data` on both
+input and output: no MPEG-TS demux/remux, PCR restamping or CC regeneration is
+performed during capture. A wall-clock timer stops recording even if timestamps
+freeze. Decoding/ffprobe analysis runs on the saved files afterwards.
+
+The new output directory contains original `udp.ts` / `srt.ts`, per-PID CSVs,
+`summary.csv` (audio/video packet counts, CC/TEI, PES/PTS changes/span and decoded
+video frame count), `clocks.csv` (PCR counts, timestamp span/gaps/backwards), and
+capture/probe/decode logs. `report.zip` packages the reports without the large TS
+files. Keep both TS captures for further comparison.
+
+Different start/end times and output buffers can produce different packet
+counts; counts alone are not evidence of loss. A decoder may report missing
+reference frames when capture starts in the middle of a GOP. CC errors need to
+be correlated with the input/server/network; they do not identify which device
+lost data. PCR timestamp gaps are media-clock measurements, not a measurement
+of UDP network jitter. Zero CC errors do not establish that the payload is good.
+For intermittent failures, increase `-DurationSeconds` to 300 or more and capture
+an actual breakup, rather than drawing conclusions from a clean short window.
