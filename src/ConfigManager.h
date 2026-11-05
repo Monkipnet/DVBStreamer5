@@ -84,6 +84,8 @@ struct StreamConfig {
     // V334: opt-in, per-tile PCR timeline for HTTP/SRT passthrough to UDP-CBR.
     // Stored independently of the legacy encoded CBR startup buffer setting.
     bool ipSourcePcrPassthrough = false;
+    // V364 opt-in periodic PCR/reservoir algorithm; default remains legacy.
+    bool wisiCompatible = false;
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.

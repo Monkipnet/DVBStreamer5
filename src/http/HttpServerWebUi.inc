@@ -7190,7 +7190,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_deinterlace_mode:'legacy', transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, wisi_compatible:false, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_deinterlace_mode:'legacy', transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, input_audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
@@ -7913,7 +7913,15 @@ function openStreamForm(stream) {
         <div class="form-row"><label>SID входа</label><input class="compact" id="streamInputServiceId" type="number" min="0" max="65535" value="${stream.input_service_id ?? 0}" placeholder="0 = Auto" /><small>0 = автоопределение SID из PAT; значение 1–65535 = выбрать конкретный входной канал.</small></div>
         <div class="form-row"><label>SID выхода</label><input class="compact" id="streamServiceId" type="number" min="1" max="65535" value="${stream.service_id||1}" placeholder="1" /></div>
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
-        <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.round((stream.target_bitrate||2000000)/1000)}" placeholder="2000" oninput="updateIpSourcePcrVisibility()" /></div>
+        <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.floor((stream.target_bitrate||2000000)/1000)}" placeholder="2000" oninput="updateIpSourcePcrVisibility()" /></div>
+        <div class="form-row full edit-section">
+          <div class="edit-toggle">
+            <div class="edit-field-title" ${uiBiAttrs('Совместимость WISI','WISI compatibility')}>${uiBiText('Совместимость WISI','WISI compatibility')}</div>
+            <small class="field-help" ${uiBiAttrs('Эксперимент: буфер 5 с и PCR каждые 20 мс. Выключено — прежний алгоритм.','Experimental: 5 s reservoir and PCR every 20 ms. Off keeps the original algorithm.')}>${uiBiText('Эксперимент: буфер 5 с и PCR каждые 20 мс. Выключено — прежний алгоритм.','Experimental: 5 s reservoir and PCR every 20 ms. Off keeps the original algorithm.')}</small>
+            <label class="checkbox-inline"><input id="streamWisiCompatible" type="checkbox" ${stream.wisi_compatible===true?'checked':''}/><span ${uiBiAttrs('Включить wisi_compatible','Enable wisi_compatible')}>${uiBiText('Включить wisi_compatible','Enable wisi_compatible')}</span></label>
+            <small class="field-help" ${uiBiAttrs('Только UDP-CBR. После сохранения вручную перезапустите плитку.','UDP-CBR only. Save and manually restart the tile.')}>${uiBiText('Только UDP-CBR. После сохранения вручную перезапустите плитку.','UDP-CBR only. Save and manually restart the tile.')}</small>
+          </div>
+        </div>
         <div class="form-row full edit-section" id="streamIpSourcePcrRow">
           <div class="edit-toggle">
             <div class="edit-field-title" ${subtitleUiTriAttrs('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}>${subtitleUiTriText('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}</div>
@@ -8517,6 +8525,8 @@ function saveStream(id) {
   const subtitleLang = selectedSubtitleTrack === 'auto'
     ? 'auto'
     : selectedSubtitleTrack.split(':')[1];
+  const originalStream = state.streams.find(s=>s.id===id);
+  const savedCbrMarker = Number(originalStream?.target_bitrate || 0) % 1000;
   const payload = {
     id: id,
     name: document.getElementById('streamName').value,
@@ -8549,7 +8559,8 @@ function saveStream(id) {
     auto_start: activationMode === 'online' && document.getElementById('streamAutoStart').checked,
     remap_enabled: document.getElementById('streamRemapEnabled').checked,
     cbr: selectedCbr,
-    target_bitrate: Number(document.getElementById('streamBitrate').value) * 1000,
+    target_bitrate: Math.trunc(Number(document.getElementById('streamBitrate').value)) * 1000 + savedCbrMarker,
+    wisi_compatible: document.getElementById('streamWisiCompatible')?.checked === true,
     transcode_enabled: state.transcoder?.available === true && document.getElementById('streamTranscodeEnabled').checked,
     transcode_resolution: document.getElementById('streamTranscodeResolution').value,
     transcode_video_codec: document.getElementById('streamTranscodeVideoCodec').value,

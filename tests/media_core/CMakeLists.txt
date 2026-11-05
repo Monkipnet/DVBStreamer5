@@ -37,6 +37,13 @@ endif()
 enable_testing()
 add_test(NAME media_core_tests COMMAND media_core_tests)
 
+# V364: opt-in 20ms periodic PCR, legacy algorithm preserved.
+add_executable(wisi_compatible_cbr_test
+    test_wisi_compatible_cbr.cpp
+    ../../src/media/CbrTsPacer.cpp)
+target_include_directories(wisi_compatible_cbr_test PRIVATE ../../src)
+add_test(NAME wisi_compatible_cbr COMMAND wisi_compatible_cbr_test)
+
 # V330: deterministic NVENC A/B policy test, independent of CUDA/NVENC drivers.
 add_executable(nvenc_quality_policy_test test_nvenc_quality_policy.cpp)
 target_include_directories(nvenc_quality_policy_test PRIVATE ../../src)

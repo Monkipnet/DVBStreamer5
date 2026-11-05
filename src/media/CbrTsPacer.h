@@ -23,7 +23,7 @@ using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
 // input delivery jitter and queue locks from moving the UDP transmission clock.
 class CbrTsPacer {
 public:
-    explicit CbrTsPacer(std::uint64_t targetBitrate);
+    explicit CbrTsPacer(std::uint64_t targetBitrate, bool wisiCompatible = false);
 
     bool canEnqueue(const Packet& packet) const noexcept;
     bool enqueue(const Packet& packet);
@@ -59,6 +59,10 @@ public:
     std::size_t lastDatagramUsefulPackets() const noexcept;
     std::uint64_t outputSlots() const noexcept;
     bool sourcePllMode() const noexcept { return sourcePllMode_; }
+    bool wisiCompatible() const noexcept { return wisiCompatible_; }
+    std::size_t maxQueuedBytes() const noexcept {
+        return wisiCompatible_ ? kCompatQueuedBytes : kMaximumQueuedBytes;
+    }
 
     // V176 keeps the per-stream controls backward-compatible with the existing
     // StreamManager wiring. The Web UI stores target bitrate in whole kbps and
@@ -170,6 +174,8 @@ private:
     void observeSourcePcr(const Packet& packet) noexcept;
     void updateUsefulPace(std::chrono::steady_clock::time_point now) noexcept;
     bool restampPcr(Packet& packet, std::uint64_t outputSlot) noexcept;
+    std::uint64_t compatElapsedTicks(std::uint64_t slot) const noexcept;
+    void makePeriodicPcr(Packet& packet, std::uint64_t slot) noexcept;
 
     static bool isNullPacket(const Packet& packet) noexcept;
     static std::uint16_t packetPid(const Packet& packet) noexcept;
@@ -180,6 +186,7 @@ private:
     static bool writePcr(Packet& packet, std::uint64_t pcrTicks) noexcept;
 
     static constexpr std::size_t kMaximumQueuedBytes = 8 * 1024 * 1024;
+    static constexpr std::size_t kCompatQueuedBytes = 32 * 1024 * 1024;
     static constexpr std::uint64_t kMinimumBitrate = 100000;
     static constexpr std::uint64_t kMaximumBitrate = 200000000;
     static constexpr std::size_t kPidCount = 8192;
@@ -187,6 +194,7 @@ private:
     const bool sourcePllMode_;
     // V299 opt-in WISI-only reservoir assist (+809); not used by HTTP observers.
     const bool wisiReservoirAssist_;
+    const bool wisiCompatible_;
     std::uint64_t targetBitrate_;
     std::deque<Packet> queuedPackets_;
 
@@ -229,6 +237,14 @@ private:
     // Output PCR clocks. Every PCR PID has its own anchor so SPTS and MPTS are
     // both supported. Legacy mode restamps PCR to output slot phase; Source-PCR
     // mode preserves provider PCR and keeps media timestamps in one clock domain.
+    // Private to the opt-in WISI-compatible algorithm.
+    bool periodicPcrInitialized_ = false;
+    std::uint16_t periodicPcrPid_ = kNullPid;
+    std::uint64_t periodicPcrAnchorTicks_ = 0;
+    std::uint64_t periodicPcrAnchorSlot_ = 0;
+    std::uint64_t nextPeriodicPcrElapsedTicks_ = 0;
+    bool pcrPayloadCcValid_ = false;
+    std::uint8_t pcrPayloadCc_ = 0;
     std::uint64_t outputSlotCounter_ = 0;
     std::array<OutputPcrState, kPidCount> outputPcrStates_ {};
     std::uint64_t pcrRewriteCount_ = 0;
