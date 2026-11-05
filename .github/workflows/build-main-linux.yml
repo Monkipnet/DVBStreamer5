@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/dvb-source-pcr-pacing
   workflow_dispatch:
 
 permissions:
@@ -50,7 +51,7 @@ jobs:
 
       - name: Compile DVBStreamer5 and mandatory Newcamd plugin
         run: |
-          cmake --build build-main-ci --parallel 2 --target DVBStreamer5
+          cmake --build build-main-ci --parallel 2 --target DVBStreamer5 oscam-mini
           test -x build-main-ci/DVBStreamer5
           test -s build-main-ci/ca-plugins/dvbstreamer5-ca-newcamd.so
 
@@ -63,7 +64,8 @@ jobs:
             dvbstreamer5_audio_track_test \
             dvbstreamer5_video_cadence_test \
             dvbstreamer5_ticker_test \
-            dvbstreamer5_docx_import_test
+            dvbstreamer5_docx_import_test \
+            dvbstreamer5_source_pcr_config_test
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums
@@ -75,6 +77,7 @@ jobs:
             --build-dir build-main-ci \
             --binary build-main-ci/DVBStreamer5 \
             --output-dir "dist/DVBStreamer5-${version}-linux-x86_64" \
+            --with-oscam \
             --archive
           sha256sum "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz" > dist/SHA256SUMS.txt
           cat dist/SHA256SUMS.txt

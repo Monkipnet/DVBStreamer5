@@ -6,6 +6,7 @@
 #include "TranscoderModule.h"
 #include "AutoTranscodePolicy.h"
 #include "media/IpCbrSourceClockPolicy.h"
+#include "media/DvbSourcePcrPacingPolicy.h"
 #include "mpts/MptsOutputManager.h"
 #include "protocols/SrtVpsProfile.h"
 #include "protocols/stream/inputs/StreamVdrInputProtocol.h"
@@ -1272,6 +1273,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         streamConfig.cbr && std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB") &&
         std::string(std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB")) == "1";
     relay.wisiPreserveSourcePcr = transcodePcrAb || ipSourceClockAb;
+    relay.sourcePcrPacketPacing = dvbstreamer5::media::network::enableDvbSourcePcrPacketPacing(
+        streamConfig.dvbSourcePcrPacing, DvbSatellite::isDvbUri(normalizedInput),
+        streamConfig.transcodeEnabled, streamConfig.cbr, hasUdpCbrOutput,
+        testInput, streamConfig.targetBitrate);
     if (ipSourceClockAb) {
         std::cerr << "NATIVE WISI SOURCE PCR AB"
                   << " stream_id=" << streamConfig.id

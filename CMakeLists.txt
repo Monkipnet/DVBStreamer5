@@ -446,6 +446,13 @@ target_link_libraries(dvbstreamer5_docx_import_test PRIVATE
     LibXml2::LibXml2 ZLIB::ZLIB)
 add_test(NAME ticker_docx_import COMMAND dvbstreamer5_docx_import_test)
 
+add_executable(dvbstreamer5_source_pcr_config_test
+    tests/test_dvb_source_pcr_config.cpp src/ConfigManager.cpp src/utils.cpp)
+target_link_libraries(dvbstreamer5_source_pcr_config_test PRIVATE
+    dvbstreamer5_boost_headers dvbstreamer5_media_core
+    dvbstreamer5_jsoncpp OpenSSL::Crypto)
+add_test(NAME dvb_source_pcr_config COMMAND dvbstreamer5_source_pcr_config_test)
+
 target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
 target_link_libraries(DVBStreamer5 ZLIB::ZLIB PkgConfig::LIBCURL LibXml2::LibXml2)
 message(STATUS "XMLTV external download: libcurl, libxml2 and gzip enabled")

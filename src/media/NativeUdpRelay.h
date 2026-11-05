@@ -162,6 +162,7 @@ struct NativeUdpRelayConfig {
     // V333: +777 source-PCR profile with no legacy reservoir-rate correction,
     // and the existing 3-s startup buffer. Never enabled automatically.
     bool wisiSourcePcrStrict = false;
+    bool sourcePcrPacketPacing = false;
     std::vector<NativeUdpRelayOutputConfig> outputs;
     bool allowNoNetworkOutput = false;
 };

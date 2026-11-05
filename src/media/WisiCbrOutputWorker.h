@@ -54,12 +54,13 @@ public:
         Observer observer,
         ErrorCallback errorCallback,
         std::atomic<std::uint64_t>* perOutputBytes = nullptr,
-        std::string streamId = {})
+        std::string streamId = {},
+        bool sourcePcrPacketPacing = false)
         : socket_(socket),
           outputIndex_(outputIndex),
           workerId_(nextWorkerId_.fetch_add(1ULL, std::memory_order_relaxed)),
           streamId_(std::move(streamId)),
-          pacer_(targetBitrate),
+          pacer_(targetBitrate, sourcePcrPacketPacing),
           requestedStartupBuffer_(std::chrono::milliseconds(
               mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
           startupBuffer_(effectiveStartupBuffer(targetBitrate)),
@@ -918,6 +919,8 @@ private:
                               << " pcr_schedule="
                               << (pacer_.sourcePllMode() ? "source-timeline" : "output-cbr-slot-clock")
                               << " pts_dts=preserved"
+                              << " useful_schedule="
+                              << (pacer_.sourceTimelinePacing() ? "pcr-intervals" : "legacy-rate")
                               << " auto_tune=off"
                               << " catchup_burst=off"
                               << " phase_recovery_max_pct=0.25"

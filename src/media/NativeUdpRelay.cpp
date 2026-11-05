@@ -959,7 +959,8 @@ void NativeUdpRelay::run() {
                             httpQueueCondition_.notify_all();
                         },
                         output.sentTsBytes ? output.sentTsBytes.get() : nullptr,
-                        config_.streamId);
+                        config_.streamId,
+                        config_.sourcePcrPacketPacing);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();

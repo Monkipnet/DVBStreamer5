@@ -1,3 +1,10 @@
+## V10.8.368 — opt-in DVB Source PCR packet pacing
+
+- Adds per-channel **Precise DVB Source PCR pacing (experimental)** for DVB → UDP-CBR passthrough with Source PCR and a nonzero startup buffer. The default is off; existing configurations retain their prior behavior.
+- Schedules useful packets by adjacent source PCR intervals while preserving their bytes, 7×188 UDP datagrams, configured transport bitrate and the existing physical sender clock. It does not recover multicast network losses.
+- Adds ten-minute virtual-time PCR/VBR regressions, byte-preserving dual-UDP/observer loopback and config compatibility tests. Live WISI Chameleon validation is still required before wider activation.
+- Build and rollback instructions: [WISI Source PCR pacing](docs/WISI_SOURCE_PCR_PACING.md).
+
 ## V10.8.345 — GCC 13 MP4 relay constructor build fix + GitHub Linux CI
 
 - Fixed GCC 13 failure in StreamManager.cpp: std::make_unique<NativeUdpRelay>() previously instantiated the inline-defaulted NativeUdpRelay constructor while std::unique_ptr<mp4::NativeMp4Replacement> still held an incomplete type. The constructor is now declared in NativeUdpRelay.h and defined out-of-line in NativeUdpRelay.cpp after including the complete native MP4 type. The destructor and existing MPEG-TS/MP4 implementation remain unchanged.

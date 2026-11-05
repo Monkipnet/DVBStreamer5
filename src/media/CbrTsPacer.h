@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/TransportStream.h"
+#include "media/SourcePcrPacketSchedule.h"
 
 #include <array>
 #include <chrono>
@@ -23,7 +24,7 @@ using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
 // input delivery jitter and queue locks from moving the UDP transmission clock.
 class CbrTsPacer {
 public:
-    explicit CbrTsPacer(std::uint64_t targetBitrate);
+    explicit CbrTsPacer(std::uint64_t targetBitrate, bool sourceTimelinePacing = false);
 
     bool canEnqueue(const Packet& packet) const noexcept;
     bool enqueue(const Packet& packet);
@@ -59,6 +60,7 @@ public:
     std::size_t lastDatagramUsefulPackets() const noexcept;
     std::uint64_t outputSlots() const noexcept;
     bool sourcePllMode() const noexcept { return sourcePllMode_; }
+    bool sourceTimelinePacing() const noexcept { return sourceTimelinePacing_; }
 
     // V176 keeps the per-stream controls backward-compatible with the existing
     // StreamManager wiring. The Web UI stores target bitrate in whole kbps and
@@ -185,6 +187,9 @@ private:
     static constexpr std::size_t kPidCount = 8192;
 
     const bool sourcePllMode_;
+    const bool sourceTimelinePacing_;
+    SourcePcrPacketSchedule sourceSchedule_;
+    std::uint64_t emittedUsefulPackets_ = 0;
     // V299 opt-in WISI-only reservoir assist (+809); not used by HTTP observers.
     const bool wisiReservoirAssist_;
     std::uint64_t targetBitrate_;

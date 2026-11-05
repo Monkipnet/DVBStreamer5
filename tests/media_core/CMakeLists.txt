@@ -129,3 +129,10 @@ add_executable(native_failover_program_identity_test
     ../../src/media/TransportStream.cpp)
 target_include_directories(native_failover_program_identity_test PRIVATE ../../src)
 add_test(NAME native_failover_program_identity COMMAND native_failover_program_identity_test)
+
+add_executable(source_pcr_packet_pacing_test
+    test_source_pcr_packet_pacing.cpp
+    ../../src/media/CbrTsPacer.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(source_pcr_packet_pacing_test PRIVATE ../../src)
+add_test(NAME source_pcr_packet_pacing COMMAND source_pcr_packet_pacing_test)

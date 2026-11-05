@@ -1074,6 +1074,68 @@ void testCbrTsPacer() {
     assert(bounded.queuedPackets() == maximumQueuedPackets);
 }
 
+void testNativeSourcePcrCbrFanout() {
+    using namespace dvbstreamer5::media::network;
+    UdpSocket first, second;
+    std::string error;
+    assert(first.openReceiver("127.0.0.1",0,"","",0,error));
+    assert(second.openReceiver("127.0.0.1",0,"","",0,error));
+    std::vector<Packet> expected;
+    std::vector<std::uint8_t> input;
+    for (unsigned i = 0; i < 240; ++i) {
+        auto p = packet(0x100, i & 15U);
+        if (i % 20 == 0) {
+            p[3] |= 0x20U; p[4] = 7; p[5] = 0x10;
+            const std::uint64_t ticks = 27000000ULL + i * 20304ULL;
+            const auto base = ticks / 300ULL, ext = ticks % 300ULL;
+            p[6] = base >> 25U; p[7] = base >> 17U; p[8] = base >> 9U;
+            p[9] = base >> 1U; p[10] = ((base & 1U) << 7U) | 0x7eU | (ext >> 8U);
+            p[11] = ext;
+        }
+        expected.push_back(p);
+        input.insert(input.end(),p.begin(),p.end());
+    }
+    std::mutex observedMutex;
+    std::vector<Packet> observed;
+    NativeUdpRelayConfig config;
+    config.inputUri = "external://pcr-fanout-test";
+    config.externallyFedInput = true;
+    config.targetBitrate = 3000800ULL; // Source PCR, 500-ms startup for loopback
+    config.sourcePcrPacketPacing = true;
+    config.paceObservedTransport = true;
+    config.outputs = {{"udp-cbr","127.0.0.1",first.localPort(),""},
+                      {"udp-cbr","127.0.0.1",second.localPort(),""}};
+    config.observeTransport = [&](const std::uint8_t* bytes,std::size_t size) {
+        assert(size % 188U == 0);
+        std::lock_guard<std::mutex> lock(observedMutex);
+        for (std::size_t at = 0; at < size; at += 188U) {
+            if ((((bytes[at+1] & 31U) << 8U) | bytes[at+2]) == 0x1fffU) continue;
+            Packet p;
+            std::copy(bytes+at,bytes+at+188U,p.begin());
+            observed.push_back(p);
+        }
+    };
+    NativeUdpRelay relay;
+    assert(relay.start(config,error));
+    assert(relay.pushInput(input.data(),input.size()));
+    const auto receivedFirst = collectCbrMedia(first,expected.size(),3000);
+    const auto receivedSecond = collectCbrMedia(second,expected.size(),3000);
+    assert(receivedFirst == expected && receivedSecond == expected);
+    const auto limit = std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lock(observedMutex);
+            if (observed.size() >= expected.size()) break;
+        }
+        assert(std::chrono::steady_clock::now() < limit);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    relay.stop();
+    // SRT/HTTP consume this observer: it must receive identical useful TS,
+    // not a second remux with different PCRs or a reordered packet sequence.
+    assert(observed == expected);
+}
+
 void testNativeUdpCbrRelay() {
     using namespace dvbstreamer5::media::network;
     const std::uint16_t inputPort = reserveLocalUdpPort();
@@ -1549,6 +1611,7 @@ int main() {
     testNativeExternallyFedTsRelay();
     testCbrTsPacer();
     testNativeUdpCbrRelay();
+    testNativeSourcePcrCbrFanout();
     testNativeUdpFanoutRelay();
     testNativeFileCbrRelay();
     testNativeHttpCbrRelay();
