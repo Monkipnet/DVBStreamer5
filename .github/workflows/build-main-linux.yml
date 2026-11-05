@@ -1,25 +1,30 @@
-name: DVBStreamer5 main Linux build + portable
+name: DVBStreamer5 Linux build + portable
 
 on:
   push:
     branches:
       - main
       - fix/dvb-source-pcr-pacing
+      - rewrite/udp-transport
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: dvbstreamer5-main-linux
+  group: dvbstreamer5-linux-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   linux-x86_64:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
-      - name: Checkout main source
+      - name: Checkout source
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -76,16 +81,16 @@ jobs:
           bash scripts/make_portable_linux_bundle.sh \
             --build-dir build-main-ci \
             --binary build-main-ci/DVBStreamer5 \
-            --output-dir "dist/DVBStreamer5-${version}-linux-x86_64" \
+            --output-dir "dist/DVBStreamer5-${version}-${{ matrix.os }}-linux-x86_64" \
             --with-oscam \
             --archive
-          sha256sum "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz" > dist/SHA256SUMS.txt
+          sha256sum "dist/DVBStreamer5-${version}-${{ matrix.os }}-linux-x86_64.tar.gz" > dist/SHA256SUMS.txt
           cat dist/SHA256SUMS.txt
 
       - name: Upload portable + binary for download
         uses: actions/upload-artifact@v4
         with:
-          name: DVBStreamer5-linux-x86_64
+          name: DVBStreamer5-${{ matrix.os }}-linux-x86_64
           path: |
             dist/*.tar.gz
             dist/SHA256SUMS.txt

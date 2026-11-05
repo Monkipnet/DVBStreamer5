@@ -45,6 +45,7 @@ using dvbstreamer5::media::mpegts::Packet;
 using dvbstreamer5::media::mpegts::PacketInfo;
 
 namespace {
+bool nativeUdpUnderTest=false;
 
 Packet packet(std::uint16_t pid, std::uint8_t counter, bool payload = true) {
     Packet result {};
@@ -834,10 +835,10 @@ void testNativeUdpTsRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
 #if defined(__linux__)
     config.inputInterfaceAddress = "127.0.0.1";
-    config.inputInterfaceDeviceName = "lo";
     config.inputInterfaceAddressConfigured = true;
 #endif
     config.outputType = "udp-vbr";
@@ -896,6 +897,7 @@ void testNativeRtpTsRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "rtp://127.0.0.1:" + std::to_string(inputPort);
     config.outputType = "rtp";
     config.outputHost = "127.0.0.1";
@@ -937,6 +939,7 @@ void testNativeExternallyFedTsRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "external://hls";
     config.externallyFedInput = true;
     config.outputType = "udp-vbr";
@@ -1098,6 +1101,7 @@ void testNativeSourcePcrCbrFanout() {
     std::mutex observedMutex;
     std::vector<Packet> observed;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "external://pcr-fanout-test";
     config.externallyFedInput = true;
     config.targetBitrate = 3000800ULL; // Source PCR, 500-ms startup for loopback
@@ -1148,6 +1152,7 @@ void testNativeUdpCbrRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
     config.outputType = "udp-cbr";
     config.outputHost = "127.0.0.1";
@@ -1203,6 +1208,7 @@ void testNativeUdpFanoutRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
     config.outputs = {
         {"udp-vbr", "127.0.0.1", udpReceiver.localPort(), ""},
@@ -1276,6 +1282,7 @@ void testNativeFileCbrRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "file://" + filePath.string();
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
@@ -1340,6 +1347,7 @@ void testNativeHttpCbrRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/live.ts";
     config.accessKeyMode = "header";
@@ -1381,6 +1389,7 @@ void testNativeHttpQueryAccessKey() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) +
         "/live.ts#client-fragment";
@@ -1421,6 +1430,7 @@ void testNativeHttpVbrAndRtpFanout() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/fanout.ts";
     config.outputs = {
@@ -1461,6 +1471,7 @@ void testNativeHttpFailureIsReported() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/missing.ts";
     config.outputs = {
@@ -1492,6 +1503,7 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
+    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/secure.ts";
     config.accessKeyMode = "header";
@@ -1606,10 +1618,12 @@ int main() {
     testRtpParsingAndPayload();
     testRtpPacketizerRoundTrip();
     testUdpLoopback();
+    testCbrTsPacer();
+    for (const bool native : {false,true}) {
+        nativeUdpUnderTest=native;
     testNativeUdpTsRelay();
     testNativeRtpTsRelay();
     testNativeExternallyFedTsRelay();
-    testCbrTsPacer();
     testNativeUdpCbrRelay();
     testNativeSourcePcrCbrFanout();
     testNativeUdpFanoutRelay();
@@ -1619,6 +1633,7 @@ int main() {
     testNativeHttpVbrAndRtpFanout();
     testNativeHttpFailureIsReported();
     testNativeHttpDoesNotRedirectAccessKeys();
+    }
     testNativePreviewHubBackpressureIntegrity();
     testNativePreviewHubFanout();
     std::cout << "PASS: native MPEG-TS/RTP and CBR output relay over UDP\n";

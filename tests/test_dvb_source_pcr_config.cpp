@@ -26,6 +26,12 @@ int main() {
     require(!StreamConfig::fromJson(restored.toJson()).dvbSourcePcrPacing, "rollback not saved");
     require(!StreamConfig::fromJson(legacy).dvbSourcePcrPacing, "unrelated stream enabled");
 
+    require(StreamConfig::fromJson(legacy).udpOutputEngine=="legacy", "legacy UDP engine default changed");
+    restored.udpOutputEngine="native";
+    require(StreamConfig::fromJson(restored.toJson()).udpOutputEngine=="native", "native UDP engine not persisted");
+    saved["udp_output_engine"]="unknown";
+    require(StreamConfig::fromJson(saved).udpOutputEngine=="legacy", "invalid engine did not fall back");
+
     const auto eligible = [](bool enabled, bool dvb, bool transcode, bool cbr,
                              bool udp, bool test, std::uint64_t target) {
         return enableDvbSourcePcrPacketPacing(enabled,dvb,transcode,cbr,udp,test,target);

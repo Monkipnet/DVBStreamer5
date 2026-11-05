@@ -86,6 +86,7 @@ struct StreamConfig {
     bool ipSourcePcrPassthrough = false;
     // Opt-in DVB passthrough scheduling by adjacent source PCR intervals.
     bool dvbSourcePcrPacing = false;
+    std::string udpOutputEngine = "legacy"; // legacy | native
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.

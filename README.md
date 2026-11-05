@@ -1,3 +1,10 @@
+## V10.8.369 — new UDP-CBR / UDP-VBR output engine and loopback interface
+
+- Adds a separately implemented UDP packetizer, shared absolute-deadline schedulers, nonblocking per-destination retry queues and common CBR fanout. Existing configs retain the legacy engine; select the new engine per tile for controlled testing.
+- Preserves UDP format, PCR modes, startup buffers, routing/interface choices and non-UDP consumers. Adds `lo (127.0.0.1)` to interface selectors and sender queue/timing counters to the state API.
+- The relay regression suite exercises both engines; additional tests cover retries, VBR tails, source/fixed PCR and 100 concurrent 3-Mbit/s CBR channels. Ubuntu 22.04/24.04 CI and portable artifacts are configured.
+- Details, limits, build commands and rollback: [UDP transport rewrite](docs/UDP_TRANSPORT_REWRITE.md). Actual WISI Chameleon validation remains required.
+
 ## V10.8.368 — opt-in DVB Source PCR packet pacing
 
 - Adds per-channel **Precise DVB Source PCR pacing (experimental)** for DVB → UDP-CBR passthrough with Source PCR and a nonzero startup buffer. The default is off; existing configurations retain their prior behavior.

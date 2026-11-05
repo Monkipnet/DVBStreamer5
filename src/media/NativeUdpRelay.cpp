@@ -451,6 +451,15 @@ void NativeUdpRelay::stop() noexcept {
     if (worker_.joinable() && worker_.get_id() != std::this_thread::get_id()) {
         worker_.join();
     }
+    // Also cover setup failures that return before run() reaches its normal
+    // cleanup. Scheduled states must be stopped before their sockets close.
+    std::shared_ptr<UdpTsOutput> cbr,vbr;
+    {
+        std::lock_guard<std::mutex> lock(errorMutex_);
+        cbr=std::move(nativeCbrOutput_); vbr=std::move(nativeVbrOutput_);
+    }
+    if (cbr) cbr->stop();
+    if (vbr) vbr->stop();
     inputSocket_.close();
     fileInput_.close();
     mp4Input_.reset();
@@ -507,6 +516,15 @@ std::vector<std::uint64_t> NativeUdpRelay::outputTransportBytesByIndex() const {
 
 std::uint64_t NativeUdpRelay::payloadOutputBytes() const noexcept {
     return payloadOutputBytes_.load(std::memory_order_relaxed);
+}
+
+std::vector<UdpTsOutput::Stats> NativeUdpRelay::udpOutputStats() const {
+    std::shared_ptr<UdpTsOutput> cbr,vbr;
+    { std::lock_guard<std::mutex> lock(errorMutex_); cbr=nativeCbrOutput_;vbr=nativeVbrOutput_; }
+    std::vector<UdpTsOutput::Stats> result;
+    if (cbr) result.push_back(cbr->stats());
+    if (vbr) result.push_back(vbr->stats());
+    return result;
 }
 
 std::uint64_t NativeUdpRelay::continuityErrors() const noexcept {
@@ -932,7 +950,7 @@ void NativeUdpRelay::run() {
                 std::uint8_t{33},
                 std::size_t{7});
         }
-        if (config_.outputs[index].outputType == "udp-cbr") {
+        if (!config_.nativeUdpOutput && config_.outputs[index].outputType == "udp-cbr") {
             try {
                 dvbstreamer5::media::network::WisiCbrOutputWorker::Observer observer;
                 if (index == observedCbrOutputIndex) observer = config_.observeTransport;
@@ -973,6 +991,47 @@ void NativeUdpRelay::run() {
         ++seed;
     }
 
+    std::shared_ptr<UdpTsOutput> nativeCbr, nativeVbr;
+    if (config_.nativeUdpOutput) {
+        const auto failure=[this](const std::string& message) {
+            { std::lock_guard<std::mutex> lock(errorMutex_); lastError_=message; }
+            running_.store(false,std::memory_order_release); httpQueueCondition_.notify_all();
+        };
+        std::vector<UdpTsOutput::Destination> cbrTargets,vbrTargets;
+        for (const auto& output:outputs) {
+            if (output.rtp) continue;
+            auto& targets=output.type=="udp-cbr" ? cbrTargets : vbrTargets;
+            targets.push_back({output.socket,output.index,output.sentTsBytes});
+        }
+        try {
+            if (!cbrTargets.empty()) {
+                const auto target=config_.wisiSourcePcrStrict
+                    ? sourcePcrCbrTargetKeepingStartupBuffer(config_.targetBitrate)
+                    : (config_.wisiPreserveSourcePcr && config_.targetBitrate%1000ULL==0
+                        ? config_.targetBitrate+809ULL : config_.targetBitrate);
+                UdpTsOutput::Observer observer;
+                if (observedCbrOutputIndex<outputs.size()) observer=config_.observeTransport;
+                nativeCbr=std::make_shared<UdpTsOutput>(true,target,config_.streamId,
+                    std::move(cbrTargets),&outputBytes_,std::move(observer),failure);
+            }
+            if (!vbrTargets.empty()) nativeVbr=std::make_shared<UdpTsOutput>(false,
+                config_.targetBitrate,config_.streamId,std::move(vbrTargets),&outputBytes_,
+                UdpTsOutput::Observer{},failure);
+            { std::lock_guard<std::mutex> lock(errorMutex_);
+              nativeCbrOutput_=nativeCbr; nativeVbrOutput_=nativeVbr; }
+        } catch (const std::exception& e) {
+            failure(e.what()); return;
+        }
+    }
+    const auto finishAndDrained=[&] {
+        if (nativeCbr) nativeCbr->finish();
+        if (nativeVbr) nativeVbr->finish();
+        return (!nativeCbr || nativeCbr->drained()) && (!nativeVbr || nativeVbr->drained()) &&
+            std::all_of(outputs.begin(),outputs.end(),[](const OutputWorker& o) {
+                return !o.cbrWorker || o.cbrWorker->queuedPackets()==0;
+            });
+    };
+
     // WISI CBR: the first UDP-CBR worker publishes its already-shaped
     // datagrams to observeTransport asynchronously. Observer work can never
     // block the physical WISI UDP sender clock.
@@ -982,7 +1041,8 @@ void NativeUdpRelay::run() {
         std::cerr << "NATIVE OBSERVED CBR share output_index="
                   << observedCbrOutputIndex
                   << " target_kbps=" << (config_.targetBitrate / 1000ULL)
-                  << " profile=wisi-fixed-cbr async_observer=1"
+                  << " profile=" << (config_.nativeUdpOutput ? "native-udp-ts" : "wisi-fixed-cbr")
+                  << " async_observer=1"
                   << std::endl;
     }
 
@@ -1336,10 +1396,7 @@ void NativeUdpRelay::run() {
                 }
             }
             if (fileInputEof && packets.empty() &&
-                !(config_.fileInputLoop && fileHadTsPackets) && std::all_of(
-                    outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                        return !output.cbrWorker || output.cbrWorker->queuedPackets() == 0;
-                    })) {
+                !(config_.fileInputLoop && fileHadTsPackets) && finishAndDrained()) {
                 if (!fileHadTsPackets) {
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_ =
@@ -1356,11 +1413,7 @@ void NativeUdpRelay::run() {
         } else if (httpInput) {
             std::unique_lock<std::mutex> lock(httpQueueMutex_);
             if (httpQueue_.empty()) {
-                const bool cbrDrained = std::all_of(
-                    outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                        return !output.cbrWorker ||
-                            output.cbrWorker->queuedPackets() == 0;
-                    });
+                const bool cbrDrained = httpFinished_ && finishAndDrained();
                 if (httpFinished_ && cbrDrained) {
                     break;
                 }
@@ -1573,11 +1626,7 @@ void NativeUdpRelay::run() {
                     }
                 }
             } else if (httpFinished_) {
-                const bool cbrDrained = std::all_of(
-                    outputs.begin(), outputs.end(), [](const OutputWorker& output) {
-                        return !output.cbrWorker ||
-                            output.cbrWorker->queuedPackets() == 0;
-                    });
+                const bool cbrDrained = httpFinished_ && finishAndDrained();
                 if (cbrDrained) {
                     break;
                 }
@@ -1790,7 +1839,15 @@ void NativeUdpRelay::run() {
                 break;
             }
 
+            if ((nativeCbr && !nativeCbr->enqueue(packets)) ||
+                (nativeVbr && !nativeVbr->enqueue(packets))) {
+                std::lock_guard<std::mutex> lock(errorMutex_);
+                lastError_=nativeCbr && !nativeCbr->lastError().empty() ? nativeCbr->lastError() :
+                    (nativeVbr ? nativeVbr->lastError() : "native UDP output stopped");
+                break;
+            }
             for (auto& output : outputs) {
+                if (config_.nativeUdpOutput && !output.rtp) continue;
                 if (output.cbrWorker) {
                     for (const auto& packet : packets) {
                         if (!output.cbrWorker->enqueue(packet)) {
@@ -1873,6 +1930,10 @@ void NativeUdpRelay::run() {
     if (observedCbrWorker.joinable()) {
         observedCbrWorker.join();
     }
+
+    if (nativeCbr) nativeCbr->stop();
+    if (nativeVbr) nativeVbr->stop();
+    { std::lock_guard<std::mutex> lock(errorMutex_); nativeCbrOutput_.reset(); nativeVbrOutput_.reset(); }
 
     running_.store(false, std::memory_order_release);
     httpQueueCondition_.notify_all();

@@ -29,7 +29,7 @@ std::string physicalDvbCardKey(int adapter, int frontend) {
 
 std::string HttpServer::listInterfaces() {
     Json::Value root;
-    auto interfaces = enumerateNetworkInterfaces();
+    auto interfaces = enumerateNetworkInterfaces(true);
     for (auto& iface : interfaces) {
         Json::Value item;
         item["name"] = iface.name;
@@ -1077,7 +1077,7 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
     }
 
     Json::Value interfaces(Json::arrayValue);
-    const auto interfaceAddresses = enumerateNetworkInterfaces();
+    const auto interfaceAddresses = enumerateNetworkInterfaces(true);
     std::ifstream netdev("/proc/net/dev");
     std::string line;
     while (std::getline(netdev, line)) {
@@ -1086,7 +1086,7 @@ std::string HttpServer::systemLoadHistory(uint64_t periodSeconds) {
       std::string name = line.substr(0, colon);
       name.erase(0, name.find_first_not_of(" \t"));
       name.erase(name.find_last_not_of(" \t") + 1);
-      if (name == "lo" || name.empty()) continue;
+      if (name.empty()) continue;
       std::istringstream values(line.substr(colon + 1));
       uint64_t rxBytes = 0, txBytes = 0;
       if (!(values >> rxBytes)) continue;
@@ -1143,7 +1143,7 @@ std::string HttpServer::currentState() {
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now() - startedAt_).count()));
     Json::Value interfaces(Json::arrayValue);
-    for (const auto& iface : enumerateNetworkInterfaces()) {
+    for (const auto& iface : enumerateNetworkInterfaces(true)) {
         Json::Value item;
         item["name"] = iface.name;
         item["address"] = iface.address;
@@ -1428,6 +1428,23 @@ std::string HttpServer::currentState() {
             item["output_cc_errors"] = Json::UInt64(streamState->outputCcErrorsDelta.load());
             item["input_cc_errors_total"] = Json::UInt64(streamState->inputCcErrors.load());
             item["output_cc_errors_total"] = Json::UInt64(streamState->outputCcErrors.load());
+            Json::Value udpStats(Json::arrayValue);
+            if (streamState->nativeRelay) for (const auto& stat:streamState->nativeRelay->udpOutputStats()) {
+                Json::Value udp;
+                udp["mode"]=stat.cbr ? "cbr" : "vbr";
+                udp["datagrams_sent"]=Json::UInt64(stat.datagrams);
+                udp["send_retries"]=Json::UInt64(stat.retries);
+                udp["sender_late_max_us"]=Json::UInt64(stat.lateMaxUs);
+                udp["clock_resets"]=Json::UInt64(stat.clockResets);
+                udp["queue_bytes"]=Json::UInt64(stat.queueBytes);
+                udp["queue_peak_bytes"]=Json::UInt64(stat.queuePeakBytes);
+                udp["send_buffer_bytes"]=Json::UInt64(stat.sendBufferBytes);
+                udp["pending_bytes"]=Json::UInt64(stat.pendingBytes);
+                udp["observer_bytes"]=Json::UInt64(stat.observerBytes);
+                udp["null_datagrams"]=Json::UInt64(stat.nullDatagrams);
+                udpStats.append(udp);
+            }
+            item["udp_transport"]=udpStats;
             const uint64_t caPayloadPackets = streamState->outputTsPayloadPacketsDelta.load();
             const uint64_t caScrambledPackets = streamState->outputTsScrambledPacketsDelta.load();
             const uint64_t caClearPesStarts = streamState->outputTsClearPesStartsDelta.load();

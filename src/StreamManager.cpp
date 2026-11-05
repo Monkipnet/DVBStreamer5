@@ -1247,6 +1247,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     relay.accessKeyValue = streamConfig.hlsAccessKeyValue;
     relay.userAgent = streamConfig.hlsUserAgent;
     relay.targetBitrate = streamConfig.targetBitrate;
+    relay.nativeUdpOutput = streamConfig.udpOutputEngine == "native";
     // V344: keep a replacement file repeating until the primary recovers.
     relay.fileInputLoop = state->usingBackup &&
         toLower(streamConfig.backupInputType) == "file";

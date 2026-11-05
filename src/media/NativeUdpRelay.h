@@ -7,6 +7,7 @@
 #include "media/NativeSrtSwitchClock.h"
 #include "media/NativeFailoverProgramIdentity.h"
 #include "media/UdpSocket.h"
+#include "media/UdpTsOutput.h"
 
 #include <algorithm>
 #include <atomic>
@@ -163,6 +164,7 @@ struct NativeUdpRelayConfig {
     // and the existing 3-s startup buffer. Never enabled automatically.
     bool wisiSourcePcrStrict = false;
     bool sourcePcrPacketPacing = false;
+    bool nativeUdpOutput = false;
     std::vector<NativeUdpRelayOutputConfig> outputs;
     bool allowNoNetworkOutput = false;
 };
@@ -191,6 +193,7 @@ public:
     // Per-network-output TS byte counters in config_.outputs order.
     // Used for quality history only; no impact on sender clock.
     std::vector<std::uint64_t> outputTransportBytesByIndex() const;
+    std::vector<UdpTsOutput::Stats> udpOutputStats() const;
     std::uint64_t payloadOutputBytes() const noexcept;
     std::uint64_t continuityErrors() const noexcept;
     std::string lastError() const;
@@ -243,6 +246,7 @@ private:
     mutable std::mutex errorMutex_;
     std::string lastError_;
     std::thread worker_;
+    std::shared_ptr<UdpTsOutput> nativeCbrOutput_, nativeVbrOutput_; // guarded by errorMutex_
 };
 
 } // namespace dvbstreamer5::media::network
