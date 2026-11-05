@@ -958,7 +958,8 @@ void NativeUdpRelay::run() {
                             running_.store(false, std::memory_order_release);
                             httpQueueCondition_.notify_all();
                         },
-                        output.sentTsBytes ? output.sentTsBytes.get() : nullptr);
+                        output.sentTsBytes ? output.sentTsBytes.get() : nullptr,
+                        config_.streamId);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();

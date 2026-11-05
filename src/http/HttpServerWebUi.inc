@@ -4706,6 +4706,33 @@ function outputBadgeText(stream) {
   const outputs = outputConfigsForStream(stream);
   return outputs.length > 1 ? `${outputs.length} OUT` : normalizedOutputType(outputs[0] || stream).toUpperCase();
 }
+// V367: the last 3 bits of target_bitrate store PCR/startup preferences.
+// Preserve this legacy carrier exactly unless the operator changes controls.
+function decodeWisiCbrProfile(rawRate) {
+  const raw=Math.trunc(Number(rawRate)||2000000);
+  const marker=((raw%1000)+1000)%1000;
+  const sourcePcr=marker===777||marker===799||(marker>=800&&marker<=829);
+  let startupMs=3000;
+  if(marker===699||marker===799) startupMs=0;
+  else if(marker>=700&&marker<=729) startupMs=(marker-699)*500;
+  else if(marker>=800&&marker<=829) startupMs=(marker-799)*500;
+  return {bitrateKbps:Math.floor(raw/1000),marker,
+          mode:sourcePcr?'source':'fixed',startupMs};
+}
+function encodeWisiCbrTargetBitrate(kbps, savedRaw, mode, startupMs) {
+  const rate=Number(kbps),ms=Number(startupMs);
+  if(!Number.isInteger(rate)||rate<100||rate>100000||
+     !Number.isSafeInteger(rate*1000)||
+     (mode!=='source'&&mode!=='fixed')||
+     !Number.isInteger(ms)||ms<0||ms>15000||ms%500!==0)
+     throw new Error('Invalid CBR bitrate, PCR mode or startup buffer');
+  const old=decodeWisiCbrProfile(savedRaw);
+  if(mode===old.mode&&ms===old.startupMs) return rate*1000+old.marker;
+  const marker=ms===0?(mode==='source'?799:699)
+    :ms===3000?(mode==='source'?777:0)
+    :(mode==='source'?799:699)+ms/500;
+  return rate*1000+marker;
+}
 function streamBitrateMode(stream) {
   const type = normalizedOutputType(stream);
   if (type === 'udp-cbr') return 'CBR';
@@ -7754,6 +7781,9 @@ function refreshStreamMediaTracksFromForm(){
 }
 function openStreamForm(stream) {
   const renderStreamForm = () => {
+    const cbrProfile=decodeWisiCbrProfile(stream.target_bitrate);
+    const cbrStartupOptions=[0,...Array.from({length:30},(_,i)=>(i+1)*500)]
+      .map(ms=>`<option value="${ms}" ${cbrProfile.startupMs===ms?'selected':''}>${ms} ms</option>`).join('');
     const ifaceOptions = state.interfaces || [];
     const inputIfaceOptions = (state.input_interfaces && state.input_interfaces.length) ? state.input_interfaces : ifaceOptions;
     const outputOptions = ifaceOptions.map(i=>`<option value="${i.address}" ${i.address===stream.interface_address?'selected':''}>${i.name} (${i.address})</option>`).join('');
@@ -7913,7 +7943,24 @@ function openStreamForm(stream) {
         <div class="form-row"><label>SID входа</label><input class="compact" id="streamInputServiceId" type="number" min="0" max="65535" value="${stream.input_service_id ?? 0}" placeholder="0 = Auto" /><small>0 = автоопределение SID из PAT; значение 1–65535 = выбрать конкретный входной канал.</small></div>
         <div class="form-row"><label>SID выхода</label><input class="compact" id="streamServiceId" type="number" min="1" max="65535" value="${stream.service_id||1}" placeholder="1" /></div>
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
-        <div class="form-row full"><label>Target bitrate (кбит/с, для CBR)</label><input id="streamBitrate" type="number" value="${Math.round((stream.target_bitrate||2000000)/1000)}" placeholder="2000" oninput="updateIpSourcePcrVisibility()" /></div>
+        <div class="form-row full">
+          <label>Target bitrate (кбит/с, для CBR)</label>
+          <small class="field-help" ${uiBiAttrs('Реальный выходной CBR без скрытых PCR-маркеров.','Physical output CBR excluding internal PCR markers.')}>${uiBiText('Реальный выходной CBR без скрытых PCR-маркеров.','Physical output CBR excluding internal PCR markers.')}</small>
+          <input id="streamBitrate" type="number" min="100" max="100000" step="1" value="${cbrProfile.bitrateKbps}" placeholder="2000" oninput="updateIpSourcePcrVisibility()" />
+        </div>
+        <div class="form-row full edit-section">
+          <div class="edit-field">
+            <div class="edit-field-title" ${uiBiAttrs('CBR: режим PCR и стартовый буфер','CBR: PCR mode and startup buffer')}>${uiBiText('CBR: режим PCR и стартовый буфер','CBR: PCR mode and startup buffer')}</div>
+            <small class="field-help" ${uiBiAttrs('Для данной плитки; сохранение без перезапуска, применить вручную. HTTP/SRT Source PCR выше — отдельная опция.','Per-tile only; save without restart, apply manually. The HTTP/SRT Source PCR option above is separate.')}>${uiBiText('Для данной плитки; сохранение без перезапуска, применить вручную. HTTP/SRT Source PCR выше — отдельная опция.','Per-tile only; save without restart, apply manually. The HTTP/SRT Source PCR option above is separate.')}</small>
+            <div class="row-inline compact-row">
+              <select id="streamCbrPcrMode" aria-label="CBR PCR mode">
+                <option value="fixed" ${cbrProfile.mode==='fixed'?'selected':''}>Fixed PCR</option>
+                <option value="source" ${cbrProfile.mode==='source'?'selected':''}>Source PCR</option>
+              </select>
+              <select id="streamCbrStartupMs" aria-label="CBR startup buffer">${cbrStartupOptions}</select>
+            </div>
+          </div>
+        </div>
         <div class="form-row full edit-section" id="streamIpSourcePcrRow">
           <div class="edit-toggle">
             <div class="edit-field-title" ${subtitleUiTriAttrs('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}>${subtitleUiTriText('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}</div>
@@ -8517,6 +8564,21 @@ function saveStream(id) {
   const subtitleLang = selectedSubtitleTrack === 'auto'
     ? 'auto'
     : selectedSubtitleTrack.split(':')[1];
+  const existingCbrStream=(state.streams||[]).find(s=>s.id===id);
+  let encodedCbrBitrate=0;
+  try {
+    encodedCbrBitrate=encodeWisiCbrTargetBitrate(
+      document.getElementById('streamBitrate').value,
+      existingCbrStream?.target_bitrate,
+      document.getElementById('streamCbrPcrMode').value,
+      document.getElementById('streamCbrStartupMs').value);
+  } catch(error) {
+    uiError(subtitleUiTriText(
+      'CBR: проверьте битрейт, PCR и стартовый буфер.',
+      'CBR: check bitrate, PCR mode and startup buffer.',
+      'CBR: provjerite bitrate, PCR i početni međuspremnik.'));
+    return;
+  }
   const payload = {
     id: id,
     name: document.getElementById('streamName').value,
@@ -8549,7 +8611,7 @@ function saveStream(id) {
     auto_start: activationMode === 'online' && document.getElementById('streamAutoStart').checked,
     remap_enabled: document.getElementById('streamRemapEnabled').checked,
     cbr: selectedCbr,
-    target_bitrate: Number(document.getElementById('streamBitrate').value) * 1000,
+    target_bitrate: encodedCbrBitrate,
     transcode_enabled: state.transcoder?.available === true && document.getElementById('streamTranscodeEnabled').checked,
     transcode_resolution: document.getElementById('streamTranscodeResolution').value,
     transcode_video_codec: document.getElementById('streamTranscodeVideoCodec').value,

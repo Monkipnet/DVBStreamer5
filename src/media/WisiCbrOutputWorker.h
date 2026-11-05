@@ -53,10 +53,12 @@ public:
         std::atomic<bool>* relayRunning,
         Observer observer,
         ErrorCallback errorCallback,
-        std::atomic<std::uint64_t>* perOutputBytes = nullptr)
+        std::atomic<std::uint64_t>* perOutputBytes = nullptr,
+        std::string streamId = {})
         : socket_(socket),
           outputIndex_(outputIndex),
           workerId_(nextWorkerId_.fetch_add(1ULL, std::memory_order_relaxed)),
+          streamId_(std::move(streamId)),
           pacer_(targetBitrate),
           requestedStartupBuffer_(std::chrono::milliseconds(
               mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
@@ -101,6 +103,7 @@ public:
                 backpressureWaitEvents_ = 0;
                 lastBackpressureLog_ = logNow;
                 std::cerr << "WISI CBR BACKPRESSURE worker=" << workerId_
+                          << " stream_id=" << streamId_
                           << " index=" << outputIndex_
                           << " buffered_kb="
                           << (bufferedPackets_.load(std::memory_order_relaxed) *
@@ -108,6 +111,11 @@ public:
                           << " limit_kb="
                           << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
                           << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
+                          << " pcr_mode=" << (pacer_.sourcePllMode() ? "source" : "fixed")
+                          << " source_kbps=" << sourceKbpsSnapshot_.load(std::memory_order_relaxed)
+                          << " useful_kbps=" << usefulKbpsSnapshot_.load(std::memory_order_relaxed)
+                          << " sent_useful_kbps=" << sentUsefulKbpsSnapshot_.load(std::memory_order_relaxed)
+                          << " sent_udp_kbps=" << sentUdpKbpsSnapshot_.load(std::memory_order_relaxed)
                           << " wait_events=" << events
                           << std::endl;
             }
@@ -601,6 +609,11 @@ private:
             std::uint64_t diagPcrGapMaxTicks = 0, diagPcrOver100 = 0;
             std::uint64_t diagGapMaxNs = 0, diagLateMaxNs = 0;
             std::uint64_t diagNullOnly = 0;
+            // V367: sender-only telemetry. Ingress reads atomic snapshots;
+            // it never races against the pacer's mutable PCR/rate estimator.
+            std::uint64_t rateWindowStartNs = 0;
+            std::uint64_t rateWindowDatagrams = 0;
+            std::uint64_t rateWindowUsefulPackets = 0;
 
             while (!stopping_.load(std::memory_order_acquire) &&
                    relayRunning_->load(std::memory_order_acquire)) {
@@ -689,6 +702,31 @@ private:
                     perOutputBytes_->fetch_add(kDatagramBytes, std::memory_order_relaxed);
                 }
                 queueObserverDatagram(bytes, kDatagramBytes);
+
+                if (!rateWindowStartNs) rateWindowStartNs = sendNs;
+                ++rateWindowDatagrams;
+                rateWindowUsefulPackets += useful;
+                const std::uint64_t elapsedRateNs = sendNs >= rateWindowStartNs
+                    ? sendNs - rateWindowStartNs : 0ULL;
+                if (elapsedRateNs >= kNanosecondsPerSecond) {
+                    sentUdpKbpsSnapshot_.store(
+                        rateWindowDatagrams * kDatagramBytes * 8ULL *
+                            1000000ULL / elapsedRateNs,
+                        std::memory_order_relaxed);
+                    sentUsefulKbpsSnapshot_.store(
+                        rateWindowUsefulPackets * mpegts::kPacketSize * 8ULL *
+                            1000000ULL / elapsedRateNs,
+                        std::memory_order_relaxed);
+                    sourceKbpsSnapshot_.store(
+                        pacer_.sourcePayloadBitrate() / 1000ULL,
+                        std::memory_order_relaxed);
+                    usefulKbpsSnapshot_.store(
+                        pacer_.usefulPaceBitrate() / 1000ULL,
+                        std::memory_order_relaxed);
+                    rateWindowStartNs = sendNs;
+                    rateWindowDatagrams = 0;
+                    rateWindowUsefulPackets = 0;
+                }
 
                 const std::uint64_t gapNs = lastSendNs_ > 0 && sendNs >= lastSendNs_
                     ? sendNs - lastSendNs_
@@ -865,6 +903,7 @@ private:
                 if (!firstSendLogged_) {
                     firstSendLogged_ = true;
                     std::cerr << "WISI CBR start worker=" << workerId_
+                              << " stream_id=" << streamId_
                               << " index=" << outputIndex_
                               << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                               << " datagram_bytes=" << kDatagramBytes
@@ -913,6 +952,7 @@ private:
     std::size_t outputIndex_ = 0;
     inline static std::atomic<std::uint64_t> nextWorkerId_ {1ULL};
     const std::uint64_t workerId_;
+    const std::string streamId_;
     mpegts::CbrTsPacer pacer_;
     const std::chrono::milliseconds requestedStartupBuffer_;
     const std::chrono::milliseconds startupBuffer_;
@@ -928,6 +968,11 @@ private:
     std::atomic<std::size_t> bufferedPackets_ {0};
     std::atomic<std::int64_t> nextDeadlineSteadyNs_ {0};
     std::atomic<bool> queueSpaceProducerWaiting_ {false};
+    // Populated only by the dedicated sender; read without touching pacer_.
+    std::atomic<std::uint64_t> sourceKbpsSnapshot_ {0};
+    std::atomic<std::uint64_t> usefulKbpsSnapshot_ {0};
+    std::atomic<std::uint64_t> sentUsefulKbpsSnapshot_ {0};
+    std::atomic<std::uint64_t> sentUdpKbpsSnapshot_ {0};
 
     std::mutex ingressMutex_;
     std::condition_variable ingressReady_;

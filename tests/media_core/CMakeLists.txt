@@ -36,6 +36,13 @@ endif()
 
 enable_testing()
 add_test(NAME media_core_tests COMMAND media_core_tests)
+# V367: validate exact embedded-browser PCR and CBR marker persistence.
+find_program(DVBSTREAMER5_NODE_EXECUTABLE NAMES node nodejs)
+if(DVBSTREAMER5_NODE_EXECUTABLE)
+    add_test(NAME cbr_profile_ui
+        COMMAND ${DVBSTREAMER5_NODE_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/../web/test_cbr_profile_ui.js")
+endif()
 
 # V330: deterministic NVENC A/B policy test, independent of CUDA/NVENC drivers.
 add_executable(nvenc_quality_policy_test test_nvenc_quality_policy.cpp)
