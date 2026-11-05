@@ -53,17 +53,14 @@ public:
         std::atomic<bool>* relayRunning,
         Observer observer,
         ErrorCallback errorCallback,
-        std::atomic<std::uint64_t>* perOutputBytes = nullptr,
-        bool wisiCompatible = false)
+        std::atomic<std::uint64_t>* perOutputBytes = nullptr)
         : socket_(socket),
           outputIndex_(outputIndex),
           workerId_(nextWorkerId_.fetch_add(1ULL, std::memory_order_relaxed)),
-          pacer_(targetBitrate, wisiCompatible),
+          pacer_(targetBitrate),
           requestedStartupBuffer_(std::chrono::milliseconds(
-              wisiCompatible ? 5000ULL :
               mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
-          startupBuffer_(effectiveStartupBuffer(
-              targetBitrate, wisiCompatible ? pacer_.maxQueuedBytes() : 0ULL)),
+          startupBuffer_(effectiveStartupBuffer(targetBitrate)),
           outputBytes_(outputBytes),
           perOutputBytes_(perOutputBytes),
           relayRunning_(relayRunning),
@@ -95,8 +92,7 @@ public:
         std::unique_lock<std::mutex> lock(ingressMutex_);
         while (!stopping_.load(std::memory_order_acquire) &&
                relayRunning_->load(std::memory_order_acquire) &&
-               bufferedPackets_.load(std::memory_order_relaxed) >=
-                   pacer_.maxQueuedBytes() / mpegts::kPacketSize) {
+               bufferedPackets_.load(std::memory_order_relaxed) >= kMaximumBufferedPackets) {
             ++backpressureWaitEvents_;
             const auto logNow = std::chrono::steady_clock::now();
             if (lastBackpressureLog_ == std::chrono::steady_clock::time_point{} ||
@@ -110,7 +106,7 @@ public:
                           << (bufferedPackets_.load(std::memory_order_relaxed) *
                               mpegts::kPacketSize / 1024U)
                           << " limit_kb="
-                          << (pacer_.maxQueuedBytes() / 1024U)
+                          << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
                           << " target_kbps=" << (pacer_.targetBitrate() / 1000ULL)
                           << " wait_events=" << events
                           << std::endl;
@@ -185,7 +181,8 @@ private:
     static constexpr std::size_t kObserverBatchDatagrams = 4;
     static constexpr std::size_t kDatagramBytes =
         mpegts::kPacketsPerCbrDatagram * mpegts::kPacketSize;
-    // Queue capacity follows the opt-in per-tile CBR algorithm.
+    static constexpr std::size_t kMaximumBufferedPackets =
+        mpegts::CbrTsPacer::maximumQueuedBytes() / mpegts::kPacketSize;
     static constexpr std::uint64_t kNanosecondsPerSecond = 1000000000ULL;
     static constexpr std::uint64_t kSpinGuardNanoseconds = 30000ULL; // 30 us
     static constexpr std::uint64_t kPhaseCorrectionDivisor = 400ULL; // 0.25%
@@ -194,11 +191,9 @@ private:
     static constexpr auto kBackpressureLogInterval = std::chrono::seconds(5);
 
     static std::chrono::milliseconds effectiveStartupBuffer(
-        std::uint64_t encodedTargetBitrate,
-        std::size_t compatibilityQueuedBytes = 0) noexcept {
-        const std::uint64_t requestedMs = compatibilityQueuedBytes
-            ? 5000ULL
-            : mpegts::CbrTsPacer::startupBufferMilliseconds(encodedTargetBitrate);
+        std::uint64_t encodedTargetBitrate) noexcept {
+        const std::uint64_t requestedMs =
+            mpegts::CbrTsPacer::startupBufferMilliseconds(encodedTargetBitrate);
         if (requestedMs == 0ULL) return std::chrono::milliseconds(0);
 
         const std::uint64_t physicalBitrate =
@@ -213,9 +208,7 @@ private:
         // reproduced in production); that can dead-pressure the producer before
         // the sender clock has even started.
         const std::uint64_t safeCapacityMs =
-            (static_cast<std::uint64_t>(compatibilityQueuedBytes
-                ? compatibilityQueuedBytes
-                : mpegts::CbrTsPacer::maximumQueuedBytes()) *
+            (static_cast<std::uint64_t>(mpegts::CbrTsPacer::maximumQueuedBytes()) *
              8ULL * 1000ULL * kStartupQueueUsePercent) /
             (physicalBitrate * 100ULL);
         return std::chrono::milliseconds(
@@ -530,7 +523,7 @@ private:
                           << " requested_ms=" << requestedStartupBuffer_.count()
                           << " effective_ms=" << startupBuffer_.count()
                           << " queue_limit_kb="
-                          << (pacer_.maxQueuedBytes() / 1024U)
+                          << (mpegts::CbrTsPacer::maximumQueuedBytes() / 1024U)
                           << " reserved_headroom_pct="
                           << (100ULL - kStartupQueueUsePercent)
                           << std::endl;
@@ -881,13 +874,10 @@ private:
                               << " startup_buffer_ms=" << startupBuffer_.count()
                               << " ingress_clock=decoupled"
                               << " source_null=regenerated"
-                              << " wisi_compatible=" << (pacer_.wisiCompatible() ? "on" : "off")
                               << " source_pcr="
-                              << (pacer_.wisiCompatible() ? "synthetic-from-first-PCR" :
-                                  (pacer_.sourcePllMode() ? "preserved" : "restamped-all-pids"))
+                              << (pacer_.sourcePllMode() ? "preserved" : "restamped-all-pids")
                               << " pcr_schedule="
-                              << (pacer_.wisiCompatible() ? "periodic-pcr-only-20ms" :
-                                  (pacer_.sourcePllMode() ? "source-timeline" : "output-cbr-slot-clock"))
+                              << (pacer_.sourcePllMode() ? "source-timeline" : "output-cbr-slot-clock")
                               << " pts_dts=preserved"
                               << " auto_tune=off"
                               << " catchup_burst=off"

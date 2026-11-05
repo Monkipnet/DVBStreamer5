@@ -10,7 +10,6 @@ namespace {
 constexpr std::uint64_t kNanosecondsPerSecond = 1000000000ULL;
 constexpr std::uint64_t kPcrClockHz = 27000000ULL;
 constexpr std::uint64_t kPcrWrapTicks = (1ULL << 33U) * 300ULL;
-constexpr std::uint64_t kPeriodicTicks = kPcrClockHz / 50ULL;
 constexpr std::uint64_t kDatagramBits =
     kPacketsPerCbrDatagram * kPacketSize * 8ULL;
 constexpr std::uint64_t kPacketBits = kPacketSize * 8ULL;
@@ -27,10 +26,9 @@ constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // legacy fixed-CBR o
 
 } // namespace
 
-CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate, bool wisiCompatible)
+CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate)
     : sourcePllMode_(sourcePllEncodedTargetBitrate(targetBitrate)),
       wisiReservoirAssist_(targetBitrate % 1000ULL == 809ULL),
-      wisiCompatible_(wisiCompatible),
       targetBitrate_(std::clamp(
           decodeTargetBitrate(targetBitrate), kMinimumBitrate, kMaximumBitrate)) {
     if (decodeTargetBitrate(targetBitrate) == 0) {
@@ -41,7 +39,7 @@ CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate, bool wisiCompatible)
 bool CbrTsPacer::canEnqueue(const Packet& packet) const noexcept {
     if (packet[0] != kSyncByte) return false;
     if (isNullPacket(packet)) return true;
-    return (queuedPackets_.size() + 1U) * kPacketSize <= maxQueuedBytes();
+    return (queuedPackets_.size() + 1U) * kPacketSize <= kMaximumQueuedBytes;
 }
 
 bool CbrTsPacer::enqueue(const Packet& packet) {
@@ -90,21 +88,10 @@ bool CbrTsPacer::emitDatagram(
             : (targetBitrate_ * 3ULL) / 4ULL;
     }
     pace = (std::max<std::uint64_t>)(1ULL, (std::min)(pace, targetBitrate_));
-    if (wisiCompatible_) pace = (std::min<std::uint64_t>)(
-        pace, targetBitrate_ - targetBitrate_ / std::uint64_t{50});
 
     lastDatagramUsefulPackets_ = 0;
     for (Packet& packet : datagram) {
         usefulToken_ += pace;
-        if (wisiCompatible_ && periodicPcrInitialized_ &&
-            compatElapsedTicks(outputSlotCounter_) >= nextPeriodicPcrElapsedTicks_) {
-            makePeriodicPcr(packet, outputSlotCounter_);
-            do {
-                nextPeriodicPcrElapsedTicks_ += kPeriodicTicks;
-            } while (compatElapsedTicks(outputSlotCounter_) >= nextPeriodicPcrElapsedTicks_);
-            ++outputSlotCounter_;
-            continue;
-        }
         bool emitUseful = false;
         if (!queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
             usefulToken_ -= targetBitrate_;
@@ -115,11 +102,6 @@ bool CbrTsPacer::emitDatagram(
             packet = queuedPackets_.front();
             queuedPackets_.pop_front();
             restampPcr(packet, outputSlotCounter_);
-            if (wisiCompatible_ && periodicPcrInitialized_ &&
-                packetPid(packet) == periodicPcrPid_ && (packet[3] & 0x10U)) {
-                pcrPayloadCc_ = static_cast<std::uint8_t>(packet[3] & 0x0fU);
-                pcrPayloadCcValid_ = true;
-            }
             ++lastDatagramUsefulPackets_;
         } else {
             // Do not accumulate unlimited useful entitlement while an input is
@@ -363,23 +345,6 @@ void CbrTsPacer::updateUsefulPace(
     if (base == 0) return;
     base = (std::min)(base, targetBitrate_);
 
-    if (wisiCompatible_) {
-        // Opt-in 2500-ms reservoir, 4-s correction, 800-ms low watermark.
-        // Output CBR sender remains an independent absolute-time clock.
-        const std::uint64_t cap = targetBitrate_ - targetBitrate_ / 50ULL;
-        const std::uint64_t bytes = queuedPackets_.size() * kPacketSize;
-        const std::uint64_t targetBytes = base * 2500ULL / 8000ULL;
-        const std::int64_t correction =
-            (static_cast<std::int64_t>(bytes) -
-             static_cast<std::int64_t>(targetBytes)) * 2LL;
-        std::int64_t desired = static_cast<std::int64_t>(base) + correction;
-        if (bytes * 8000ULL < base * 800ULL)
-            desired = (std::min)(desired, static_cast<std::int64_t>(base * 85ULL / 100ULL));
-        usefulPaceBitrate_ = static_cast<std::uint64_t>(
-            (std::max<std::int64_t>)(0LL, (std::min)(desired, static_cast<std::int64_t>(cap))));
-        return;
-    }
-
     if (sourcePllMode_ && sourcePayloadBitrate_ > 0) {
         // V175: source-PCR timeline mode. This is the key behavioural change.
         // The useful media rate is derived only from source PCR elapsed time and
@@ -455,19 +420,6 @@ bool CbrTsPacer::restampPcr(
     if (!readPcr(packet, sourceTicks, discontinuity)) return false;
 
     const std::uint16_t pid = packetPid(packet);
-    if (wisiCompatible_) {
-        if (!periodicPcrInitialized_) {
-            periodicPcrPid_ = pid;
-            periodicPcrAnchorTicks_ = sourceTicks;
-            periodicPcrAnchorSlot_ = outputSlot;
-            nextPeriodicPcrElapsedTicks_ = kPeriodicTicks;
-            periodicPcrInitialized_ = true;
-        } else if (pid == periodicPcrPid_) {
-            // Keep adaptation size and PES untouched; disable source PCR flag.
-            packet[5] = static_cast<std::uint8_t>(packet[5] & ~0x10U);
-        }
-        return true;
-    }
     if (pid >= outputPcrStates_.size()) return false;
     OutputPcrState& state = outputPcrStates_[pid];
 
@@ -510,25 +462,6 @@ bool CbrTsPacer::restampPcr(
     if (!writePcr(packet, rewritten)) return false;
     ++pcrRewriteCount_;
     return true;
-}
-
-std::uint64_t CbrTsPacer::compatElapsedTicks(std::uint64_t slot) const noexcept {
-    const auto slots = slot >= periodicPcrAnchorSlot_ ? slot - periodicPcrAnchorSlot_ : 0ULL;
-    const unsigned __int128 numerator = static_cast<unsigned __int128>(slots) *
-        static_cast<unsigned __int128>(kPacketBits) * kPcrClockHz;
-    return static_cast<std::uint64_t>(numerator / targetBitrate_);
-}
-
-void CbrTsPacer::makePeriodicPcr(Packet& packet, std::uint64_t slot) noexcept {
-    packet.fill(0xff);
-    packet[0] = kSyncByte;
-    packet[1] = static_cast<std::uint8_t>((periodicPcrPid_ >> 8U) & 0x1fU);
-    packet[2] = static_cast<std::uint8_t>(periodicPcrPid_);
-    packet[3] = static_cast<std::uint8_t>(
-        0x20U | (pcrPayloadCcValid_ ? pcrPayloadCc_ : 0U));
-    packet[4] = 183U;
-    packet[5] = 0x10U;
-    writePcr(packet, (periodicPcrAnchorTicks_ + compatElapsedTicks(slot)) % kPcrWrapTicks);
 }
 
 bool CbrTsPacer::isNullPacket(const Packet& packet) noexcept {
