@@ -159,7 +159,14 @@ recording. No DVBStreamer5 rebuild or service restart is needed for this tool.
 Use the actual multicast group and SRT endpoint. FFmpeg interprets the SRT URL
 `latency` in microseconds, so `1500000` means 1500 ms. Add
 `-InterfaceIP '192.0.2.20'` to select the Windows NIC if multicast arrives via
-a specific interface. Custom executable locations can be passed with `-Ffmpeg`
+a specific interface. Alternatively, `-Ethernet` automatically selects a single
+connected Ethernet IPv4 address. If multiple wired addresses exist, it lists
+them and requires an explicit choice with `-InterfaceIP`. The address must be
+assigned to a connected local PC adapter; a network prefix or server address
+is rejected before capture. Interface details are included in
+`capture-interface.json`. Both captures stop if either FFmpeg process exits
+early, and a report missing either audio/video source is marked incomplete.
+Custom executable locations can be passed with `-Ffmpeg`
 and `-Ffprobe`. Existing captures can be analysed with `-UdpFile` and `-SrtFile`.
 
 The two FFmpeg processes capture raw data concurrently with `-f data` on both

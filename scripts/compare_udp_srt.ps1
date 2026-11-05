@@ -3,6 +3,8 @@
 Capture the same channel over UDP and SRT, without remuxing its MPEG-TS.
 Requires ffmpeg and ffprobe in PATH (or supply their executable paths).
 SRT URL latency is in MICROSECONDS in FFmpeg: 1500000 means 1500 ms.
+Use -Ethernet to select a single connected wired IPv4 adapter automatically.
+With several wired addresses, select an actual PC address using -InterfaceIP.
 
 Example:
   .\compare_udp_srt.ps1 -UdpUrl 'udp://@239.10.10.1:1234' `
@@ -20,6 +22,7 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Files')][string]$UdpFile,
     [Parameter(Mandatory = $true, ParameterSetName = 'Files')][string]$SrtFile,
     [string]$InterfaceIP = '',
+    [Parameter(ParameterSetName = 'Capture')][switch]$Ethernet,
     [ValidateRange(5, 3600)][int]$DurationSeconds = 90,
     [string]$OutputDirectory = '',
     [string]$Ffmpeg = 'ffmpeg',
@@ -28,6 +31,47 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $encoding = New-Object System.Text.UTF8Encoding($false)
+$selectedInterfaces = @()
+if ($PSCmdlet.ParameterSetName -eq 'Capture') {
+    $localInterfaces = @(
+        foreach ($adapter in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+            foreach ($unicast in $adapter.GetIPProperties().UnicastAddresses) {
+                if ($unicast.Address.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) {
+                    [pscustomobject]@{
+                        Name = $adapter.Name; IPAddress = $unicast.Address.ToString()
+                        Type = $adapter.NetworkInterfaceType.ToString(); Status = $adapter.OperationalStatus.ToString()
+                    }
+                }
+            }
+        }
+    )
+    if ($Ethernet -and $InterfaceIP) { throw 'Use either -Ethernet or -InterfaceIP, not both.' }
+    if ($Ethernet) {
+        $candidates = @($localInterfaces | Where-Object {
+            $_.Status -eq 'Up' -and $_.Type -in @('Ethernet', 'GigabitEthernet', 'FastEthernetT', 'FastEthernetFx') -and
+            !$_.IPAddress.StartsWith('169.254.')
+        })
+        if ($candidates.Count -ne 1) {
+            $details = ($candidates | ForEach-Object { $_.Name + ': ' + $_.IPAddress }) -join '; '
+            throw "Expected one connected Ethernet IPv4 address; found $($candidates.Count). Connect the cable or select an address with -InterfaceIP. Candidates: $details"
+        }
+        $InterfaceIP = $candidates[0].IPAddress
+    } elseif (!$InterfaceIP) {
+        $urlAddress = [regex]::Match($UdpUrl, '(?:\?|&)localaddr=([^&]*)')
+        if ($urlAddress.Success) { $InterfaceIP = [Uri]::UnescapeDataString($urlAddress.Groups[1].Value) }
+    }
+    if ($InterfaceIP) {
+        $address = [Net.IPAddress]::Parse($InterfaceIP)
+        if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw 'InterfaceIP must be an IPv4 address.' }
+        $InterfaceIP = $address.ToString()
+        $selectedInterfaces = @($localInterfaces | Where-Object { $_.IPAddress -eq $InterfaceIP -and $_.Status -eq 'Up' })
+        if (!$selectedInterfaces.Count) {
+            $details = ($localInterfaces | Where-Object { $_.Status -eq 'Up' } | ForEach-Object { $_.Name + ': ' + $_.IPAddress }) -join '; '
+            throw "InterfaceIP $InterfaceIP is not assigned to a connected local adapter. Use the PC's adapter address, not a subnet or server address. Local IPv4 addresses: $details"
+        }
+        Write-Host ("UDP interface: " + $selectedInterfaces[0].Name + ' (' + $InterfaceIP + ')')
+    }
+}
 $ffmpegPath = (Get-Command $Ffmpeg -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $ffprobePath = (Get-Command $Ffprobe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 if (!$OutputDirectory) {
@@ -35,6 +79,10 @@ if (!$OutputDirectory) {
 }
 if (Test-Path $OutputDirectory) { throw 'OutputDirectory already exists; choose a new directory to preserve earlier captures.' }
 $outDir = (New-Item -ItemType Directory -Path $OutputDirectory).FullName
+if ($PSCmdlet.ParameterSetName -eq 'Capture') {
+    [pscustomobject]@{ InterfaceIP = $InterfaceIP; EthernetRequested = [bool]$Ethernet; Interfaces = $selectedInterfaces; RequestedSeconds = $DurationSeconds } |
+        ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $outDir 'capture-interface.json')
+}
 
 function Quote-Argument([string]$Value) {
     # ProcessStartInfo.Arguments uses native argument quoting, not shell syntax.
@@ -82,9 +130,9 @@ function Add-UrlOption([string]$Url, [string]$Name, [string]$Value) {
 if ($PSCmdlet.ParameterSetName -eq 'Capture') {
     $UdpUrl = $UdpUrl -replace '^udp://@', 'udp://'
     if ($InterfaceIP) {
-        $address = [Net.IPAddress]::Parse($InterfaceIP)
-        if ($address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw 'InterfaceIP must be an IPv4 address.' }
-        $UdpUrl = Add-UrlOption $UdpUrl 'localaddr' $InterfaceIP
+        if ($UdpUrl -match '(?:\?|&)localaddr=') {
+            $UdpUrl = [regex]::Replace($UdpUrl, '([?&])localaddr=[^&]*', '${1}localaddr=' + $InterfaceIP)
+        } else { $UdpUrl = Add-UrlOption $UdpUrl 'localaddr' $InterfaceIP }
     }
     $UdpUrl = Add-UrlOption $UdpUrl 'buffer_size' '4194304'
     $UdpUrl = Add-UrlOption $UdpUrl 'fifo_size' '65536'
@@ -105,7 +153,11 @@ if ($PSCmdlet.ParameterSetName -eq 'Capture') {
         Write-Host "Recording both original transports for $DurationSeconds seconds..."
         $watch = [Diagnostics.Stopwatch]::StartNew()
         while ($watch.Elapsed.TotalSeconds -lt $DurationSeconds) {
-            if (@($jobs | Where-Object { !$_.Process.HasExited }).Count -eq 0) { break }
+            $ended = @($jobs | Where-Object { $_.Process.HasExited })
+            if ($ended.Count) {
+                Write-Warning ($ended[0].Stem + ' ended before the recording timer; stopping both captures. Inspect its log.')
+                break
+            }
             Write-Progress -Activity 'UDP + SRT capture' -Status ('{0:N0} / {1} s' -f $watch.Elapsed.TotalSeconds, $DurationSeconds) -PercentComplete (100 * $watch.Elapsed.TotalSeconds / $DurationSeconds)
             Start-Sleep -Milliseconds 200
         }
@@ -308,3 +360,7 @@ if ($reportFiles.Count) {
     Write-Host 'Send report.zip first. It contains reports and logs, without the large TS captures.'
 }
 Write-Host 'PCR/PTS spans describe media time, not network jitter. Different capture windows can have different packet counts.'
+if (!@($summary | Where-Object { $_.Source -eq 'udp' }).Count -or !@($summary | Where-Object { $_.Source -eq 'srt' }).Count) {
+    Write-Warning 'Comparison incomplete: audio/video was not identified on both UDP and SRT. Inspect the capture logs.'
+    exit 2
+}
