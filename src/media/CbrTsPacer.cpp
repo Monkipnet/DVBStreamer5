@@ -90,7 +90,8 @@ bool CbrTsPacer::emitDatagram(
             : (targetBitrate_ * 3ULL) / 4ULL;
     }
     pace = (std::max<std::uint64_t>)(1ULL, (std::min)(pace, targetBitrate_));
-    if (wisiCompatible_) pace = (std::min)(pace, targetBitrate_ - targetBitrate_ / 50ULL);
+    if (wisiCompatible_) pace = (std::min<std::uint64_t>)(
+        pace, targetBitrate_ - targetBitrate_ / std::uint64_t{50});
 
     lastDatagramUsefulPackets_ = 0;
     for (Packet& packet : datagram) {
