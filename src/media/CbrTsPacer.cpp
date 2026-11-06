@@ -26,10 +26,8 @@ constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // legacy fixed-CBR o
 
 } // namespace
 
-CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate, bool sourceTimelinePacing)
+CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate)
     : sourcePllMode_(sourcePllEncodedTargetBitrate(targetBitrate)),
-      sourceTimelinePacing_(sourceTimelinePacing && sourcePllMode_ &&
-          startupBufferMilliseconds(targetBitrate) != 0),
       wisiReservoirAssist_(targetBitrate % 1000ULL == 809ULL),
       targetBitrate_(std::clamp(
           decodeTargetBitrate(targetBitrate), kMinimumBitrate, kMaximumBitrate)) {
@@ -93,30 +91,23 @@ bool CbrTsPacer::emitDatagram(
 
     lastDatagramUsefulPackets_ = 0;
     for (Packet& packet : datagram) {
-        const bool scheduled = sourceTimelinePacing_ && sourceSchedule_.ready();
+        usefulToken_ += pace;
         bool emitUseful = false;
-        if (scheduled) {
-            emitUseful = !queuedPackets_.empty() && sourceSchedule_.due(
-                emittedUsefulPackets_, outputSlotCounter_, targetBitrate_);
-        } else {
-            usefulToken_ += pace;
-            if (!queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
-                usefulToken_ -= targetBitrate_;
-                emitUseful = true;
-            }
+        if (!queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
+            usefulToken_ -= targetBitrate_;
+            emitUseful = true;
         }
 
         if (emitUseful) {
             packet = queuedPackets_.front();
             queuedPackets_.pop_front();
-            ++emittedUsefulPackets_;
             restampPcr(packet, outputSlotCounter_);
             ++lastDatagramUsefulPackets_;
         } else {
             // Do not accumulate unlimited useful entitlement while an input is
             // temporarily empty. Recovery must remain smooth rather than turn
             // into a full-rate burst of real packets.
-            if (!scheduled && queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
+            if (queuedPackets_.empty() && usefulToken_ >= targetBitrate_) {
                 usefulToken_ = targetBitrate_ - 1ULL;
             }
             makeNullPacket(packet);
@@ -271,9 +262,6 @@ void CbrTsPacer::observeSourcePcr(const Packet& packet) noexcept {
     } else if (pid != referencePcrPid_) {
         return;
     }
-
-    if (sourceTimelinePacing_)
-        sourceSchedule_.observe(totalUsefulPackets_ - 1ULL, pcrTicks, discontinuity);
 
     if (!havePreviousSourcePcr_ || discontinuity) {
         previousSourcePcrTicks_ = pcrTicks;

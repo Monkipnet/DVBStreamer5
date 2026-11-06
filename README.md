@@ -1,23 +1,3 @@
-## V10.8.370 — multicast TTL compatibility with TVStreamerSat5
-
-- Sets IPv4 multicast TTL to 32 in the common UDP socket, matching TVStreamerSat5. Previously it inherited the OS default, observed as TTL=1 on Linux. Applies to both legacy and new UDP-CBR/VBR engines and RTP multicast.
-- Logs `multicast_ttl=32` when opening a multicast destination. TS bytes, 1316-byte CBR datagrams, pacing, PCR/PTS/DTS and unicast TTL are preserved.
-- A regression test checks the actual received IP TTL and exact payload through both blocking and nonblocking sends. This corrects a confirmed difference in routed-multicast behavior; receiver/network and WISI playback verification remain required.
-
-## V10.8.369 — new UDP-CBR / UDP-VBR output engine and loopback interface
-
-- Adds a separately implemented UDP packetizer, shared absolute-deadline schedulers, nonblocking per-destination retry queues and common CBR fanout. Existing configs retain the legacy engine; select the new engine per tile for controlled testing.
-- Preserves UDP format, PCR modes, startup buffers, routing/interface choices and non-UDP consumers. Adds `lo (127.0.0.1)` to interface selectors and sender queue/timing counters to the state API.
-- The relay regression suite exercises both engines; additional tests cover retries, VBR tails, source/fixed PCR and 100 concurrent 3-Mbit/s CBR channels. Ubuntu 22.04/24.04 CI and portable artifacts are configured.
-- Details, limits, build commands and rollback: [UDP transport rewrite](docs/UDP_TRANSPORT_REWRITE.md). Actual WISI Chameleon validation remains required.
-
-## V10.8.368 — opt-in DVB Source PCR packet pacing
-
-- Adds per-channel **Precise DVB Source PCR pacing (experimental)** for DVB → UDP-CBR passthrough with Source PCR and a nonzero startup buffer. The default is off; existing configurations retain their prior behavior.
-- Schedules useful packets by adjacent source PCR intervals while preserving their bytes, 7×188 UDP datagrams, configured transport bitrate and the existing physical sender clock. It does not recover multicast network losses.
-- Adds ten-minute virtual-time PCR/VBR regressions, byte-preserving dual-UDP/observer loopback and config compatibility tests. Live WISI Chameleon validation is still required before wider activation.
-- Build and rollback instructions: [WISI Source PCR pacing](docs/WISI_SOURCE_PCR_PACING.md).
-
 ## V10.8.345 — GCC 13 MP4 relay constructor build fix + GitHub Linux CI
 
 - Fixed GCC 13 failure in StreamManager.cpp: std::make_unique<NativeUdpRelay>() previously instantiated the inline-defaulted NativeUdpRelay constructor while std::unique_ptr<mp4::NativeMp4Replacement> still held an incomplete type. The constructor is now declared in NativeUdpRelay.h and defined out-of-line in NativeUdpRelay.cpp after including the complete native MP4 type. The destructor and existing MPEG-TS/MP4 implementation remain unchanged.

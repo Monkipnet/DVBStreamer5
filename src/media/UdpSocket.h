@@ -36,13 +36,8 @@ public:
         int timeoutMs,
         std::string& error);
     bool send(const std::uint8_t* data, std::size_t size, std::string& error);
-    enum class SendResult { Sent, Retry, Failed };
-    bool configureOutputBuffer(int requestedBytes, int& effectiveBytes, std::string& error);
-    SendResult trySend(const std::uint8_t* data, std::size_t size, std::string& error);
 
     std::uint16_t localPort() const noexcept;
-    // Configured multicast hop limit; zero for receivers/unicast sockets.
-    int multicastTtl() const noexcept;
     void close() noexcept;
 
 private:

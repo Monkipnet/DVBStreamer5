@@ -16,9 +16,6 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#ifdef __linux__
-#include <ifaddrs.h>
-#endif
 #if defined(__linux__) && !defined(IP_MULTICAST_ALL)
 #define IP_MULTICAST_ALL 49
 #endif
@@ -93,7 +90,6 @@ bool parseIpv4(const std::string& address, in_addr& result) noexcept {
 
 struct UdpSocket::Destination {
     sockaddr_in address {};
-    int multicastTtl = 0;
 };
 
 UdpSocket::UdpSocket() noexcept = default;
@@ -114,12 +110,13 @@ bool UdpSocket::openReceiver(
     if (!ensureSocketRuntime(error)) {
         return false;
     }
-    if (receiveBufferBytes < 0) {
+    if (receiveBufferBytes < 0 ||
+        (multicastGroup.empty() && !interfaceAddress.empty() && interfaceDevice.empty())) {
         error = "invalid UDP receiver buffer or interface settings";
         return false;
     }
 #if !defined(__linux__)
-    if ((!interfaceDevice.empty() || !interfaceAddress.empty()) && multicastGroup.empty()) {
+    if (!interfaceDevice.empty() && multicastGroup.empty()) {
         error = "binding a UDP receiver to a network device is supported only on Linux";
         return false;
     }
@@ -138,21 +135,6 @@ bool UdpSocket::openReceiver(
         }
     }
 
-    std::string receiveDevice=interfaceDevice;
-#ifdef __linux__
-    if (multicastGroup.empty() && receiveDevice.empty() && !interfaceAddress.empty()) {
-        ifaddrs* addresses=nullptr;
-        if (::getifaddrs(&addresses)!=0) { error="cannot enumerate UDP input interfaces"; return false; }
-        in_addr selected{}; parseIpv4(interfaceAddress,selected);
-        for (const auto* current=addresses;current;current=current->ifa_next) {
-            if (!current->ifa_addr || current->ifa_addr->sa_family!=AF_INET) continue;
-            const auto* address=reinterpret_cast<const sockaddr_in*>(current->ifa_addr);
-            if (address->sin_addr.s_addr==selected.s_addr) { receiveDevice=current->ifa_name; break; }
-        }
-        ::freeifaddrs(addresses);
-        if (receiveDevice.empty()) { error="UDP input interface address is not assigned locally: "+interfaceAddress; return false; }
-    }
-#endif
     NativeSocket socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (socket == kInvalidSocket) {
         setSocketError(error, "UDP receiver socket");
@@ -166,13 +148,13 @@ bool UdpSocket::openReceiver(
         return false;
     }
 #if defined(__linux__) && defined(SO_BINDTODEVICE)
-    if (!receiveDevice.empty() && multicastGroup.empty() &&
+    if (!interfaceDevice.empty() && multicastGroup.empty() &&
         setSocketOption(
             socket,
             SOL_SOCKET,
             SO_BINDTODEVICE,
-            receiveDevice.c_str(),
-            static_cast<socklen_t>(receiveDevice.size() + 1)) != 0) {
+            interfaceDevice.c_str(),
+            static_cast<socklen_t>(interfaceDevice.size() + 1)) != 0) {
         setSocketError(error, "SO_BINDTODEVICE");
         closeSocket(socket);
         return false;
@@ -295,27 +277,12 @@ bool UdpSocket::openSender(
 
     auto destination = std::make_unique<Destination>();
     std::memcpy(&destination->address, addresses->ai_addr, sizeof(destination->address));
-    const bool multicast = IN_MULTICAST(ntohl(destination->address.sin_addr.s_addr));
 
     NativeSocket socket = ::socket(
         addresses->ai_family, addresses->ai_socktype, addresses->ai_protocol);
     if (socket == kInvalidSocket) {
         setSocketError(error, "UDP sender socket");
         return false;
-    }
-
-    if (multicast) {
-        // TVStreamerSat5 sets 32 on both native UDP and GStreamer senders.
-        // Leaving the OS default (1 on Linux) prevents normal multicast
-        // routing beyond the directly attached subnet. This is independent
-        // of TS packetization, CBR timing and the selected output engine.
-        const int ttl = 32;
-        if (setSocketOption(socket, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) != 0) {
-            setSocketError(error, "IP_MULTICAST_TTL");
-            closeSocket(socket);
-            return false;
-        }
-        destination->multicastTtl = ttl;
     }
 
     if (!interfaceAddress.empty()) {
@@ -327,7 +294,7 @@ bool UdpSocket::openSender(
             closeSocket(socket);
             return false;
         }
-        if (multicast &&
+        if (IN_MULTICAST(ntohl(destination->address.sin_addr.s_addr)) &&
             setSocketOption(
                 socket, IPPROTO_IP, IP_MULTICAST_IF, &localInterface, sizeof(localInterface)) != 0) {
             setSocketError(error, "IP_MULTICAST_IF");
@@ -433,57 +400,8 @@ bool UdpSocket::send(const std::uint8_t* data, std::size_t size, std::string& er
     return true;
 }
 
-bool UdpSocket::configureOutputBuffer(int requested, int& effective, std::string& error) {
-    if (socket_==kInvalidSocket || receiver_ || requested<=0) { error="invalid UDP sender buffer"; return false; }
-    const auto socket=static_cast<NativeSocket>(socket_);
-    if (setSocketOption(socket,SOL_SOCKET,SO_SNDBUF,&requested,sizeof(requested))!=0) {
-        setSocketError(error,"SO_SNDBUF"); return false;
-    }
-#ifdef _WIN32
-    int length=sizeof(effective);
-    u_long enabled=1;
-    if (::ioctlsocket(socket,FIONBIO,&enabled)!=0) { setSocketError(error,"FIONBIO"); return false; }
-    if (::getsockopt(socket,SOL_SOCKET,SO_SNDBUF,reinterpret_cast<char*>(&effective),&length)!=0) {
-#else
-    socklen_t length=sizeof(effective);
-    if (::getsockopt(socket,SOL_SOCKET,SO_SNDBUF,&effective,&length)!=0) {
-#endif
-        setSocketError(error,"SO_SNDBUF readback"); return false;
-    }
-    error.clear(); return true;
-}
-
-UdpSocket::SendResult UdpSocket::trySend(const std::uint8_t* data, std::size_t size, std::string& error) {
-    if (socket_==kInvalidSocket || receiver_ || !destination_ || !data || !size || size>65507) {
-        error="invalid nonblocking UDP send"; return SendResult::Failed;
-    }
-#ifdef _WIN32
-    const auto count=::sendto(static_cast<NativeSocket>(socket_),reinterpret_cast<const char*>(data),
-        static_cast<int>(size),0,reinterpret_cast<const sockaddr*>(&destination_->address),sizeof(destination_->address));
-#else
-    const auto count=::sendto(static_cast<NativeSocket>(socket_),data,size,MSG_DONTWAIT,
-        reinterpret_cast<const sockaddr*>(&destination_->address),sizeof(destination_->address));
-#endif
-    if (count<0) {
-        const auto code=lastSocketError();
-#ifdef _WIN32
-        if (code==WSAEWOULDBLOCK || code==WSAENOBUFS || code==WSAEINTR)
-#else
-        if (code==EAGAIN || code==EWOULDBLOCK || code==ENOBUFS || code==EINTR)
-#endif
-        { error.clear(); return SendResult::Retry; }
-        setSocketError(error,"nonblocking UDP send"); return SendResult::Failed;
-    }
-    if (static_cast<std::size_t>(count)!=size) { error="partial UDP datagram send"; return SendResult::Failed; }
-    error.clear(); return SendResult::Sent;
-}
-
 std::uint16_t UdpSocket::localPort() const noexcept {
     return localPort_;
-}
-
-int UdpSocket::multicastTtl() const noexcept {
-    return destination_ ? destination_->multicastTtl : 0;
 }
 
 void UdpSocket::close() noexcept {

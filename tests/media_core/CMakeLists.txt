@@ -11,8 +11,6 @@ find_package(OpenSSL REQUIRED)
 add_executable(media_core_tests
     ../test_media_core.cpp
     ../../src/media/CbrTsPacer.cpp
-    ../../src/media/UdpTsMux.cpp
-    ../../src/media/UdpTsOutput.cpp
     ../../src/media/MpegTsRemapper.cpp
     ../../src/media/NativeMpegTsMux.cpp
     ../../src/media/TransportStream.cpp
@@ -131,25 +129,3 @@ add_executable(native_failover_program_identity_test
     ../../src/media/TransportStream.cpp)
 target_include_directories(native_failover_program_identity_test PRIVATE ../../src)
 add_test(NAME native_failover_program_identity COMMAND native_failover_program_identity_test)
-
-add_executable(source_pcr_packet_pacing_test
-    test_source_pcr_packet_pacing.cpp
-    ../../src/media/CbrTsPacer.cpp
-    ../../src/media/TransportStream.cpp)
-target_include_directories(source_pcr_packet_pacing_test PRIVATE ../../src)
-add_test(NAME source_pcr_packet_pacing COMMAND source_pcr_packet_pacing_test)
-
-add_executable(udp_ts_output_test test_udp_ts_output.cpp
-    ../../src/media/UdpTsMux.cpp ../../src/media/UdpTsOutput.cpp
-    ../../src/media/UdpSocket.cpp)
-target_include_directories(udp_ts_output_test PRIVATE ../../src)
-target_link_libraries(udp_ts_output_test PRIVATE Threads::Threads)
-add_test(NAME udp_ts_output COMMAND udp_ts_output_test)
-
-add_executable(udp_ts_load_test test_udp_ts_load.cpp
-    ../../src/media/UdpTsMux.cpp ../../src/media/UdpTsOutput.cpp
-    ../../src/media/UdpSocket.cpp)
-target_include_directories(udp_ts_load_test PRIVATE ../../src)
-target_link_libraries(udp_ts_load_test PRIVATE Threads::Threads)
-add_test(NAME udp_ts_load COMMAND udp_ts_load_test)
-set_tests_properties(udp_ts_load PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)

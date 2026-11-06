@@ -7950,27 +7950,15 @@ function openStreamForm(stream) {
         </div>
         <div class="form-row full edit-section">
           <div class="edit-field">
-            <label ${uiBiAttrs('Механизм UDP-выходов','UDP output engine')}>${uiBiText('Механизм UDP-выходов','UDP output engine')}</label>
-            <select id="streamUdpOutputEngine" onchange="updateIpSourcePcrVisibility()">
-              <option value="legacy" ${stream.udp_output_engine!=='native'?'selected':''}>${uiBiText('Классический','Legacy')}</option>
-              <option value="native" ${stream.udp_output_engine==='native'?'selected':''}>${uiBiText('Новый UDP-CBR / UDP-VBR (тестовый)','New UDP-CBR / UDP-VBR (test)')}</option>
-            </select>
-            <small class="field-help">${uiBiText('Для всех UDP-адресов этой плитки. После сохранения перезапустите плитку.','Applies to every UDP destination of this tile. Restart the tile after saving.')}</small>
-          </div>
-        </div>
-        <div class="form-row full edit-section">
-          <div class="edit-field">
             <div class="edit-field-title" ${uiBiAttrs('CBR: режим PCR и стартовый буфер','CBR: PCR mode and startup buffer')}>${uiBiText('CBR: режим PCR и стартовый буфер','CBR: PCR mode and startup buffer')}</div>
             <small class="field-help" ${uiBiAttrs('Для данной плитки; сохранение без перезапуска, применить вручную. HTTP/SRT Source PCR выше — отдельная опция.','Per-tile only; save without restart, apply manually. The HTTP/SRT Source PCR option above is separate.')}>${uiBiText('Для данной плитки; сохранение без перезапуска, применить вручную. HTTP/SRT Source PCR выше — отдельная опция.','Per-tile only; save without restart, apply manually. The HTTP/SRT Source PCR option above is separate.')}</small>
             <div class="row-inline compact-row">
-              <select id="streamCbrPcrMode" aria-label="CBR PCR mode" onchange="updateIpSourcePcrVisibility()">
+              <select id="streamCbrPcrMode" aria-label="CBR PCR mode">
                 <option value="fixed" ${cbrProfile.mode==='fixed'?'selected':''}>Fixed PCR</option>
                 <option value="source" ${cbrProfile.mode==='source'?'selected':''}>Source PCR</option>
               </select>
-              <select id="streamCbrStartupMs" aria-label="CBR startup buffer" onchange="updateIpSourcePcrVisibility()">${cbrStartupOptions}</select>
+              <select id="streamCbrStartupMs" aria-label="CBR startup buffer">${cbrStartupOptions}</select>
             </div>
-            <label class="checkbox-inline"><input id="streamDvbSourcePcrPacing" type="checkbox" ${stream.dvb_source_pcr_pacing===true?'checked':''}/><span ${uiBiAttrs('Точный пейсинг DVB Source PCR (экспериментальный)','Precise DVB Source PCR pacing (experimental)')}>${uiBiText('Точный пейсинг DVB Source PCR (экспериментальный)','Precise DVB Source PCR pacing (experimental)')}</span></label>
-            <small class="field-help" ${uiBiAttrs('Только DVB → UDP-CBR, Source PCR, с ненулевым стартовым буфером и без транскодирования. После сохранения перезапустите эту плитку.','DVB → UDP-CBR, Source PCR, with startup buffering and without transcoding only. Restart this tile after saving.')}>${uiBiText('Только DVB → UDP-CBR, Source PCR, с ненулевым стартовым буфером и без транскодирования. После сохранения перезапустите эту плитку.','DVB → UDP-CBR, Source PCR, with startup buffering and without transcoding only. Restart this tile after saving.')}</small>
           </div>
         </div>
         <div class="form-row full edit-section" id="streamIpSourcePcrRow">
@@ -8338,10 +8326,6 @@ function updateIpSourcePcrVisibility() {
   const testPattern=document.getElementById('streamTestPattern')?.checked===true;
   const cbr=document.getElementById('streamCbr')?.checked===true;
   const bitrate=Number(document.getElementById('streamBitrate')?.value||0);
-  const dvbPacing=document.getElementById('streamDvbSourcePcrPacing');
-  if(dvbPacing) dvbPacing.disabled=!(document.getElementById('streamUdpOutputEngine')?.value!=='native' && uri.startsWith('dvb://') && hasUdpCbr && cbr &&
-    !transcode && !testPattern && document.getElementById('streamCbrPcrMode')?.value==='source' &&
-    Number(document.getElementById('streamCbrStartupMs')?.value)>0);
   const reason = !ipTs || isHls
     ? subtitleUiTriText('Требуется HTTP MPEG-TS или SRT вход.','Requires HTTP MPEG-TS or SRT input.','Potreban je HTTP MPEG-TS ili SRT ulaz.')
     : !hasUdpCbr || !cbr
@@ -8657,8 +8641,6 @@ function saveStream(id) {
     input_service_id: Number(document.getElementById('streamInputServiceId').value),
     http_ts_input_jitter_enabled: document.getElementById('streamHttpTsJitterEnabled')?.checked === true,
     ip_source_pcr_passthrough: document.getElementById('streamIpSourcePcrEnabled')?.checked === true,
-    dvb_source_pcr_pacing: document.getElementById('streamDvbSourcePcrPacing')?.checked === true,
-    udp_output_engine: document.getElementById('streamUdpOutputEngine')?.value || 'legacy',
     service_id: Number(document.getElementById('streamServiceId').value),
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,

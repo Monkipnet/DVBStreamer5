@@ -19,7 +19,6 @@
 #include <chrono>
 #include <climits>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -46,7 +45,6 @@ using dvbstreamer5::media::mpegts::Packet;
 using dvbstreamer5::media::mpegts::PacketInfo;
 
 namespace {
-bool nativeUdpUnderTest=false;
 
 Packet packet(std::uint16_t pid, std::uint8_t counter, bool payload = true) {
     Packet result {};
@@ -798,80 +796,6 @@ void testUdpLoopback() {
     assert(!sender.send(nullptr, 0, error));
 }
 
-void testUdpMulticastTtlCompatibility() {
-#ifdef __linux__
-    // Inspect the IP TTL delivered with real UDP datagrams, rather than a
-    // constant in the sender. Both classic send() and native trySend() share it.
-    using dvbstreamer5::media::network::UdpSocket;
-    const int receiver = ::socket(AF_INET, SOCK_DGRAM, 0);
-    assert(receiver >= 0);
-    const int enabled = 1;
-    assert(::setsockopt(receiver, IPPROTO_IP, IP_RECVTTL, &enabled, sizeof(enabled)) == 0);
-    const timeval timeout {2, 0};
-    assert(::setsockopt(receiver, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
-    sockaddr_in local {};
-    local.sin_family = AF_INET;
-    local.sin_addr.s_addr = htonl(INADDR_ANY);
-    assert(::bind(receiver, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0);
-    socklen_t localSize = sizeof(local);
-    assert(::getsockname(receiver, reinterpret_cast<sockaddr*>(&local), &localSize) == 0);
-    ip_mreq membership {};
-    assert(::inet_pton(AF_INET, "239.255.66.7", &membership.imr_multiaddr) == 1);
-    assert(::inet_pton(AF_INET, "127.0.0.1", &membership.imr_interface) == 1);
-    assert(::setsockopt(receiver, IPPROTO_IP, IP_ADD_MEMBERSHIP, &membership, sizeof(membership)) == 0);
-
-    int defaultUnicastTtl = 0;
-    socklen_t ttlSize = sizeof(defaultUnicastTtl);
-    assert(::getsockopt(receiver, IPPROTO_IP, IP_TTL, &defaultUnicastTtl, &ttlSize) == 0);
-    std::array<std::uint8_t, 1316> expected {};
-    for (unsigned n = 0; n < 7; ++n) {
-        const auto ts = packet(0x0100, n);
-        std::copy(ts.begin(), ts.end(), expected.begin() + n * 188);
-    }
-    const auto receiveTtl = [&] {
-        std::array<std::uint8_t, 2048> data {};
-        alignas(cmsghdr) std::array<std::uint8_t, CMSG_SPACE(sizeof(int))> control {};
-        iovec vector {data.data(), data.size()};
-        msghdr message {};
-        message.msg_iov = &vector;
-        message.msg_iovlen = 1;
-        message.msg_control = control.data();
-        message.msg_controllen = control.size();
-        assert(::recvmsg(receiver, &message, 0) == static_cast<ssize_t>(expected.size()));
-        assert(!(message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)));
-        assert(std::equal(expected.begin(), expected.end(), data.begin()));
-        for (auto* c = CMSG_FIRSTHDR(&message); c; c = CMSG_NXTHDR(&message, c)) {
-            if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_TTL) {
-                assert(c->cmsg_len >= CMSG_LEN(sizeof(int)));
-                int ttl = 0;
-                std::memcpy(&ttl, CMSG_DATA(c), sizeof(ttl));
-                return ttl;
-            }
-        }
-        assert(false && "missing IP_TTL ancillary data");
-        return -1;
-    };
-    UdpSocket sender;
-    std::string error;
-    assert(sender.openSender("239.255.66.7", ntohs(local.sin_port), "127.0.0.1", error));
-    assert(sender.multicastTtl() == 32);
-    assert(sender.send(expected.data(), expected.size(), error));
-    const auto blockingTtl = receiveTtl();
-    if (blockingTtl != 32) std::cerr << "Expected TVStreamerSat5 multicast TTL=32, received " << blockingTtl << '\n';
-    assert(blockingTtl == 32);
-    int effective = 0;
-    assert(sender.configureOutputBuffer(1024 * 1024, effective, error));
-    assert(sender.trySend(expected.data(), expected.size(), error) == UdpSocket::SendResult::Sent);
-    assert(receiveTtl() == 32);
-    // Multicast scope must not change the normal unicast IP_TTL policy.
-    assert(sender.openSender("127.0.0.1", ntohs(local.sin_port), "127.0.0.1", error));
-    assert(sender.multicastTtl() == 0);
-    assert(sender.send(expected.data(), expected.size(), error));
-    assert(receiveTtl() == defaultUnicastTtl);
-    ::close(receiver);
-#endif
-}
-
 void testLinuxDvbPidListParsing() {
     using dvbstreamer5::media::network::LinuxDvbInput;
     std::vector<std::uint16_t> pids;
@@ -910,10 +834,10 @@ void testNativeUdpTsRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
 #if defined(__linux__)
     config.inputInterfaceAddress = "127.0.0.1";
+    config.inputInterfaceDeviceName = "lo";
     config.inputInterfaceAddressConfigured = true;
 #endif
     config.outputType = "udp-vbr";
@@ -972,7 +896,6 @@ void testNativeRtpTsRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "rtp://127.0.0.1:" + std::to_string(inputPort);
     config.outputType = "rtp";
     config.outputHost = "127.0.0.1";
@@ -1014,7 +937,6 @@ void testNativeExternallyFedTsRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "external://hls";
     config.externallyFedInput = true;
     config.outputType = "udp-vbr";
@@ -1152,69 +1074,6 @@ void testCbrTsPacer() {
     assert(bounded.queuedPackets() == maximumQueuedPackets);
 }
 
-void testNativeSourcePcrCbrFanout() {
-    using namespace dvbstreamer5::media::network;
-    UdpSocket first, second;
-    std::string error;
-    assert(first.openReceiver("127.0.0.1",0,"","",0,error));
-    assert(second.openReceiver("127.0.0.1",0,"","",0,error));
-    std::vector<Packet> expected;
-    std::vector<std::uint8_t> input;
-    for (unsigned i = 0; i < 240; ++i) {
-        auto p = packet(0x100, i & 15U);
-        if (i % 20 == 0) {
-            p[3] |= 0x20U; p[4] = 7; p[5] = 0x10;
-            const std::uint64_t ticks = 27000000ULL + i * 20304ULL;
-            const auto base = ticks / 300ULL, ext = ticks % 300ULL;
-            p[6] = base >> 25U; p[7] = base >> 17U; p[8] = base >> 9U;
-            p[9] = base >> 1U; p[10] = ((base & 1U) << 7U) | 0x7eU | (ext >> 8U);
-            p[11] = ext;
-        }
-        expected.push_back(p);
-        input.insert(input.end(),p.begin(),p.end());
-    }
-    std::mutex observedMutex;
-    std::vector<Packet> observed;
-    NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
-    config.inputUri = "external://pcr-fanout-test";
-    config.externallyFedInput = true;
-    config.targetBitrate = 3000800ULL; // Source PCR, 500-ms startup for loopback
-    config.sourcePcrPacketPacing = true;
-    config.paceObservedTransport = true;
-    config.outputs = {{"udp-cbr","127.0.0.1",first.localPort(),""},
-                      {"udp-cbr","127.0.0.1",second.localPort(),""}};
-    config.observeTransport = [&](const std::uint8_t* bytes,std::size_t size) {
-        assert(size % 188U == 0);
-        std::lock_guard<std::mutex> lock(observedMutex);
-        for (std::size_t at = 0; at < size; at += 188U) {
-            if ((((bytes[at+1] & 31U) << 8U) | bytes[at+2]) == 0x1fffU) continue;
-            Packet p;
-            std::copy(bytes+at,bytes+at+188U,p.begin());
-            observed.push_back(p);
-        }
-    };
-    NativeUdpRelay relay;
-    assert(relay.start(config,error));
-    assert(relay.pushInput(input.data(),input.size()));
-    const auto receivedFirst = collectCbrMedia(first,expected.size(),3000);
-    const auto receivedSecond = collectCbrMedia(second,expected.size(),3000);
-    assert(receivedFirst == expected && receivedSecond == expected);
-    const auto limit = std::chrono::steady_clock::now()+std::chrono::seconds(2);
-    for (;;) {
-        {
-            std::lock_guard<std::mutex> lock(observedMutex);
-            if (observed.size() >= expected.size()) break;
-        }
-        assert(std::chrono::steady_clock::now() < limit);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    relay.stop();
-    // SRT/HTTP consume this observer: it must receive identical useful TS,
-    // not a second remux with different PCRs or a reordered packet sequence.
-    assert(observed == expected);
-}
-
 void testNativeUdpCbrRelay() {
     using namespace dvbstreamer5::media::network;
     const std::uint16_t inputPort = reserveLocalUdpPort();
@@ -1227,7 +1086,6 @@ void testNativeUdpCbrRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
     config.outputType = "udp-cbr";
     config.outputHost = "127.0.0.1";
@@ -1283,7 +1141,6 @@ void testNativeUdpFanoutRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "udp://127.0.0.1:" + std::to_string(inputPort);
     config.outputs = {
         {"udp-vbr", "127.0.0.1", udpReceiver.localPort(), ""},
@@ -1357,7 +1214,6 @@ void testNativeFileCbrRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri = "file://" + filePath.string();
     config.outputs = {
         {"udp-cbr", "127.0.0.1", receiver.localPort(), ""}
@@ -1422,7 +1278,6 @@ void testNativeHttpCbrRelay() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/live.ts";
     config.accessKeyMode = "header";
@@ -1464,7 +1319,6 @@ void testNativeHttpQueryAccessKey() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) +
         "/live.ts#client-fragment";
@@ -1505,7 +1359,6 @@ void testNativeHttpVbrAndRtpFanout() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/fanout.ts";
     config.outputs = {
@@ -1546,7 +1399,6 @@ void testNativeHttpFailureIsReported() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/missing.ts";
     config.outputs = {
@@ -1578,7 +1430,6 @@ void testNativeHttpDoesNotRedirectAccessKeys() {
 
     NativeUdpRelay relay;
     NativeUdpRelayConfig config;
-    config.nativeUdpOutput=nativeUdpUnderTest;
     config.inputUri =
         "http://127.0.0.1:" + std::to_string(httpServer.port()) + "/secure.ts";
     config.accessKeyMode = "header";
@@ -1693,15 +1544,11 @@ int main() {
     testRtpParsingAndPayload();
     testRtpPacketizerRoundTrip();
     testUdpLoopback();
-    testUdpMulticastTtlCompatibility();
-    testCbrTsPacer();
-    for (const bool native : {false,true}) {
-        nativeUdpUnderTest=native;
     testNativeUdpTsRelay();
     testNativeRtpTsRelay();
     testNativeExternallyFedTsRelay();
+    testCbrTsPacer();
     testNativeUdpCbrRelay();
-    testNativeSourcePcrCbrFanout();
     testNativeUdpFanoutRelay();
     testNativeFileCbrRelay();
     testNativeHttpCbrRelay();
@@ -1709,7 +1556,6 @@ int main() {
     testNativeHttpVbrAndRtpFanout();
     testNativeHttpFailureIsReported();
     testNativeHttpDoesNotRedirectAccessKeys();
-    }
     testNativePreviewHubBackpressureIntegrity();
     testNativePreviewHubFanout();
     std::cout << "PASS: native MPEG-TS/RTP and CBR output relay over UDP\n";

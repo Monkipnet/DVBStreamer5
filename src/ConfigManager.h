@@ -84,9 +84,6 @@ struct StreamConfig {
     // V334: opt-in, per-tile PCR timeline for HTTP/SRT passthrough to UDP-CBR.
     // Stored independently of the legacy encoded CBR startup buffer setting.
     bool ipSourcePcrPassthrough = false;
-    // Opt-in DVB passthrough scheduling by adjacent source PCR intervals.
-    bool dvbSourcePcrPacing = false;
-    std::string udpOutputEngine = "legacy"; // legacy | native
     bool testPattern = false;
     // V10.8.71: channel activation policy. Online keeps the full media/CA
     // pipeline running; OnDemand starts it only for an observable client.
