@@ -20,7 +20,7 @@ PCR_WRAP = (1 << 33) * 300
 
 
 class PidStats:
-    def __init__(self, pid):
+    def __init__(self, pid, cbr_bitrate=None):
         self.pid = pid
         self.packets = self.tei = self.scrambled = self.header_errors = 0
         self.cc_errors = self.duplicates = self.discontinuities = 0
@@ -28,8 +28,12 @@ class PidStats:
         self.previous_payload = None
         self.pcr_count = self.pcr_backwards = self.pcr_elapsed = self.pcr_gap = 0
         self.previous_pcr = None
+        self.cbr_bitrate = cbr_bitrate
+        self.phase_anchor = None
+        self.phase_ticks = self.phase_samples = 0
+        self.phase_min = self.phase_max = 0.0
 
-    def push(self, packet):
+    def push(self, packet, ts_position=None):
         self.packets += 1
         self.tei += bool(packet[1] & 0x80)
         self.scrambled += bool(packet[3] & 0xc0)
@@ -58,9 +62,24 @@ class PidStats:
                         delta = (ticks - self.previous_pcr) % PCR_WRAP
                         if delta > PCR_WRAP // 2:
                             self.pcr_backwards += 1
+                            self.phase_anchor = None
+                            self.phase_ticks = 0
                         else:
                             self.pcr_elapsed += delta
                             self.pcr_gap = max(self.pcr_gap, delta)
+                            self.phase_ticks += delta
+                    else:
+                        self.phase_anchor = None
+                        self.phase_ticks = 0
+                    if self.cbr_bitrate and ts_position is not None:
+                        if self.phase_anchor is None:
+                            self.phase_anchor = ts_position
+                        numerator = ((ts_position - self.phase_anchor) * 188 * 8 * 27000000
+                                     - self.phase_ticks * self.cbr_bitrate)
+                        phase_us = numerator * 1000000 / (self.cbr_bitrate * 27000000)
+                        self.phase_samples += 1
+                        self.phase_min = min(self.phase_min, phase_us)
+                        self.phase_max = max(self.phase_max, phase_us)
                     self.previous_pcr = ticks
         if not afc & 1 or self.pid == 0x1fff:
             return
@@ -80,7 +99,11 @@ class PidStats:
                     header_errors=self.header_errors, discontinuities=self.discontinuities,
                     pcr_count=self.pcr_count, pcr_backwards=self.pcr_backwards,
                     pcr_span_seconds=round(self.pcr_elapsed / 27000000, 6),
-                    pcr_gap_max_ms=round(self.pcr_gap / 27000, 6))
+                    pcr_gap_max_ms=round(self.pcr_gap / 27000, 6),
+                    pcr_cbr_phase_samples=self.phase_samples,
+                    pcr_cbr_phase_min_us=round(self.phase_min, 6) if self.phase_samples > 1 else None,
+                    pcr_cbr_phase_max_us=round(self.phase_max, 6) if self.phase_samples > 1 else None,
+                    pcr_cbr_phase_span_us=round(self.phase_max - self.phase_min, 6) if self.phase_samples > 1 else None)
 
 
 def percentile(sorted_values, fraction):
@@ -93,7 +116,7 @@ def percentile(sorted_values, fraction):
 
 
 class Flow:
-    def __init__(self, key):
+    def __init__(self, key, cbr_bitrate=None, extracted_ts=None, writer=None):
         self.key = key
         self.first = self.last = None
         self.datagrams = self.payload_bytes = self.first_payload_size = 0
@@ -105,8 +128,14 @@ class Flow:
         self.gaps = []
         self.backwards_timestamps = self.invalid_ts = 0
         self.pids = {}
+        self.cbr_bitrate = cbr_bitrate
+        self.ts_position = 0
+        self.extracted_ts = extracted_ts
+        self.writer = writer
 
     def push(self, timestamp, payload, ttl, tos, dont_fragment):
+        if self.writer is not None:
+            self.writer.write(payload)  # retain the exact received bytes, even if malformed
         if self.first is None:
             self.first = timestamp
             self.first_payload_size = len(payload)
@@ -131,8 +160,9 @@ class Flow:
             packet = payload[offset:offset + 188]
             pid = ((packet[1] & 31) << 8) | packet[2]
             if pid not in self.pids:
-                self.pids[pid] = PidStats(pid)
-            self.pids[pid].push(packet)
+                self.pids[pid] = PidStats(pid, self.cbr_bitrate)
+            self.pids[pid].push(packet, self.ts_position)
+            self.ts_position += 1
 
     def report(self):
         interface, direction, source, sport, dest, dport = self.key
@@ -163,6 +193,8 @@ class Flow:
                     gaps_under_200us=sum(g < 200000 for g in gaps),
                     backwards_capture_timestamps=self.backwards_timestamps,
                     invalid_ts_datagrams=self.invalid_ts,
+                    declared_cbr_bitrate=self.cbr_bitrate,
+                    extracted_ts=str(self.extracted_ts) if self.extracted_ts else None,
                     cc_errors=sum(p.cc_errors for p in self.pids.values()),
                     pids=[p.report() for _, p in sorted(self.pids.items())])
 
@@ -201,7 +233,9 @@ def network_packet(frame, link_type):
     return (interface, direction, frame[offset:]) if protocol == 0x0800 else None
 
 
-def analyze(path, destination=None, port=None):
+def analyze(path, destination=None, port=None, cbr_bitrate=None, extract_dir=None):
+    if cbr_bitrate is not None and not 100000 <= cbr_bitrate <= 200000000:
+        raise ValueError('declared CBR bitrate must be 100000..200000000 bit/s')
     counts = Counter()
     flows = {}
     with ExitStack() as stack:
@@ -221,6 +255,9 @@ def analyze(path, destination=None, port=None):
             raise ValueError(f'unsupported pcap version {major}.{minor}')
         if link_type not in (1, 101, 113, 228, 276):
             raise ValueError(f'unsupported pcap link type {link_type}')
+        if extract_dir is not None:
+            extract_dir = Path(extract_dir)
+            extract_dir.mkdir(parents=True, exist_ok=False)
         while True:
             record = f.read(16)
             if not record:
@@ -270,7 +307,11 @@ def analyze(path, destination=None, port=None):
                 payload = ip[ihl + 8:ihl + udp_len]
                 key = (interface, direction, source, sport, dest, dport)
                 if key not in flows:
-                    flows[key] = Flow(key)
+                    extracted_ts = writer = None
+                    if extract_dir is not None:
+                        extracted_ts = extract_dir / f'if{interface}-type{direction}-{source}-{sport}-to-{dest}-{dport}.ts'
+                        writer = stack.enter_context(extracted_ts.open('xb'))
+                    flows[key] = Flow(key, cbr_bitrate, extracted_ts, writer)
                 flows[key].push(seconds * 1000000000 + fraction * ns_per_unit,
                                 payload, ip[8], ip[1], fragments & 0x4000)
                 counts['selected_udp_records'] += 1
@@ -284,6 +325,7 @@ def analyze(path, destination=None, port=None):
                 notes=['Interfaces and source sockets are analysed separately to avoid counting bridge/bond copies as CC errors.',
                        'Capture timestamps do not prove NIC wire timing or receiver delivery; checksums are not checked because of TX offload.',
                        'CC errors are sequence violations, not an exact count of lost packets. PCR gaps use media timestamps.',
+                       'PCR CBR phase compares relative PCR values with TS byte positions at the explicitly declared rate, not capture timestamps. Capture/TS losses invalidate this comparison; it is not a wire-level jitter certification.',
                        'Record counts alone do not establish that the capture had no drops; also inspect the tcpdump log.'])
 
 
@@ -292,10 +334,12 @@ def main():
     parser.add_argument('capture', type=Path)
     parser.add_argument('--destination', type=str)
     parser.add_argument('--port', type=int)
+    parser.add_argument('--cbr-bitrate', type=int, help='declared full TS bitrate in bit/s for PCR/packet-position checks')
+    parser.add_argument('--extract-dir', type=Path, help='new directory for exact per-flow UDP payload files')
     parser.add_argument('--json', type=Path, help='write detailed JSON here')
     args = parser.parse_args()
     try:
-        result = analyze(args.capture, args.destination, args.port)
+        result = analyze(args.capture, args.destination, args.port, args.cbr_bitrate, args.extract_dir)
     except (OSError, EOFError, ValueError) as error:
         parser.exit(1, f'Cannot analyse capture: {error}\n')
     if args.json:
@@ -311,6 +355,10 @@ def main():
         print('PID      Packets     CC    Dup    TEI    PCR   PCR_gap_ms  PCR_backwards')
         for pid in flow['pids']:
             print(f"{pid['pid_hex']} {pid['packets']:9} {pid['cc_errors']:6} {pid['exact_duplicates']:6} {pid['tei']:6} {pid['pcr_count']:6} {pid['pcr_gap_max_ms']:12.3f} {pid['pcr_backwards']:6}")
+            if pid['pcr_cbr_phase_span_us'] is not None:
+                print(f"  PCR/CBR relative phase: min={pid['pcr_cbr_phase_min_us']} max={pid['pcr_cbr_phase_max_us']} span={pid['pcr_cbr_phase_span_us']} us (declared {args.cbr_bitrate} bit/s)")
+        if flow['extracted_ts']:
+            print('Extracted TS bytes:', flow['extracted_ts'])
     if args.json:
         print('\nDetailed report:', args.json)
     if not result['flows']:

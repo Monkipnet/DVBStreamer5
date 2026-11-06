@@ -14,7 +14,7 @@ SPEC.loader.exec_module(pcap)
 def ts(index, discontinuity=False):
     packet = bytearray(b'\xff' * 188)
     packet[:6] = bytes((0x47, 1, 2, 0x30 | (index & 15), 7, 0x90 if discontinuity else 0x10))
-    ticks = (pcap.PCR_WRAP - 10000 + index * 8122) % pcap.PCR_WRAP
+    ticks = (pcap.PCR_WRAP - 10000 + index * 188 * 8 * 27000000 // 5000000) % pcap.PCR_WRAP
     base, ext = divmod(ticks, 300)
     packet[6:12] = bytes((base >> 25 & 255, base >> 17 & 255, base >> 9 & 255,
                           base >> 1 & 255, ((base & 1) << 7) | 0x7e | (ext >> 8), ext & 255))
@@ -55,11 +55,11 @@ def capture(records, link=276, endian='<', nanos=False):
 
 
 class CaptureTests(unittest.TestCase):
-    def analyse(self, data, compressed=False):
+    def analyse(self, data, compressed=False, cbr_bitrate=None):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / ('capture.pcap.gz' if compressed else 'capture.pcap')
             path.write_bytes(gzip.compress(data) if compressed else data)
-            return pcap.analyze(path, '227.9.9.1', 56444)
+            return pcap.analyze(path, '227.9.9.1', 56444, cbr_bitrate)
 
     def records(self, link=276):
         return [(1000000000 + int(i * 2105600), frame(b''.join(ts(i * 7 + n) for n in range(7)), link), None)
@@ -98,6 +98,41 @@ class CaptureTests(unittest.TestCase):
         flow = self.analyse(capture(records))['flows'][0]
         self.assertEqual(flow['cc_errors'], 1)
         self.assertGreater(flow['gap_us']['max'], 4000)
+
+    def test_fixed_pcr_matches_cbr_positions_through_wrap(self):
+        flow = self.analyse(capture(self.records()), cbr_bitrate=5000000)['flows'][0]
+        stats = flow['pids'][0]
+        self.assertEqual(stats['pcr_cbr_phase_samples'], 70)
+        self.assertLess(stats['pcr_cbr_phase_span_us'], .038)
+
+    def test_cc_clean_null_insertion_can_change_pcr_byte_clock(self):
+        null = bytes((0x47, 0x1f, 0xff, 0x10)) + b'\xff' * 184
+        payload = ts(0) + null + ts(1)
+        flow = self.analyse(capture([(0, frame(payload), None)]), cbr_bitrate=5000000)['flows'][0]
+        stats = next(p for p in flow['pids'] if p['pid'] == 258)
+        self.assertEqual(flow['cc_errors'], 0)
+        self.assertGreater(stats['pcr_cbr_phase_span_us'], 300)
+        self.assertLess(stats['pcr_cbr_phase_span_us'], 301)
+
+    def test_pcr_phase_is_opt_in(self):
+        stats = self.analyse(capture(self.records()))['flows'][0]['pids'][0]
+        self.assertIsNone(stats['pcr_cbr_phase_span_us'])
+
+    def test_extracts_exact_bytes_with_interfaces_kept_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source = tmp / 'input.pcap.gz'
+            payloads = [b''.join(ts(i * 7 + n) for n in range(7)) for i in range(2)]
+            records = [(i * 2105600, frame(payload, interface=iface), None)
+                       for i, payload in enumerate(payloads) for iface in (2, 3)]
+            source.write_bytes(gzip.compress(capture(records)))
+            out = tmp / 'ts'
+            result = pcap.analyze(source, '227.9.9.1', 56444, 5000000, out)
+            self.assertEqual(len(result['flows']), 2)
+            for flow in result['flows']:
+                self.assertEqual(Path(flow['extracted_ts']).read_bytes(), b''.join(payloads))
+            with self.assertRaises(FileExistsError):
+                pcap.analyze(source, extract_dir=out)
 
     def test_interfaces_and_source_ports_are_separate(self):
         records = []

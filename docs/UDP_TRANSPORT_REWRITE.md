@@ -222,7 +222,8 @@ with VLAN tags, and raw IPv4, with microsecond or nanosecond capture timestamps.
 
 ```bash
 python3 scripts/analyze_udp_pcap.py /tmp/udp-out.pcap.gz \
-  --destination 239.10.10.1 --port 1234 --json /tmp/udp-out-analysis.json
+  --destination 239.10.10.1 --port 1234 --cbr-bitrate 4000000 \
+  --extract-dir /tmp/udp-ts-new --json /tmp/udp-out-analysis.json
 ```
 
 It reports each interface/source socket separately, datagram sizes/rate/gaps,
@@ -236,6 +237,46 @@ fragmented datagrams are not reassembled. A port-based capture filter may omit
 non-initial IP fragments. Keep the `tcpdump` drop statistics alongside the file.
 TX checksum offload is not treated as payload damage. Software capture timing
 does not establish wire-level PCR accuracy or downstream delivery.
+
+`--cbr-bitrate` is the **full TS output rate in bit/s**, including NULLs. It
+compares relative PCR values with their positions in the TS byte stream at that
+explicit rate. This can expose inconsistent CBR stuffing/PCR even when CC is
+clean. It does not use capture timestamps and is not a wire-level PCR jitter
+certification. Capture loss, malformed TS or an incorrect declared rate makes
+this comparison unreliable. PCR discontinuities/backwards jumps reset the
+relative anchor. Source PCR can show a wider phase range than Fixed PCR.
+
+`--extract-dir` must name a new directory. It saves the exact UDP payload bytes
+per interface/source socket, including NULLs and malformed payloads, without
+demux/remux, PCR/CC regeneration or repair. Use these files for offline decoder
+inspection; zero CC errors alone do not establish valid video payload.
+
+For a combined passive capture, network-counter snapshot and offline decoder
+report on the server:
+
+```bash
+bash scripts/capture_udp_diagnostic.sh \
+  --destination 239.10.10.1 --port 1234 --interface any \
+  --bitrate 4000000 --seconds 100
+```
+
+Replace the example group/port with the **current output to WISI**, and select
+the physical egress interface when known. A clean capture from a different
+interface, destination or tile does not verify that path. The helper uses
+`tcpdump -Q out` without promiscuous mode and retains all UDP ports/fragments to
+that destination in the PCAP; the analyser selects the requested port. It does
+not change application configuration, routes, sysctls or qdiscs. It needs
+`tcpdump`, Python 3, iproute2 and coreutils, plus root/sudo for live capture.
+Optional FFmpeg/ffprobe inspect the extracted files afterwards with a bounded
+runtime and low-priority, single-threaded decoding. Decoding starts at an
+arbitrary GOP boundary, so initial missing-reference messages alone do not
+establish continuing corruption.
+
+The new `/tmp/dvb-udp-diag.*` directory contains a small `reports.tar.gz` for
+sharing first. Large original PCAP and extracted TS files remain outside the
+archive. Keep the original capture/drop statistics for later inspection. For an
+existing `.pcap` or `.pcap.gz`, add `--pcap /path/to/capture.pcap.gz`; no new
+traffic is captured, and interface counters describe analysis time only.
 
 Standalone regression checks:
 
