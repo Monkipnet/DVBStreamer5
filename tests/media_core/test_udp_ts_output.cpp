@@ -51,13 +51,13 @@ static void clockTest() {
   check(c.deadline()>stalled,"stale deadlines replayed as a burst");
  }
 }
-static void pcrModel(bool source) {
- UdpTsMux mux(true,source?3000808:3000708);std::deque<Packet> expected;
+static void pcrModel(bool source,std::uint64_t target=3000000) {
+ UdpTsMux mux(true,target+(source?808:708));std::deque<Packet> expected;
  std::uint64_t inputNs=0,nextPcr=0,id=0,slots=0,firstSlot=0;bool seen=false;
  constexpr std::uint64_t hz=27000000,wrap=(1ULL<<33)*300ULL,origin=wrap-hz;long double worst=0;
- std::uint64_t previousTicks=0,elapsedTicks=0;
- for(std::uint64_t dg=0;;++dg){auto wall=dg*1316ULL*8*1000000000/3000000;if(wall>600000000000ULL)break;
-  while(inputNs<=wall){auto rate=(inputNs/15000000000ULL)&1?2800000ULL:2000000ULL;
+ std::uint64_t previousTicks=0,elapsedTicks=0,firstOutputPcr=0;
+ for(std::uint64_t dg=0;;++dg){auto wall=dg*1316ULL*8*1000000000/target;if(wall>600000000000ULL)break;
+  while(inputNs<=wall){auto rate=target==4000000?3500000ULL:((inputNs/15000000000ULL)&1?2800000ULL:2000000ULL);
    bool withPcr=inputNs>=nextPcr;auto p=packet(id++,withPcr?origin+inputNs*hz/1000000000:0);
    check(mux.push({p},inputNs),"PCR model queue overflow");expected.push_back(p);
    if(withPcr)nextPcr=inputNs+20000000;inputNs+=188ULL*8*1000000000/rate;}
@@ -65,16 +65,25 @@ static void pcrModel(bool source) {
   for(auto p:unpack(d.bytes.data(),d.size)){auto slot=slots++;if(p[1]==0x1f&&p[2]==0xff)continue;
    check(!expected.empty(),"unexpected media");auto original=expected.front();expected.pop_front();
    if(p[3]&0x20){auto ticks=[](const Packet& t){return (((std::uint64_t(t[6])<<25)|(std::uint64_t(t[7])<<17)|(std::uint64_t(t[8])<<9)|(std::uint64_t(t[9])<<1)|(t[10]>>7))*300+((t[10]&1)<<8)+t[11]);};
-    auto originalTicks=ticks(original);if(!seen){seen=true;previousTicks=originalTicks;firstSlot=slot;}
+    auto originalTicks=ticks(original);if(!seen){seen=true;previousTicks=originalTicks;firstSlot=slot;firstOutputPcr=ticks(p);}
     elapsedTicks+=(originalTicks+wrap-previousTicks)%wrap;previousTicks=originalTicks;
-    auto phase=(static_cast<long double>(slot-firstSlot)*188*8*hz/3000000-elapsedTicks)*1000/hz;
+    auto phase=(static_cast<long double>(slot-firstSlot)*188*8*hz/target-elapsedTicks)*1000/hz;
     worst=std::max(worst,std::abs(phase));
-    if(!source){auto delta=(ticks(p)+wrap-originalTicks)%wrap;check(std::min(delta,wrap-delta)<27000,"Fixed PCR diverged from source timestamps");
+    if(!source){
+      // Verify the CBR/PCR invariant independently of input timestamps and
+      // capture arrival timing: PCR follows all output slots, including NULLs,
+      // to within one 27-MHz tick (also across a PCR wrap).
+      const auto actual=(ticks(p)+wrap-firstOutputPcr)%wrap;
+      const auto nominal=static_cast<unsigned __int128>(slot-firstSlot)*188*8*hz;
+      const auto encoded=static_cast<unsigned __int128>(actual)*target;
+      check(encoded<=nominal && nominal-encoded<target,"Fixed PCR does not match the output CBR packet clock");
+      auto delta=(ticks(p)+wrap-originalTicks)%wrap;check(std::min(delta,wrap-delta)<27000,"Fixed PCR diverged from source timestamps");
       std::copy(original.begin()+6,original.begin()+12,p.begin()+6);}}
    check(p==original,"CBR changed payload/order/PTS/DTS/CC");}
  }
- check(worst<0.502L,"new mux lost source PCR delivery phase");
- std::cout<<(source?"source":"fixed")<<" PCR phase max ms="<<static_cast<double>(worst)<<'\n';
+ check(worst<188.0L*8*1000/target+0.001L,"new mux lost source PCR delivery phase");
+ std::cout<<(source?"source":"fixed")<<" target_kbps="<<target/1000<<" input PCR phase max ms="<<static_cast<double>(worst)<<'\n';
+ if(!source)std::cout<<"PASS: output PCR matches CBR packet positions within one 27-MHz tick\n";
 }
 static void retryAndObserver() {
  UdpSocket a,b;std::string error;check(a.openSender("127.0.0.1",19099,"",error)&&b.openSender("127.0.0.1",19100,"",error),"test socket setup");
@@ -106,4 +115,4 @@ static void explicitFailure() {
  check(failed&&bytes==0&&!output.lastError().empty(),"failed datagram counted as delivered or failure not reported");
  output.stop();
 }
-int main(){framing();clockTest();pcrModel(true);pcrModel(false);retryAndObserver();explicitFailure();std::cout<<"UDP transport core: OK\n";}
+int main(){framing();clockTest();pcrModel(true);pcrModel(false);pcrModel(true,4000000);pcrModel(false,4000000);retryAndObserver();explicitFailure();std::cout<<"UDP transport core: OK\n";}

@@ -5,6 +5,10 @@ not the DVB reader, CA backend, remapper, codec, EPG/subtitles or failover logic
 The old sender remains selectable for rollback. Existing configs default to
 `udp_output_engine: "legacy"`; select `"native"` to use the new implementation.
 
+See [reference comparison and SRT bridge](UDP_REFERENCE_AND_SRT_RELAY.md) for
+Astra's documented UDP/CBR behavior, a Fixed PCR test at a changed transport
+rate, and an optional independent raw SRT -> UDP sender on the server.
+
 ## What is new
 
 - Two shared scheduler threads serve all channels. There is no dedicated spinning
