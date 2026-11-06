@@ -261,12 +261,23 @@ bash scripts/capture_udp_diagnostic.sh \
 ```
 
 Replace the example group/port with the **current output to WISI**, and select
-the physical egress interface when known. A clean capture from a different
+the physical egress interface when known. `--interface` also accepts that NIC's
+local IPv4 (for example `--interface 172.10.0.71`); it must resolve to exactly
+one local interface. A clean capture from a different
 interface, destination or tile does not verify that path. The helper uses
 `tcpdump -Q out` without promiscuous mode and retains all UDP ports/fragments to
 that destination in the PCAP; the analyser selects the requested port. It does
 not change application configuration, routes, sysctls or qdiscs. It needs
 `tcpdump`, Python 3, iproute2 and coreutils, plus root/sudo for live capture.
+Keep `analyze_udp_pcap.py` and `capture_udp_pcap.py` alongside this shell script.
+The Python supervisor stops tcpdump with SIGINT at the requested deadline,
+allows five seconds to flush, then kills an unresponsive child. `-U` flushes
+each captured packet to the PCAP. Capture exit/elapsed time and completeness
+are saved in `capture-status.json`; a child crash or early exit is explicitly
+marked incomplete. A tcpdump crash still produces a reports archive, with
+its version, available kernel messages and an analysis of any complete PCAP
+records written before the failure. This preserves evidence; it does not fix
+tcpdump or establish a clean/full-duration capture.
 Optional FFmpeg/ffprobe inspect the extracted files afterwards with a bounded
 runtime and low-priority, single-threaded decoding. Decoding starts at an
 arbitrary GOP boundary, so initial missing-reference messages alone do not
@@ -276,10 +287,15 @@ The new `/tmp/dvb-udp-diag.*` directory contains a small `reports.tar.gz` for
 sharing first. Large original PCAP and extracted TS files remain outside the
 archive. Keep the original capture/drop statistics for later inspection. For an
 existing `.pcap` or `.pcap.gz`, add `--pcap /path/to/capture.pcap.gz`; no new
-traffic is captured, and interface counters describe analysis time only.
+traffic is captured, and interface counters describe analysis time only. Any
+adjacent `reports/tcpdump.log` / `capture-status.json` are copied as source
+metadata. The wrapper opts into `--allow-truncated`: incomplete final record
+headers/data are excluded and explicitly reported as a truncated PCAP tail.
+The analyser rejects these tails by default; an invalid global PCAP header is
+still rejected in either mode. Retained records do not recover missing data.
 
 Standalone regression checks:
 
 ```bash
-python3 -m unittest discover -s tests -p test_udp_pcap_analysis.py -v
+python3 -m unittest discover -s tests -p 'test_udp_*py' -v
 ```

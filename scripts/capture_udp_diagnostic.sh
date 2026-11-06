@@ -13,7 +13,7 @@ capture_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 usage() {
     cat <<'USAGE'
 Usage: bash capture_udp_diagnostic.sh --destination IP --port PORT [options]
-  --interface NAME   Linux interface name, or any (default any)
+  --interface NAME   Linux interface name, its local IPv4, or any (default any)
   --bitrate BPS      Full output CBR for PCR/TS-position checks (default 4000000)
   --seconds N        Capture duration, 5..900 seconds (default 100)
   --pcap PATH        Analyse an existing PCAP/PCAP.GZ instead of capturing
@@ -58,12 +58,33 @@ try:
 except ValueError as error:
     sys.exit(str(error))
 PY
-[[ -f "$capture_script_dir/analyze_udp_pcap.py" ]] || fail 'Run this helper from the repository scripts directory with analyze_udp_pcap.py alongside it.'
+for capture_helper in analyze_udp_pcap.py capture_udp_pcap.py; do
+    [[ -f "$capture_script_dir/$capture_helper" ]] || fail "Missing companion script: $capture_script_dir/$capture_helper"
+done
 capture_root=()
 if [[ -z "$capture_existing" ]] && ((EUID != 0)); then capture_root=(sudo); fi
 if [[ -n "$capture_existing" ]]; then
     [[ -r "$capture_existing" ]] || fail "Cannot read capture: $capture_existing"
     capture_existing="$(realpath -- "$capture_existing")"
+fi
+if [[ -z "$capture_existing" ]]; then
+    capture_interface="$(python3 - "$capture_interface" <<'PY'
+import ipaddress, json, subprocess, sys
+value = sys.argv[1]
+if not value:
+    sys.exit('Capture interface cannot be empty')
+try:
+    address = str(ipaddress.IPv4Address(value))
+except ValueError:
+    print(value)
+    sys.exit(0)
+interfaces = json.loads(subprocess.check_output(['ip', '-j', '-4', 'address', 'show'], text=True))
+names = [i['ifname'] for i in interfaces if any(a.get('local') == address for a in i.get('addr_info', []))]
+if len(names) != 1:
+    sys.exit('Expected one local interface for ' + address + '; found ' + str(len(names)))
+print(names[0])
+PY
+)"
 fi
 capture_dir="$(mktemp -d /tmp/dvb-udp-diag.XXXXXXXX)"
 capture_reports="$capture_dir/reports"
@@ -78,33 +99,43 @@ capture_stats() {
     if command -v nstat >/dev/null; then nstat -asz > "$capture_reports/nstat-${capture_stage}.txt" 2>&1 || true; fi
 }
 capture_stats before
+if command -v tcpdump >/dev/null; then
+    tcpdump --version > "$capture_reports/tcpdump-version.txt" 2>&1 || true
+fi
 if [[ -n "$capture_existing" ]]; then
     capture_input="$capture_existing"
     printf 'Analysing existing capture: %s\n' "$capture_input"
     printf 'Offline analysis; no live capture or capture-drop statistics collected.\n' > "$capture_reports/tcpdump.log"
+    for capture_original in tcpdump.log capture-status.json; do
+        capture_original_path="$(dirname -- "$capture_existing")/reports/$capture_original"
+        if [[ -f "$capture_original_path" ]]; then cp -- "$capture_original_path" "$capture_reports/source-$capture_original"; fi
+    done
 else
 capture_input="$capture_dir/udp.pcap"
 printf 'Capturing %s:%s on %s for %s seconds. Directory: %s\n' \
     "$capture_destination" "$capture_port" "$capture_interface" "$capture_seconds" "$capture_dir"
 capture_status=0
-"${capture_root[@]}" timeout --signal=INT --kill-after=5s "$capture_seconds" \
-    tcpdump -p -i "$capture_interface" -Q out -nn -s 0 -B 8192 -Z "$capture_user" \
-    -w "$capture_input" "ip proto 17 and dst host $capture_destination" \
-    > "$capture_reports/tcpdump.log" 2>&1 || capture_status=$?
+"${capture_root[@]}" python3 "$capture_script_dir/capture_udp_pcap.py" \
+    --interface "$capture_interface" --seconds "$capture_seconds" --user "$capture_user" \
+    --output "$capture_input" --destination "$capture_destination" \
+    > "$capture_reports/capture-status.json" 2> "$capture_reports/tcpdump.log" || capture_status=$?
 cat "$capture_reports/tcpdump.log"
-if [[ "$capture_status" != 0 && "$capture_status" != 124 && "$capture_status" != 130 ]]; then
-    fail "Capture failed (status $capture_status). Reports retained: $capture_dir"
+if [[ "$capture_status" != 0 ]]; then
+    printf 'WARNING: Capture did not complete (status %s). Analysing available records and packaging failure reports.\n' "$capture_status"
 fi
+printf '%s\n' "$capture_status" > "$capture_reports/capture-exit.txt"
 fi
 capture_stats after
 if command -v journalctl >/dev/null; then
+    "${capture_root[@]}" journalctl -k -b --no-pager -o short-iso 2>/dev/null \
+        | grep -Ei 'tcpdump|libpcap' | tail -n 30 > "$capture_reports/capture-kernel.log" || true
     "${capture_root[@]}" journalctl -b -u dvbstreamer5.service --no-pager -o cat 2>/dev/null \
         | grep -E 'NATIVE UDP OUTPUT open|UDP TS OUTPUT engine=native' \
         | tail -n 80 > "$capture_reports/udp-startup.log" || true
 fi
 if ! python3 "$capture_script_dir/analyze_udp_pcap.py" "$capture_input" \
     --destination "$capture_destination" --port "$capture_port" --cbr-bitrate "$capture_bitrate" \
-    --extract-dir "$capture_dir/ts" --json "$capture_reports/analysis.json" \
+    --allow-truncated --extract-dir "$capture_dir/ts" --json "$capture_reports/analysis.json" \
     > "$capture_reports/analysis.txt" 2>&1; then
     printf 'Packet analysis reported an error/no matching flow; see analysis.txt.\n'
 fi

@@ -233,7 +233,7 @@ def network_packet(frame, link_type):
     return (interface, direction, frame[offset:]) if protocol == 0x0800 else None
 
 
-def analyze(path, destination=None, port=None, cbr_bitrate=None, extract_dir=None):
+def analyze(path, destination=None, port=None, cbr_bitrate=None, extract_dir=None, allow_truncated=False):
     if cbr_bitrate is not None and not 100000 <= cbr_bitrate <= 200000000:
         raise ValueError('declared CBR bitrate must be 100000..200000000 bit/s')
     counts = Counter()
@@ -263,12 +263,18 @@ def analyze(path, destination=None, port=None, cbr_bitrate=None, extract_dir=Non
             if not record:
                 break
             if len(record) != 16:
+                if allow_truncated:
+                    counts['truncated_pcap_tail_header'] += 1
+                    break
                 raise ValueError('truncated pcap record header')
             seconds, fraction, captured, original = struct.unpack(endian + 'IIII', record)
             if captured > 16 * 1024 * 1024:
                 raise ValueError('unreasonable pcap record length')
             frame = f.read(captured)
             if len(frame) != captured:
+                if allow_truncated:
+                    counts['truncated_pcap_tail_data'] += 1
+                    break
                 raise ValueError('truncated pcap record data')
             counts['records'] += 1
             if captured < original:
@@ -322,6 +328,7 @@ def analyze(path, destination=None, port=None, cbr_bitrate=None, extract_dir=Non
     sockets = {(flow['source_ip'], flow['source_port']) for flow in reports}
     return dict(input=str(path), link_type=link_type, timestamp_resolution_ns=ns_per_unit,
                 snaplen=snaplen, counts=dict(counts), source_sockets=len(sockets), flows=reports,
+                pcap_tail_truncated=bool(counts['truncated_pcap_tail_header'] or counts['truncated_pcap_tail_data']),
                 notes=['Interfaces and source sockets are analysed separately to avoid counting bridge/bond copies as CC errors.',
                        'Capture timestamps do not prove NIC wire timing or receiver delivery; checksums are not checked because of TX offload.',
                        'CC errors are sequence violations, not an exact count of lost packets. PCR gaps use media timestamps.',
@@ -336,16 +343,19 @@ def main():
     parser.add_argument('--port', type=int)
     parser.add_argument('--cbr-bitrate', type=int, help='declared full TS bitrate in bit/s for PCR/packet-position checks')
     parser.add_argument('--extract-dir', type=Path, help='new directory for exact per-flow UDP payload files')
+    parser.add_argument('--allow-truncated', action='store_true', help='report complete records before a truncated PCAP tail, explicitly marking the capture incomplete')
     parser.add_argument('--json', type=Path, help='write detailed JSON here')
     args = parser.parse_args()
     try:
-        result = analyze(args.capture, args.destination, args.port, args.cbr_bitrate, args.extract_dir)
+        result = analyze(args.capture, args.destination, args.port, args.cbr_bitrate, args.extract_dir, args.allow_truncated)
     except (OSError, EOFError, ValueError) as error:
         parser.exit(1, f'Cannot analyse capture: {error}\n')
     if args.json:
         args.json.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     print(f"Records={result['counts'].get('records', 0)} selected_UDP={result['counts'].get('selected_udp_records', 0)} source_sockets={result['source_sockets']}")
     print('Capture warnings:', {k: v for k, v in result['counts'].items() if k not in ('records', 'selected_udp_records')})
+    if result['pcap_tail_truncated']:
+        print('WARNING: PCAP tail is truncated. Only complete preceding records are analysed; this is an incomplete capture.')
     for flow in result['flows']:
         print(f"\nInterface={flow['interface_index']} packet_type={flow['packet_type']} {flow['source_ip']}:{flow['source_port']} -> {flow['destination_ip']}:{flow['destination_port']}")
         print(f"Datagrams={flow['datagrams']} span_s={flow['span_seconds']} TS_Mbps={flow['payload_mbps']} lengths={flow['payload_lengths']}")

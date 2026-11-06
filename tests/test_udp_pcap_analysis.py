@@ -183,6 +183,29 @@ class CaptureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'truncated pcap record data'):
             self.analyse(capture(self.records())[:-1])
 
+    def test_explicit_truncated_mode_extracts_only_complete_records(self):
+        records = self.records()[:3]
+        tails = [capture(records[:2]) + b'partial', capture(records)[:-12]]
+        for content in tails:
+            for compressed in (False, True):
+                with self.subTest(compressed=compressed), tempfile.TemporaryDirectory() as tmp:
+                    tmp = Path(tmp)
+                    source = tmp / 'capture.pcap'
+                    source.write_bytes(gzip.compress(content) if compressed else content)
+                    result = pcap.analyze(source, extract_dir=tmp / 'ts', allow_truncated=True)
+                    self.assertTrue(result['pcap_tail_truncated'])
+                    self.assertEqual(result['counts']['records'], 2)
+                    self.assertEqual(result['flows'][0]['datagrams'], 2)
+                    expected = b''.join(ts(i) for i in range(14))
+                    self.assertEqual(Path(result['flows'][0]['extracted_ts']).read_bytes(), expected)
+
+    def test_truncated_mode_still_rejects_invalid_global_header(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'invalid.pcap'
+            source.write_bytes(b'not a capture')
+            with self.assertRaisesRegex(ValueError, 'expected classic pcap'):
+                pcap.analyze(source, allow_truncated=True)
+
 
 if __name__ == '__main__':
     unittest.main()
