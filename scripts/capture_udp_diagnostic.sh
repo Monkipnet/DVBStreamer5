@@ -64,8 +64,10 @@ done
 capture_root=()
 if [[ -z "$capture_existing" ]] && ((EUID != 0)); then capture_root=(sudo); fi
 if [[ -n "$capture_existing" ]]; then
-    [[ -r "$capture_existing" ]] || fail "Cannot read capture: $capture_existing"
-    capture_existing="$(realpath -- "$capture_existing")"
+    if [[ ! -r "$capture_existing" ]]; then
+        printf 'WARNING: Cannot read capture: %s. Packaging available failure metadata.\n' "$capture_existing" >&2
+    fi
+    capture_existing="$(realpath -m -- "$capture_existing")"
 fi
 if [[ -z "$capture_existing" ]]; then
     capture_interface="$(python3 - "$capture_interface" <<'PY'

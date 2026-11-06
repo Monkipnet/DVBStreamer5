@@ -293,6 +293,9 @@ metadata. The wrapper opts into `--allow-truncated`: incomplete final record
 headers/data are excluded and explicitly reported as a truncated PCAP tail.
 The analyser rejects these tails by default; an invalid global PCAP header is
 still rejected in either mode. Retained records do not recover missing data.
+If a crash happened before tcpdump created the PCAP, the offline wrapper still
+packages the adjacent capture log and analysis error; it does not report a
+successful packet analysis.
 
 Standalone regression checks:
 
