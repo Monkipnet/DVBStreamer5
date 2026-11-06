@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Supervise tcpdump without propagating its fatal signal to the caller."""
+"""Supervise tcpdump or AF_PACKET capture and record completion/failure."""
 import argparse
 import ipaddress
 import json
+import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -56,13 +58,21 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--user', required=True)
     parser.add_argument('--seconds', required=True, type=int)
+    parser.add_argument('--engine', choices=('tcpdump', 'afpacket'), default='tcpdump')
+    parser.add_argument('--owner-uid', type=int, default=os.getuid())
+    parser.add_argument('--owner-gid', type=int, default=os.getgid())
     args = parser.parse_args()
     if not args.interface or not 5 <= args.seconds <= 900:
         parser.error('interface must be nonempty and seconds must be 5..900')
     command = ['tcpdump', '-p', '-i', args.interface, '-Q', 'out', '-nn', '-s', '0',
                '-B', '8192', '-U', '-Z', args.user, '-w', args.output,
                f'ip proto 17 and dst host {args.destination}']
+    if args.engine == 'afpacket':
+        command = [sys.executable, str(Path(__file__).with_name('capture_udp_afpacket.py')),
+                   '--interface', args.interface, '--destination', str(args.destination),
+                   '--output', args.output, '--uid', str(args.owner_uid), '--gid', str(args.owner_gid)]
     result, status = capture(command, args.seconds)
+    result['engine'] = args.engine
     json.dump(result, sys.stdout, indent=2)
     print()
     return status

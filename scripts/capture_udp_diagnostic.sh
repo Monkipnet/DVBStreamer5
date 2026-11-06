@@ -9,6 +9,7 @@ capture_interface=any
 capture_bitrate=4000000
 capture_seconds=100
 capture_existing=''
+capture_engine=tcpdump
 capture_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 usage() {
     cat <<'USAGE'
@@ -17,8 +18,11 @@ Usage: bash capture_udp_diagnostic.sh --destination IP --port PORT [options]
   --bitrate BPS      Full output CBR for PCR/TS-position checks (default 4000000)
   --seconds N        Capture duration, 5..900 seconds (default 100)
   --pcap PATH        Analyse an existing PCAP/PCAP.GZ instead of capturing
+  --capture-engine E tcpdump (default) or afpacket (Linux Ethernet, no libpcap)
 
-Requires tcpdump, Python 3, iproute2 and coreutils. FFmpeg/ffprobe are optional
+Requires Python 3, iproute2, coreutils, and tcpdump for the tcpdump engine only.
+AF_PACKET requires root/CAP_NET_RAW and a physical Ethernet interface.
+FFmpeg/ffprobe are optional
 for offline program/decoder reports. Only one destination is captured; all its
 UDP ports/fragments are retained in PCAP, then the requested port is analysed.
 Writes a new /tmp/dvb-udp-diag.* folder. Upload reports.tar.gz first; original
@@ -28,7 +32,7 @@ USAGE
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 while (($#)); do
     case "$1" in
-        --destination|--port|--interface|--bitrate|--seconds|--pcap)
+        --destination|--port|--interface|--bitrate|--seconds|--pcap|--capture-engine)
             (($# >= 2)) || fail "$1 needs a value"
             case "$1" in
                 --destination) capture_destination="$2" ;;
@@ -37,6 +41,7 @@ while (($#)); do
                 --bitrate) capture_bitrate="$2" ;;
                 --seconds) capture_seconds="$2" ;;
                 --pcap) capture_existing="$2" ;;
+                --capture-engine) capture_engine="$2" ;;
             esac
             shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -44,10 +49,14 @@ while (($#)); do
     esac
 done
 capture_tools=(python3 ip timeout tar)
-if [[ -z "$capture_existing" ]]; then capture_tools+=(tcpdump); fi
+[[ "$capture_engine" == tcpdump || "$capture_engine" == afpacket ]] || fail 'capture engine must be tcpdump or afpacket'
+if [[ -z "$capture_existing" && "$capture_engine" == tcpdump ]]; then capture_tools+=(tcpdump); fi
 for capture_tool in "${capture_tools[@]}"; do
     command -v "$capture_tool" >/dev/null || fail "Required tool missing: $capture_tool"
 done
+if [[ "$capture_engine" == afpacket ]]; then
+    [[ -f "$capture_script_dir/capture_udp_afpacket.py" ]] || fail 'Missing companion script: capture_udp_afpacket.py'
+fi
 python3 - "$capture_destination" "$capture_port" "$capture_bitrate" "$capture_seconds" <<'PY'
 import ipaddress, sys
 try:
@@ -88,6 +97,9 @@ print(names[0])
 PY
 )"
 fi
+if [[ -z "$capture_existing" && "$capture_engine" == afpacket && "$capture_interface" == any ]]; then
+    fail 'AF_PACKET needs --interface with the physical Ethernet name or its local IPv4'
+fi
 capture_dir="$(mktemp -d /tmp/dvb-udp-diag.XXXXXXXX)"
 capture_reports="$capture_dir/reports"
 mkdir "$capture_reports"
@@ -101,7 +113,7 @@ capture_stats() {
     if command -v nstat >/dev/null; then nstat -asz > "$capture_reports/nstat-${capture_stage}.txt" 2>&1 || true; fi
 }
 capture_stats before
-if command -v tcpdump >/dev/null; then
+if [[ "$capture_engine" == tcpdump ]] && command -v tcpdump >/dev/null; then
     tcpdump --version > "$capture_reports/tcpdump-version.txt" 2>&1 || true
 fi
 if [[ -n "$capture_existing" ]]; then
@@ -119,9 +131,20 @@ printf 'Capturing %s:%s on %s for %s seconds. Directory: %s\n' \
 capture_status=0
 "${capture_root[@]}" python3 "$capture_script_dir/capture_udp_pcap.py" \
     --interface "$capture_interface" --seconds "$capture_seconds" --user "$capture_user" \
+    --engine "$capture_engine" --owner-uid "$(id -u)" --owner-gid "$(id -g)" \
     --output "$capture_input" --destination "$capture_destination" \
     > "$capture_reports/capture-status.json" 2> "$capture_reports/tcpdump.log" || capture_status=$?
 cat "$capture_reports/tcpdump.log"
+if [[ "$capture_engine" == afpacket ]]; then
+    python3 - "$capture_reports/tcpdump.log" "$capture_reports/capture-packet-stats.json" <<'PY'
+import json, pathlib, sys
+lines = pathlib.Path(sys.argv[1]).read_text(errors='replace').splitlines()
+for line in lines:
+    if line.startswith('AF_PACKET_CAPTURE '):
+        stats = json.loads(line[len('AF_PACKET_CAPTURE '):])
+        pathlib.Path(sys.argv[2]).write_text(json.dumps(stats, indent=2) + '\n')
+PY
+fi
 if [[ "$capture_status" != 0 ]]; then
     printf 'WARNING: Capture did not complete (status %s). Analysing available records and packaging failure reports.\n' "$capture_status"
 fi

@@ -278,6 +278,38 @@ marked incomplete. A tcpdump crash still produces a reports archive, with
 its version, available kernel messages and an analysis of any complete PCAP
 records written before the failure. This preserves evidence; it does not fix
 tcpdump or establish a clean/full-duration capture.
+
+If the host's tcpdump/libpcap crashes, an independent standard-library Linux
+capture is available (keep `capture_udp_afpacket.py` alongside the other helpers):
+
+```bash
+bash scripts/capture_udp_diagnostic.sh --capture-engine afpacket \
+  --destination 237.37.1.4 --port 1234 --interface enp1s0f0 \
+  --bitrate 4000000 --seconds 300
+```
+
+This mode opens a passive `AF_PACKET` raw socket on one Ethernet interface,
+without libpcap, promiscuous membership or network configuration changes. It
+requires root/sudo or CAP_NET_RAW; `any` and non-Ethernet devices are rejected.
+A kernel classic-BPF filter retains only outgoing IPv4 UDP to the chosen
+destination, including fragments and up to two 802.1Q/802.1ad tags. Other ports
+to that group are retained for offline selection. The socket is filtered before
+it starts receiving. Opening the output/sockets precedes dropping to the caller's
+uid/gid when launched through sudo. Existing files are never overwritten.
+
+The output is classic nanosecond PCAP with Ethernet frames and Linux
+`SO_TIMESTAMPNS_NEW` timestamps. Available packet-socket accepted/drop counters,
+effective receive buffer, truncation and timestamp fallback counts are saved in
+`capture-packet-stats.json` and the capture log. Packet-socket drops or fallback
+timestamps limit interpretation. A clean software capture still does not prove
+physical wire timing or downstream WISI delivery. The supervisor and report
+packaging are shared with tcpdump capture; `capture-status.json` names the engine.
+
+The filter is tested against the actual Linux kernel using unprivileged UNIX
+datagram sockets, including ancillary packet-type checks, VLAN/QinQ, fragments,
+destination/protocol rejection and timestamped PCAP byte preservation. These
+tests do not exercise a physical NIC or establish CAP_NET_RAW availability.
+
 Optional FFmpeg/ffprobe inspect the extracted files afterwards with a bounded
 runtime and low-priority, single-threaded decoding. Decoding starts at an
 arbitrary GOP boundary, so initial missing-reference messages alone do not
