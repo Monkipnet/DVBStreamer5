@@ -136,8 +136,13 @@ bool CbrTsPacer::nextDatagram(
     // owns a separate physical transport clock.
     const std::uint64_t periodNs =
         (kDatagramBits * kNanosecondsPerSecond) / targetBitrate_;
-    if (now - nextDeadline_ >=
-        std::chrono::nanoseconds((std::max<std::uint64_t>)(periodNs, 1ULL))) {
+    // V10.8.378: a normal scheduler wake-up can be one or several datagrams
+    // late. Reanchoring on every such wake-up permanently loses transport
+    // slots, slowly fills the Observed CBR queue, and eventually stops a tile.
+    // Drain modest lateness on the original physical clock; only reanchor
+    // after a real stall to avoid a large catch-up burst.
+    constexpr auto kMaximumObserverCatchup = std::chrono::milliseconds(80);
+    if (now - nextDeadline_ > kMaximumObserverCatchup) {
         nextDeadline_ = now;
         pacingRemainder_ = 0;
     }
