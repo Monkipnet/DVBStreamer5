@@ -410,14 +410,19 @@ void NativeHlsInput::run() {
     };
 
     Playlist playlist;
-    const auto startupDeadline = Clock::now() + std::chrono::seconds(15);
+    // A temporarily unavailable HLS origin is not a terminal stream error.
+    // Remain stoppable and retry until media returns; never turn the tile OFF
+    // after the old 15-second startup deadline.
+    auto nextRetryLog = Clock::now() + std::chrono::seconds(15);
     while (!stopping_.load() && !loadPlaylist(playlist)) {
-        if (Clock::now() >= startupDeadline) {
-            fail("native HLS playlist load failed: " + error);
-            running_.store(false);
-            return;
+        if (Clock::now() >= nextRetryLog) {
+            std::cerr << "NATIVE HLS INPUT WAIT stream_id=" << config_.id
+                      << " reason=" << error
+                      << " action=retry_playlist" << std::endl;
+            nextRetryLog = Clock::now() + std::chrono::seconds(15);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        for (int i = 0; i < 5 && !stopping_.load(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         active = root;
     }
     if (stopping_.load()) { running_.store(false); return; }

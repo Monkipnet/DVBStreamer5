@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -402,6 +403,7 @@ public:
 
 private:
     void monitorNativeStream(StreamState* state);
+    void processAsyncStopRequests();
     void monitorFailoverStreams();
     bool primaryStreamHealthy(const StreamConfig& primary);
     void monitorOnDemandStreams();
@@ -464,6 +466,19 @@ private:
     std::mutex failoverMutex;
     // Serializes explicit UI Stop/Restart with automatic channel failover.
     std::mutex failoverActionMutex;
+    // The /api/stop-stream handler only queues a stop. The dedicated worker
+    // owns blocking input/relay/codec teardown so HTTP requests never join
+    // network threads or wait for an automatic failover transition.
+    struct AsyncStopRequest {
+        std::string id;
+        std::chrono::steady_clock::time_point generation;
+    };
+    std::mutex asyncStopMutex_;
+    std::condition_variable asyncStopCv_;
+    std::deque<AsyncStopRequest> asyncStopQueue_;
+    std::set<std::string> asyncStopPending_;
+    bool asyncStopShutdown_ = false;
+    std::thread asyncStopThread_;
     std::map<std::string, FailoverEntry> failoverEntries;
     std::atomic<bool> failoverMonitorStop{false};
     std::thread failoverMonitorThread;

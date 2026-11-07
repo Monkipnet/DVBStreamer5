@@ -484,11 +484,18 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     failoverMonitorThread = std::thread(&StreamManager::monitorFailoverStreams, this);
     configureRestartSchedule();
     restartScheduleThread = std::thread(&StreamManager::monitorGlobalRestartSchedule, this);
+    asyncStopThread_ = std::thread(&StreamManager::processAsyncStopRequests, this);
 }
 
 StreamManager::~StreamManager() {
     failoverMonitorStop.store(true, std::memory_order_release);
     if (failoverMonitorThread.joinable()) failoverMonitorThread.join();
+    {
+        std::lock_guard<std::mutex> lock(asyncStopMutex_);
+        asyncStopShutdown_ = true;
+    }
+    asyncStopCv_.notify_all();
+    if (asyncStopThread_.joinable()) asyncStopThread_.join();
     restartScheduleStop.store(true, std::memory_order_release);
     restartScheduleCv.notify_all();
     if (restartScheduleThread.joinable()) restartScheduleThread.join();
@@ -2499,34 +2506,87 @@ bool StreamManager::stopStream(const std::string& id) {
     return true;
 }
 
+// HTTP stop requests must not wait for a missing SRT/HLS/HTTP source, a
+// blocked codec teardown, or failoverActionMutex. The stream's launch time
+// identifies the exact generation to stop, so an old queued request cannot
+// destroy a newer instance after a manual restart.
 bool StreamManager::stopStreamAsync(const std::string& id) {
-    std::lock_guard<std::mutex> actionLock(failoverActionMutex);
-    {
-        std::lock_guard<std::mutex> lock(failoverMutex);
-        failoverEntries.erase(id);
-    }
-    // This entry point is used by the control-panel /api/stop-stream action.
-    // Internal teardown/restart paths call stopStream() directly and therefore
-    // do not generate a misleading "stopped by user" Telegram notification.
-    StreamConfig stoppedConfig;
-    bool haveStoppedConfig = false;
+    if (id.empty()) return false;
+    std::chrono::steady_clock::time_point generation;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         const auto it = streams.find(id);
-        if (it != streams.end() && it->second) {
-            stoppedConfig = it->second->config;
-            haveStoppedConfig = true;
+        if (it == streams.end() || !it->second) return false;
+        generation = it->second->startedAt;
+    }
+    {
+        std::lock_guard<std::mutex> lock(asyncStopMutex_);
+        if (asyncStopShutdown_) return false;
+        if (!asyncStopPending_.insert(id).second) return true;
+        try {
+            asyncStopQueue_.push_back({id, generation});
+        } catch (...) {
+            asyncStopPending_.erase(id);
+            throw;
         }
     }
+    asyncStopCv_.notify_one();
+    return true;
+}
 
-    const bool stopped = stopStream(id);
-    if (stopped && haveStoppedConfig) {
-        sendTelegramStreamState(
-            telegramNotifier, configManager, stoppedConfig, "🟡",
-            telegramText(configManager, "Поток остановлен", "Stream stopped"),
-            telegramText(configManager, "Остановлен пользователем через панель", "Stopped by user from control panel"));
+void StreamManager::processAsyncStopRequests() {
+    for (;;) {
+        AsyncStopRequest request;
+        {
+            std::unique_lock<std::mutex> lock(asyncStopMutex_);
+            asyncStopCv_.wait(lock, [this] {
+                return asyncStopShutdown_ || !asyncStopQueue_.empty();
+            });
+            if (asyncStopQueue_.empty()) return;
+            request = std::move(asyncStopQueue_.front());
+            asyncStopQueue_.pop_front();
+        }
+        try {
+            // Keep manual stop serialized with automatic failover; only this
+            // background thread waits for potentially long source transitions.
+            std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+            StreamConfig stoppedConfig;
+            bool sameGeneration = false;
+            {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                const auto it = streams.find(request.id);
+                if (it != streams.end() && it->second &&
+                    it->second->startedAt == request.generation) {
+                    stoppedConfig = it->second->config;
+                    sameGeneration = true;
+                }
+            }
+            if (sameGeneration) {
+                {
+                    std::lock_guard<std::mutex> lock(failoverMutex);
+                    failoverEntries.erase(request.id);
+                }
+                if (stopStream(request.id)) {
+                    sendTelegramStreamState(
+                        telegramNotifier, configManager, stoppedConfig, "🟡",
+                        telegramText(configManager, "Поток остановлен", "Stream stopped"),
+                        telegramText(configManager,
+                            "Остановлен пользователем через панель",
+                            "Stopped by user from control panel"));
+                }
+            }
+        } catch (const std::exception& ex) {
+            std::cerr << "NATIVE ASYNC STOP ERROR stream_id=" << request.id
+                      << " reason=" << ex.what() << std::endl;
+        } catch (...) {
+            std::cerr << "NATIVE ASYNC STOP ERROR stream_id=" << request.id
+                      << " reason=unknown" << std::endl;
+        }
+        {
+            std::lock_guard<std::mutex> lock(asyncStopMutex_);
+            asyncStopPending_.erase(request.id);
+        }
     }
-    return stopped;
 }
 
 void StreamManager::stopAll() {

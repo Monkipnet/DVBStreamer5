@@ -690,7 +690,7 @@ std::string HttpServer::handleStopStream(const std::string& body) {
             if (stopped || configured) {
                 response["result"] = "ok";
                 response["already_stopped"] = !stopped;
-                response["status"] = "stopped";
+                response["status"] = stopped ? "stopping" : "stopped";
             } else {
                 response["result"] = "error";
                 response["error"] = "stream is not configured: " + id;

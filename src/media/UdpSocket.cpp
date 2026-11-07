@@ -343,6 +343,11 @@ bool UdpSocket::receive(
         return true;
     }
     if (ready < 0) {
+#ifndef _WIN32
+        // EINTR is a transient wakeup, not a lost UDP source. Stopping
+        // the entire relay here leaves a healthy tile in OFFLINE.
+        if (errno == EINTR) { error.clear(); return true; }
+#endif
         setSocketError(error, "UDP receiver select");
         return false;
     }
@@ -359,6 +364,12 @@ bool UdpSocket::receive(
     const ssize_t count = ::recvfrom(socket, buffer, capacity, 0, nullptr, nullptr);
 #endif
     if (count < 0) {
+#ifndef _WIN32
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+            error.clear();
+            return true;
+        }
+#endif
         setSocketError(error, "UDP receive");
         return false;
     }
