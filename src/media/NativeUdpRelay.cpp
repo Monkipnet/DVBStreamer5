@@ -1161,6 +1161,12 @@ void NativeUdpRelay::run() {
                                   << observedCbrPacer->targetBitrate() / 1000ULL
                                   << " measured_useful_kbps="
                                   << observedCbrPacer->sourcePayloadBitrate() / 1000ULL
+                                  << " paced_useful_kbps="
+                                  << observedCbrPacer->usefulPaceBitrate() / 1000ULL
+                                  << " buffered_media_ms="
+                                  << observedCbrPacer->bufferedMediaMilliseconds()
+                                  << " timing_locked="
+                                  << (observedCbrPacer->timingLocked() ? 1 : 0)
                                   << std::endl;
                         running_.store(false, std::memory_order_release);
                         httpQueueCondition_.notify_all();
