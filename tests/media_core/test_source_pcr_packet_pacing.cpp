@@ -151,7 +151,31 @@ static void legacyAndFallback() {
     }
 }
 
+static void observerLateWakeups() {
+    CbrTsPacer pacer(3000799ULL);
+    const auto epoch = Clock::time_point(std::chrono::seconds(1));
+    require(pacer.enqueueAt(packet(0, 0, false), epoch), "observer fixture enqueue");
+    constexpr std::uint64_t periodNs = 1316ULL * 8ULL * 1000000000ULL / 3000000ULL;
+    std::uint64_t datagrams = 0;
+    for (std::uint64_t i = 0; i < 1200; ++i) {
+        const auto now = epoch + std::chrono::nanoseconds(i * periodNs * 4ULL / 3ULL);
+        CbrDatagram output;
+        while (pacer.nextDatagram(now, output)) {
+            ++datagrams;
+            require(datagrams < 1700, "observer catch-up unbounded");
+        }
+    }
+    require(datagrams >= 1590 && datagrams <= 1601,
+            "observer long-term CBR fell behind scheduler wakeups");
+    CbrDatagram output;
+    const auto afterStall = epoch + std::chrono::seconds(20);
+    require(pacer.nextDatagram(afterStall, output), "observer stall reanchor");
+    require(!pacer.nextDatagram(afterStall, output),
+            "observer stall caused an unbounded catch-up burst");
+}
+
 int main() {
+    observerLateWakeups();
     legacyAndFallback();
     require(simulate(false,false) > 500.0L, "fixture no longer reproduces the legacy VBR phase error");
     // One TS slot is 0.5014 ms at 3 Mbit/s. PCRs stay on that timeline even
