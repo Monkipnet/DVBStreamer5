@@ -179,6 +179,9 @@ public:
     bool start(const NativeUdpRelayConfig& config, std::string& error);
     bool pushInput(const std::uint8_t* data, std::size_t size);
     void finishInput(const std::string& error = {});
+    // Nonblocking shutdown signal: releases producers waiting for the bounded
+    // external-input queue before the input threads are joined by StreamManager.
+    void requestStop() noexcept;
     void stop() noexcept;
 
     bool isRunning() const noexcept;

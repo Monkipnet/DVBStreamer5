@@ -441,10 +441,14 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
     return true;
 }
 
-void NativeUdpRelay::stop() noexcept {
+void NativeUdpRelay::requestStop() noexcept {
     httpStopRequested_.store(true, std::memory_order_release);
     running_.store(false, std::memory_order_release);
     httpQueueCondition_.notify_all();
+}
+
+void NativeUdpRelay::stop() noexcept {
+    requestStop();
     if (httpWorker_.joinable() && httpWorker_.get_id() != std::this_thread::get_id()) {
         httpWorker_.join();
     }

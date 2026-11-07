@@ -2417,6 +2417,11 @@ bool StreamManager::stopStream(const std::string& id) {
     }
     state->monitorStop.store(true);
     state->testPatternStop.store(true);
+    // Signal relay shutdown BEFORE joining SRT/HLS/RTSP/RTMP producers.
+    // A producer can be parked in enqueueHttpData() waiting for queue space;
+    // joining it first deadlocks because only the relay shutdown wakes it.
+    // requestStop() is nonblocking and does not destroy producer callbacks.
+    if (state->nativeRelay) state->nativeRelay->requestStop();
     if (state->nativeHttpHub) {
         if (automaticFailoverTransition) {
             state->nativeHttpHub->flushPending();
@@ -2433,9 +2438,8 @@ bool StreamManager::stopStream(const std::string& id) {
     if (state->nativeSrtInput) state->nativeSrtInput->stop();
     if (state->nativeRtspInput) state->nativeRtspInput->stop();
     if (state->nativeRtmpInput) state->nativeRtmpInput->stop();
-    // Stop the per-service relay first so a subscriber callback blocked on its
-    // external-input queue wakes immediately; then detach it from the shared
-    // transponder reader. The last subscriber closes dvr0 and the demux filter.
+    // After the producer joins, finish relay teardown and detach the shared
+    // DVB reader. requestStop() above already released any blocked producers.
     if (state->nativeRelay) state->nativeRelay->stop();
     sharedDvbInputs.unsubscribe(id);
     // V347: the monitor can sample nativeSrtOutputs while the old relay
