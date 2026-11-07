@@ -32,7 +32,8 @@ jobs:
             binutils nasm autoconf automake libtool file \
             libpcsclite-dev libssl-dev libcrypt-dev libmp3lame-dev \
             libcurl4-openssl-dev libxml2-dev zlib1g-dev \
-            libva-dev libvpl-dev libfreetype-dev
+            libva-dev libvpl-dev libfreetype-dev \
+            libavcodec-dev libavutil-dev
 
       - name: Vendor and compile pinned native SRT/codec sources
         run: |
@@ -40,20 +41,26 @@ jobs:
           bash scripts/vendor_native_codecs.sh
           DVBSTREAMER5_CODEC_JOBS=2 bash scripts/build_native_codecs.sh
 
-      - name: Configure full application (no FFmpeg; keep GPU backends)
+      - name: Configure full application (FFmpeg H.264 decoder and GPU backends)
         run: |
           cmake -S . -B build-main-ci \
             -DCMAKE_BUILD_TYPE=Release \
-            -DDVBSTREAMER5_ENABLE_FFMPEG_AVC=OFF \
+            -DDVBSTREAMER5_ENABLE_FFMPEG_AVC=ON \
             -DDVBSTREAMER5_ENABLE_NVENC=ON \
             -DDVBSTREAMER5_ENABLE_VAAPI=ON \
             -DDVBSTREAMER5_ENABLE_INTEL_QSV=ON
+          grep -q '^DVBSTREAMER5_FFMPEG_FOUND:INTERNAL=1$' build-main-ci/CMakeCache.txt || {
+            echo 'ERROR: FFmpeg H.264 decoder was not enabled'; exit 1;
+          }
 
       - name: Compile DVBStreamer5 and mandatory Newcamd plugin
         run: |
           cmake --build build-main-ci --parallel 2 --target DVBStreamer5 oscam-mini
           test -x build-main-ci/DVBStreamer5
           test -s build-main-ci/ca-plugins/dvbstreamer5-ca-newcamd.so
+          readelf -d build-main-ci/DVBStreamer5 | grep -q 'libavcodec.so' || {
+            echo 'ERROR: FFmpeg/libavcodec is missing from the executable'; exit 1;
+          }
 
       - name: Build and run native MPEG-TS/MP4/failover tests
         run: |
