@@ -297,7 +297,15 @@ void NativeSrtInput::run() {
                 if (!accepted) { stopRequested_ = true; break; }
                 continue;
             }
-            if (api().state(s.s) == SRTS_CONNECTED) continue;
+            if (api().state(s.s) == SRTS_CONNECTED) {
+                // Listener inputs use nonblocking SRTO_RCVSYN=0. On a silent
+                // but connected source recv() returns immediately with no
+                // data; a tight retry loop spins one CPU core per tile and
+                // competes with API/failover workers. Yield only on empty
+                // reads; active media reception stays unchanged.
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
             if (diag) {
                 std::cerr << "NATIVE SRT RX DISCONNECT stream_id=" << config_.diagnosticTileId
                           << " no_data_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(
