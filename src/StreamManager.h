@@ -511,6 +511,9 @@ private:
         std::chrono::steady_clock::time_point connectedAt =
             std::chrono::steady_clock::now();
         int upstreamFd = -1;
+        // Live callback-driven SRT/RTSP/RTMP peers sharing one IP/stream.
+        // HLS and individual HTTP socket sessions always use one logical connection.
+        std::size_t connectionCount = 1;
         std::string previewSession;
     };
     std::map<int, HttpClientSession> httpClients;

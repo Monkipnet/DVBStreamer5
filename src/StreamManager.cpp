@@ -3165,6 +3165,13 @@ bool StreamManager::addStreamSession(const std::string& streamId, const std::str
     // session per protocol/stream/client and only refresh its activity timestamp;
     // otherwise every .m3u8/.ts request allocates another map node for two minutes.
     const std::string key = protocol + ":" + streamId + ":" + ip;
+    const bool callbackDriven = protocol == "srt" || protocol == "rtsp" || protocol == "rtmp";
+    auto existing = adHocSessions.find(key);
+    if (callbackDriven && existing != adHocSessions.end()) {
+        // Separate SRT/RTSP peers may share an IP and stream. One peer
+        // disconnecting must not hide the others from subscriber monitoring.
+        ++existing->second.connectionCount;
+    }
     auto& session = adHocSessions[key];
     session.streamId = streamId;
     session.clientIp = ip;
@@ -3182,7 +3189,13 @@ bool StreamManager::removeStreamSession(const std::string& streamId, const std::
     std::lock_guard<std::mutex> lock(managerMutex);
     for (auto it = adHocSessions.begin(); it != adHocSessions.end();) {
         if (it->second.streamId == streamId && it->second.clientIp == ip && it->second.protocol == protocol) {
-            it = adHocSessions.erase(it);
+            const bool callbackDriven = protocol == "srt" || protocol == "rtsp" || protocol == "rtmp";
+            if (callbackDriven && it->second.connectionCount > 1) {
+                --it->second.connectionCount;
+                ++it;
+            } else {
+                it = adHocSessions.erase(it);
+            }
             removed = true;
         } else ++it;
     }
@@ -3191,7 +3204,13 @@ bool StreamManager::removeStreamSession(const std::string& streamId, const std::
 
 void StreamManager::pruneExpiredAdHocSessionsLocked(std::chrono::steady_clock::time_point now) {
     for (auto it = adHocSessions.begin(); it != adHocSessions.end();) {
-        if (now - it->second.lastActivity > kAdHocSessionTtl) it = adHocSessions.erase(it);
+        // Connection-oriented transports report real disconnects via callbacks.
+        // Their timestamp is set at connection time and is NOT a keepalive:
+        // expiring them after two minutes hid live SRT subscribers.
+        const auto& protocol = it->second.protocol;
+        const bool callbackDriven = protocol == "srt" || protocol == "rtsp" || protocol == "rtmp";
+        if (!callbackDriven && now - it->second.lastActivity > kAdHocSessionTtl)
+            it = adHocSessions.erase(it);
         else ++it;
     }
 }
@@ -3201,7 +3220,7 @@ size_t StreamManager::activeHttpSessions(const std::string& clientIp) const {
     size_t count = 0;
     std::lock_guard<std::mutex> lock(managerMutex);
     for (const auto& [fd, session] : httpClients) { (void)fd; if (session.clientIp == ip) ++count; }
-    for (const auto& [key, session] : adHocSessions) { (void)key; if (session.clientIp == ip) ++count; }
+    for (const auto& [key, session] : adHocSessions) { (void)key; if (session.clientIp == ip) count += session.connectionCount; }
     return count;
 }
 
@@ -3218,7 +3237,7 @@ size_t StreamManager::activeSubscriberSessions(const SubscriberConfig& subscribe
     std::lock_guard<std::mutex> lock(managerMutex);
     pruneExpiredAdHocSessionsLocked(std::chrono::steady_clock::now());
     for (const auto& [fd, session] : httpClients) { (void)fd; if (matches(session)) ++count; }
-    for (const auto& [key, session] : adHocSessions) { (void)key; if (matches(session)) ++count; }
+    for (const auto& [key, session] : adHocSessions) { (void)key; if (matches(session)) count += session.connectionCount; }
     return count;
 }
 
@@ -3233,7 +3252,7 @@ std::vector<ActiveStreamSession> StreamManager::activeStreamSessions() {
         out.streamId = session.streamId;
         out.clientIp = session.clientIp;
         out.protocol = session.protocol;
-        ++out.connections;
+        out.connections += session.connectionCount;
         // Grouped HTTP sockets retain the oldest currently connected socket.
         // For HLS, the initial logical session survives segment requests.
         const auto age = std::chrono::duration_cast<std::chrono::seconds>(
