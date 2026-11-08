@@ -19,10 +19,14 @@ namespace dvbstreamer5::media::network {
 class PcrVbrUdpOutputWorker {
 public:
     using ErrorCallback=std::function<void(const std::string&)>;
+    // Called once per PCR-paced batch before network fan-out. HLS segments,
+    // HTTP TS, SRT, RTSP and RTMP all consume the same media timeline.
+    using ObserverCallback=std::function<void(const std::uint8_t*,std::size_t)>;
     PcrVbrUdpOutputWorker(UdpSocket* socket,std::size_t index,
                           std::atomic<std::uint64_t>* globalBytes,
                           std::atomic<std::uint64_t>* outputBytes,
-                          ErrorCallback onError,const std::string& streamId);
+                          ErrorCallback onError,const std::string& streamId,
+                          ObserverCallback observer={});
     ~PcrVbrUdpOutputWorker();
     PcrVbrUdpOutputWorker(const PcrVbrUdpOutputWorker&)=delete;
     PcrVbrUdpOutputWorker& operator=(const PcrVbrUdpOutputWorker&)=delete;
@@ -35,6 +39,7 @@ private:
     std::atomic<std::uint64_t>* globalBytes_=nullptr;
     std::atomic<std::uint64_t>* outputBytes_=nullptr;
     ErrorCallback onError_;
+    ObserverCallback observer_;
     std::string streamId_;
     std::mutex mutex_;
     std::condition_variable cv_;

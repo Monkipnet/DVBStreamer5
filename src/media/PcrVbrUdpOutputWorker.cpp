@@ -18,9 +18,9 @@ constexpr std::uint64_t kFallbackBps=4000000ULL;
 PcrVbrUdpOutputWorker::PcrVbrUdpOutputWorker(
     UdpSocket* socket,std::size_t index,std::atomic<std::uint64_t>* global,
     std::atomic<std::uint64_t>* output,ErrorCallback onError,
-    const std::string& streamId)
+    const std::string& streamId,ObserverCallback observer)
     :socket_(socket),index_(index),globalBytes_(global),outputBytes_(output),
-     onError_(std::move(onError)),streamId_(streamId),
+     onError_(std::move(onError)),observer_(std::move(observer)),streamId_(streamId),
      worker_(&PcrVbrUdpOutputWorker::run,this){}
 PcrVbrUdpOutputWorker::~PcrVbrUdpOutputWorker(){stop();}
 void PcrVbrUdpOutputWorker::stop()noexcept{
@@ -134,12 +134,26 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         const auto dropped=droppedBytes_;
         lock.unlock();
         std::string error;
-        if(!socket_ || !socket_->send(buffer.data(),count*188,error)){
-            if(onError_)onError_("UDP-VBR PCR sender: "+error);
-            return;
+        if(observer_){
+            try{observer_(buffer.data(),count*188);}
+            catch(const std::exception& ex){
+                if(onError_)onError_("VBR observer: "+std::string(ex.what()));
+                return;
+            }catch(...){
+                if(onError_)onError_("VBR observer callback exception");
+                return;
+            }
         }
-        if(globalBytes_)globalBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
-        if(outputBytes_)outputBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
+        // Observer-only sender: the media is already delivered to the shared
+        // fanout; no UDP socket or second transport stream is needed.
+        if(socket_){
+            if(!socket_->send(buffer.data(),count*188,error)){
+                if(onError_)onError_("UDP-VBR PCR sender: "+error);
+                return;
+            }
+            if(globalBytes_)globalBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
+            if(outputBytes_)outputBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
+        }
         ++datagrams;
         if(now-lastReport>15s){
             std::cerr<<"NATIVE UDP VBR PCR STATUS stream_id="<<streamId_

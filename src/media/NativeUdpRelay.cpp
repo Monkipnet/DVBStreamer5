@@ -252,15 +252,19 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
             config.outputPort,
             config.interfaceAddress});
     }
-    // The averaged HTTP byte-clock must not precede a PCR-disciplined
-    // UDP-VBR-only output: double smoothing compounds phase error.
-    const bool vbrOnly = !config_.outputs.empty() &&
-        std::all_of(config_.outputs.begin(),config_.outputs.end(),
-            [](const auto& out){return out.outputType=="udp-vbr";});
-    if(vbrOnly && httpJitterEnabled_){
+    // V386: one PCR timeline for VBR physical UDP and the shared
+    // SRT/HTTP/HLS/RTSP/RTMP observer. Do not first pace the HTTP input by
+    // its averaged byte rate: the two independent clocks accumulate jitter.
+    const bool hasCbrPhysical=std::any_of(config_.outputs.begin(),config_.outputs.end(),
+        [](const auto& out){return out.outputType=="udp-cbr";});
+    const bool vbrSourcePacing=!config_.paceObservedTransport && !hasCbrPhysical &&
+        (config_.observeTransport || std::any_of(
+            config_.outputs.begin(),config_.outputs.end(),
+            [](const auto& out){return out.outputType=="udp-vbr";}));
+    if(vbrSourcePacing && httpJitterEnabled_){
         httpJitterEnabled_=false;
         std::cerr<<"NATIVE HTTP JITTER disabled stream_id="<<config_.streamId
-                 <<" reason=udp_vbr_source_pcr_clock"<<std::endl;
+                 <<" reason=vbr_pcr_shared_clock"<<std::endl;
     }
     fileInput_.close();
     fileInput_.clear();
@@ -831,6 +835,14 @@ void NativeUdpRelay::run() {
         std::unique_ptr<dvbstreamer5::media::network::PcrVbrUdpOutputWorker> vbrWorker;
     };
 
+    // V386: observer may ride the first UDP-VBR worker, or use an
+    // observer-only worker when the stream has HTTP/SRT/HLS outputs alone.
+    const bool hasPhysicalCbr=std::any_of(config_.outputs.begin(),config_.outputs.end(),
+        [](const auto& out){return out.outputType=="udp-cbr";});
+    const bool vbrObserverEnabled=static_cast<bool>(config_.observeTransport) &&
+        !config_.paceObservedTransport && !hasPhysicalCbr;
+    bool vbrObserverAttached=false;
+    std::unique_ptr<PcrVbrUdpOutputWorker> vbrObserverWorker;
     UdpInputEndpoint inputEndpoint;
     const bool networkInput = parseInputEndpoint(config_.inputUri, inputEndpoint);
     const bool httpInput = httpInputSource_ || externalInputSource_;
@@ -958,7 +970,12 @@ void NativeUdpRelay::run() {
                             {std::lock_guard<std::mutex> lock(errorMutex_);lastError_=message;}
                             running_.store(false,std::memory_order_release);
                             httpQueueCondition_.notify_all();
-                        },config_.streamId);
+                        },config_.streamId,
+                        vbrObserverEnabled && !vbrObserverAttached
+                            ? config_.observeTransport
+                            : PcrVbrUdpOutputWorker::ObserverCallback{});
+                if(vbrObserverEnabled && !vbrObserverAttached)
+                    vbrObserverAttached=true;
             }catch(const std::exception& exception){
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_=exception.what();
@@ -1007,6 +1024,28 @@ void NativeUdpRelay::run() {
         outputs.push_back(std::move(output));
         ++seed;
     }
+
+    if(vbrObserverEnabled && !vbrObserverAttached){
+        try{
+            vbrObserverWorker=std::make_unique<PcrVbrUdpOutputWorker>(
+                nullptr,static_cast<std::size_t>(-1),nullptr,nullptr,
+                [this](const std::string& message){
+                    {std::lock_guard<std::mutex> lock(errorMutex_);lastError_=message;}
+                    running_.store(false,std::memory_order_release);
+                    httpQueueCondition_.notify_all();
+                },config_.streamId,config_.observeTransport);
+            vbrObserverAttached=true;
+        }catch(const std::exception& e){
+            {std::lock_guard<std::mutex> lock(errorMutex_);lastError_=e.what();}
+            running_.store(false,std::memory_order_release);
+            httpQueueCondition_.notify_all();
+            return;
+        }
+    }
+    if(vbrObserverAttached)
+        std::cerr<<"NATIVE OBSERVED VBR PCR START stream_id="<<config_.streamId
+                 <<" shared_media=1 protocols=http,srt,hls,rtsp,rtmp"
+                 <<" buffer_ms=1200"<<std::endl;
 
     // WISI CBR: the first UDP-CBR worker publishes its already-shaped
     // datagrams to observeTransport asynchronously. Observer work can never
@@ -1158,6 +1197,19 @@ void NativeUdpRelay::run() {
         // The first UDP-CBR pacer will publish its already-shaped 1316-byte
         // datagrams below. Do not enqueue the same TS into a second pacer.
         if (shareObservedCbrWithUdpOutput) return true;
+
+        // One VBR worker publishes time-aligned TS to every observer exactly
+        // once. It is either the first UDP-VBR worker (queued below), or a
+        // standalone shared observer when no physical VBR output exists.
+        if(vbrObserverAttached){
+            if(vbrObserverWorker && !vbrObserverWorker->enqueue(observedPackets)){
+                {std::lock_guard<std::mutex> lock(errorMutex_);
+                 lastError_="shared VBR PCR observer stopped";}
+                running_.store(false,std::memory_order_release);
+                return false;
+            }
+            return true;
+        }
 
         if (observedCbrPacer) {
             bool wakeForStart = false;
@@ -1916,6 +1968,9 @@ void NativeUdpRelay::run() {
         }
     }
 
+    if(vbrObserverWorker) vbrObserverWorker->stop();
+    for(auto& output:outputs)
+        if(output.vbrWorker) output.vbrWorker->stop();
     {
         std::lock_guard<std::mutex> lock(observedCbrMutex);
         observedCbrStop = true;
