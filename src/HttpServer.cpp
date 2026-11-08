@@ -123,6 +123,10 @@ std::string HttpServer::renderIndexPage() {
 <label><input type="checkbox" id="dvbAuthOn"> <span id="dvbAuthEnabledLabel"></span></label>
 <label for="dvbAuthUrl" id="dvbAuthUrlLabel"></label><input id="dvbAuthUrl" type="url" placeholder="https://auth.example.com/check" autocomplete="off">
 <label for="dvbAuthTimeout" id="dvbAuthTimeoutLabel"></label><input type="number" id="dvbAuthTimeout" min="100" max="3000" step="100">
+<label for="dvbAuthRecheck" id="dvbAuthRecheckLabel"></label><input type="number" id="dvbAuthRecheck" min="1" max="60" step="1">
+<label for="dvbAuthEnd" id="dvbAuthEndLabel"></label><input id="dvbAuthEnd" type="url" placeholder="https://auth.example.com/stop" autocomplete="off">
+<button type="button" id="dvbAuthSessions"></button>
+<div id="dvbAuthSessionsList" style="max-height:180px;overflow:auto;font:12px system-ui"></div>
 <small id="dvbAuthNote"></small><small id="dvbAuthIpNote"></small>
 <div id="dvbAuthStatus" role="status"></div>
 <button type="button" id="dvbAuthSave"></button>
@@ -146,6 +150,16 @@ save:'Save',close:'Close',ok:'Saved without restarting streams',error:'Could not
 };
 for(const [key,id] of [['title','dvbAuthHeading'],['enabled','dvbAuthEnabledLabel'],['url','dvbAuthUrlLabel'],['timeout','dvbAuthTimeoutLabel'],['note','dvbAuthNote'],['ip','dvbAuthIpNote'],['save','dvbAuthSave'],['close','dvbAuthClose']])
 document.getElementById(id).textContent=t[key];
+const extra=ru?{
+recheck:'Повторная проверка токена, мин',end:'URL уведомления о завершении (необязательно)',
+sessions:'Активные сессии',disconnect:'Отключить',none:'Нет активных сессий'
+}:{
+recheck:'Revalidate token every, min',end:'Session-end webhook URL (optional)',
+sessions:'Active sessions',disconnect:'Disconnect',none:'No active sessions'
+};
+document.getElementById('dvbAuthRecheckLabel').textContent=extra.recheck;
+document.getElementById('dvbAuthEndLabel').textContent=extra.end;
+document.getElementById('dvbAuthSessions').textContent=extra.sessions;
 const modal=document.getElementById('dvbAuthModal'),status=document.getElementById('dvbAuthStatus');
 document.getElementById('dvbAuthBtn').addEventListener('click',async()=>{
 status.textContent='';modal.setAttribute('open','');
@@ -153,9 +167,37 @@ try{const r=await fetch('/api/stream-auth',{credentials:'same-origin',cache:'no-
 document.getElementById('dvbAuthOn').checked=!!d.enabled;
 document.getElementById('dvbAuthUrl').value=d.backend_url||'';
 document.getElementById('dvbAuthTimeout').value=d.timeout_ms||1200;
+document.getElementById('dvbAuthRecheck').value=d.recheck_minutes||5;
+document.getElementById('dvbAuthEnd').value=d.end_url||'';
 }catch(e){status.textContent=t.error+': '+e.message;}
 });
 document.getElementById('dvbAuthClose').addEventListener('click',()=>modal.removeAttribute('open'));
+document.getElementById('dvbAuthSessions').addEventListener('click',async()=>{
+const holder=document.getElementById('dvbAuthSessionsList');holder.replaceChildren();
+try{
+const r=await fetch('/api/stream-auth/sessions',{credentials:'same-origin',cache:'no-store'});
+if(!r.ok)throw Error('HTTP '+r.status);
+const d=await r.json();const list=Array.isArray(d.sessions)?d.sessions:[];
+if(!list.length){holder.textContent=extra.none;return;}
+for(const s of list){
+const line=document.createElement('div');line.style.cssText='display:flex;gap:8px;align-items:center;margin:5px 0';
+const desc=document.createElement('span');desc.style.flex='1';
+desc.textContent=[s.protocol,s.channel_id,s.ip,new Date((s.started_at||0)*1000).toLocaleString()].join(' / ');
+const kick=document.createElement('button');kick.type='button';kick.textContent=extra.disconnect;
+kick.addEventListener('click',async()=>{
+kick.disabled=true;
+try{
+const response=await fetch('/api/stream-auth/sessions/disconnect',{
+method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({session_id:s.session_id})});
+if(!response.ok)throw Error('HTTP '+response.status);
+line.remove();
+}catch(e){status.textContent=String(e.message);kick.disabled=false;}
+});
+line.append(desc,kick);holder.append(line);
+}
+}catch(e){holder.textContent=String(e.message)}
+});
 modal.addEventListener('click',e=>{if(e.target===modal)modal.removeAttribute('open')});
 document.getElementById('dvbAuthSave').addEventListener('click',async()=>{
 const button=document.getElementById('dvbAuthSave');button.disabled=true;status.textContent='';
@@ -164,7 +206,9 @@ const r=await fetch('/api/stream-auth/save',{method:'POST',credentials:'same-ori
 headers:{'Content-Type':'application/json'},body:JSON.stringify({
 enabled:document.getElementById('dvbAuthOn').checked,
 backend_url:document.getElementById('dvbAuthUrl').value.trim(),
-timeout_ms:Number(document.getElementById('dvbAuthTimeout').value)||1200})});
+timeout_ms:Number(document.getElementById('dvbAuthTimeout').value)||1200,
+recheck_minutes:Number(document.getElementById('dvbAuthRecheck').value)||5,
+end_url:document.getElementById('dvbAuthEnd').value.trim()})});
 const d=await r.json();if(!r.ok||d.result!=='ok')throw Error(d.error||('HTTP '+r.status));
 status.textContent=t.ok;
 }catch(e){status.textContent=t.error+': '+e.message;}finally{button.disabled=false;}

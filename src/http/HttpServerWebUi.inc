@@ -7817,6 +7817,13 @@ function openStreamForm(stream) {
       </div>
       <div class="form-grid">
         <div class="form-row full"><label>Имя плитки</label><input class="compact" id="streamName" value="${escapeHtmlValue(stream.name||'')}" data-default-name="${uiEscapeAttr(stream.id)}" placeholder="Belarus 5" oninput="document.getElementById('streamEditChannelName').textContent=this.value||this.dataset.defaultName" /></div>
+        <div class="form-row full"><label>${uiBiText('Авторизация зрителей (HTTP/HLS/SRT)','Viewer authorization (HTTP/HLS/SRT)')}</label>
+        <small class="field-help">${uiBiText('Наследовать глобальный режим, включить только для этого канала или отключить. IP-фильтр при работающем middleware не применяется.','Inherit global mode, enable for this channel only, or disable. IP filtering is bypassed when middleware is active.')}</small>
+        <select id="streamAuthMode">
+          <option value="inherit" ${!stream.stream_auth_mode||stream.stream_auth_mode==='inherit'?'selected':''}>${uiBiText('Наследовать глобально','Inherit global')}</option>
+          <option value="on" ${stream.stream_auth_mode==='on'?'selected':''}>${uiBiText('Включить middleware','Enable middleware')}</option>
+          <option value="off" ${stream.stream_auth_mode==='off'?'selected':''}>${uiBiText('Отключить middleware (IP-фильтр)','Disable middleware (IP filter)')}</option>
+        </select></div>
         <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} oninput="updateDvbTunerVisibility();updateIpSourcePcrVisibility()" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility();if(this.value==='vdr'){const ca=document.getElementById('streamCaMode');if(ca){ca.value='ciplus';updateStreamCaMode();}}"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
         <details class="form-row full edit-section edit-collapsible" id="streamDvbTunerPanel" style="display:${String(stream.input_uri||'').toLowerCase().startsWith('dvb://')?'':'none'}">
           <summary class="edit-section-head"><span ${uiBiAttrs('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}>${uiBiText('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
@@ -8612,6 +8619,7 @@ function saveStream(id) {
     hls_access_key_name: document.getElementById('streamHlsAccessKeyName').value,
     hls_access_key_value: document.getElementById('streamHlsAccessKeyValue').value,
     hls_user_agent: document.getElementById('streamHlsUserAgent').value,
+    stream_auth_mode: document.getElementById('streamAuthMode')?.value || 'inherit',
     test_pattern: document.getElementById('streamTestPattern').checked,
     activation_mode: activationMode,
     auto_start: activationMode === 'online' && document.getElementById('streamAutoStart').checked,
