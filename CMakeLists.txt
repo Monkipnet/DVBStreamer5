@@ -187,6 +187,7 @@ target_include_directories(dvbstreamer5_media_core
 target_link_libraries(dvbstreamer5_media_core PUBLIC
     Threads::Threads
     dvbstreamer5_http_client
+    dvbstreamer5_jsoncpp
     srt_static
     OpenSSL::Crypto
 )

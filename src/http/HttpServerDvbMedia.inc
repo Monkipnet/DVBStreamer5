@@ -657,7 +657,7 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
     }
     // Shared HLS segments remain unchanged; token is propagated into each
     // relative URI, including key and init-map resources.
-    if (dvbstreamer5::stream_auth::enabled(configManager.config) &&
+    if (dvbstreamer5::stream_auth::enabled(configManager.config,id) &&
         filePath.extension()==".m3u8") {
         const auto q=target.find('?');
         if(q!=std::string::npos)
