@@ -130,20 +130,67 @@ std::string panelCookieValue(const http::request<http::string_body>& req,
 } // namespace
 
 void HttpServer::handleSession(tcp::socket socket) {
-    // Reuse one connection for a bounded burst of HLS requests. A short
-    // idle timeout avoids pinning the fixed-size API/HTTP request pool for
-    // several seconds between 2-6s HLS segment fetches.
-    boost::beast::flat_buffer buffer;
-    for(unsigned hlsRequests=0;hlsRequests<8;++hlsRequests){
+    handleSession(std::move(socket),std::make_shared<boost::beast::flat_buffer>(),0);
+}
+
+// HTTP/HLS requests still pass through the existing auth/session logic.
+// Between keep-alive requests the TCP socket waits asynchronously in
+// io_context, not in any of the 24 synchronous HTTP request workers.
+void HttpServer::scheduleHlsKeepAlive(
+    tcp::socket socket,std::shared_ptr<boost::beast::flat_buffer> buffered,
+    unsigned requests) {
+    if(!socket.is_open())return;
+    auto live=std::make_shared<tcp::socket>(std::move(socket));
+    auto timer=std::make_shared<boost::asio::steady_timer>(ioContext);
+    auto done=std::make_shared<std::atomic<bool>>(false);
+    auto resume=[this,live,buffered,requests,timer,done]() mutable {
+        if(done->exchange(true,std::memory_order_acq_rel))return;
+        boost::system::error_code ignored;
+        timer->cancel(ignored);
+        try {
+            boost::asio::post(sessionPool,[this,live,buffered,requests]() mutable {
+                handleSession(std::move(*live),buffered,requests);
+            });
+        } catch(...) {
+            live->close(ignored);
+        }
+    };
+    // A client may pipeline HLS requests; buffered data is already readable.
+    if(buffered && buffered->size()>0){resume();return;}
+    timer->expires_after(std::chrono::seconds(2));
+    timer->async_wait([live,done](const boost::system::error_code& ec) {
+        if(ec || done->exchange(true,std::memory_order_acq_rel))return;
+        boost::system::error_code ignored;
+        live->close(ignored);
+    });
+    live->async_wait(tcp::socket::wait_read,
+        [resume,live,timer,done](const boost::system::error_code& ec) mutable {
+            if(ec){
+                if(!done->exchange(true,std::memory_order_acq_rel)){
+                    boost::system::error_code ignored;
+                    timer->cancel(ignored);
+                    live->close(ignored);
+                }
+                return;
+            }
+            resume();
+        });
+}
+
+void HttpServer::handleSession(
+    tcp::socket socket,std::shared_ptr<boost::beast::flat_buffer> buffered,
+    unsigned hlsRequests) {
+    // Requests are processed by a bounded synchronous worker pool. The
+    // TCP receive timeout applies only after epoll/asio signalled readability.
     if(hlsRequests>0){
-        struct timeval idle{0,250000};
+        struct timeval partialRequestTimeout{1,0};
         ::setsockopt(socket.native_handle(),SOL_SOCKET,SO_RCVTIMEO,
-                     &idle,sizeof(idle));
+                     &partialRequestTimeout,sizeof(partialRequestTimeout));
     }
     try {
         http::request_parser<http::string_body> parser;
         parser.body_limit(512ULL * 1024ULL * 1024ULL);
-        http::read(socket, buffer, parser);
+        http::read(socket,*buffered,parser);
         http::request<http::string_body> req = parser.release();
         http::response<http::string_body> res{http::status::ok, req.version()};
         res.set(http::field::server, "DVBStreamer5");
@@ -532,7 +579,8 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         if(!directFile.empty()){
                             if(!sendHlsFileZeroCopy(socket,directFile,res,req.version(),
                                                     hlsKeepAlive))return;
-                            if(hlsKeepAlive)continue;
+                            if(hlsKeepAlive)
+                                scheduleHlsKeepAlive(std::move(socket),buffered,hlsRequests+1);
                             return;
                         }
                     }
@@ -1155,7 +1203,9 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         res.content_length(res.body().size());
         res.keep_alive(hlsKeepAlive);
         http::write(socket, res);
-        if(!hlsKeepAlive)return;
+        if(hlsKeepAlive)
+            scheduleHlsKeepAlive(std::move(socket),buffered,hlsRequests+1);
+        return;
     } catch (const std::exception& ex) {
         const std::string message = ex.what();
         if (message.find("bad method") != std::string::npos) {
@@ -1164,7 +1214,6 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             std::cerr << "HTTP session failed: " << message << std::endl;
         }
         return;
-    }
     }
 }
 

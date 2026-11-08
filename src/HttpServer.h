@@ -48,6 +48,12 @@ private:
 
     void doAccept(std::shared_ptr<tcp::acceptor> listener, int port, uint64_t generation);
     void handleSession(tcp::socket socket);
+    void handleSession(tcp::socket socket,
+                       std::shared_ptr<boost::beast::flat_buffer> buffered,
+                       unsigned hlsRequestCount);
+    void scheduleHlsKeepAlive(tcp::socket socket,
+                              std::shared_ptr<boost::beast::flat_buffer> buffered,
+                              unsigned hlsRequestCount);
     bool requiresAuthentication(const std::string& target) const;
     bool isAuthorized(const http::request<http::string_body>& req) const;
     bool isPanelSessionAuthorized(const http::request<http::string_body>& req) const;
