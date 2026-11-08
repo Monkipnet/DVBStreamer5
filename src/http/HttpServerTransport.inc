@@ -209,6 +209,72 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket, res);
             return;
         }
+        // V383: independent metadata-only auth settings. Existing streaming
+        // workers and output sessions are NOT restarted on save.
+        if (target == "/api/stream-auth" && req.method()==http::verb::get) {
+            Json::Value data(Json::objectValue);
+            data["enabled"]=configManager.config.streamAuthBackendEnabled;
+            data["backend_url"]=configManager.config.streamAuthBackendUrl;
+            data["timeout_ms"]=configManager.config.streamAuthBackendTimeoutMs;
+            data["ip_filter_effective"]=!configManager.config.streamAuthBackendEnabled;
+            data["failure_policy"]="deny";
+            data["protocols"]="http,hls,srt";
+            Json::StreamWriterBuilder writer;
+            res.set(http::field::content_type,"application/json; charset=UTF-8");
+            res.body()=Json::writeString(writer,data);
+            res.content_length(res.body().size());
+            http::write(socket,res);
+            return;
+        }
+        if (target == "/api/stream-auth/save" && req.method()==http::verb::post) {
+            res.set(http::field::content_type,"application/json; charset=UTF-8");
+            Json::Value reply(Json::objectValue),data;
+            Json::CharReaderBuilder reader;
+            std::string errors;
+            std::istringstream payload(req.body());
+            if (req.body().size()>8192 ||
+                !Json::parseFromStream(reader,payload,&data,&errors) ||
+                !data.isObject() || !data["enabled"].isBool() ||
+                !data["backend_url"].isString()) {
+                res.result(http::status::bad_request);
+                reply["error"]="Invalid stream authentication settings";
+            } else {
+                const bool enabled=data["enabled"].asBool();
+                const std::string url=data["backend_url"].asString();
+                const int timeout=std::clamp(data.get("timeout_ms",1200).asInt(),100,3000);
+                const bool safeUrl=url.size()<=2048 &&
+                    url.find_first_of("\r\n#")==std::string::npos &&
+                    (url.empty()||url.rfind("https://",0)==0||url.rfind("http://",0)==0);
+                if (!safeUrl || (enabled && url.empty())) {
+                    res.result(http::status::bad_request);
+                    reply["error"]="HTTP(S) backend URL required when enabled";
+                } else {
+                    const bool oldEnabled=configManager.config.streamAuthBackendEnabled;
+                    const std::string oldUrl=configManager.config.streamAuthBackendUrl;
+                    const int oldTimeout=configManager.config.streamAuthBackendTimeoutMs;
+                    configManager.config.streamAuthBackendEnabled=enabled;
+                    configManager.config.streamAuthBackendUrl=url;
+                    configManager.config.streamAuthBackendTimeoutMs=timeout;
+                    if (!configManager.save()) {
+                        configManager.config.streamAuthBackendEnabled=oldEnabled;
+                        configManager.config.streamAuthBackendUrl=oldUrl;
+                        configManager.config.streamAuthBackendTimeoutMs=oldTimeout;
+                        res.result(http::status::internal_server_error);
+                        reply["error"]="Failed to save stream authentication";
+                    } else {
+                        reply["result"]="ok";
+                        reply["enabled"]=enabled;
+                        reply["ip_filter_effective"]=!enabled;
+                        reply["failure_policy"]="deny";
+                    }
+                }
+            }
+            Json::StreamWriterBuilder writer;
+            res.body()=Json::writeString(writer,reply);
+            res.content_length(res.body().size());
+            http::write(socket,res);
+            return;
+        }
         if (target == "/api/panel/logout") {
             res.set(http::field::content_type, "application/json");
             const auto requestedWith = req.find("X-Requested-With");
@@ -1035,7 +1101,7 @@ bool HttpServer::requiresAuthentication(const std::string& target) const {
         target == "/playlist.m3u") return false;
     // Control-panel preview endpoints must never become public via a channel
     // whose HLS public name collides with the first URL segment ('api').
-    if (target.rfind("/api/streams/", 0) == 0) return true;
+    if (target.rfind("/api/", 0) == 0) return true;
     std::string hlsId, hlsFile;
     const bool hlsTarget = resolveHlsTarget(configManager.config.streams, target, hlsId, hlsFile);
     std::string httpMpegTsId;

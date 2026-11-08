@@ -431,10 +431,15 @@ void NativeSrtOutput::run(){
                     std::string(sid.data(),static_cast<std::size_t>(sidLen)) : "";
                 if(peerAllowed_ && config_.asyncPeerAuthorization){
                     const auto allow=peerAllowed_;
-                    pendingAuth.push_back({client,peer,std::async(std::launch::async,
-                        [allow,peer,peerSid](){
-                            try{return allow(peer,peerSid);}catch(...){return false;}
-                        })});
+                    try {
+                        pendingAuth.push_back({client,peer,std::async(std::launch::async,
+                            [allow,peer,peerSid](){
+                                try{return allow(peer,peerSid);}catch(...){return false;}
+                            })});
+                    } catch (...) {
+                        api().close(client);
+                        setError("SRT authentication worker unavailable");
+                    }
                     continue;
                 }
                 if(peerAllowed_ && !peerAllowed_(peer,peerSid)){
