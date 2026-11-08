@@ -1,0 +1,156 @@
+#include "media/PcrVbrUdpOutputWorker.h"
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <iostream>
+
+namespace dvbstreamer5::media::network {
+using Clock=std::chrono::steady_clock;
+using namespace std::chrono_literals;
+using dvbstreamer5::media::mpegts::Packet;
+namespace {
+constexpr std::size_t kMaxPackets=(8*1024*1024)/188;
+constexpr auto kPrebuffer=1200ms;
+constexpr auto kMaxNoPcrWait=2200ms;
+constexpr auto kMaximumLate=80ms;
+constexpr std::uint64_t kFallbackBps=4000000ULL;
+}
+PcrVbrUdpOutputWorker::PcrVbrUdpOutputWorker(
+    UdpSocket* socket,std::size_t index,std::atomic<std::uint64_t>* global,
+    std::atomic<std::uint64_t>* output,ErrorCallback onError,
+    const std::string& streamId)
+    :socket_(socket),index_(index),globalBytes_(global),outputBytes_(output),
+     onError_(std::move(onError)),streamId_(streamId),
+     worker_(&PcrVbrUdpOutputWorker::run,this){}
+PcrVbrUdpOutputWorker::~PcrVbrUdpOutputWorker(){stop();}
+void PcrVbrUdpOutputWorker::stop()noexcept{
+    {std::lock_guard<std::mutex> lock(mutex_);stop_=true;}
+    cv_.notify_all();
+    if(worker_.joinable())worker_.join();
+}
+bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
+    if(in.empty())return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if(stop_)return false;
+    if(packets_.empty())firstQueued_=Clock::now();
+    for(const auto& packet:in){
+        if(clock_.observe(packet,nextIndex_)){
+            // Source has explicitly restarted its PCR clock. Old media cannot
+            // be scheduled against the new timeline.
+            droppedBytes_+=packets_.size()*188ULL;
+            packets_.clear();
+            frontIndex_=nextIndex_;
+            firstQueued_=Clock::now();
+            restartClock_=true;
+            std::cerr<<"NATIVE UDP VBR PCR RESET stream_id="<<streamId_
+                     <<" output_index="<<index_
+                     <<" cause=pcr_discontinuity_or_invalid_jump"<<std::endl;
+        }
+        packets_.push_back(packet);
+        ++nextIndex_;
+    }
+    if(packets_.size()>kMaxPackets){
+        const auto excess=packets_.size()-kMaxPackets;
+        for(std::size_t i=0;i<excess;++i)packets_.pop_front();
+        frontIndex_+=excess;
+        droppedBytes_+=excess*188ULL;
+        firstQueued_=Clock::now();
+        restartClock_=true;
+        std::cerr<<"NATIVE UDP VBR PCR OVERFLOW stream_id="<<streamId_
+                 <<" output_index="<<index_
+                 <<" dropped_bytes="<<droppedBytes_
+                 <<" reason=bounded_live_queue"<<std::endl;
+    }
+    cv_.notify_one();
+    return true;
+}
+void PcrVbrUdpOutputWorker::run()noexcept{
+    bool started=false,pcrMode=false;
+    auto wallAnchor=Clock::time_point{};
+    std::int64_t mediaAnchor=0;
+    std::uint64_t indexAnchor=0;
+    auto lastReport=Clock::now();
+    std::uint64_t datagrams=0,lateResets=0;
+    for(;;){
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock,[&]{return stop_||!packets_.empty();});
+        if(stop_)break;
+        const auto now=Clock::now();
+        if(restartClock_){started=false;restartClock_=false;}
+        if(!started){
+            const auto elapsed=now-firstQueued_;
+            if(elapsed<kPrebuffer ||
+               (!clock_.ready() && elapsed<kMaxNoPcrWait)){
+                const auto hold=firstQueued_+
+                    (elapsed<kPrebuffer?kPrebuffer:kMaxNoPcrWait);
+                cv_.wait_until(lock,hold,[&]{return stop_||restartClock_;});
+                continue;
+            }
+            started=true;
+            wallAnchor=now;
+            indexAnchor=frontIndex_;
+            pcrMode=clock_.timeNs(frontIndex_,mediaAnchor);
+            if(!pcrMode)mediaAnchor=0;
+            std::cerr<<"NATIVE UDP VBR PCR START stream_id="<<streamId_
+                     <<" output_index="<<index_
+                     <<" mode="<<(pcrMode?"source_pcr":"fallback_no_pcr")
+                     <<" prebuffer_ms="<<
+                        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
+                     <<" pcr_pid="<<clock_.referencePid()<<std::endl;
+        }
+        std::int64_t mediaNs=0;
+        if(clock_.ready() && !pcrMode){
+            pcrMode=clock_.timeNs(frontIndex_,mediaNs);
+            mediaAnchor=mediaNs;indexAnchor=frontIndex_;wallAnchor=now;
+        }
+        if(pcrMode && !clock_.timeNs(frontIndex_,mediaNs)){
+            pcrMode=false;indexAnchor=frontIndex_;wallAnchor=now;
+        }
+        if(!pcrMode){
+            mediaNs=static_cast<std::int64_t>(
+                static_cast<unsigned __int128>(frontIndex_-indexAnchor)*
+                188ULL*8ULL*1000000000ULL/kFallbackBps);
+            mediaAnchor=0;
+        }
+        const auto delta=mediaNs-mediaAnchor;
+        auto due=wallAnchor+std::chrono::nanoseconds(delta);
+        if(due>now){
+            cv_.wait_until(lock,due,[&]{return stop_||restartClock_;});
+            continue;
+        }
+        if(now-due>kMaximumLate){
+            // Real scheduler stall/underflow: discard only old wall-clock
+            // phase, not TS bytes or their PCR/PTS/DTS.
+            wallAnchor=now-std::chrono::nanoseconds(delta);
+            ++lateResets;
+        }
+        std::array<std::uint8_t,7*188> buffer{};
+        const auto count=std::min<std::size_t>(7,packets_.size());
+        for(std::size_t i=0;i<count;++i){
+            std::memcpy(buffer.data()+i*188,packets_.front().data(),188);
+            packets_.pop_front();++frontIndex_;
+        }
+        const auto queued=packets_.size();
+        const auto dropped=droppedBytes_;
+        lock.unlock();
+        std::string error;
+        if(!socket_ || !socket_->send(buffer.data(),count*188,error)){
+            if(onError_)onError_("UDP-VBR PCR sender: "+error);
+            return;
+        }
+        if(globalBytes_)globalBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
+        if(outputBytes_)outputBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
+        ++datagrams;
+        if(now-lastReport>15s){
+            std::cerr<<"NATIVE UDP VBR PCR STATUS stream_id="<<streamId_
+                     <<" output_index="<<index_
+                     <<" mode="<<(pcrMode?"source_pcr":"fallback_no_pcr")
+                     <<" queue_packets="<<queued
+                     <<" late_reanchors="<<lateResets
+                     <<" dropped_bytes="<<dropped
+                     <<" datagrams="<<datagrams<<std::endl;
+            lastReport=now;
+        }
+    }
+}
+} // namespace dvbstreamer5::media::network

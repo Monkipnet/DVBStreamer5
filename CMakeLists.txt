@@ -175,6 +175,7 @@ add_library(dvbstreamer5_media_core
     src/media/NativeRtmpTransport.cpp
     src/media/NativeSrtTransport.cpp
     src/media/NativeUdpRelay.cpp
+    src/media/PcrVbrUdpOutputWorker.cpp
 )
 target_include_directories(dvbstreamer5_media_core
     PUBLIC ${CMAKE_SOURCE_DIR}/src
@@ -461,6 +462,10 @@ target_include_directories(dvbstreamer5_stream_auth_test PRIVATE
 target_link_libraries(dvbstreamer5_stream_auth_test PRIVATE
     dvbstreamer5_http_client dvbstreamer5_jsoncpp)
 add_test(NAME stream_auth_backend COMMAND dvbstreamer5_stream_auth_test)
+
+add_executable(dvbstreamer5_udp_vbr_pcr_test tests/test_udp_vbr_pcr_clock.cpp)
+target_include_directories(dvbstreamer5_udp_vbr_pcr_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME udp_vbr_pcr_clock COMMAND dvbstreamer5_udp_vbr_pcr_test)
 
 target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
 target_link_libraries(DVBStreamer5 ZLIB::ZLIB PkgConfig::LIBCURL LibXml2::LibXml2)

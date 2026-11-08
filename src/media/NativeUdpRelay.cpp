@@ -4,6 +4,7 @@
 #include "media/CbrTsPacer.h"
 #include "media/IpCbrSourceClockPolicy.h"
 #include "media/WisiCbrOutputWorker.h"
+#include "media/PcrVbrUdpOutputWorker.h"
 #include "media/RtpMpegTs.h"
 #include "media/TransportStream.h"
 #include "media/NativeFileLoopClock.h"
@@ -250,6 +251,16 @@ bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& erro
             config.outputHost,
             config.outputPort,
             config.interfaceAddress});
+    }
+    // The averaged HTTP byte-clock must not precede a PCR-disciplined
+    // UDP-VBR-only output: double smoothing compounds phase error.
+    const bool vbrOnly = !config_.outputs.empty() &&
+        std::all_of(config_.outputs.begin(),config_.outputs.end(),
+            [](const auto& out){return out.outputType=="udp-vbr";});
+    if(vbrOnly && httpJitterEnabled_){
+        httpJitterEnabled_=false;
+        std::cerr<<"NATIVE HTTP JITTER disabled stream_id="<<config_.streamId
+                 <<" reason=udp_vbr_source_pcr_clock"<<std::endl;
     }
     fileInput_.close();
     fileInput_.clear();
@@ -817,6 +828,7 @@ void NativeUdpRelay::run() {
         std::shared_ptr<std::atomic<std::uint64_t>> sentTsBytes;
         std::unique_ptr<dvbstreamer5::media::rtp::MpegTsPacketizer> packetizer;
         std::unique_ptr<dvbstreamer5::media::network::WisiCbrOutputWorker> cbrWorker;
+        std::unique_ptr<dvbstreamer5::media::network::PcrVbrUdpOutputWorker> vbrWorker;
     };
 
     UdpInputEndpoint inputEndpoint;
@@ -935,6 +947,25 @@ void NativeUdpRelay::run() {
                 static_cast<std::uint16_t>(outputSeed >> 16),
                 std::uint8_t{33},
                 std::size_t{7});
+        }
+        if (config_.outputs[index].outputType == "udp-vbr") {
+            try {
+                output.vbrWorker =
+                    std::make_unique<dvbstreamer5::media::network::PcrVbrUdpOutputWorker>(
+                        output.socket,index,&outputBytes_,
+                        output.sentTsBytes ? output.sentTsBytes.get() : nullptr,
+                        [this](const std::string& message){
+                            {std::lock_guard<std::mutex> lock(errorMutex_);lastError_=message;}
+                            running_.store(false,std::memory_order_release);
+                            httpQueueCondition_.notify_all();
+                        },config_.streamId);
+            }catch(const std::exception& exception){
+                std::lock_guard<std::mutex> lock(errorMutex_);
+                lastError_=exception.what();
+                running_.store(false,std::memory_order_release);
+                httpQueueCondition_.notify_all();
+                return;
+            }
         }
         if (config_.outputs[index].outputType == "udp-cbr") {
             try {
@@ -1813,6 +1844,16 @@ void NativeUdpRelay::run() {
                         lastError_ = error;
                         break;
                     }
+                } else if (output.vbrWorker) {
+                    if (!output.vbrWorker->enqueue(packets)) {
+                        error = "UDP-VBR source-PCR sender stopped";
+                        std::lock_guard<std::mutex> lock(errorMutex_);
+                        lastError_ = error;
+                        break;
+                    }
+                    // The dedicated worker updates per-output and total bytes
+                    // only after the physical UDP datagram has been sent.
+                    continue;
                 } else if (!flushPackets(
                         packets, output.rtp, output.packetizer.get(), *output.socket,
                         outputBytes_, error)) {
