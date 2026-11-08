@@ -1,3 +1,48 @@
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/time.h>
+
+namespace {
+// Linux zero-copy HLS media transfer. This function is only called after the
+// ordinary per-request middleware check and the existing OnDemand guard.
+// No URL or token is used to construct a filesystem path here.
+bool sendHlsFileZeroCopy(tcp::socket& socket,const std::filesystem::path& path,
+                         const http::response<http::string_body>& response,
+                         unsigned version,bool keepAlive){
+    const int source=::open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+    if(source<0)return false;
+    struct stat info{};
+    if(::fstat(source,&info)<0||!S_ISREG(info.st_mode)||
+       info.st_size<0||info.st_size>static_cast<off_t>(256U*1024U*1024U)){
+        ::close(source);return false;
+    }
+    http::response<http::empty_body> headers{response.result(),version};
+    for(const auto& field:response.base())
+        headers.set(field.name(),field.value());
+    headers.content_length(static_cast<std::uint64_t>(info.st_size));
+    headers.keep_alive(keepAlive);
+    struct timeval sendLimit{2,0};
+    ::setsockopt(socket.native_handle(),SOL_SOCKET,SO_SNDTIMEO,
+                 &sendLimit,sizeof(sendLimit));
+    try{
+        http::response_serializer<http::empty_body> writer{headers};
+        http::write_header(socket,writer);
+    }catch(...){::close(source);return false;}
+    off_t offset=0;
+    while(offset<info.st_size){
+        const auto sent=::sendfile(socket.native_handle(),source,&offset,
+            static_cast<std::size_t>(info.st_size-offset));
+        if(sent>0)continue;
+        if(sent<0&&errno==EINTR)continue;
+        ::close(source);return false;
+    }
+    ::close(source);
+    return true;
+}
+} // namespace
+
 HttpServer::HttpServer(boost::asio::io_context& ioc, ConfigManager& cfg, StreamManager& sm)
     : ioContext(ioc), sessionPool(kHttpSessionWorkers), qualityHistoryTimer(ioc),
       configManager(cfg), streamManager(sm) {
@@ -85,8 +130,17 @@ std::string panelCookieValue(const http::request<http::string_body>& req,
 } // namespace
 
 void HttpServer::handleSession(tcp::socket socket) {
+    // Reuse one connection for a bounded burst of HLS requests. A short
+    // idle timeout avoids pinning the fixed-size API/HTTP request pool for
+    // several seconds between 2-6s HLS segment fetches.
+    boost::beast::flat_buffer buffer;
+    for(unsigned hlsRequests=0;hlsRequests<8;++hlsRequests){
+    if(hlsRequests>0){
+        struct timeval idle{0,250000};
+        ::setsockopt(socket.native_handle(),SOL_SOCKET,SO_RCVTIMEO,
+                     &idle,sizeof(idle));
+    }
     try {
-        boost::beast::flat_buffer buffer;
         http::request_parser<http::string_body> parser;
         parser.body_limit(512ULL * 1024ULL * 1024ULL);
         http::read(socket, buffer, parser);
@@ -101,6 +155,7 @@ void HttpServer::handleSession(tcp::socket socket) {
         // the response makes HLS clients reuse a connection that no longer has a
         // request loop and can stall playlist/segment fetching after a few seconds.
         res.keep_alive(false);
+        bool hlsKeepAlive=false;
 
         const std::string target(req.target());
 
@@ -469,8 +524,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.result(http::status::forbidden);
                     res.set(http::field::content_type, "text/plain");
                     res.body() = "Stream access denied";
-                } else if (serveHlsFile(socket, target, res)) {
-                    // serveHlsFile filled the response.
+                } else {
+                    std::filesystem::path directFile;
+                    if(serveHlsFile(socket,target,res,&directFile)){
+                        hlsKeepAlive=res.result()==http::status::ok &&
+                            req.keep_alive() && hlsRequests<7;
+                        if(!directFile.empty()){
+                            if(!sendHlsFileZeroCopy(socket,directFile,res,req.version(),
+                                                    hlsKeepAlive))return;
+                            if(hlsKeepAlive)continue;
+                            return;
+                        }
+                    }
                 }
             } else if (target == "/epg.xml" || target == "/epg.xml.gz" ||
                        target == "/playlist.m3u") {
@@ -1088,7 +1153,9 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         }
 
         res.content_length(res.body().size());
+        res.keep_alive(hlsKeepAlive);
         http::write(socket, res);
+        if(!hlsKeepAlive)return;
     } catch (const std::exception& ex) {
         const std::string message = ex.what();
         if (message.find("bad method") != std::string::npos) {
@@ -1096,6 +1163,8 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         } else {
             std::cerr << "HTTP session failed: " << message << std::endl;
         }
+        return;
+    }
     }
 }
 

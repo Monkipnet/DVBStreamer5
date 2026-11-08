@@ -72,7 +72,9 @@ private:
     std::string handleDvbTune(const std::string& body, bool scan);
     std::string handleDvbAddChannels(const std::string& body);
     bool handleHttpStream(tcp::socket& socket, const std::string& target);
-    bool serveHlsFile(const tcp::socket& socket, const std::string& target, http::response<http::string_body>& res);
+    bool serveHlsFile(const tcp::socket& socket, const std::string& target,
+                      http::response<http::string_body>& res,
+                      std::filesystem::path* directFile = nullptr);
     std::string handleConfigExport();
     std::string handleConfigImport(const std::string& body);
     std::string handleSaveConfig(const std::string& body);

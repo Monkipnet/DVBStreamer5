@@ -474,6 +474,10 @@ target_link_libraries(dvbstreamer5_shared_vbr_test PRIVATE
     dvbstreamer5_media_core Threads::Threads)
 add_test(NAME shared_vbr_fanout COMMAND dvbstreamer5_shared_vbr_test)
 
+add_executable(dvbstreamer5_hls_cache_test tests/test_hls_file_cache.cpp)
+target_include_directories(dvbstreamer5_hls_cache_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME hls_bounded_file_cache COMMAND dvbstreamer5_hls_cache_test)
+
 target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
 target_link_libraries(DVBStreamer5 ZLIB::ZLIB PkgConfig::LIBCURL LibXml2::LibXml2)
 message(STATUS "XMLTV external download: libcurl, libxml2 and gzip enabled")

@@ -535,7 +535,10 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
     return true;
 }
 
-bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& target, http::response<http::string_body>& res) {
+bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& target,
+                              http::response<http::string_body>& res,
+                              std::filesystem::path* directFile) {
+    if(directFile)directFile->clear();
     std::string id;
     std::string fileName;
     if (!resolveHlsTarget(configManager.config.streams, target, id, fileName) ||
@@ -650,10 +653,26 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
             res.body() = "Not Found";
             return true;
         }
-        std::ifstream input(filePath, std::ios::binary);
-        std::ostringstream buffer;
-        buffer << input.rdbuf();
-        res.body() = buffer.str();
+        std::error_code sizeError;
+        const auto diskBytes=std::filesystem::file_size(filePath,sizeError);
+        if(sizeError){
+            res.result(http::status::not_found);
+            res.body()="Not Found";
+            return true;
+        }
+        if(directFile && filePath.extension()!=".m3u8" &&
+           diskBytes>dvbstreamer5::media::hls::HlsFileCache::kMaxFileBytes){
+            // Authorization/on-demand checks already completed above. The
+            // actual bytes are sent with sendfile() after MIME headers.
+            *directFile=filePath;
+        }else if(!dvbstreamer5::media::hls::HlsFileCache::instance()
+                     .readSmallFile(filePath,res.body())){
+            // A replaced/truncated file is retried on the next HLS request.
+            res.result(http::status::service_unavailable);
+            res.set("Retry-After","1");
+            res.body()="HLS file updating";
+            return true;
+        }
     }
     // Shared HLS segments remain unchanged; token is propagated into each
     // relative URI, including key and init-map resources.
