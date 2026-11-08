@@ -47,6 +47,31 @@ inline bool authorize(const AppConfig& c,const std::string& channel,
     dvbstreamer5::http::Response result;std::string error;
     return dvbstreamer5::http::get(url,opt,result,error) && result.status==200;
 }
+// The SRT listener supplies the peer's streamid. Forward its original
+// streamid and common Cesbo-style token= fields to HTTP middleware.
+inline std::string srtQuery(const std::string& streamid) {
+    std::string query = "streamid=" +
+        dvbstreamer5::http::encodeQueryComponent(streamid);
+    auto text = streamid;
+    if (text.rfind("#!::",0)==0) text.erase(0,4);
+    if (!text.empty() && text[0]=='?') text.erase(0,1);
+    std::size_t offset=0;
+    while(offset<text.size()) {
+        const auto end=text.find_first_of(",&",offset);
+        const auto field=text.substr(offset,end==std::string::npos?
+            std::string::npos:end-offset);
+        const auto eq=field.find('=');
+        if(eq!=std::string::npos) {
+            const auto name=field.substr(0,eq);
+            if(name=="token" || name=="access_token" || name=="auth")
+                query += "&" + name + "=" +
+                    dvbstreamer5::http::encodeQueryComponent(field.substr(eq+1));
+        }
+        if(end==std::string::npos)break;
+        offset=end+1;
+    }
+    return query;
+}
 inline void propagateHlsQuery(std::string& playlist,const std::string& query){
     if(query.empty()||query.size()>2048)return;
     auto withQuery=[&](const std::string& uri){

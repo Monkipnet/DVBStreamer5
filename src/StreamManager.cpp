@@ -1156,7 +1156,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                         return dvbstreamer5::stream_auth::authorize(conf,
                             currentStreamId,peerIp,"/srt/"+currentStreamId,
                             "SRT/1.5.7","",
-                            "streamid="+dvbstreamer5::http::encodeQueryComponent(peerSid));
+                            dvbstreamer5::stream_auth::srtQuery(peerSid));
                     }
                     return isClientAllowedForStream(currentStreamId,peerIp);
                 },
@@ -3314,6 +3314,9 @@ size_t StreamManager::enforceSubscriberAccess() {
     size_t count = 0;
     std::lock_guard<std::mutex> lock(managerMutex);
     for (const auto& [fd, session] : httpClients) {
+        // V381: backend-authorized HTTP clients are never disconnected by
+        // changes to the local IP subscriber lists.
+        if (configManager.config.streamAuthBackendEnabled) continue;
         if (!isClientAllowedForStream(session.streamId, session.clientIp)) {
             ::shutdown(fd, SHUT_RDWR);
             if (session.upstreamFd >= 0) ::shutdown(session.upstreamFd, SHUT_RDWR);
@@ -3321,6 +3324,12 @@ size_t StreamManager::enforceSubscriberAccess() {
         }
     }
     for (auto it = adHocSessions.begin(); it != adHocSessions.end();) {
+        const auto& protocol = it->second.protocol;
+        if (configManager.config.streamAuthBackendEnabled &&
+            (protocol == "http" || protocol == "hls" || protocol == "srt")) {
+            ++it;
+            continue;
+        }
         if (!isClientAllowedForStream(it->second.streamId, it->second.clientIp)) {
             it = adHocSessions.erase(it); ++count;
         } else ++it;
