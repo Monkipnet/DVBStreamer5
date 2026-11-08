@@ -146,7 +146,7 @@ void HttpServer::scheduleHlsKeepAlive(
     auto resume=[this,live,buffered,requests,timer,done]() mutable {
         if(done->exchange(true,std::memory_order_acq_rel))return;
         boost::system::error_code ignored;
-        timer->cancel(ignored);
+        timer->cancel();
         try {
             boost::asio::post(sessionPool,[this,live,buffered,requests]() mutable {
                 handleSession(std::move(*live),buffered,requests);
@@ -168,7 +168,7 @@ void HttpServer::scheduleHlsKeepAlive(
             if(ec){
                 if(!done->exchange(true,std::memory_order_acq_rel)){
                     boost::system::error_code ignored;
-                    timer->cancel(ignored);
+                    timer->cancel();
                     live->close(ignored);
                 }
                 return;
