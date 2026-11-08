@@ -58,5 +58,27 @@ int main(){
     check(!fault,"VBR observer signalled an error");
     check(!invalid,"VBR shared observer corrupted/reordered TS packets");
     check(received==data.size(),"VBR shared observer lost/duplicated packets");
+    // A 1500ms HLS callback cannot delay the physical UDP output.
+    {
+        UdpSocket receiver,sender;
+        std::string error;
+        check(receiver.openReceiver("127.0.0.1",0,"","",0,error),
+              "loopback UDP receiver unavailable");
+        check(sender.openSender("127.0.0.1",receiver.localPort(),"",error),
+              "loopback UDP sender unavailable");
+        PcrVbrUdpOutputWorker worker(&sender,1,nullptr,nullptr,
+            [&](const std::string&){fault=true;},"vbr-isolated-udp-test",
+            [&](const std::uint8_t*,std::size_t){
+                std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            });
+        check(worker.enqueue(std::vector<mpegts::Packet>{packet(0)}),
+              "single packet enqueue failed");
+        std::array<std::uint8_t,1500> datagram{};
+        std::size_t n=0;
+        check(receiver.receive(datagram.data(),datagram.size(),n,1300,error)&&n==188,
+              "slow HLS observer blocked physical UDP sender");
+        worker.stop();
+        check(!fault,"slow observer callback reported a transport fault");
+    }
     std::cout<<"Shared VBR fanout: OK ("<<received<<" packets)\n";
 }

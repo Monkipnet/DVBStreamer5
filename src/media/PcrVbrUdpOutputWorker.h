@@ -34,6 +34,7 @@ public:
     void stop()noexcept;
 private:
     void run()noexcept;
+    void dispatchObserver()noexcept;
     UdpSocket* socket_=nullptr;
     std::size_t index_=0;
     std::atomic<std::uint64_t>* globalBytes_=nullptr;
@@ -49,6 +50,15 @@ private:
     std::chrono::steady_clock::time_point firstQueued_{};
     bool stop_=false;
     bool restartClock_=false;
+    // Fanout operations may block (e.g. HLS segment writes). A bounded queue
+    // prevents them from delaying the source-PCR UDP sender clock.
+    std::mutex observerMutex_;
+    std::condition_variable observerCondition_;
+    std::deque<std::vector<std::uint8_t>> observerQueue_;
+    std::size_t observerQueuedBytes_=0;
+    std::uint64_t observerDroppedBytes_=0;
+    bool observerStop_=false;
+    std::thread observerWorker_;
     std::thread worker_;
 };
 

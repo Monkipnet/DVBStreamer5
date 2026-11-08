@@ -10,6 +10,7 @@ using namespace std::chrono_literals;
 using dvbstreamer5::media::mpegts::Packet;
 namespace {
 constexpr std::size_t kMaxPackets=(8*1024*1024)/188;
+constexpr std::size_t kMaximumObserverBytes=2U*1024U*1024U;
 // Keep VBR startup bounded. The former 2.2s no-PCR hold delayed
 // perfectly valid single-packet streams and failed the established
 // native UDP relay regression. PCR-capable feeds still use the source
@@ -24,13 +25,50 @@ PcrVbrUdpOutputWorker::PcrVbrUdpOutputWorker(
     std::atomic<std::uint64_t>* output,ErrorCallback onError,
     const std::string& streamId,ObserverCallback observer)
     :socket_(socket),index_(index),globalBytes_(global),outputBytes_(output),
-     onError_(std::move(onError)),observer_(std::move(observer)),streamId_(streamId),
-     worker_(&PcrVbrUdpOutputWorker::run,this){}
+     onError_(std::move(onError)),observer_(std::move(observer)),streamId_(streamId){
+    if(observer_)
+        observerWorker_=std::thread(&PcrVbrUdpOutputWorker::dispatchObserver,this);
+    try {
+        worker_=std::thread(&PcrVbrUdpOutputWorker::run,this);
+    }catch(...){
+        {std::lock_guard<std::mutex> lock(observerMutex_);observerStop_=true;}
+        observerCondition_.notify_all();
+        if(observerWorker_.joinable())observerWorker_.join();
+        throw;
+    }
+}
 PcrVbrUdpOutputWorker::~PcrVbrUdpOutputWorker(){stop();}
 void PcrVbrUdpOutputWorker::stop()noexcept{
     {std::lock_guard<std::mutex> lock(mutex_);stop_=true;}
     cv_.notify_all();
     if(worker_.joinable())worker_.join();
+    {std::lock_guard<std::mutex> lock(observerMutex_);observerStop_=true;}
+    observerCondition_.notify_all();
+    if(observerWorker_.joinable())observerWorker_.join();
+}
+void PcrVbrUdpOutputWorker::dispatchObserver()noexcept {
+    for(;;){
+        std::vector<std::uint8_t> bytes;
+        {
+            std::unique_lock<std::mutex> lock(observerMutex_);
+            observerCondition_.wait(lock,[&]{
+                return observerStop_||!observerQueue_.empty();
+            });
+            if(observerStop_)break;
+            bytes=std::move(observerQueue_.front());
+            observerQueuedBytes_-=bytes.size();
+            observerQueue_.pop_front();
+        }
+        try{
+            observer_(bytes.data(),bytes.size());
+        }catch(const std::exception& e){
+            if(onError_)onError_("VBR fanout callback: "+std::string(e.what()));
+            break;
+        }catch(...){
+            if(onError_)onError_("VBR fanout callback failed");
+            break;
+        }
+    }
 }
 bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
     if(in.empty())return true;
@@ -138,18 +176,7 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         const auto dropped=droppedBytes_;
         lock.unlock();
         std::string error;
-        if(observer_){
-            try{observer_(buffer.data(),count*188);}
-            catch(const std::exception& ex){
-                if(onError_)onError_("VBR observer: "+std::string(ex.what()));
-                return;
-            }catch(...){
-                if(onError_)onError_("VBR observer callback exception");
-                return;
-            }
-        }
-        // Observer-only sender: the media is already delivered to the shared
-        // fanout; no UDP socket or second transport stream is needed.
+        // The network socket is always served before any observer work.
         if(socket_){
             if(!socket_->send(buffer.data(),count*188,error)){
                 if(onError_)onError_("UDP-VBR PCR sender: "+error);
@@ -157,6 +184,23 @@ void PcrVbrUdpOutputWorker::run()noexcept{
             }
             if(globalBytes_)globalBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
             if(outputBytes_)outputBytes_->fetch_add(count*188ULL,std::memory_order_relaxed);
+        }
+        if(observer_){
+            const std::size_t bytes=count*188;
+            std::lock_guard<std::mutex> guard(observerMutex_);
+            if(!observerStop_){
+                // Only observer copies may be discarded when a slow output
+                // exceeds 2 MiB; physical UDP transport remains unaffected.
+                while(observerQueuedBytes_+bytes>kMaximumObserverBytes &&
+                      !observerQueue_.empty()){
+                    observerDroppedBytes_+=observerQueue_.front().size();
+                    observerQueuedBytes_-=observerQueue_.front().size();
+                    observerQueue_.pop_front();
+                }
+                observerQueue_.emplace_back(buffer.data(),buffer.data()+bytes);
+                observerQueuedBytes_+=bytes;
+                observerCondition_.notify_one();
+            }
         }
         ++datagrams;
         if(now-lastReport>15s){
@@ -166,6 +210,7 @@ void PcrVbrUdpOutputWorker::run()noexcept{
                      <<" queue_packets="<<queued
                      <<" late_reanchors="<<lateResets
                      <<" dropped_bytes="<<dropped
+                     <<" observer_dropped_bytes="<<observerDroppedBytes_
                      <<" datagrams="<<datagrams<<std::endl;
             lastReport=now;
         }
