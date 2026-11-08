@@ -19,6 +19,7 @@ add_executable(media_core_tests
     ../../src/media/LinuxDvbInput.cpp
     ../../src/media/NativePreviewHub.cpp
     ../../src/media/NativeUdpRelay.cpp
+    ../../src/media/PcrVbrUdpOutputWorker.cpp
     ../../src/NativeHttpClient.cpp
 )
 target_include_directories(media_core_tests PRIVATE ../../src ../../third_party)
