@@ -870,6 +870,15 @@ void testNativeUdpTsRelay() {
     assert(size == expected.size());
     assert(std::equal(expected.begin(), expected.end(), received.begin()));
     assert(caCalls.load(std::memory_order_relaxed) == 1);
+    // V396: observer is deliberately on a second worker to keep HLS
+    // disk I/O / slow SRT users off the physical UDP send deadline.
+    // Its callback may run just after the UDP receiver wakes up.
+    const auto observerDeadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (observerCalls.load(std::memory_order_relaxed) < 1 &&
+           std::chrono::steady_clock::now() < observerDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     assert(observerCalls.load(std::memory_order_relaxed) == 1);
     const auto counterDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (relay.outputBytes() < expected.size() &&

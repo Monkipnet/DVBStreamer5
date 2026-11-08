@@ -15,7 +15,10 @@ constexpr std::size_t kMaximumObserverBytes=2U*1024U*1024U;
 // perfectly valid single-packet streams and failed the established
 // native UDP relay regression. PCR-capable feeds still use the source
 // PCR interval for all timed sends, without averaging the arrival rate.
-constexpr auto kPrebuffer=350ms;
+// Source-PCR feeds need enough reservoir to smooth 0.5-1.0s HTTP bursts;
+// the former averaged HTTP rate shaper is deliberately not in this path.
+// Do not impose this delay on legacy MPEG-TS with no PCR clock.
+constexpr auto kPcrPrebuffer=1200ms;
 constexpr auto kMaxNoPcrWait=550ms;
 constexpr auto kMaximumLate=80ms;
 constexpr std::uint64_t kFallbackBps=4000000ULL;
@@ -121,11 +124,11 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         if(restartClock_){started=false;restartClock_=false;}
         if(!started){
             const auto elapsed=now-firstQueued_;
-            if(elapsed<kPrebuffer ||
-               (!clock_.ready() && elapsed<kMaxNoPcrWait)){
-                const auto hold=firstQueued_+
-                    (elapsed<kPrebuffer?kPrebuffer:kMaxNoPcrWait);
-                cv_.wait_until(lock,hold,[&]{return stop_||restartClock_;});
+            const auto reservoir=clock_.ready()
+                ? kPcrPrebuffer : kMaxNoPcrWait;
+            if(elapsed<reservoir){
+                cv_.wait_until(lock,firstQueued_+reservoir,
+                    [&]{return stop_||restartClock_;});
                 continue;
             }
             started=true;
