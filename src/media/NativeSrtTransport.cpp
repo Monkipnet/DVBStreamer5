@@ -1,4 +1,5 @@
 #include "media/NativeSrtTransport.h"
+#include "StreamAuthSessions.h"
 
 #include <algorithm>
 #include <array>
@@ -409,14 +410,14 @@ bool NativeSrtOutput::popChunk(std::vector<std::uint8_t>&c){std::unique_lock<std
 void NativeSrtOutput::clearQueuedData(){std::lock_guard<std::mutex>l(queueMutex_);for(auto&c:queue_)droppedBytes_+=c.size();queue_.clear();queuedBytes_=0;}
 void NativeSrtOutput::run(){
     if(lower(config_.mode)=="listener"){
-        struct Peer{SrtSocket socket=kInvalidSocket;std::string ip;};
+        struct Peer{SrtSocket socket=kInvalidSocket;std::string ip;std::string authSessionId;};
         Socket listener;std::string e;if(!createListenerSocket(config_,listener,e)){setError(e);running_=false;connected_=false;return;}
-        struct PendingAuth {SrtSocket socket;std::string ip;std::future<bool> decision;};
+        struct PendingAuth {SrtSocket socket;std::string ip;std::string sessionId;std::future<bool> decision;};
         std::vector<PendingAuth> pendingAuth;
         std::vector<Peer> peers;std::vector<std::uint8_t> pending;bool first=true;
         std::uint64_t observedGeneration=sourceGeneration_.load(std::memory_order_acquire);
         std::size_t payload=static_cast<std::size_t>(std::max(188,config_.payloadSize));payload-=payload%188;if(!payload)payload=188;
-        auto removePeer=[&](std::size_t i,const std::string& reason){if(i>=peers.size())return;const std::string ip=peers[i].ip;if(peers[i].socket!=kInvalidSocket)api().close(peers[i].socket);peers.erase(peers.begin()+static_cast<std::ptrdiff_t>(i));connected_=!peers.empty();if(!reason.empty())setError(reason);if(onDisconnected_)onDisconnected_(ip);};
+        auto removePeer=[&](std::size_t i,const std::string& reason){if(i>=peers.size())return;const std::string ip=peers[i].ip;const auto authId=peers[i].authSessionId;if(peers[i].socket!=kInvalidSocket)api().close(peers[i].socket);peers.erase(peers.begin()+static_cast<std::ptrdiff_t>(i));connected_=!peers.empty();if(!reason.empty())setError(reason);if(!authId.empty())dvbstreamer5::stream_auth::SessionRegistry::instance().detach(authId);if(onDisconnected_)onDisconnected_(ip);};
         while(!stopRequested_){
             for(;;){
                 if(pendingAuth.size()>=16)break;
@@ -432,7 +433,10 @@ void NativeSrtOutput::run(){
                 if(peerAllowed_ && config_.asyncPeerAuthorization){
                     const auto allow=peerAllowed_;
                     try {
-                        pendingAuth.push_back({client,peer,std::async(std::launch::async,
+                        const auto sid=dvbstreamer5::stream_auth::SessionRegistry::idFor(
+                            "srt",config_.diagnosticTileId,peer,
+                            dvbstreamer5::stream_auth::srtQuery(peerSid));
+                        pendingAuth.push_back({client,peer,sid,std::async(std::launch::async,
                             [allow,peer,peerSid](){
                                 try{return allow(peer,peerSid);}catch(...){return false;}
                             })});
@@ -446,7 +450,13 @@ void NativeSrtOutput::run(){
                     api().close(client);setError("SRT peer rejected: "+peer);continue;
                 }
                 if(!first)++reconnects_;first=false;
-                peers.push_back({client,peer});connected_=true;setError({});
+                const auto authId=dvbstreamer5::stream_auth::SessionRegistry::idFor(
+                    "srt",config_.diagnosticTileId,peer,
+                    dvbstreamer5::stream_auth::srtQuery(peerSid));
+                auto& registry=dvbstreamer5::stream_auth::SessionRegistry::instance();
+                const auto attached=registry.exists(authId)?authId:std::string{};
+                if(!attached.empty())registry.attach(attached);
+                peers.push_back({client,peer,attached});connected_=true;setError({});
                 if(onConnected_)onConnected_(peer);
             }
             for(std::size_t i=0;i<pendingAuth.size();){
@@ -458,7 +468,11 @@ void NativeSrtOutput::run(){
                 const auto peer=pendingAuth[i].ip;
                 if(allowed && !stopRequested_){
                     if(!first)++reconnects_;first=false;
-                    peers.push_back({client,peer});connected_=true;setError({});
+                    const auto attached=pendingAuth[i].sessionId;
+                    auto& registry=dvbstreamer5::stream_auth::SessionRegistry::instance();
+                    const auto validId=registry.exists(attached)?attached:std::string{};
+                    if(!validId.empty())registry.attach(validId);
+                    peers.push_back({client,peer,validId});connected_=true;setError({});
                     if(onConnected_)onConnected_(peer);
                 }else{
                     api().close(client);setError("SRT middleware denied peer: "+peer);
@@ -472,7 +486,18 @@ void NativeSrtOutput::run(){
                 observedGeneration=currentGeneration;
                 c.clear();
             }
-            for(std::size_t i=0;i<peers.size();){if(api().state(peers[i].socket)==SRTS_CONNECTED){++i;continue;}removePeer(i,"SRT listener peer disconnected");}
+            for(std::size_t i=0;i<peers.size();){
+                if(!peers[i].authSessionId.empty()){
+                    auto& registry=dvbstreamer5::stream_auth::SessionRegistry::instance();
+                    if(!registry.isAllowed(peers[i].authSessionId)){
+                        removePeer(i,"SRT middleware session revoked");
+                        continue;
+                    }
+                    registry.touch(peers[i].authSessionId);
+                }
+                if(api().state(peers[i].socket)==SRTS_CONNECTED){++i;continue;}
+                removePeer(i,"SRT listener peer disconnected");
+            }
             if(peers.empty()){const auto discarded=c.size()+pending.size();droppedBytes_+=discarded;noPeerDiscardBytes_+=discarded;pending.clear();continue;}
             if(c.empty())continue;
             pending.insert(pending.end(),c.begin(),c.end());std::size_t off=0;
@@ -483,7 +508,7 @@ void NativeSrtOutput::run(){
             candidate.decision.wait();
             if(candidate.socket!=kInvalidSocket)api().close(candidate.socket);
         }
-        for(auto& peer:peers){if(peer.socket!=kInvalidSocket)api().close(peer.socket);if(onDisconnected_)onDisconnected_(peer.ip);}connected_=false;droppedBytes_+=pending.size();clearQueuedData();running_=false;return;
+        for(auto& peer:peers){if(peer.socket!=kInvalidSocket)api().close(peer.socket);if(!peer.authSessionId.empty())dvbstreamer5::stream_auth::SessionRegistry::instance().detach(peer.authSessionId);if(onDisconnected_)onDisconnected_(peer.ip);}connected_=false;droppedBytes_+=pending.size();clearQueuedData();running_=false;return;
     }
     bool first=true;std::vector<std::uint8_t>pending;
     std::uint64_t observedGeneration=sourceGeneration_.load(std::memory_order_acquire);

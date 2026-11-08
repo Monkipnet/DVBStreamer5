@@ -1154,9 +1154,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                 [this, currentStreamId, listener=srtConfig.mode=="listener"](
                     const std::string& peerIp,const std::string& peerSid){
                     const auto& conf=configManager.config;
-                    if(listener && dvbstreamer5::stream_auth::enabled(conf)){
-                        return dvbstreamer5::stream_auth::authorize(conf,
-                            currentStreamId,peerIp,"/srt/"+currentStreamId,
+                    if(listener && dvbstreamer5::stream_auth::enabled(conf,currentStreamId)){
+                        return dvbstreamer5::stream_auth::SessionRegistry::instance().check(
+                            conf,currentStreamId,peerIp,"srt","/srt/"+currentStreamId,
                             "SRT/1.5.7","",
                             dvbstreamer5::stream_auth::srtQuery(peerSid));
                     }
