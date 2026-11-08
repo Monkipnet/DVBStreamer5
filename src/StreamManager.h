@@ -337,6 +337,7 @@ struct StreamState {
 };
 
 class ExternalXmltvManager;
+namespace dvbstreamer5::media::network { class HttpTsEpollDispatcher; }
 
 class StreamManager {
 public:
@@ -520,6 +521,7 @@ private:
         std::string authSessionId; // set only for middleware-authorized HTTP TS
     };
     std::map<int, HttpClientSession> httpClients;
+    std::unique_ptr<dvbstreamer5::media::network::HttpTsEpollDispatcher> httpEpollDispatcher_;
     std::map<std::string, HttpClientSession> adHocSessions;
     mutable std::mutex onDemandMutex;
     std::map<std::string, std::shared_ptr<std::mutex>> onDemandStartMutexes;
