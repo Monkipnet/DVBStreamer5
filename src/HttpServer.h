@@ -2,6 +2,7 @@
 
 #include <boost/asio.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/core/flat_buffer.hpp>
 #include <jsoncpp/json/json.h>
 #include <atomic>
 #include <chrono>
