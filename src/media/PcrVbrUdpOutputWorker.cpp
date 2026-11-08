@@ -10,8 +10,12 @@ using namespace std::chrono_literals;
 using dvbstreamer5::media::mpegts::Packet;
 namespace {
 constexpr std::size_t kMaxPackets=(8*1024*1024)/188;
-constexpr auto kPrebuffer=1200ms;
-constexpr auto kMaxNoPcrWait=2200ms;
+// Keep VBR startup bounded. The former 2.2s no-PCR hold delayed
+// perfectly valid single-packet streams and failed the established
+// native UDP relay regression. PCR-capable feeds still use the source
+// PCR interval for all timed sends, without averaging the arrival rate.
+constexpr auto kPrebuffer=350ms;
+constexpr auto kMaxNoPcrWait=550ms;
 constexpr auto kMaximumLate=80ms;
 constexpr std::uint64_t kFallbackBps=4000000ULL;
 }
