@@ -58,7 +58,8 @@ inline void propagateHlsQuery(std::string& playlist,const std::string& query){
     std::string result;result.reserve(playlist.size()+256);
     std::size_t pos=0;
     while(pos<playlist.size()){
-        const auto end=playlist.find('\n',pos),nl=end!=std::string::npos;
+        const auto end=playlist.find('\n',pos);
+        const bool nl=end!=std::string::npos;
         std::string line=playlist.substr(pos,nl?end-pos:std::string::npos);
         if(!line.empty()&&line.back()=='\r')line.pop_back();
         if(!line.empty()&&line[0]!='#')line=withQuery(line);
