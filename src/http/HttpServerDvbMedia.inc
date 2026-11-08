@@ -523,7 +523,15 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
             return false;
         }
     }
-    streamManager.addHttpClient(id, fd, endpointError ? "" : clientIp, previewToken);
+    std::string middlewareSession;
+    if(publicHttp && !endpointError &&
+       dvbstreamer5::stream_auth::enabled(configManager.config,id)){
+        const auto q=target.find('?');
+        middlewareSession=dvbstreamer5::stream_auth::SessionRegistry::idFor(
+            "http",id,clientIp,q==std::string::npos?"":target.substr(q+1));
+    }
+    streamManager.addHttpClient(id, fd, endpointError ? "" : clientIp,
+                                previewToken,middlewareSession);
     return true;
 }
 

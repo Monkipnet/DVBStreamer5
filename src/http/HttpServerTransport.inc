@@ -216,6 +216,8 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             data["enabled"]=configManager.config.streamAuthBackendEnabled;
             data["backend_url"]=configManager.config.streamAuthBackendUrl;
             data["timeout_ms"]=configManager.config.streamAuthBackendTimeoutMs;
+            data["recheck_minutes"]=configManager.config.streamAuthRecheckMinutes;
+            data["end_url"]=configManager.config.streamAuthEndUrl;
             data["ip_filter_effective"]=!configManager.config.streamAuthBackendEnabled;
             data["failure_policy"]="deny";
             data["protocols"]="http,hls,srt";
@@ -242,23 +244,34 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 const bool enabled=data["enabled"].asBool();
                 const std::string url=data["backend_url"].asString();
                 const int timeout=std::clamp(data.get("timeout_ms",1200).asInt(),100,3000);
-                const bool safeUrl=url.size()<=2048 &&
-                    url.find_first_of("\r\n#")==std::string::npos &&
-                    (url.empty()||url.rfind("https://",0)==0||url.rfind("http://",0)==0);
-                if (!safeUrl || (enabled && url.empty())) {
+                const int recheck=std::clamp(data.get("recheck_minutes",5).asInt(),1,60);
+                const std::string endUrl=data.get("end_url","").asString();
+                const auto validUrl=[](const std::string& value){
+                    return value.size()<=2048 &&
+                       value.find_first_of("\r\n#")==std::string::npos &&
+                       (value.empty()||value.rfind("https://",0)==0||
+                        value.rfind("http://",0)==0);
+                };
+                if (!validUrl(url) || !validUrl(endUrl) || (enabled && url.empty())) {
                     res.result(http::status::bad_request);
                     reply["error"]="HTTP(S) backend URL required when enabled";
                 } else {
                     const bool oldEnabled=configManager.config.streamAuthBackendEnabled;
                     const std::string oldUrl=configManager.config.streamAuthBackendUrl;
                     const int oldTimeout=configManager.config.streamAuthBackendTimeoutMs;
+                    const int oldRecheck=configManager.config.streamAuthRecheckMinutes;
+                    const auto oldEnd=configManager.config.streamAuthEndUrl;
                     configManager.config.streamAuthBackendEnabled=enabled;
                     configManager.config.streamAuthBackendUrl=url;
                     configManager.config.streamAuthBackendTimeoutMs=timeout;
+                    configManager.config.streamAuthRecheckMinutes=recheck;
+                    configManager.config.streamAuthEndUrl=endUrl;
                     if (!configManager.save()) {
                         configManager.config.streamAuthBackendEnabled=oldEnabled;
                         configManager.config.streamAuthBackendUrl=oldUrl;
                         configManager.config.streamAuthBackendTimeoutMs=oldTimeout;
+                        configManager.config.streamAuthRecheckMinutes=oldRecheck;
+                        configManager.config.streamAuthEndUrl=oldEnd;
                         res.result(http::status::internal_server_error);
                         reply["error"]="Failed to save stream authentication";
                     } else {
@@ -274,6 +287,41 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             res.content_length(res.body().size());
             http::write(socket,res);
             return;
+        }
+        // Admin-only viewer management. Never return tokens/credentials.
+        if(target=="/api/stream-auth/sessions" && req.method()==http::verb::get){
+            Json::Value data(Json::objectValue);
+            data["result"]="ok";
+            data["sessions"]=dvbstreamer5::stream_auth::SessionRegistry::instance().listing();
+            Json::StreamWriterBuilder writer;
+            res.set(http::field::content_type,"application/json; charset=UTF-8");
+            res.body()=Json::writeString(writer,data);
+            res.content_length(res.body().size());http::write(socket,res);return;
+        }
+        if(target=="/api/stream-auth/sessions/disconnect" &&
+           req.method()==http::verb::post){
+            Json::Value payload,reply(Json::objectValue);
+            Json::CharReaderBuilder reader;std::string errors;
+            std::istringstream body(req.body());
+            if(req.body().size()>4096 ||
+               !Json::parseFromStream(reader,body,&payload,&errors) ||
+               !payload.isObject() || !payload["session_id"].isString() ||
+               payload["session_id"].asString().size()>128){
+                res.result(http::status::bad_request);
+                reply["error"]="Invalid session ID";
+            }else{
+                const std::string sid=payload["session_id"].asString();
+                const bool revoked=
+                    dvbstreamer5::stream_auth::SessionRegistry::instance().revoke(sid);
+                reply["result"]=revoked?"ok":"not_found";
+                reply["http_disconnected"]=Json::UInt64(
+                    revoked?streamManager.disconnectAuthSession(sid):0);
+                if(!revoked)res.result(http::status::not_found);
+            }
+            Json::StreamWriterBuilder writer;
+            res.set(http::field::content_type,"application/json; charset=UTF-8");
+            res.body()=Json::writeString(writer,reply);
+            res.content_length(res.body().size());http::write(socket,res);return;
         }
         if (target == "/api/panel/logout") {
             res.set(http::field::content_type, "application/json");
@@ -1173,12 +1221,16 @@ bool HttpServer::isStreamClientAllowed(const tcp::socket& socket, const std::str
     std::string fileName;
     resolveHlsTarget(configManager.config.streams, target, streamId, fileName);
   }
-  if (dvbstreamer5::stream_auth::enabled(configManager.config)) {
+  if (dvbstreamer5::stream_auth::enabled(configManager.config,streamId)) {
     const auto q=target.find('?');
     const auto agent=request.find(http::field::user_agent);
     const auto host=request.find(http::field::host);
-    return dvbstreamer5::stream_auth::authorize(configManager.config,
-        streamId,clientIp,q==std::string::npos?target:target.substr(0,q),
+    std::string hlsId,hlsFile;
+    const std::string protocol=resolveHlsTarget(configManager.config.streams,
+        target,hlsId,hlsFile)?"hls":"http";
+    return dvbstreamer5::stream_auth::SessionRegistry::instance().check(
+        configManager.config,streamId,clientIp,protocol,
+        q==std::string::npos?target:target.substr(0,q),
         agent==request.end()?"":std::string(agent->value()),
         host==request.end()?"":std::string(host->value()),
         q==std::string::npos?"":target.substr(q+1));

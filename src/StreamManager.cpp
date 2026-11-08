@@ -1,5 +1,6 @@
 #include "StreamManager.h"
 #include "StreamAuthBackend.h"
+#include "StreamAuthSessions.h"
 
 #include "CardManager.h"
 #include "CaBackend.h"
@@ -2875,7 +2876,8 @@ std::map<std::string, StreamState*> StreamManager::snapshot() {
 }
 
 bool StreamManager::addHttpClient(const std::string& id, int fd, const std::string& clientIp,
-                                  const std::string& previewSession) {
+                                  const std::string& previewSession,
+                                  const std::string& authSessionId) {
     std::shared_ptr<dvbstreamer5::media::network::NativePreviewHub> hub;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
@@ -2974,9 +2976,13 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
         std::lock_guard<std::mutex> lock(managerMutex);
         httpClients[fd] = {id, normalizeIpAddress(clientIp), "mpegts",
                            std::chrono::steady_clock::now(), upstreamFd, previewSession};
+        httpClients[fd].authSessionId=authSessionId;
     }
+    if(!authSessionId.empty())
+        dvbstreamer5::stream_auth::SessionRegistry::instance().attach(authSessionId);
     try {
-        std::thread([this, hub, fd, upstreamFd, id, noDelayActive, previewSession]() {
+        std::thread([this, hub, fd, upstreamFd, id, noDelayActive, previewSession,
+                     authSessionId]() {
             std::array<char, 64 * 1024> buffer{};
             const char* diagnosticId =
                 std::getenv("DVBSTREAMER5_DIAG_INPUT_STREAM_ID");
@@ -3004,6 +3010,14 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             for (;;) {
                 const ssize_t n = ::read(upstreamFd, buffer.data(), buffer.size());
                 if (n > 0) {
+                    if(!authSessionId.empty()) {
+                        auto& registry=dvbstreamer5::stream_auth::SessionRegistry::instance();
+                        if(!registry.isAllowed(authSessionId)){
+                            disconnectReason="middleware_session_revoked";
+                            break;
+                        }
+                        registry.touch(authSessionId);
+                    }
                     const auto readAt = std::chrono::steady_clock::now();
                     if (diagnostic && lastRead !=
                         std::chrono::steady_clock::time_point{}) {
@@ -3143,8 +3157,12 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
             hub->unsubscribe(upstreamFd);
             ::close(upstreamFd);
             ::close(fd);
+            if(!authSessionId.empty())
+                dvbstreamer5::stream_auth::SessionRegistry::instance().detach(authSessionId);
         }).detach();
     } catch (...) {
+        if(!authSessionId.empty())
+            dvbstreamer5::stream_auth::SessionRegistry::instance().detach(authSessionId);
         std::lock_guard<std::mutex> lock(managerMutex);
         httpClients.erase(fd);
         hub->unsubscribe(upstreamFd);
@@ -3279,6 +3297,19 @@ std::vector<ActiveStreamSession> StreamManager::activeStreamSessions() {
     return result;
 }
 
+size_t StreamManager::disconnectAuthSession(const std::string& sessionId) {
+    if(sessionId.empty())return 0;
+    std::lock_guard<std::mutex> lock(managerMutex);
+    std::size_t count=0;
+    for(const auto& [fd,session]:httpClients){
+        if(session.authSessionId!=sessionId)continue;
+        ::shutdown(fd,SHUT_RDWR);
+        if(session.upstreamFd>=0)::shutdown(session.upstreamFd,SHUT_RDWR);
+        ++count;
+    }
+    return count;
+}
+
 size_t StreamManager::resetHttpSessions(const std::string& clientIp) {
     const std::string ip = normalizeIpAddress(clientIp);
     size_t count = 0;
@@ -3317,7 +3348,7 @@ size_t StreamManager::enforceSubscriberAccess() {
     for (const auto& [fd, session] : httpClients) {
         // V381: backend-authorized HTTP clients are never disconnected by
         // changes to the local IP subscriber lists.
-        if (configManager.config.streamAuthBackendEnabled) continue;
+        if (dvbstreamer5::stream_auth::enabled(configManager.config,session.streamId)) continue;
         if (!isClientAllowedForStream(session.streamId, session.clientIp)) {
             ::shutdown(fd, SHUT_RDWR);
             if (session.upstreamFd >= 0) ::shutdown(session.upstreamFd, SHUT_RDWR);
@@ -3326,7 +3357,8 @@ size_t StreamManager::enforceSubscriberAccess() {
     }
     for (auto it = adHocSessions.begin(); it != adHocSessions.end();) {
         const auto& protocol = it->second.protocol;
-        if (configManager.config.streamAuthBackendEnabled &&
+        if (dvbstreamer5::stream_auth::enabled(
+                configManager.config,it->second.streamId) &&
             (protocol == "http" || protocol == "hls" || protocol == "srt")) {
             ++it;
             continue;

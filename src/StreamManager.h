@@ -370,7 +370,8 @@ public:
     std::map<std::string, StreamState*> snapshot();
 
     bool addHttpClient(const std::string& id, int fd, const std::string& clientIp,
-                       const std::string& previewSession = {});
+                       const std::string& previewSession = {},
+                       const std::string& authSessionId = {});
     bool closePreviewSession(const std::string& id, const std::string& previewSession);
     bool addStreamSession(const std::string& streamId, const std::string& clientIp,
                           const std::string& protocol);
@@ -380,6 +381,7 @@ public:
     size_t activeSubscriberSessions(const SubscriberConfig& subscriber);
     std::vector<ActiveStreamSession> activeStreamSessions();
     size_t resetHttpSessions(const std::string& clientIp);
+    size_t disconnectAuthSession(const std::string& sessionId);
     size_t enforceSubscriberAccess();
     size_t restartSrtOutputsForStreams(const std::vector<std::string>& streamIds);
     size_t restartAllSrtOutputs();
@@ -515,6 +517,7 @@ private:
         // HLS and individual HTTP socket sessions always use one logical connection.
         std::size_t connectionCount = 1;
         std::string previewSession;
+        std::string authSessionId; // set only for middleware-authorized HTTP TS
     };
     std::map<int, HttpClientSession> httpClients;
     std::map<std::string, HttpClientSession> adHocSessions;

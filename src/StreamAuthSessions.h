@@ -211,6 +211,11 @@ public:
         wake_.notify_all();
         return okay;
     }
+    bool exists(const std::string& id) const {
+        if(id.empty())return false;
+        std::lock_guard<std::mutex> lock(mutex_);
+        return sessions_.find(id)!=sessions_.end();
+    }
     bool isAllowed(const std::string& id) const {
         if(id.empty())return true;
         std::lock_guard<std::mutex> lock(mutex_);
