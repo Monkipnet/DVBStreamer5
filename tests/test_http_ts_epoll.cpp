@@ -49,12 +49,33 @@ int main(){
             }
             assert(output==input);
         }
+        // Token revocation must close only that one HTTP viewer. The
+        // epoll worker also notices revoked sessions on idle streams.
+        int revocableMedia[2]={-1,-1},revocableNetwork[2]={-1,-1};
+        assert(::socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,revocableMedia)==0);
+        assert(::socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,revocableNetwork)==0);
+        std::atomic<bool> authorized{true};
+        std::atomic<int> revoked{0};
+        assert(dispatcher.add(revocableNetwork[0],revocableMedia[0],
+            [&](const char* reason,std::uint64_t){
+                if(std::string(reason)=="middleware_session_revoked")++revoked;
+                ::close(revocableNetwork[0]);
+                ::close(revocableMedia[0]);
+                ++closed;
+            },
+            [&]{return authorized.load(std::memory_order_acquire);}));
+        authorized.store(false,std::memory_order_release);
+        for(int wait=0;wait<35 && !revoked.load();++wait)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        assert(revoked.load()==1);
+        ::close(revocableMedia[1]);
+        ::close(revocableNetwork[1]);
         for(auto& pair:pairs){
             ::close(pair.producer);
             ::close(pair.receiver);
         }
         dispatcher.stop();
     }
-    assert(closed==static_cast<int>(pairs.size()));
+    assert(closed==static_cast<int>(pairs.size())+1);
     std::cout<<"HTTP TS shared epoll delivery: OK, clients="<<closed<<"\n";
 }

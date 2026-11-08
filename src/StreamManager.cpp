@@ -3006,6 +3006,13 @@ bool StreamManager::addHttpClient(const std::string& id, int fd, const std::stri
                      <<" tcp_nodelay="<<(noDelayActive?1:0)
                      <<" delivery=epoll_shared"
                      <<std::endl;
+        },
+        [authSessionId]{
+            if(authSessionId.empty())return true;
+            auto& registry=dvbstreamer5::stream_auth::SessionRegistry::instance();
+            if(!registry.isAllowed(authSessionId))return false;
+            registry.touch(authSessionId);
+            return true;
         });
     if(!accepted){
         if(!authSessionId.empty())

@@ -32,6 +32,7 @@ namespace dvbstreamer5::media::network {
 class HttpTsEpollDispatcher {
 public:
     using OnClose = std::function<void(const char*,std::uint64_t)>;
+    using CanSend = std::function<bool()>;
     explicit HttpTsEpollDispatcher(std::size_t workers=4) {
         if(!workers)workers=1;
         for(std::size_t i=0;i<workers;++i)
@@ -41,10 +42,10 @@ public:
     HttpTsEpollDispatcher(const HttpTsEpollDispatcher&)=delete;
     HttpTsEpollDispatcher& operator=(const HttpTsEpollDispatcher&)=delete;
 
-    bool add(int fd,int hubFd,OnClose onClose) {
+    bool add(int fd,int hubFd,OnClose onClose,CanSend canSend={}) {
         if(fd<0||hubFd<0)return false;
         const auto index=next_.fetch_add(1,std::memory_order_relaxed)%workers_.size();
-        return workers_[index]->add(fd,hubFd,std::move(onClose));
+        return workers_[index]->add(fd,hubFd,std::move(onClose),std::move(canSend));
     }
     void stop()noexcept {
         for(auto& worker:workers_)worker->stop();
@@ -57,6 +58,7 @@ private:
         std::size_t queued=0,offset=0;
         std::uint64_t sent=0;
         OnClose onClose;
+        CanSend canSend;
     };
     class Worker {
     public:
@@ -67,7 +69,7 @@ private:
             catch(...){::close(epfd_);throw;}
         }
         ~Worker(){stop();}
-        bool add(int fd,int hubFd,OnClose closeCallback){
+        bool add(int fd,int hubFd,OnClose closeCallback,CanSend canSend){
             const auto makeNonblocking=[](int value){
                 const int flags=::fcntl(value,F_GETFL,0);
                 return flags>=0 && ::fcntl(value,F_SETFL,flags|O_NONBLOCK)==0;
@@ -76,6 +78,7 @@ private:
             auto client=std::make_shared<Client>();
             client->fd=fd;client->hubFd=hubFd;
             client->onClose=std::move(closeCallback);
+            client->canSend=std::move(canSend);
             std::lock_guard<std::mutex> guard(mutex_);
             if(stopped_.load(std::memory_order_relaxed))return false;
             struct epoll_event upstream{};
@@ -188,10 +191,28 @@ private:
         }
         void run()noexcept {
             std::array<epoll_event,128> events{};
+            auto lastAuthSweep=std::chrono::steady_clock::now();
             while(!stopped_.load(std::memory_order_acquire)){
                 const int ready=::epoll_wait(epfd_,events.data(),
                                   static_cast<int>(events.size()),100);
                 if(ready<0){if(errno==EINTR)continue;break;}
+                // Revoke inactive/idle HTTP TS sockets too: a token can be
+                // invalidated while the upstream stream is temporarily idle.
+                // Sweep only twice per second, never under the reactor mutex.
+                const auto now=std::chrono::steady_clock::now();
+                if(now-lastAuthSweep>=std::chrono::milliseconds(500)){
+                    std::vector<std::shared_ptr<Client>> checked;
+                    {
+                        std::lock_guard<std::mutex> guard(mutex_);
+                        for(const auto& [fd,client]:sockets_)
+                            if(fd==client->fd && client->canSend)
+                                checked.push_back(client);
+                    }
+                    for(const auto& client:checked){
+                        if(!client->canSend())remove(client,"middleware_session_revoked");
+                    }
+                    lastAuthSweep=now;
+                }
                 for(int i=0;i<ready;++i){
                     std::shared_ptr<Client> client;
                     const int fd=events[static_cast<std::size_t>(i)].data.fd;
@@ -201,6 +222,10 @@ private:
                         if(it!=sockets_.end())client=it->second;
                     }
                     if(!client)continue;
+                    if(client->canSend && !client->canSend()){
+                        remove(client,"middleware_session_revoked");
+                        continue;
+                    }
                     const auto flags=events[static_cast<std::size_t>(i)].events;
                     if(flags&(EPOLLERR|EPOLLHUP|EPOLLRDHUP)){
                         remove(client,"socket_closed");continue;
