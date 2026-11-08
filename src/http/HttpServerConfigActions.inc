@@ -258,6 +258,14 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     if (!root.isMember("language")) {
         nextConfig.language = configManager.config.language;
     }
+    // Ordinary tile and UI saves omit backend-auth fields. Never silently
+    // disable token authorization or erase the middleware URL.
+    if (!root.isMember("stream_auth_backend_enabled"))
+        nextConfig.streamAuthBackendEnabled = previousConfig.streamAuthBackendEnabled;
+    if (!root.isMember("stream_auth_backend_url"))
+        nextConfig.streamAuthBackendUrl = previousConfig.streamAuthBackendUrl;
+    if (!root.isMember("stream_auth_backend_timeout_ms"))
+        nextConfig.streamAuthBackendTimeoutMs = previousConfig.streamAuthBackendTimeoutMs;
     // Partial settings and channel-editor saves must never clear Telegram
     // credentials. Explicit non-empty updates still take effect immediately.
     const auto preserveTelegramField = [&](const char* key, std::string& value,

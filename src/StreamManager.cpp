@@ -1125,8 +1125,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // overwrite the optimization profile after URI parsing.
         srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
         srtConfig.diagnosticTileId = streamConfig.id;
-        srtConfig.asyncPeerAuthorization =
-            configManager.config.streamAuthBackendEnabled && srtConfig.mode=="listener";
+        // Keep the listener acceptance check off the live SRT sender thread
+        // even when backend mode is switched on without restarting a tile.
+        srtConfig.asyncPeerAuthorization = srtConfig.mode=="listener";
         std::cerr << "SRT OUT route stream=" << streamConfig.id
                   << " mode=" << srtConfig.mode
                   << " local_bind=" << (srtConfig.bindAddress.empty() ? std::string("auto") : srtConfig.bindAddress)
