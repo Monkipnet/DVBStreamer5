@@ -1575,6 +1575,34 @@ void testNativePreviewHubBackpressureIntegrity() {
 #endif
 }
 
+void testNativePreviewHubConcurrentDetach() {
+#if !defined(_WIN32)
+    using dvbstreamer5::media::network::NativePreviewHub;
+    NativePreviewHub hub;
+    std::string error;
+    std::vector<int> fds;
+    for(int i=0;i<16;++i){
+        const int fd=hub.subscribe(error);
+        assert(fd>=0);
+        fds.push_back(fd);
+    }
+    Packet pkt=packet(0x123,1);
+    std::atomic<bool> started{false};
+    std::thread producer([&]{
+        started=true;
+        for(int i=0;i<512;++i)hub.publish(pkt.data(),pkt.size());
+    });
+    while(!started.load())std::this_thread::yield();
+    for(const int fd:fds){
+        hub.unsubscribe(fd);
+        ::close(fd);
+    }
+    producer.join();
+    assert(hub.subscriberCount()==0);
+    hub.close();
+#endif
+}
+
 void testNativePreviewHubFanout() {
 #if !defined(_WIN32)
     using dvbstreamer5::media::network::NativePreviewHub;
@@ -1630,5 +1658,6 @@ int main() {
     testNativeHttpDoesNotRedirectAccessKeys();
     testNativePreviewHubBackpressureIntegrity();
     testNativePreviewHubFanout();
+    testNativePreviewHubConcurrentDetach();
     std::cout << "PASS: native MPEG-TS/RTP and CBR output relay over UDP\n";
 }

@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <memory>
 #include <string>
 
 namespace dvbstreamer5::media::network {
@@ -34,12 +35,16 @@ private:
     std::mutex mutex_;
     struct Subscriber {
         int sendFd = -1;
-        std::deque<std::vector<std::uint8_t>> pending;
+        std::mutex mutex;
+        // Immutable pending chunks are shared by all lagging viewers of one
+        // source publish() call. No duplicate large TS buffers per viewer.
+        std::deque<std::shared_ptr<const std::vector<std::uint8_t>>> pending;
         std::size_t pendingBytes = 0;
         bool backlogWarningLogged = false;
+        bool detached = false;
     };
     static constexpr std::size_t kMaxPendingBytes = 4U * 1024U * 1024U;
-    std::map<int, Subscriber> subscribers_;
+    std::map<int, std::shared_ptr<Subscriber>> subscribers_;
     bool closed_ = false;
     std::chrono::steady_clock::time_point lastRateSample_{};
     std::uint64_t publishedBytes_ = 0;

@@ -21,6 +21,8 @@
 #include <unordered_map>
 #include <vector>
 #include <iostream>
+#include <stdexcept>
+#include <utility>
 
 namespace dvbstreamer5::media::network {
 
