@@ -122,10 +122,16 @@ std::string HttpServer::renderIndexPage() {
     }
     static constexpr const char* middlewareUi = R"AUTHUI(
 <style>
-#dvbAuthModal,#dvbAuthSessionsModal{display:none;position:fixed;inset:0;z-index:2100;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
+/* Must cover the fixed main header (z-index:100000) and its menus.
+   This modal is injected at body level, independent of tile stacking. */
+#dvbAuthModal,#dvbAuthSessionsModal{display:none;position:fixed;inset:0;z-index:220000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
 #dvbAuthModal[open],#dvbAuthSessionsModal[open]{display:flex}
 #dvbAuthBox,#dvbAuthSessionsBox{box-sizing:border-box;color:#e6f0ff;background:#172230;border:1px solid #405166;border-radius:12px;padding:20px;font:13px system-ui,Arial,sans-serif;box-shadow:0 20px 70px rgba(0,0,0,.45);width:min(520px,100%);max-height:92dvh;overflow:auto}
 #dvbAuthSessionsBox{width:min(980px,100%);height:min(720px,90dvh);display:flex;flex-direction:column;overflow:hidden;gap:12px}
+/* The session list scrolls independently; the dialog heading/close button
+   must stay visible even with hundreds of connected viewers. */
+#dvbAuthSessionsBox>.dvb-auth-head{position:sticky;top:0;z-index:2;flex:0 0 auto;background:#172230;padding-bottom:8px}
+#dvbAuthSessionsToolbar,#dvbAuthSessionsTotal{flex:0 0 auto}
 .dvb-auth-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .dvb-auth-head h3{margin:0;font-size:17px}
 .dvb-auth-head button,.dvb-auth-actions button,#dvbAuthSessionsRefresh{cursor:pointer;border:1px solid #526f92;border-radius:8px;padding:8px 12px;background:#24384f;color:#edf5ff}
