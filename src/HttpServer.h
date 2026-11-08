@@ -53,7 +53,8 @@ private:
     bool isPanelSessionAuthorized(const http::request<http::string_body>& req) const;
     std::string createPanelSession();
     void revokePanelSession(const http::request<http::string_body>& req);
-    bool isStreamClientAllowed(const tcp::socket& socket, const std::string& target) const;
+    bool isStreamClientAllowed(const tcp::socket& socket, const std::string& target,
+                               const http::request<http::string_body>& request) const;
     bool isClientAllowedForStream(const std::string& streamId, const std::string& clientIp) const;
     void writeUnauthorized(http::response<http::string_body>& res) const;
     std::set<int> configuredHttpPorts() const;

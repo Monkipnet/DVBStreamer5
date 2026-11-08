@@ -32,6 +32,7 @@ struct EndpointConfig {
     int pbkeylen = 0;
     std::string streamId;
     std::string diagnosticTileId; // local-only; never sent as SRT streamid
+    bool asyncPeerAuthorization = false;
 };
 
 bool parseUri(const std::string& uri, EndpointConfig& config, std::string& error);
@@ -72,7 +73,7 @@ private:
 
 class NativeSrtOutput {
 public:
-    using PeerAllowedCallback = std::function<bool(const std::string&)>;
+    using PeerAllowedCallback = std::function<bool(const std::string&,const std::string&)>;
     using PeerStateCallback = std::function<void(const std::string&)>;
     ~NativeSrtOutput();
     NativeSrtOutput() = default;

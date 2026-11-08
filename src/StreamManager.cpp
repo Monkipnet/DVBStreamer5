@@ -1,4 +1,5 @@
 #include "StreamManager.h"
+#include "StreamAuthBackend.h"
 
 #include "CardManager.h"
 #include "CaBackend.h"
@@ -1124,6 +1125,8 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         // overwrite the optimization profile after URI parsing.
         srtConfig = dvbstreamer5::protocols::srt_vps::profile(srtConfig, streamConfig);
         srtConfig.diagnosticTileId = streamConfig.id;
+        srtConfig.asyncPeerAuthorization =
+            configManager.config.streamAuthBackendEnabled && srtConfig.mode=="listener";
         std::cerr << "SRT OUT route stream=" << streamConfig.id
                   << " mode=" << srtConfig.mode
                   << " local_bind=" << (srtConfig.bindAddress.empty() ? std::string("auto") : srtConfig.bindAddress)
@@ -1146,8 +1149,16 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         const std::string currentStreamId = streamConfig.id;
         if (!output->start(
                 srtConfig,
-                [this, currentStreamId](const std::string& peerIp) {
-                    return isClientAllowedForStream(currentStreamId, peerIp);
+                [this, currentStreamId, listener=srtConfig.mode=="listener"](
+                    const std::string& peerIp,const std::string& peerSid){
+                    const auto& conf=configManager.config;
+                    if(listener && dvbstreamer5::stream_auth::enabled(conf)){
+                        return dvbstreamer5::stream_auth::authorize(conf,
+                            currentStreamId,peerIp,"/srt/"+currentStreamId,
+                            "SRT/1.5.7","",
+                            "streamid="+dvbstreamer5::http::encodeQueryComponent(peerSid));
+                    }
+                    return isClientAllowedForStream(currentStreamId,peerIp);
                 },
                 [this, currentStreamId](const std::string& peerIp) {
                     if (!peerIp.empty()) addStreamSession(currentStreamId, peerIp, "srt");

@@ -203,6 +203,10 @@ struct AppConfig {
     std::string serverName = "DVBStreamer5";
     int httpPort = 9000;
     std::string language = "en";
+    // Optional fail-closed Cesbo Astra HTTP Request backend.
+    bool streamAuthBackendEnabled = false;
+    std::string streamAuthBackendUrl;
+    int streamAuthBackendTimeoutMs = 1200;
     std::string telegramToken;
     std::string telegramChatId;
     // Opt-in SRT profile for VPS/VDS/container hosts.

@@ -799,6 +799,9 @@ Json::Value AppConfig::toJson() const {
     root["server_name"] = serverName;
     root["http_port"] = httpPort;
     root["language"] = language;
+    root["stream_auth_backend_enabled"] = streamAuthBackendEnabled;
+    root["stream_auth_backend_url"] = streamAuthBackendUrl;
+    root["stream_auth_backend_timeout_ms"] = streamAuthBackendTimeoutMs;
     root["telegram_token"] = telegramToken;
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
@@ -833,6 +836,10 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.serverName = root.get("server_name", "DVBStreamer5").asString();
     config.httpPort = root.get("http_port", 9000).asInt();
     config.language = root.get("language", "en").asString();
+    config.streamAuthBackendEnabled = root.get("stream_auth_backend_enabled", false).asBool();
+    config.streamAuthBackendUrl = root.get("stream_auth_backend_url", "").asString();
+    config.streamAuthBackendTimeoutMs = std::clamp(
+        root.get("stream_auth_backend_timeout_ms", 1200).asInt(), 100, 3000);
     if (config.language != "ru" && config.language != "en" && config.language != "hr") {
         config.language = "en";
     }

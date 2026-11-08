@@ -268,7 +268,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             }
             std::string httpMpegTsId;
             if (resolveHttpMpegTsTarget(configManager.config.streams, target, httpMpegTsId)) {
-                if (!isStreamClientAllowed(socket, target)) {
+                if (!isStreamClientAllowed(socket, target, req)) {
                     res.result(http::status::forbidden);
                     res.set(http::field::content_type, "text/plain");
                 } else {
@@ -284,7 +284,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             std::string hlsId;
             std::string hlsFile;
             if (resolveHlsTarget(configManager.config.streams, target, hlsId, hlsFile)) {
-                if (!isStreamClientAllowed(socket, target)) {
+                if (!isStreamClientAllowed(socket, target, req)) {
                     res.result(http::status::forbidden);
                     res.set(http::field::content_type, "text/plain");
                     res.keep_alive(false);
@@ -343,7 +343,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
           } else {
           std::string httpMpegTsId;
           if (resolveHttpMpegTsTarget(configManager.config.streams, target, httpMpegTsId)) {
-            if (!isStreamClientAllowed(socket, target)) {
+            if (!isStreamClientAllowed(socket, target, req)) {
               res.result(http::status::forbidden);
               res.set(http::field::content_type, "text/plain");
               res.body() = "Stream access denied";
@@ -351,7 +351,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
               return;
             }
             } else if ([&] { std::string sid, file; return resolveHlsTarget(configManager.config.streams, target, sid, file); }()) {
-                if (!isStreamClientAllowed(socket, target)) {
+                if (!isStreamClientAllowed(socket, target, req)) {
                     res.result(http::status::forbidden);
                     res.set(http::field::content_type, "text/plain");
                     res.body() = "Stream access denied";
@@ -1094,7 +1094,8 @@ bool HttpServer::isClientAllowedForStream(const std::string& streamId, const std
   return false;
 }
 
-bool HttpServer::isStreamClientAllowed(const tcp::socket& socket, const std::string& target) const {
+bool HttpServer::isStreamClientAllowed(const tcp::socket& socket, const std::string& target,
+                                       const http::request<http::string_body>& request) const {
   boost::system::error_code ec;
   const std::string clientIp = socket.remote_endpoint(ec).address().to_string();
   if (ec) {
@@ -1106,7 +1107,18 @@ bool HttpServer::isStreamClientAllowed(const tcp::socket& socket, const std::str
     std::string fileName;
     resolveHlsTarget(configManager.config.streams, target, streamId, fileName);
   }
-  return isClientAllowedForStream(streamId, clientIp);
+  if (dvbstreamer5::stream_auth::enabled(configManager.config)) {
+    const auto q=target.find('?');
+    const auto agent=request.find(http::field::user_agent);
+    const auto host=request.find(http::field::host);
+    return dvbstreamer5::stream_auth::authorize(configManager.config,
+        streamId,clientIp,q==std::string::npos?target:target.substr(0,q),
+        agent==request.end()?"":std::string(agent->value()),
+        host==request.end()?"":std::string(host->value()),
+        q==std::string::npos?"":target.substr(q+1));
+  }
+  // Backend mode overrides local allow/deny subscriber IP lists.
+  return isClientAllowedForStream(streamId,clientIp);
 }
 
 void HttpServer::writeUnauthorized(http::response<http::string_body>& res) const {

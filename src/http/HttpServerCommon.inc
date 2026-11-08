@@ -1,5 +1,6 @@
 #include "HttpServer.h"
 #include "AppVersion.h"
+#include "StreamAuthBackend.h"
 #include "EmbeddedWebAssets.h"
 #include "StableUdpOutput.h"
 

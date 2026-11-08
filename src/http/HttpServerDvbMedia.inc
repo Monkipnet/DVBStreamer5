@@ -647,6 +647,14 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
         buffer << input.rdbuf();
         res.body() = buffer.str();
     }
+    // Shared HLS segments remain unchanged; token is propagated into each
+    // relative URI, including key and init-map resources.
+    if (dvbstreamer5::stream_auth::enabled(configManager.config) &&
+        filePath.extension()==".m3u8") {
+        const auto q=target.find('?');
+        if(q!=std::string::npos)
+            dvbstreamer5::stream_auth::propagateHlsQuery(res.body(),target.substr(q+1));
+    }
     boost::system::error_code endpointError;
     const std::string clientIp = socket.remote_endpoint(endpointError).address().to_string();
     if (!endpointError && !clientIp.empty()) {

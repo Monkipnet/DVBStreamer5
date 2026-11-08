@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <iomanip>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <netdb.h>
@@ -38,6 +39,7 @@ int srt_cleanup();
 SrtSocket srt_create_socket();
 int srt_close(SrtSocket);
 int srt_setsockopt(SrtSocket, int, int, const void*, int);
+int srt_getsockopt(SrtSocket, int, int, void*, int*);
 int srt_bind(SrtSocket, const sockaddr*, int);
 int srt_listen(SrtSocket, int);
 SrtSocket srt_accept(SrtSocket, sockaddr*, int*);
@@ -53,12 +55,14 @@ void srt_setloglevel(int);
 struct SrtApi {
     using FnStartup=int(*)(); using FnCleanup=int(*)(); using FnCreate=SrtSocket(*)();
     using FnClose=int(*)(SrtSocket); using FnSet=int(*)(SrtSocket,int,int,const void*,int);
+    using FnGet=int(*)(SrtSocket,int,int,void*,int*);
     using FnBind=int(*)(SrtSocket,const sockaddr*,int); using FnListen=int(*)(SrtSocket,int);
     using FnAccept=SrtSocket(*)(SrtSocket,sockaddr*,int*); using FnConnect=int(*)(SrtSocket,const sockaddr*,int);
     using FnSend=int(*)(SrtSocket,const char*,int,int,int); using FnRecv=int(*)(SrtSocket,char*,int);
     using FnError=const char*(*)(); using FnVersion=std::uint32_t(*)(); using FnState=int(*)(SrtSocket);
     using FnLog=void(*)(int);
 
+    FnGet get=&srt_getsockopt;
     FnStartup startup=&srt_startup; FnCleanup cleanup=&srt_cleanup; FnCreate create=&srt_create_socket;
     FnClose close=&srt_close; FnSet set=&srt_setsockopt; FnBind bind=&srt_bind; FnListen listen=&srt_listen;
     FnAccept accept=&srt_accept; FnConnect connect=&srt_connect; FnSend send=&srt_sendmsg; FnRecv recv=&srt_recvmsg;
@@ -407,12 +411,55 @@ void NativeSrtOutput::run(){
     if(lower(config_.mode)=="listener"){
         struct Peer{SrtSocket socket=kInvalidSocket;std::string ip;};
         Socket listener;std::string e;if(!createListenerSocket(config_,listener,e)){setError(e);running_=false;connected_=false;return;}
+        struct PendingAuth {SrtSocket socket;std::string ip;std::future<bool> decision;};
+        std::vector<PendingAuth> pendingAuth;
         std::vector<Peer> peers;std::vector<std::uint8_t> pending;bool first=true;
         std::uint64_t observedGeneration=sourceGeneration_.load(std::memory_order_acquire);
         std::size_t payload=static_cast<std::size_t>(std::max(188,config_.payloadSize));payload-=payload%188;if(!payload)payload=188;
         auto removePeer=[&](std::size_t i,const std::string& reason){if(i>=peers.size())return;const std::string ip=peers[i].ip;if(peers[i].socket!=kInvalidSocket)api().close(peers[i].socket);peers.erase(peers.begin()+static_cast<std::ptrdiff_t>(i));connected_=!peers.empty();if(!reason.empty())setError(reason);if(onDisconnected_)onDisconnected_(ip);};
         while(!stopRequested_){
-            for(;;){sockaddr_storage remote{};int len=sizeof(remote);SrtSocket client=api().accept(listener.s,reinterpret_cast<sockaddr*>(&remote),&len);if(client==kInvalidSocket)break;std::string peer=peerIp(remote);if(peerAllowed_&&!peerAllowed_(peer)){api().close(client);setError("SRT peer rejected: "+peer);continue;}if(!first)++reconnects_;first=false;peers.push_back({client,peer});connected_=true;setError({});if(onConnected_)onConnected_(peer);}
+            for(;;){
+                if(pendingAuth.size()>=16)break;
+                sockaddr_storage remote{};int len=sizeof(remote);
+                SrtSocket client=api().accept(listener.s,reinterpret_cast<sockaddr*>(&remote),&len);
+                if(client==kInvalidSocket)break;
+                const std::string peer=peerIp(remote);
+                std::array<char,513> sid{};int sidLen=512;
+                const std::string peerSid=
+                    api().get(client,0,SRTO_STREAMID,sid.data(),&sidLen)==0 &&
+                    sidLen>0 && sidLen<=512 ?
+                    std::string(sid.data(),static_cast<std::size_t>(sidLen)) : "";
+                if(peerAllowed_ && config_.asyncPeerAuthorization){
+                    const auto allow=peerAllowed_;
+                    pendingAuth.push_back({client,peer,std::async(std::launch::async,
+                        [allow,peer,peerSid](){
+                            try{return allow(peer,peerSid);}catch(...){return false;}
+                        })});
+                    continue;
+                }
+                if(peerAllowed_ && !peerAllowed_(peer,peerSid)){
+                    api().close(client);setError("SRT peer rejected: "+peer);continue;
+                }
+                if(!first)++reconnects_;first=false;
+                peers.push_back({client,peer});connected_=true;setError({});
+                if(onConnected_)onConnected_(peer);
+            }
+            for(std::size_t i=0;i<pendingAuth.size();){
+                if(pendingAuth[i].decision.wait_for(std::chrono::milliseconds(0))!=
+                   std::future_status::ready){++i;continue;}
+                bool allowed=false;
+                try{allowed=pendingAuth[i].decision.get();}catch(...){}
+                const auto client=pendingAuth[i].socket;
+                const auto peer=pendingAuth[i].ip;
+                if(allowed && !stopRequested_){
+                    if(!first)++reconnects_;first=false;
+                    peers.push_back({client,peer});connected_=true;setError({});
+                    if(onConnected_)onConnected_(peer);
+                }else{
+                    api().close(client);setError("SRT middleware denied peer: "+peer);
+                }
+                pendingAuth.erase(pendingAuth.begin()+static_cast<std::ptrdiff_t>(i));
+            }
             std::vector<std::uint8_t> c;if(!popChunk(c))break;
             const auto currentGeneration=sourceGeneration_.load(std::memory_order_acquire);
             if(currentGeneration!=observedGeneration){
@@ -427,11 +474,15 @@ void NativeSrtOutput::run(){
             while(pending.size()-off>=payload){const char* message=reinterpret_cast<const char*>(pending.data()+off);for(std::size_t i=0;i<peers.size();){int n=api().send(peers[i].socket,message,static_cast<int>(payload),-1,1);if(n==static_cast<int>(payload)){sentBytes_+=static_cast<std::uint64_t>(n);++i;continue;}std::string reason=n<=0?"SRT send disconnected peer="+peers[i].ip+": "+api().lastError():"partial SRT MPEG-TS message peer="+peers[i].ip;droppedBytes_+=payload;removePeer(i,reason);}off+=payload;if(peers.empty()){droppedBytes_+=pending.size()-off;off=pending.size();break;}}
             if(off)pending.erase(pending.begin(),pending.begin()+static_cast<std::ptrdiff_t>(off));
         }
+        for(auto& candidate:pendingAuth){
+            candidate.decision.wait();
+            if(candidate.socket!=kInvalidSocket)api().close(candidate.socket);
+        }
         for(auto& peer:peers){if(peer.socket!=kInvalidSocket)api().close(peer.socket);if(onDisconnected_)onDisconnected_(peer.ip);}connected_=false;droppedBytes_+=pending.size();clearQueuedData();running_=false;return;
     }
     bool first=true;std::vector<std::uint8_t>pending;
     std::uint64_t observedGeneration=sourceGeneration_.load(std::memory_order_acquire);
-    while(!stopRequested_){Socket s;std::string peer,e;if(!establishConnection(config_,true,s,peer,stopRequested_,e)){if(stopRequested_)break;setError(e);++reconnects_;clearQueuedData();pause(stopRequested_);continue;}if(peerAllowed_&&!peerAllowed_(peer)){setError("SRT peer rejected: "+peer);clearQueuedData();pause(stopRequested_);continue;}if(!first)++reconnects_;first=false;connected_=true;setError({});if(onConnected_)onConnected_(peer);bool lost=false;pending.clear();while(!stopRequested_&&!lost){std::vector<std::uint8_t>c;if(!popChunk(c))break;
+    while(!stopRequested_){Socket s;std::string peer,e;if(!establishConnection(config_,true,s,peer,stopRequested_,e)){if(stopRequested_)break;setError(e);++reconnects_;clearQueuedData();pause(stopRequested_);continue;}if(peerAllowed_&&!peerAllowed_(peer,"")){setError("SRT peer rejected: "+peer);clearQueuedData();pause(stopRequested_);continue;}if(!first)++reconnects_;first=false;connected_=true;setError({});if(onConnected_)onConnected_(peer);bool lost=false;pending.clear();while(!stopRequested_&&!lost){std::vector<std::uint8_t>c;if(!popChunk(c))break;
         const auto currentGeneration=sourceGeneration_.load(std::memory_order_acquire);
         if(currentGeneration!=observedGeneration){
             pending.clear();observedGeneration=currentGeneration;c.clear();
