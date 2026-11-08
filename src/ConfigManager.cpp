@@ -415,6 +415,9 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.hlsAccessKeyMode == "query" ? "token" : "Authorization").asString();
     config.hlsAccessKeyValue = root.get("hls_access_key_value", "").asString();
     config.hlsUserAgent = root.get("hls_user_agent", "Mozilla/5.0 DVBStreamer5").asString();
+    config.streamAuthMode = root.get("stream_auth_mode", "inherit").asString();
+    if (config.streamAuthMode != "on" && config.streamAuthMode != "off")
+        config.streamAuthMode = "inherit";
     config.httpTsInputJitterEnabled = root.get("http_ts_input_jitter_enabled", false).asBool();
     config.ipSourcePcrPassthrough = root.get("ip_source_pcr_passthrough", false).asBool();
     config.dvbSourcePcrPacing = root.get("dvb_source_pcr_pacing", false).asBool();
@@ -621,6 +624,7 @@ Json::Value StreamConfig::toJson() const {
     root["hls_access_key_name"] = hlsAccessKeyName;
     root["hls_access_key_value"] = hlsAccessKeyValue;
     root["hls_user_agent"] = hlsUserAgent;
+    root["stream_auth_mode"] = streamAuthMode;
     root["http_ts_input_jitter_enabled"] = httpTsInputJitterEnabled;
     root["ip_source_pcr_passthrough"] = ipSourcePcrPassthrough;
     root["dvb_source_pcr_pacing"] = dvbSourcePcrPacing;
@@ -802,6 +806,8 @@ Json::Value AppConfig::toJson() const {
     root["stream_auth_backend_enabled"] = streamAuthBackendEnabled;
     root["stream_auth_backend_url"] = streamAuthBackendUrl;
     root["stream_auth_backend_timeout_ms"] = streamAuthBackendTimeoutMs;
+    root["stream_auth_recheck_minutes"] = streamAuthRecheckMinutes;
+    root["stream_auth_end_url"] = streamAuthEndUrl;
     root["telegram_token"] = telegramToken;
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
@@ -840,6 +846,9 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.streamAuthBackendUrl = root.get("stream_auth_backend_url", "").asString();
     config.streamAuthBackendTimeoutMs = std::clamp(
         root.get("stream_auth_backend_timeout_ms", 1200).asInt(), 100, 3000);
+    config.streamAuthRecheckMinutes = std::clamp(
+        root.get("stream_auth_recheck_minutes", 5).asInt(), 1, 60);
+    config.streamAuthEndUrl = root.get("stream_auth_end_url", "").asString();
     if (config.language != "ru" && config.language != "en" && config.language != "hr") {
         config.language = "en";
     }

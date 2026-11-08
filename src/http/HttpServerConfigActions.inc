@@ -266,6 +266,10 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
         nextConfig.streamAuthBackendUrl = previousConfig.streamAuthBackendUrl;
     if (!root.isMember("stream_auth_backend_timeout_ms"))
         nextConfig.streamAuthBackendTimeoutMs = previousConfig.streamAuthBackendTimeoutMs;
+    if (!root.isMember("stream_auth_recheck_minutes"))
+        nextConfig.streamAuthRecheckMinutes = previousConfig.streamAuthRecheckMinutes;
+    if (!root.isMember("stream_auth_end_url"))
+        nextConfig.streamAuthEndUrl = previousConfig.streamAuthEndUrl;
     // Partial settings and channel-editor saves must never clear Telegram
     // credentials. Explicit non-empty updates still take effect immediately.
     const auto preserveTelegramField = [&](const char* key, std::string& value,

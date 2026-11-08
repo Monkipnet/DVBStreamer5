@@ -7,6 +7,15 @@
 #include <string>
 namespace dvbstreamer5::stream_auth {
 inline bool enabled(const AppConfig& c) noexcept { return c.streamAuthBackendEnabled; }
+inline bool enabled(const AppConfig& c, const std::string& channel) {
+    for(const auto& stream:c.streams){
+        if(stream.id!=channel)continue;
+        if(stream.streamAuthMode=="on")return true;
+        if(stream.streamAuthMode=="off")return false;
+        break;
+    }
+    return c.streamAuthBackendEnabled;
+}
 inline bool safe(const std::string& x) {
     return x.size()<=2048 && x.find_first_of("\r\n")==std::string::npos;
 }
@@ -19,7 +28,7 @@ inline bool authorize(const AppConfig& c,const std::string& channel,
                       const std::string& ip,const std::string& path,
                       const std::string& agent,const std::string& host,
                       const std::string& query={}) {
-    if(!enabled(c))return true;
+    if(!enabled(c,channel))return true;
     const auto& backend=c.streamAuthBackendUrl;
     if(backend.empty() || backend.size()>2048 ||
        (backend.rfind("https://",0)!=0 && backend.rfind("http://",0)!=0) ||

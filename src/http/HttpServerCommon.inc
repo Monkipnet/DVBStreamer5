@@ -656,7 +656,7 @@ bool sameStreamConfig(const StreamConfig& left, const StreamConfig& right) {
     // Applying the transport clock requires a fresh WISI CBR worker, so keep
     // the current channel alive until the operator restarts that tile manually.
     for (const char* key : {"epg_mode", "xmltv_source_id", "xmltv_channel_id",
-                            "ip_source_pcr_passthrough"}) {
+                            "ip_source_pcr_passthrough", "stream_auth_mode"}) {
         leftJson.removeMember(key);
         rightJson.removeMember(key);
     }

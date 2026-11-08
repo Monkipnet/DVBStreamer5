@@ -80,6 +80,8 @@ struct StreamConfig {
     std::string hlsAccessKeyName = "Authorization";
     std::string hlsAccessKeyValue;
     std::string hlsUserAgent = "Mozilla/5.0 DVBStreamer5";
+    // inherit: global middleware switch; on: middleware always; off: IP ACL.
+    std::string streamAuthMode = "inherit";
     bool httpTsInputJitterEnabled = false;
     // V334: opt-in, per-tile PCR timeline for HTTP/SRT passthrough to UDP-CBR.
     // Stored independently of the legacy encoded CBR startup buffer setting.
@@ -207,6 +209,8 @@ struct AppConfig {
     bool streamAuthBackendEnabled = false;
     std::string streamAuthBackendUrl;
     int streamAuthBackendTimeoutMs = 1200;
+    int streamAuthRecheckMinutes = 5;
+    std::string streamAuthEndUrl; // optional session-end notification endpoint
     std::string telegramToken;
     std::string telegramChatId;
     // Opt-in SRT profile for VPS/VDS/container hosts.
