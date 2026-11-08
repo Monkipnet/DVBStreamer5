@@ -97,14 +97,19 @@ inline void propagateHlsQuery(std::string& playlist,const std::string& query){
         std::string line=playlist.substr(pos,nl?end-pos:std::string::npos);
         if(!line.empty()&&line.back()=='\r')line.pop_back();
         if(!line.empty()&&line[0]!='#')line=withQuery(line);
-        else if(line.rfind("#EXT-X-KEY:",0)==0||
-                line.rfind("#EXT-X-SESSION-KEY:",0)==0||
-                line.rfind("#EXT-X-MAP:",0)==0){
-            const auto at=line.find("URI=\"");
-            if(at!=std::string::npos){
+        else if(line.rfind("#EXT-",0)==0) {
+            // Apply token to *all* relative URI attributes: audio/subtitle
+            // renditions, CMAF init maps, encryption keys, iframe playlists,
+            // low-latency PART/PRELOAD-HINT and alternate variants.
+            std::size_t offset=0;
+            while(true){
+                const auto at=line.find("URI=\"",offset);
+                if(at==std::string::npos)break;
                 const auto begin=at+5,endUri=line.find('"',begin);
-                if(endUri!=std::string::npos)
-                    line.replace(begin,endUri-begin,withQuery(line.substr(begin,endUri-begin)));
+                if(endUri==std::string::npos)break;
+                const auto replaced=withQuery(line.substr(begin,endUri-begin));
+                line.replace(begin,endUri-begin,replaced);
+                offset=begin+replaced.size()+1;
             }
         }
         result+=line;if(nl)result+='\n';if(!nl)break;pos=end+1;

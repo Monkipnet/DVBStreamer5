@@ -47,6 +47,8 @@ int main() {
         "#EXTM3U\n"
         "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n"
         "#EXT-X-MAP:URI=\"init.mp4\"\n"
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"main\",URI=\"audio/index.m3u8\"\n"
+        "#EXT-X-PART:URI=\"part0001.m4s\",DURATION=0.5\n"
         "#EXT-X-STREAM-INF:BANDWIDTH=1000000\n"
         "low/index.m3u8\n"
         "segment0001.ts\n"
@@ -60,6 +62,10 @@ int main() {
         "variant playlist must retain token");
     check(playlist.find("segment0001.ts?token=abc")!=std::string::npos,
         "HLS media segment must retain token");
+    check(playlist.find("URI=\"audio/index.m3u8?token=abc\"")!=std::string::npos,
+        "HLS audio rendition must retain token");
+    check(playlist.find("URI=\"part0001.m4s?token=abc\"")!=std::string::npos,
+        "Low latency HLS part must retain token");
     check(playlist.find("#EXTM3U?token")==std::string::npos,
         "HLS directives must stay byte-compatible");
     std::cout<<"Stream auth backend: OK\n";
