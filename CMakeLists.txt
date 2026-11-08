@@ -453,6 +453,15 @@ target_link_libraries(dvbstreamer5_source_pcr_config_test PRIVATE
     dvbstreamer5_jsoncpp OpenSSL::Crypto)
 add_test(NAME dvb_source_pcr_config COMMAND dvbstreamer5_source_pcr_config_test)
 
+# V384: fail-closed Cesbo middleware auth, HLS token propagation and SRT token
+# parsing. The test uses no network, decoders, tuners or live service.
+add_executable(dvbstreamer5_stream_auth_test tests/test_stream_auth_backend.cpp)
+target_include_directories(dvbstreamer5_stream_auth_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(dvbstreamer5_stream_auth_test PRIVATE
+    dvbstreamer5_http_client dvbstreamer5_jsoncpp)
+add_test(NAME stream_auth_backend COMMAND dvbstreamer5_stream_auth_test)
+
 target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
 target_link_libraries(DVBStreamer5 ZLIB::ZLIB PkgConfig::LIBCURL LibXml2::LibXml2)
 message(STATUS "XMLTV external download: libcurl, libxml2 and gzip enabled")
