@@ -947,6 +947,10 @@ void NativeUdpRelay::run() {
     dvbstreamer5::media::mpegts::ContinuityTracker continuity;
     std::vector<dvbstreamer5::media::mpegts::Packet> packets;
     std::vector<dvbstreamer5::media::mpegts::Packet> remappedPackets;
+    // V430: reuse the container; the chunks themselves are moved out of the
+    // bounded queue without copying under its lock. Only selected DVB+CA
+    // feeds coalesce already-buffered chunks, never wait for future input.
+    std::vector<std::vector<std::uint8_t>> dvbCoalescedChunks;
     std::vector<std::uint8_t> sourceObservedTransport;
     std::vector<std::uint8_t> observedTransport;
     std::vector<OutputWorker> outputs;
@@ -1345,6 +1349,7 @@ void NativeUdpRelay::run() {
         auto diagRelayChunkStart = std::chrono::steady_clock::time_point{};
         std::size_t received = 0;
         packets.clear();
+        dvbCoalescedChunks.clear();
         if (fileInputSource_) {
             if (mp4Input_) {
                 const bool cbrSenderReady = std::all_of(outputs.begin(),outputs.end(),
@@ -1638,6 +1643,33 @@ void NativeUdpRelay::run() {
                     diagRelayBytes += chunk.size();
                 }
                 httpQueuedBytes_ -= chunk.size();
+
+                // V430: A shared-DVB CA relay can accumulate tens of
+                // thousands of 188-byte packets in this queue while its
+                // bitslice decoder processes tiny input calls. Drain up to
+                // four 77-packet CA batches when they are ALREADY queued.
+                // Moving buffers requires no TS copying while holding the
+                // queue mutex. Do not change HTTP/HLS/SRT or plain DVB paths,
+                // and never merge across an empty reconnect marker.
+                if (config_.trustedAlignedExternalInput &&
+                    config_.processTransport && !chunk.empty()) {
+                    constexpr std::size_t kDvbCoalesceBytes =
+                        4U * 77U * dvbstreamer5::media::mpegts::kPacketSize;
+                    std::size_t coalescedBytes = chunk.size();
+                    while (!httpQueue_.empty() && !httpQueue_.front().empty()) {
+                        const std::size_t nextBytes = httpQueue_.front().size();
+                        if (nextBytes > kDvbCoalesceBytes - (std::min)(
+                                coalescedBytes, kDvbCoalesceBytes)) {
+                            break;
+                        }
+                        dvbCoalescedChunks.push_back(
+                            std::move(httpQueue_.front()));
+                        httpQueue_.pop_front();
+                        httpQueuedBytes_ -= nextBytes;
+                        coalescedBytes += nextBytes;
+                    }
+                }
+
                 // V10.8.139: most dequeues happen while the 2 MiB queue has
                 // ample space. Avoid a futex wake unless enqueueHttpData()
                 // actually had to block on backpressure. The flag and queue
@@ -1669,15 +1701,21 @@ void NativeUdpRelay::run() {
                 }
 
                 received = chunk.size();
-                inputBytes_.fetch_add(received, std::memory_order_relaxed);
-                // V10.8.138: the dequeued vector already owns a stable contiguous
-                // byte range for the duration of framing. Feed it directly instead
-                // of copying every chunk through the 64 KiB datagram scratch buffer.
+                // All extra blocks belong to the same service and are
+                // already structurally aligned. Append in original arrival
+                // order, then invoke the unchanged 77-packet CA hook on the
+                // resulting vector. This improves native bitslice occupancy.
                 if (config_.trustedAlignedExternalInput) {
-                    inputFramer.pushTrustedAligned(chunk.data(), received, packets);
+                    inputFramer.pushTrustedAligned(chunk.data(), chunk.size(), packets);
+                    for (const auto& more : dvbCoalescedChunks) {
+                        received += more.size();
+                        inputFramer.pushTrustedAligned(
+                            more.data(), more.size(), packets);
+                    }
                 } else {
                     inputFramer.push(chunk.data(), received, packets);
                 }
+                inputBytes_.fetch_add(received, std::memory_order_relaxed);
 
                 {
                     std::lock_guard<std::mutex> recycleLock(httpQueueMutex_);
@@ -1685,6 +1723,12 @@ void NativeUdpRelay::run() {
                     if (httpQueueBufferPool_.size() < kMaximumRecycledQueueBuffers) {
                         chunk.clear();
                         httpQueueBufferPool_.push_back(std::move(chunk));
+                    }
+                    for (auto& extra : dvbCoalescedChunks) {
+                        if (httpQueueBufferPool_.size() ==
+                            kMaximumRecycledQueueBuffers) break;
+                        extra.clear();
+                        httpQueueBufferPool_.push_back(std::move(extra));
                     }
                 }
             } else if (httpFinished_) {

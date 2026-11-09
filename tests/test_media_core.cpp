@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <condition_variable>
 #include <climits>
 #include <cstdint>
 #include <filesystem>
@@ -1008,6 +1009,102 @@ void testNativeExternallyFedTsRelay() {
 }
 
 
+
+void testNativeDvbCaBacklogCoalescing() {
+    using namespace dvbstreamer5::media::network;
+    UdpSocket receiver;
+    std::string error;
+    assert(receiver.openReceiver("127.0.0.1", 0, "", "", 0, error));
+
+    std::mutex gateMutex;
+    std::condition_variable gateCv;
+    bool firstCaEntered = false;
+    bool releaseCa = false;
+    std::vector<std::size_t> sizes;
+    std::mutex sizesMutex;
+    NativeUdpRelay relay;
+    NativeUdpRelayConfig config;
+    config.streamId = "test-dvb-ca-backlog-coalescing";
+    config.inputUri = "external://dvb-ca";
+    config.externallyFedInput = true;
+    config.trustedAlignedExternalInput = true;
+    config.outputType = "udp-vbr";
+    config.outputHost = "127.0.0.1";
+    config.outputPort = receiver.localPort();
+    config.processTransport = [&](std::uint8_t* data, std::size_t size) {
+        assert(size % 188 == 0);
+        assert(data[0] == 0x47);
+        {
+            std::lock_guard<std::mutex> guard(sizesMutex);
+            sizes.push_back(size / 188);
+        }
+        {
+            std::unique_lock<std::mutex> guard(gateMutex);
+            if (!firstCaEntered) {
+                firstCaEntered = true;
+                gateCv.notify_one();
+                if (!gateCv.wait_for(guard, std::chrono::seconds(3),
+                                     [&] { return releaseCa; })) {
+                    return false;
+                }
+            }
+        }
+        for (std::size_t i=0; i<size; i+=188)
+            data[i+4] = 0x7a;
+        return true;
+    };
+    assert(relay.start(config, error));
+
+    auto sendPackets = [&](int first, int count) {
+        std::vector<std::uint8_t> bytes;
+        for (int i=0; i<count; ++i) {
+            const Packet pkt = packet(
+                0x0312, static_cast<std::uint8_t>((first+i)&0x0f));
+            bytes.insert(bytes.end(), pkt.begin(), pkt.end());
+        }
+        assert(relay.pushInput(bytes.data(), bytes.size()));
+    };
+    sendPackets(0, 50);
+    {
+        std::unique_lock<std::mutex> guard(gateMutex);
+        assert(gateCv.wait_for(guard, std::chrono::seconds(3),
+                               [&] { return firstCaEntered; }));
+    }
+    // Force exactly three source chunks to accumulate behind the first
+    // blocked consumer. No new artificial wait is introduced by the relay.
+    sendPackets(50, 50);
+    sendPackets(100, 50);
+    sendPackets(150, 50);
+    {
+        std::lock_guard<std::mutex> guard(gateMutex);
+        releaseCa = true;
+    }
+    gateCv.notify_one();
+
+    std::array<std::uint8_t, 2048> datagram {};
+    std::size_t n = 0;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(5);
+    while (n < 200 && std::chrono::steady_clock::now() < deadline) {
+        std::size_t bytes = 0;
+        assert(receiver.receive(
+            datagram.data(), datagram.size(), bytes, 1000, error));
+        assert(bytes % 188 == 0);
+        for (std::size_t i=0; i<bytes; i+=188) {
+            assert(datagram[i] == 0x47);
+            assert(datagram[i+4] == 0x7a);
+            assert((datagram[i+3]&0x0f) == (n&0x0f));
+            ++n;
+        }
+    }
+    assert(n == 200);
+    relay.finishInput();
+    relay.stop();
+    std::lock_guard<std::mutex> guard(sizesMutex);
+    assert(sizes.size() == 3);
+    assert(sizes[0] == 50 && sizes[1] == 77 && sizes[2] == 73);
+}
+
 void testNativeInplaceCaBatchAcross77Packets() {
     using namespace dvbstreamer5::media::network;
     UdpSocket outputReceiver;
@@ -1764,6 +1861,7 @@ int main() {
     testNativeRtpTsRelay();
     testNativeExternallyFedTsRelay();
     testNativeInplaceCaBatchAcross77Packets();
+    testNativeDvbCaBacklogCoalescing();
     testCbrTsPacer();
     testNativeUdpCbrRelay();
     testNativeSourcePcrCbrFanout();
