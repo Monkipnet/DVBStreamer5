@@ -4826,15 +4826,23 @@ function dvbCardFrontendEntries(group) {
     const satellite=nitNetwork ? nitNetwork+(nitOrbit && !nitNetwork.includes(nitOrbit) ? ' · '+nitOrbit : '')
       : (nitOrbit || manual);
     const frequency=Number(params.get('frequency_khz')) / 1000;
+    const system=String(params.get('delivery_system')||'dvb-s2').toLowerCase();
+    const terrestrial=system==='dvb-t'||system==='dvb-t2';
     const symbolRate=Number(params.get('symbol_rate'));
     const polarity=String(params.get('polarity') || '').toUpperCase();
-    // Never synthesize a transponder from the default tuner form values.
-    const valid=params.has('frequency_khz') && params.has('symbol_rate') &&
+    const bandwidth=Number(params.get('bandwidth_hz')||8000000);
+    // Display only real configured RF values. Never infer from form defaults.
+    const validSatellite=params.has('frequency_khz') && params.has('symbol_rate') &&
       params.has('polarity') && Number.isFinite(frequency) &&
       frequency >= 900 && frequency <= 14000 &&
       Number.isFinite(symbolRate) && symbolRate >= 100 &&
       symbolRate <= 60000 && /^[HV]$/.test(polarity);
-    const tp=valid ? 'TP '+Number(frequency.toFixed(3))+' '+polarity+' '+symbolRate : 'TP —';
+    const validTerrestrial=params.has('frequency_khz') && Number.isFinite(frequency) &&
+      frequency>=42 && frequency<=1002 &&
+      [1712000,5000000,6000000,7000000,8000000,10000000].includes(bandwidth);
+    const tp=terrestrial
+      ? (validTerrestrial?'MUX '+Number(frequency.toFixed(3))+' MHz · '+(bandwidth/1000000)+' MHz BW':'MUX —')
+      : (validSatellite?'TP '+Number(frequency.toFixed(3))+' '+polarity+' '+symbolRate:'TP —');
     entry.labels.add((satellite ? satellite+' · ' : '')+tp);
   }
   return [...byFrontend.values()].sort((a,b)=>a.adapter-b.adapter || a.frontend-b.frontend);
@@ -4847,7 +4855,8 @@ function dvbCardDisplayTitle(group) {
   const frontends=dvbCardFrontendEntries(group);
   if (!frontends.length) return cardTitle;
   const unique=[...new Set(frontends.flatMap(fe=>[...fe.labels]))];
-  const hasSatellite=frontends.some(fe=>[...fe.labels].some(label=>!label.startsWith('TP ')));
+  const hasSatellite=frontends.some(fe=>[...fe.labels].some(label=>
+    !label.startsWith('TP ') && !label.startsWith('MUX ')));
   if (unique.length===1)
     return (hasSatellite ? '' : cardTitle+' · ')+unique[0]+
       (frontends.length>1 ? ' · '+frontends.length+' FE' : '');
@@ -4964,6 +4973,16 @@ function diseqcSourceLabel(value) {
   return String(source + 1);
 }
 function dvbTuneDetails(stream) {
+  const input=String(stream?.input_uri||'');
+  const idx=input.indexOf('?');
+  const params=new URLSearchParams(idx>=0?input.slice(idx+1):'');
+  const delivery=String(params.get('delivery_system')||'dvb-s2').toLowerCase();
+  if (delivery==='dvb-t'||delivery==='dvb-t2') {
+    const bw=Number(params.get('bandwidth_hz')||8000000);
+    const plp=Number(params.get('stream_id')??-1);
+    return delivery.toUpperCase()+' · BW '+(bw/1000000)+' MHz'+
+      (delivery==='dvb-t2'?' · PLP '+(plp>=0?plp:uiBiText('Авто','Auto')):'');
+  }
   const isi = Number(stream?.dvb_stream_id ?? -1);
   const mode = String(stream?.dvb_unicable_mode || 'none');
   const unicable = mode === 'en50494' || mode === 'en50607'
@@ -5358,7 +5377,7 @@ function render(force=false) {
         <div class="info-row"><strong>${t('backup')}</strong><span title="${escapeHtmlValue((stream.backup_input_uri || '—') + (stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''))}">${escapeHtmlValue(stream.backup_input_uri || '—')}${stream.backup_input_type === 'file' && stream.backup_file_loop ? ' · loop' : ''}</span></div>
         <div class="info-row"><strong>${t('sid')}</strong><span>${stream.service_id || '—'}</span></div>
         ${stream.dvb_input ? `<div class="info-row"><strong>Frontend</strong><span data-role="dvb-frontend-details">${escapeHtmlValue(dvbFrontendDetails(stream))}</span></div>
-        <div class="info-row"><strong>ISI / DiSEqC</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
+        <div class="info-row"><strong>DVB tuning</strong><span data-role="dvb-tune-details">${escapeHtmlValue(dvbTuneDetails(stream))}</span></div>` : ''}
         ${(stream.conditional_access_client || stream.ci_plus_input) ? `<div class="info-row"><strong>CA</strong><span data-role="ca-status">${caStreamStatusText(stream)}</span></div>
         <div class="info-row decode-row"><strong>Декодирование</strong><span data-role="decode-status" class="decode-pill ${caDecodeInfo(stream).cls}" title="Контроль по A/V PID, scrambling_control и валидному PES">${caDecodeInfo(stream).text}</span></div>` : `<div class="info-row placeholder"><strong>CA</strong><span>—</span></div>
         <div class="info-row placeholder decode-row"><strong>Декодирование</strong><span>—</span></div>`}
@@ -7937,7 +7956,7 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title">Adapter</div><small class="field-help" ${uiBiAttrs('Номер DVB адаптера в /dev/dvb.','DVB adapter number in /dev/dvb.')}>${uiBiText('Номер DVB адаптера в /dev/dvb.','DVB adapter number in /dev/dvb.')}</small><input id="streamDvbAdapter" type="number" min="0" max="31" value="${dvbTuner.adapter}" /></div>
             <div class="edit-field"><div class="edit-field-title">Frontend</div><small class="field-help" ${uiBiAttrs('Номер frontend внутри выбранного адаптера.','Frontend number inside the selected adapter.')}>${uiBiText('Номер frontend внутри выбранного адаптера.','Frontend number inside the selected adapter.')}</small><input id="streamDvbFrontend" type="number" min="0" max="31" value="${dvbTuner.frontend}" /></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Частота, MHz','Frequency, MHz')}>${uiBiText('Частота, MHz','Frequency, MHz')}</div><small class="field-help" ${uiBiAttrs('Спутниковая частота транспондера.','Satellite transponder frequency.')}>${uiBiText('Спутниковая частота транспондера.','Satellite transponder frequency.')}</small><input id="streamDvbFrequency" type="number" step="0.001" value="${dvbTuner.frequency_mhz}" /></div>
-            <div class="edit-field stream-dvb-terrestrial-only" style="display:none"><div class="edit-field-title" ${subtitleUiTriAttrs('Полоса канала','Channel bandwidth','Širina kanala')}>${subtitleUiTriText('Полоса канала','Channel bandwidth','Širina kanala')}</div><small class="field-help">DVB-T/T2 · 1.712 / 5 / 6 / 7 / 8 / 10 MHz</small><select id="streamDvbBandwidth">${[1712000,5000000,6000000,7000000,8000000,10000000].map(n=>`<option value="${n}" ${Number(dvbTuner.bandwidth_hz)===n?'selected':''}>${n/1000000} MHz</option>`).join('')}</select></div>
+            <div class="edit-field stream-dvb-terrestrial-only" style="display:none"><div class="edit-field-title" ${subtitleUiTriAttrs('Полоса канала','Channel bandwidth','Širina kanala')}>${subtitleUiTriText('Полоса канала','Channel bandwidth','Širina kanala')}</div><small class="field-help">DVB-T/T2 · 1.712 / 5 / 6 / 7 / 8 / 10 MHz</small><select id="streamDvbBandwidth">${[1712000,5000000,6000000,7000000,8000000,10000000].map(n=>'<option value="'+n+'" '+(Number(dvbTuner.bandwidth_hz)===n?'selected':'')+'>'+(n/1000000)+' MHz</option>').join('')}</select></div>
             <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">Symbol Rate</div><small class="field-help" ${uiBiAttrs('Символьная скорость, ksym/s.','Symbol rate in ksym/s.')}>${uiBiText('Символьная скорость, ksym/s.','Symbol rate in ksym/s.')}</small><input id="streamDvbSymbolRate" type="number" value="${dvbTuner.symbol_rate}" /></div>
           </div>
           <div class="stream-video-grid secondary">
