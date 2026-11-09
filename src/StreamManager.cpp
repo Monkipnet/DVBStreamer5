@@ -280,8 +280,12 @@ public:
             using Mask = dvbstreamer5::media::network::SharedDvbPidAdmission::Mask;
             auto writable = std::make_shared<Mask>();
             for (std::size_t pid = 0; pid < writable->size(); ++pid) {
-                (*writable)[pid] = remapper_.wantsInputPid(
-                    static_cast<std::uint16_t>(pid)) ? 1U : 0U;
+                // Shared DVB drops source NULL packets in its original
+                // prefilter. Never queue MPTS stuffing ahead of that stage.
+                (*writable)[pid] = (pid != dvbstreamer5::media::mpegts::kNullPid ||
+                                    !dropSourceNullPackets_) &&
+                                   remapper_.wantsInputPid(
+                                       static_cast<std::uint16_t>(pid)) ? 1U : 0U;
             }
             std::shared_ptr<const Mask> snapshot = std::move(writable);
             admission_->publish(std::move(snapshot));
