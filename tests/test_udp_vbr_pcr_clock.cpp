@@ -38,7 +38,25 @@ int main(){
         "VBR source interpolation unavailable");
     check(e-d>=24000000 && e-d<=26000000,
         "VBR rate did not follow local PCR interval");
-    // A true PCR discontinuity must not cause a giant 1.9s delay.
+    // Real T49/T17 feeds legitimately carry PCR steps below one
+    // millisecond: 0.4, 0.9 and even repeated PCR. A short step must
+    // NOT rebase the 1.2s reservoir or drop the output packet queue.
+    const auto beforeResets=clock.resets();
+    check(!clock.observe(pkt(4060800),301),
+        "0.4ms PCR step caused a false output gap");
+    check(!clock.observe(pkt(4074300),302),
+        "0.9ms PCR step caused a false output gap");
+    check(!clock.observe(pkt(4050000),303),
+        "repeated PCR caused a false output gap");
+    check(clock.ready() && clock.resets()==beforeResets,
+        "sub-ms PCR steps reset the pacing clock");
+    check(clock.shortStepsIgnored()==3,
+        "valid short PCR steps were not skipped");
+    clock.observe(pkt(4320000),320);
+    std::int64_t restored=0;
+    check(clock.timeNs(320,restored)&&restored>e,
+        "PCR timeline failed to recover after skipped anchors");
+    // An explicit MPEG-TS discontinuity must still reset the clock.
     check(clock.observe(pkt(27000000,true),400),"PCR reset ignored");
     check(!clock.ready(),"PCR reset should discard stale clock anchors");
     clock.observe(pkt(28350000),500);

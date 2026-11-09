@@ -37,13 +37,19 @@ public:
         const auto last=anchors_.back();
         if(index<=last.index)return false;
         const auto ticks=(pcr+kWrap-last.pcr)%kWrap;
-        // Reject a corrupt or discontinuous PCR rather than stretch UDP output
-        // by 1-2 seconds as an averaged-bitrate smoother can do.
-        if(discontinuity || ticks<kHz/1000ULL || ticks>kHz*2ULL){
+        // Real discontinuities still reset the clock, but sub-ms PCR
+        // steps are valid on clean high-frequency PCR feeds (T49/T17).
+        // Never discard the queued transport packets for a short step:
+        // ignore only this timing anchor and retain the previous timeline.
+        if(discontinuity || ticks>kHz*2ULL){
             anchors_.clear();
             anchors_.push_back({index,0,pcr});
             ++resets_;
             return true;
+        }
+        if(ticks<kHz/1000ULL){
+            ++shortStepsIgnored_;
+            return false;
         }
         const auto deltaNs=static_cast<std::int64_t>(
             static_cast<unsigned __int128>(ticks)*1000000000ULL/kHz);
@@ -71,12 +77,14 @@ public:
         return true;
     }
     std::uint64_t resets()const noexcept{return resets_;}
+    std::uint64_t shortStepsIgnored()const noexcept{return shortStepsIgnored_;}
     std::uint16_t referencePid()const noexcept{return referencePid_;}
 private:
     std::deque<Anchor> anchors_;
     std::uint16_t referencePid_=0x1fff;
     bool havePid_=false;
     std::uint64_t resets_=0;
+    std::uint64_t shortStepsIgnored_=0;
 };
 
 } // namespace dvbstreamer5::media::mpegts
