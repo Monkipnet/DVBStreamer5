@@ -138,8 +138,12 @@ std::string HttpServer::renderIndexPage() {
 .dvb-auth-head button{padding:6px 11px}
 #dvbAuthBox label{display:block;margin:12px 0 5px;color:#b8dfff;font-weight:600}
 #dvbAuthBox label.dvb-auth-checkbox{color:#e6f0ff;font-weight:400}
-#dvbAuthBox input[type=url],#dvbAuthBox input[type=number],#dvbAuthSessionsFilter{box-sizing:border-box;width:100%;min-height:36px;padding:9px;background:#0e1723;color:#e6f0ff;border:1px solid #53637a;border-radius:7px}
+#dvbAuthBox input[type=url],#dvbAuthBox input[type=number],#dvbAuthBox input[type=text],#dvbAuthSessionsFilter{box-sizing:border-box;width:100%;min-height:36px;padding:9px;background:#0e1723;color:#e6f0ff;border:1px solid #53637a;border-radius:7px}
 #dvbAuthBox small{display:block;color:#b2c4db;margin:9px 0;line-height:1.4}
+#dvbAuthApiKey{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.02em}
+#dvbAuthApiControls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#dvbAuthApiControls button{cursor:pointer;border:1px solid #526f92;border-radius:7px;padding:8px 11px;background:#24384f;color:#edf5ff}
+#dvbAuthApiKeyStatus{color:#c0d7ee;min-height:1.2em}
 .dvb-auth-actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px}
 #dvbAuthSave{background:#266bc1;color:#fff}
 #dvbAuthStatus,#dvbAuthSessionsStatus{min-height:1.4em;color:#c0d7ee;overflow-wrap:anywhere}
@@ -167,6 +171,17 @@ std::string HttpServer::renderIndexPage() {
  <label for="dvbAuthTimeout" id="dvbAuthTimeoutLabel"></label><input type="number" id="dvbAuthTimeout" min="100" max="3000" step="100">
  <label for="dvbAuthRecheck" id="dvbAuthRecheckLabel"></label><input type="number" id="dvbAuthRecheck" min="1" max="60" step="1">
  <label for="dvbAuthEnd" id="dvbAuthEndLabel"></label><input id="dvbAuthEnd" type="url" placeholder="https://auth.example.com/stop" autocomplete="off">
+ <div id="dvbAuthApiControls">
+  <label for="dvbAuthApiKey" id="dvbAuthApiKeyLabel"></label>
+  <input type="text" id="dvbAuthApiKey" readonly spellcheck="false" autocomplete="off" aria-describedby="dvbAuthApiKeyHelp">
+  <button type="button" id="dvbAuthApiGenerate"></button>
+  <button type="button" id="dvbAuthApiCopy" disabled></button>
+ </div>
+ <small id="dvbAuthApiKeyHelp"></small>
+ <label for="dvbAuthApiIps" id="dvbAuthApiIpsLabel"></label>
+ <input type="text" id="dvbAuthApiIps" autocomplete="off" spellcheck="false" placeholder="127.0.0.1,::1,192.168.200.9">
+ <small id="dvbAuthApiIpsHelp"></small>
+ <div id="dvbAuthApiKeyStatus" role="status" aria-live="polite"></div>
  <small id="dvbAuthNote"></small><small id="dvbAuthIpNote"></small>
  <div id="dvbAuthStatus" role="status" aria-live="polite"></div>
  <div class="dvb-auth-actions"><button type="button" id="dvbAuthSessions"></button><button type="button" id="dvbAuthSave"></button><button type="button" id="dvbAuthClose"></button></div>
@@ -198,7 +213,13 @@ note:'HTTP / HLS / SRT. Ответ 200 разрешает доступ. При �
 ip:'Когда middleware включён, локальная IP-фильтрация HTTP/HLS/SRT не применяется. Списки IP сохраняются.',
 save:'Сохранить',close:'Закрыть',sessions:'Активные сессии',refresh:'Обновить',filter:'Поиск по IP, каналу или протоколу',
 disconnect:'Отключить',empty:'Активных сессий нет',ok:'Сохранено без перезапуска потоков',error:'Ошибка',
-loading:'Загрузка сессий…',shown:'Показано {shown} из {total}',sessionClosed:'Сессия отключена',more:'Показаны первые 500 записей — уточните поиск'
+loading:'Загрузка сессий…',shown:'Показано {shown} из {total}',sessionClosed:'Сессия отключена',more:'Показаны первые 500 записей — уточните поиск',
+apiKey:'Ключ API сессий (Telik Server)',apiGenerate:'Сгенерировать новый',apiCopy:'Копировать ключ',
+apiIps:'Разрешённые IP для ключа',apiIpsHelp:'Список IP через запятую. Проверяется адрес TCP-клиента, не X-Forwarded-For. По умолчанию доступ только с самого сервера.',
+apiKeyHelp:'Ключ разрешает только список и отключение сессий. Старый ключ после замены перестанет работать. Новый ключ показывается один раз.',
+apiKeyStored:'Ключ создан (скрыт)',apiKeyMissing:'Ключ ещё не создан',apiKeyCreated:'Сохраните ключ в Telik Server сейчас: повторно показать его невозможно.',
+apiKeyPrompt:'Сгенерировать новый ключ? Старый ключ немедленно перестанет работать, а новый будет показан только один раз.',
+apiKeyCopied:'Ключ скопирован',apiKeySaveHint:'Сохраните разрешённые IP кнопкой «Сохранить»'
 },
 en:{
 title:'Stream authorization — Cesbo Astra HTTP Backend',enabled:'Enable middleware authorization',
@@ -208,7 +229,13 @@ note:'HTTP / HLS / SRT. Status 200 grants access. When backend is down, new conn
 ip:'When middleware is enabled, local HTTP/HLS/SRT IP filtering is bypassed. IP lists remain saved.',
 save:'Save',close:'Close',sessions:'Active sessions',refresh:'Refresh',filter:'Search IP, channel or protocol',
 disconnect:'Disconnect',empty:'No active sessions',ok:'Saved without restarting streams',error:'Error',
-loading:'Loading sessions…',shown:'Showing {shown} of {total}',sessionClosed:'Session disconnected',more:'Showing first 500 matches — refine your search'
+loading:'Loading sessions…',shown:'Showing {shown} of {total}',sessionClosed:'Session disconnected',more:'Showing first 500 matches — refine your search',
+apiKey:'Sessions API key (Telik Server)',apiGenerate:'Generate new',apiCopy:'Copy key',
+apiIps:'Allowed IP addresses for API key',apiIpsHelp:'Comma-separated IP addresses. Uses actual TCP peer IP, never X-Forwarded-For. Defaults to local host only.',
+apiKeyHelp:'Key grants only session listing and disconnect. Rotation revokes the old key. New key is shown once.',
+apiKeyStored:'API key configured (hidden)',apiKeyMissing:'API key not configured',apiKeyCreated:'Store this key in Telik Server now. It cannot be displayed again.',
+apiKeyPrompt:'Generate a new key? The old key will be revoked immediately and the new key shown only once.',
+apiKeyCopied:'Key copied',apiKeySaveHint:'Save allowed IP addresses with Save'
 },
 hr:{
 title:'Autorizacija tokova — Cesbo Astra HTTP Backend',enabled:'Uključi autorizaciju putem middlewarea',
@@ -218,7 +245,13 @@ note:'HTTP / HLS / SRT. Status 200 dopušta pristup. Ako backend nije dostupan, 
 ip:'Kada je middleware uključen, lokalno IP filtriranje za HTTP/HLS/SRT se zaobilazi. IP popisi ostaju spremljeni.',
 save:'Spremi',close:'Zatvori',sessions:'Aktivne sesije',refresh:'Osvježi',filter:'Traži IP, kanal ili protokol',
 disconnect:'Prekini',empty:'Nema aktivnih sesija',ok:'Spremljeno bez ponovnog pokretanja tokova',error:'Pogreška',
-loading:'Učitavanje sesija…',shown:'Prikazano {shown} od {total}',sessionClosed:'Sesija prekinuta',more:'Prikazano prvih 500 zapisa — suzite pretragu'
+loading:'Učitavanje sesija…',shown:'Prikazano {shown} od {total}',sessionClosed:'Sesija prekinuta',more:'Prikazano prvih 500 zapisa — suzite pretragu',
+apiKey:'API ključ sesija (Telik Server)',apiGenerate:'Generiraj novi',apiCopy:'Kopiraj ključ',
+apiIps:'Dopuštene IP adrese za ključ',apiIpsHelp:'IP adrese odvojene zarezima. Provjerava se stvarni TCP IP, ne X-Forwarded-For. Zadano je dopušten samo lokalni pristup.',
+apiKeyHelp:'Ključ dopušta samo popis i prekid sesija. Novi ključ opoziva stari. Prikazuje se samo jednom.',
+apiKeyStored:'API ključ je postavljen (skriven)',apiKeyMissing:'API ključ nije postavljen',apiKeyCreated:'Odmah spremite ključ u Telik Server. Ne može se ponovno prikazati.',
+apiKeyPrompt:'Generirati novi ključ? Stari će odmah prestati vrijediti, a novi se prikazuje samo jednom.',
+apiKeyCopied:'Ključ kopiran',apiKeySaveHint:'Spremite dopuštene IP adrese gumbom Spremi'
 }
 };
 let currentSessions=[];
@@ -232,7 +265,10 @@ function paintLabels(){
  dvbAuthTimeoutLabel:t.timeout,dvbAuthRecheckLabel:t.recheck,dvbAuthEndLabel:t.end,
  dvbAuthNote:t.note,dvbAuthIpNote:t.ip,dvbAuthSave:t.save,dvbAuthClose:t.close,
  dvbAuthSessions:t.sessions,dvbAuthSessionsHeading:t.sessions,
- dvbAuthSessionsRefresh:t.refresh};
+ dvbAuthSessionsRefresh:t.refresh,dvbAuthApiKeyLabel:t.apiKey,
+ dvbAuthApiGenerate:t.apiGenerate,dvbAuthApiCopy:t.apiCopy,
+ dvbAuthApiIpsLabel:t.apiIps,dvbAuthApiKeyHelp:t.apiKeyHelp,
+ dvbAuthApiIpsHelp:t.apiIpsHelp};
  for(const id in targets)$(id).textContent=targets[id];
  $('dvbAuthSessionsFilter').placeholder=t.filter;
  $('dvbAuthCloseTop').setAttribute('aria-label',t.close);
@@ -245,7 +281,15 @@ function openDialog(dialog){
  const focus=dialog.querySelector('input,button');
  if(focus)focus.focus();
 }
-function closeDialog(dialog){dialog.removeAttribute('open');}
+function closeDialog(dialog){
+ dialog.removeAttribute('open');
+ if(dialog===modal){
+  // Never retain the one-time raw API key in the DOM after closing.
+  $('dvbAuthApiKey').value='';
+  $('dvbAuthApiCopy').disabled=true;
+  $('dvbAuthApiKeyStatus').textContent='';
+ }
+}
 window.openDvbAuthSettings=async function(){
  closeDialog(sessionsModal);
  $('dvbAuthStatus').textContent='';
@@ -259,22 +303,66 @@ window.openDvbAuthSettings=async function(){
   $('dvbAuthTimeout').value=data.timeout_ms||1200;
   $('dvbAuthRecheck').value=data.recheck_minutes||5;
   $('dvbAuthEnd').value=data.end_url||'';
+  $('dvbAuthApiIps').value=data.api_allowed_ips||'127.0.0.1,::1';
+  $('dvbAuthApiKey').value='';
+  $('dvbAuthApiKey').placeholder=data.api_key_configured?labels().apiKeyStored:labels().apiKeyMissing;
+  $('dvbAuthApiCopy').disabled=true;
+  $('dvbAuthApiKeyStatus').textContent='';
  }catch(error){$('dvbAuthStatus').textContent=labels().error+': '+error.message;}
 };
 $('dvbAuthClose').addEventListener('click',()=>closeDialog(modal));
 $('dvbAuthCloseTop').addEventListener('click',()=>closeDialog(modal));
+$('dvbAuthApiGenerate').addEventListener('click',async function(){
+ if(!window.confirm(labels().apiKeyPrompt))return;
+ this.disabled=true;
+ $('dvbAuthApiKeyStatus').textContent='';
+ try{
+  const r=await fetch('/api/stream-auth/api-key/rotate',{
+   method:'POST',credentials:'same-origin',
+   headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
+   body:'{}',cache:'no-store'
+  });
+  const data=await r.json();
+  if(!r.ok||data.result!=='ok'||!data.api_key)throw Error(data.error||'HTTP '+r.status);
+  $('dvbAuthApiKey').value=data.api_key;
+  $('dvbAuthApiKey').select();
+  $('dvbAuthApiCopy').disabled=false;
+  $('dvbAuthApiKeyStatus').textContent=labels().apiKeyCreated;
+ }catch(error){$('dvbAuthApiKeyStatus').textContent=labels().error+': '+error.message;}
+ finally{this.disabled=false;}
+});
+$('dvbAuthApiCopy').addEventListener('click',async()=>{
+ const input=$('dvbAuthApiKey');
+ if(!input.value)return;
+ input.select();
+ try{
+  if(navigator.clipboard && window.isSecureContext){
+   await navigator.clipboard.writeText(input.value);
+   $('dvbAuthApiKeyStatus').textContent=labels().apiKeyCopied;
+  }else{
+   // On plain-HTTP administration connections the operator can manually
+   // copy the selected read-only field; no clipboard permission assumed.
+   $('dvbAuthApiKeyStatus').textContent=labels().apiKeyCreated;
+  }
+ }catch(error){$('dvbAuthApiKeyStatus').textContent=labels().apiKeyCreated;}
+});
+$('dvbAuthApiIps').addEventListener('input',()=>{
+ $('dvbAuthApiKeyStatus').textContent=labels().apiKeySaveHint;
+});
 $('dvbAuthSave').addEventListener('click',async function(){
  this.disabled=true;
  $('dvbAuthStatus').textContent='';
  try{
   const response=await fetch('/api/stream-auth/save',{
-   method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+   method:'POST',credentials:'same-origin',
+   headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
    body:JSON.stringify({
     enabled:$('dvbAuthOn').checked,
     backend_url:$('dvbAuthUrl').value.trim(),
     timeout_ms:Number($('dvbAuthTimeout').value)||1200,
     recheck_minutes:Number($('dvbAuthRecheck').value)||5,
-    end_url:$('dvbAuthEnd').value.trim()
+    end_url:$('dvbAuthEnd').value.trim(),
+    api_allowed_ips:$('dvbAuthApiIps').value.trim()
    })
   });
   const data=await response.json();
