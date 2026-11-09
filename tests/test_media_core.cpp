@@ -1007,6 +1007,81 @@ void testNativeExternallyFedTsRelay() {
     relay.stop();
 }
 
+
+void testNativeInplaceCaBatchAcross77Packets() {
+    using namespace dvbstreamer5::media::network;
+    UdpSocket outputReceiver;
+    std::string error;
+    assert(outputReceiver.openReceiver("127.0.0.1", 0, "", "", 0, error));
+
+    std::atomic<int> calls{0};
+    std::atomic<int> totalPackets{0};
+    std::vector<std::size_t> seenBatchSizes;
+    std::mutex sizesMutex;
+
+    NativeUdpRelay relay;
+    NativeUdpRelayConfig config;
+    config.streamId = "test-native-inplace-ca-batching";
+    config.inputUri = "external://selected-dvb";
+    config.externallyFedInput = true;
+    config.trustedAlignedExternalInput = true;
+    config.outputType = "udp-vbr";
+    config.outputHost = "127.0.0.1";
+    config.outputPort = outputReceiver.localPort();
+    config.processTransport = [&](std::uint8_t* bytes, std::size_t size) {
+        assert(size % 188 == 0);
+        calls.fetch_add(1, std::memory_order_relaxed);
+        totalPackets.fetch_add(static_cast<int>(size / 188), std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> guard(sizesMutex);
+            seenBatchSizes.push_back(size / 188);
+        }
+        for (std::size_t i = 0; i < size; i += 188) {
+            assert(bytes[i] == 0x47);
+            // Emulates post-CA payload modification without changing
+            // packet headers, CC, PCR or the original packet order.
+            bytes[i+4] = 0x5a;
+        }
+        return true;
+    };
+    assert(relay.start(config, error));
+    std::vector<std::uint8_t> input;
+    constexpr int kPackets = 80;
+    for (int i=0; i<kPackets; ++i) {
+        const Packet p = packet(0x312, static_cast<std::uint8_t>(i & 0x0f));
+        input.insert(input.end(), p.begin(), p.end());
+    }
+    assert(relay.pushInput(input.data(), input.size()));
+    std::array<std::uint8_t, 2048> received{};
+    std::size_t receivedPackets=0;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(5);
+    while (receivedPackets < kPackets &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::size_t length=0;
+        assert(outputReceiver.receive(
+            received.data(), received.size(), length, 1000, error));
+        if (!length) continue;
+        assert(length % 188 == 0);
+        for (std::size_t j=0;j<length;j+=188) {
+            assert(received[j] == 0x47);
+            assert(received[j+4] == 0x5a);
+            assert((received[j+3] & 0x0f) == (receivedPackets & 0x0f));
+            ++receivedPackets;
+        }
+    }
+    assert(receivedPackets == kPackets);
+    assert(totalPackets.load() == kPackets);
+    assert(calls.load() == 2);
+    {
+        std::lock_guard<std::mutex> guard(sizesMutex);
+        assert(seenBatchSizes.size() == 2);
+        assert(seenBatchSizes[0] == 77 && seenBatchSizes[1] == 3);
+    }
+    relay.finishInput();
+    relay.stop();
+}
+
 // Collect useful MPEG-TS from CBR output, allowing NULL packets to appear
 // anywhere in the fixed-size 7x188 datagrams. Verify NULL continuity and
 // that useful media keeps its input order across datagrams.
@@ -1688,6 +1763,7 @@ int main() {
     testNativeUdpTsRelay();
     testNativeRtpTsRelay();
     testNativeExternallyFedTsRelay();
+    testNativeInplaceCaBatchAcross77Packets();
     testCbrTsPacer();
     testNativeUdpCbrRelay();
     testNativeSourcePcrCbrFanout();

@@ -232,6 +232,7 @@ NativeUdpRelay::~NativeUdpRelay() {
 bool NativeUdpRelay::start(const NativeUdpRelayConfig& config, std::string& error) {
     stop();
     config_ = config;
+    inputBackpressureEvents_.store(0, std::memory_order_relaxed);
     httpJitterEnabled_ = config_.httpTsInputJitterEnabled &&
                          !config_.externallyFedInput &&
                          isHttpInput(config_.inputUri);
@@ -553,14 +554,21 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
             return false;
         }
         std::unique_lock<std::mutex> lock(httpQueueMutex_);
+        std::uint64_t backpressureMs = 0;
+        std::size_t backpressureQueuedBytes = 0;
         const auto hasQueueSpace = [this, chunkSize, kMaximumHttpQueueBytes] {
             return !running_.load(std::memory_order_acquire) ||
                 httpQueuedBytes_ + chunkSize <= kMaximumHttpQueueBytes;
         };
         if (!hasQueueSpace()) {
+            backpressureQueuedBytes = httpQueuedBytes_;
+            const auto waitStarted = std::chrono::steady_clock::now();
             httpQueueProducerWaiting_ = true;
             httpQueueCondition_.wait(lock, hasQueueSpace);
             httpQueueProducerWaiting_ = false;
+            backpressureMs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - waitStarted).count());
         }
         if (!running_.load(std::memory_order_acquire)) {
             return false;
@@ -584,6 +592,18 @@ bool NativeUdpRelay::enqueueHttpData(const std::uint8_t* data, std::size_t size)
         httpQueue_.push_back(std::move(chunk));
         lock.unlock();
         if (notifyConsumer) httpQueueCondition_.notify_one();
+        if (config_.trustedAlignedExternalInput && backpressureMs > 25) {
+            const auto n = inputBackpressureEvents_.fetch_add(
+                1, std::memory_order_relaxed) + 1;
+            if (n <= 3 || (n & (n - 1)) == 0) {
+                std::cerr << "NATIVE DVB RELAY BACKPRESSURE stream="
+                          << config_.streamId
+                          << " wait_ms=" << backpressureMs
+                          << " queued_before_bytes=" << backpressureQueuedBytes
+                          << " queue_limit_bytes=" << kMaximumHttpQueueBytes
+                          << " occurrences=" << n << std::endl;
+            }
+        }
         offset += chunkSize;
     }
     return true;
@@ -1303,6 +1323,8 @@ void NativeUdpRelay::run() {
     std::uint64_t diagRelayLoopMaxMs = 0;
     std::uint64_t diagRelayLoopsOver100Ms = 0;
     std::size_t diagRelayQueuePeakBytes = 0;
+    std::uint64_t slowCaBatchEvents = 0;
+    std::uint64_t slowPipelineEvents = 0;
 
     // Only for a single explicitly opted-in HTTP TS service. The HTTP reader
     // continues receiving immediately into the existing bounded 2MiB queue.
@@ -1712,6 +1734,12 @@ void NativeUdpRelay::run() {
             }
         }
 
+        // Time one active DVB relay consumer iteration (not the idle wait).
+        const bool measureDvbPipeline =
+            config_.trustedAlignedExternalInput && !packets.empty();
+        const auto pipelineStarted = measureDvbPipeline
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         if (!packets.empty() && config_.observeSourceTransport) {
             sourceObservedTransport.resize(
                 packets.size() * dvbstreamer5::media::mpegts::kPacketSize);
@@ -1751,31 +1779,46 @@ void NativeUdpRelay::run() {
 
         if (!packets.empty() && config_.processTransport) {
             constexpr std::size_t kCaBatchPackets = 77;
-            std::array<std::uint8_t,
-                kCaBatchPackets * dvbstreamer5::media::mpegts::kPacketSize> caBatch {};
+            // V429: Packet is exactly a contiguous 188-byte std::array.
+            // The CA hook mutates TS bytes in place. Use 77-packet slices of
+            // the existing vector instead of copying every packet to a
+            // temporary 14 KiB buffer and copying it back after decrypt.
+            // Batch boundaries and ECM/CW processing order stay unchanged.
+            static_assert(sizeof(dvbstreamer5::media::mpegts::Packet) ==
+                dvbstreamer5::media::mpegts::kPacketSize,
+                "CA in-place TS storage must be contiguous");
             for (std::size_t first = 0; first < packets.size(); first += kCaBatchPackets) {
                 const std::size_t count = (std::min)(
                     kCaBatchPackets, packets.size() - first);
                 const std::size_t bytes =
                     count * dvbstreamer5::media::mpegts::kPacketSize;
-                for (std::size_t index = 0; index < count; ++index) {
-                    std::memcpy(
-                        caBatch.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
-                        packets[first + index].data(),
-                        dvbstreamer5::media::mpegts::kPacketSize);
+                auto* const caBytes = reinterpret_cast<std::uint8_t*>(
+                    packets.data() + first);
+                const bool traceCa = config_.trustedAlignedExternalInput;
+                const auto caStarted = traceCa
+                    ? std::chrono::steady_clock::now()
+                    : std::chrono::steady_clock::time_point{};
+                const bool accepted = config_.processTransport(caBytes, bytes);
+                if (traceCa) {
+                    const auto caMs = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - caStarted).count();
+                    if (caMs > 25 && (++slowCaBatchEvents <= 3 ||
+                        (slowCaBatchEvents & (slowCaBatchEvents - 1)) == 0)) {
+                        std::cerr << "NATIVE DVB CA BATCH SLOW stream="
+                                  << config_.streamId
+                                  << " packets=" << count
+                                  << " elapsed_ms=" << caMs
+                                  << " occurrences=" << slowCaBatchEvents
+                                  << std::endl;
+                    }
                 }
-                if (!config_.processTransport(caBatch.data(), bytes)) {
+                if (!accepted) {
                     error = "native conditional-access transport processing failed";
                     std::lock_guard<std::mutex> lock(errorMutex_);
                     lastError_ = error;
                     running_.store(false, std::memory_order_release);
                     break;
-                }
-                for (std::size_t index = 0; index < count; ++index) {
-                    std::memcpy(
-                        packets[first + index].data(),
-                        caBatch.data() + index * dvbstreamer5::media::mpegts::kPacketSize,
-                        dvbstreamer5::media::mpegts::kPacketSize);
                 }
             }
             if (!running_.load(std::memory_order_acquire)) break;
@@ -1934,6 +1977,20 @@ void NativeUdpRelay::run() {
             }
         }
 
+        if (measureDvbPipeline) {
+            const auto pipelineMs = std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - pipelineStarted).count();
+            if (pipelineMs > 50 && (++slowPipelineEvents <= 3 ||
+                (slowPipelineEvents & (slowPipelineEvents - 1)) == 0)) {
+                std::cerr << "NATIVE DVB RELAY PIPELINE SLOW stream="
+                          << config_.streamId
+                          << " packets=" << packets.size()
+                          << " elapsed_ms=" << pipelineMs
+                          << " occurrences=" << slowPipelineEvents
+                          << std::endl;
+            }
+        }
         // UDP-CBR is drained by WisiCbrOutputWorker on its own absolute
         // CLOCK_MONOTONIC sender thread. Never send CBR datagrams here.
 

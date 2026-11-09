@@ -233,6 +233,7 @@ private:
     // V10.8.139: guarded by httpQueueMutex_. Only signal queue-space
     // availability when the single producer is actually blocked.
     bool httpQueueProducerWaiting_ = false;
+    std::atomic<std::uint64_t> inputBackpressureEvents_{0};
     bool httpFinished_ = false;
     std::atomic<bool> httpStopRequested_{false};
     std::atomic<bool> running_{false};
