@@ -2,6 +2,7 @@
 #include "AppVersion.h"
 #include "StreamAuthBackend.h"
 #include "StreamAuthSessions.h"
+#include "StreamAuthApiKey.h"
 #include "media/HlsFileCache.h"
 #include "EmbeddedWebAssets.h"
 #include "StableUdpOutput.h"

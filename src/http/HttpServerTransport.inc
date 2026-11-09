@@ -45,7 +45,9 @@ bool sendHlsFileZeroCopy(tcp::socket& socket,const std::filesystem::path& path,
 
 HttpServer::HttpServer(boost::asio::io_context& ioc, ConfigManager& cfg, StreamManager& sm)
     : ioContext(ioc), sessionPool(kHttpSessionWorkers), qualityHistoryTimer(ioc),
-      configManager(cfg), streamManager(sm) {
+      configManager(cfg), streamManager(sm),
+      streamAuthApiKeyDigest_(cfg.config.streamAuthApiKeySha256),
+      streamAuthApiAllowedIps_(cfg.config.streamAuthApiAllowedIps) {
     std::cerr << "HTTP worker pool 202.47: workers=" << kHttpSessionWorkers
               << " max_queued=" << kMaxQueuedHttpSessions
               << " thread_per_request=off" << std::endl;
@@ -205,6 +207,58 @@ void HttpServer::handleSession(
         bool hlsKeepAlive=false;
 
         const std::string target(req.target());
+        // Independent API identity: never accept session-management keys for
+        // admin/UI/config/restart routes. A forged X-Forwarded-For is ignored:
+        // peer IP comes exclusively from the connected TCP socket.
+        std::string apiToken;
+        bool apiKeyAttempt=false;
+        const auto keyHeader=req.find("X-API-Key");
+        if(keyHeader!=req.end()){
+            apiKeyAttempt=true;
+            apiToken=std::string(keyHeader->value());
+        }
+        const auto authorization=req.find(http::field::authorization);
+        if(authorization!=req.end()){
+            const std::string raw=std::string(authorization->value());
+            if(raw.rfind("Bearer ",0)==0){
+                const auto candidate=raw.substr(7);
+                bool known=false;
+                {
+                    std::lock_guard<std::mutex> lock(streamAuthApiKeyMutex_);
+                    known=dvbstreamer5::stream_auth::api_key::matches(
+                        streamAuthApiKeyDigest_,candidate);
+                }
+                if(target.rfind("/api/",0)==0 || known){
+                    if(apiKeyAttempt)apiToken.clear(); // ambiguous credentials deny
+                    else apiToken=candidate;
+                    apiKeyAttempt=true;
+                }
+            }
+        }
+        bool apiKeyGranted=false;
+        if(apiKeyAttempt){
+            boost::system::error_code peerError;
+            const auto peer=socket.remote_endpoint(peerError);
+            const auto method=req.method()==http::verb::get?"GET":
+                              req.method()==http::verb::post?"POST":"OTHER";
+            const bool inScope=dvbstreamer5::stream_auth::api_key::inScope(
+                target,method);
+            {
+                std::lock_guard<std::mutex> lock(streamAuthApiKeyMutex_);
+                apiKeyGranted=inScope && !peerError &&
+                    dvbstreamer5::stream_auth::api_key::authorize(
+                        streamAuthApiKeyDigest_,streamAuthApiAllowedIps_,apiToken,
+                        peerError?"":peer.address().to_string());
+            }
+            if(!apiKeyGranted){
+                res.result(http::status::forbidden);
+                res.set(http::field::content_type,"application/json");
+                res.body()=R"({"error":"Session API key forbidden"})";
+                res.content_length(res.body().size());
+                http::write(socket,res);
+                return;
+            }
+        }
 
         // A logout guard cookie blocks the browser's cached Basic credentials.
         // Logout affects control-panel authentication only; IPTV media and
@@ -290,7 +344,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             return;
         }
         const bool panelProtected = requiresAuthentication(target);
-        if (loggedOut && panelProtected) {
+        if (loggedOut && panelProtected && !apiKeyGranted) {
             if (req.method() == http::verb::get && target == "/") {
                 res.result(http::status::see_other);
                 res.set(http::field::location, "/logout");
@@ -304,7 +358,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket, res);
             return;
         }
-        if (panelProtected && !isAuthorized(req) &&
+        if (panelProtected && !apiKeyGranted && !isAuthorized(req) &&
             !isPanelSessionAuthorized(req)) {
             writeUnauthorized(res);
             res.content_length(res.body().size());
@@ -323,6 +377,11 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             data["ip_filter_effective"]=!configManager.config.streamAuthBackendEnabled;
             data["failure_policy"]="deny";
             data["protocols"]="http,hls,srt";
+            {
+                std::lock_guard<std::mutex> guard(streamAuthApiKeyMutex_);
+                data["api_key_configured"]=!streamAuthApiKeyDigest_.empty();
+                data["api_allowed_ips"]=streamAuthApiAllowedIps_;
+            }
             Json::StreamWriterBuilder writer;
             res.set(http::field::content_type,"application/json; charset=UTF-8");
             res.body()=Json::writeString(writer,data);
@@ -348,35 +407,55 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 const int timeout=std::clamp(data.get("timeout_ms",1200).asInt(),100,3000);
                 const int recheck=std::clamp(data.get("recheck_minutes",5).asInt(),1,60);
                 const std::string endUrl=data.get("end_url","").asString();
+                const std::string allowedIps=data.get("api_allowed_ips",
+                    configManager.config.streamAuthApiAllowedIps).asString();
+                const bool updateApiIps=data.isMember("api_allowed_ips");
+                const auto requestedWith=req.find("X-Requested-With");
+                const bool trustedSettingsUpdate=!updateApiIps ||
+                    (requestedWith!=req.end() && 
+                     requestedWith->value()=="DVBStreamer5");
                 const auto validUrl=[](const std::string& value){
                     return value.size()<=2048 &&
                        value.find_first_of("\r\n#")==std::string::npos &&
                        (value.empty()||value.rfind("https://",0)==0||
                         value.rfind("http://",0)==0);
                 };
-                if (!validUrl(url) || !validUrl(endUrl) || (enabled && url.empty())) {
+                if (!trustedSettingsUpdate){
+                    res.result(http::status::forbidden);
+                    reply["error"]="Same-origin settings request required";
+                } else if (!validUrl(url) || !validUrl(endUrl) || (enabled && url.empty()) ||
+                           (updateApiIps &&
+                            !dvbstreamer5::stream_auth::api_key::validAllowedIps(allowedIps))) {
                     res.result(http::status::bad_request);
-                    reply["error"]="HTTP(S) backend URL required when enabled";
+                    reply["error"]="Invalid middleware URL or session API IP allowlist";
                 } else {
                     const bool oldEnabled=configManager.config.streamAuthBackendEnabled;
                     const std::string oldUrl=configManager.config.streamAuthBackendUrl;
                     const int oldTimeout=configManager.config.streamAuthBackendTimeoutMs;
                     const int oldRecheck=configManager.config.streamAuthRecheckMinutes;
                     const auto oldEnd=configManager.config.streamAuthEndUrl;
+                    const auto oldAllowed=configManager.config.streamAuthApiAllowedIps;
                     configManager.config.streamAuthBackendEnabled=enabled;
                     configManager.config.streamAuthBackendUrl=url;
                     configManager.config.streamAuthBackendTimeoutMs=timeout;
                     configManager.config.streamAuthRecheckMinutes=recheck;
                     configManager.config.streamAuthEndUrl=endUrl;
+                    if(updateApiIps)
+                        configManager.config.streamAuthApiAllowedIps=allowedIps;
                     if (!configManager.save()) {
                         configManager.config.streamAuthBackendEnabled=oldEnabled;
                         configManager.config.streamAuthBackendUrl=oldUrl;
                         configManager.config.streamAuthBackendTimeoutMs=oldTimeout;
                         configManager.config.streamAuthRecheckMinutes=oldRecheck;
                         configManager.config.streamAuthEndUrl=oldEnd;
+                        configManager.config.streamAuthApiAllowedIps=oldAllowed;
                         res.result(http::status::internal_server_error);
                         reply["error"]="Failed to save stream authentication";
                     } else {
+                        if(updateApiIps){
+                            std::lock_guard<std::mutex> lock(streamAuthApiKeyMutex_);
+                            streamAuthApiAllowedIps_=allowedIps;
+                        }
                         reply["result"]="ok";
                         reply["enabled"]=enabled;
                         reply["ip_filter_effective"]=!enabled;
@@ -390,7 +469,48 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket,res);
             return;
         }
-        // Admin-only viewer management. Never return tokens/credentials.
+        // Only an authenticated control-panel administrator can rotate the
+        // 256-bit credential; a session-scoped API key cannot call this route.
+        if(target=="/api/stream-auth/api-key/rotate" &&
+           req.method()==http::verb::post){
+            const auto requestedWith=req.find("X-Requested-With");
+            Json::Value response(Json::objectValue);
+            res.set(http::field::content_type,"application/json; charset=UTF-8");
+            res.set(http::field::cache_control,"no-store");
+            if(requestedWith==req.end()||
+               requestedWith->value()!="DVBStreamer5"||
+               req.body().size()>64U){
+                res.result(http::status::forbidden);
+                response["error"]="Same-origin admin request required";
+            }else{
+                const auto raw=dvbstreamer5::stream_auth::api_key::generate();
+                const auto digest=dvbstreamer5::stream_auth::api_key::sha256(raw);
+                if(raw.empty()||digest.empty()){
+                    res.result(http::status::service_unavailable);
+                    response["error"]="Secure random generator unavailable";
+                }else{
+                    std::lock_guard<std::mutex> lock(streamAuthApiKeyMutex_);
+                    const auto old=configManager.config.streamAuthApiKeySha256;
+                    configManager.config.streamAuthApiKeySha256=digest;
+                    if(!configManager.save()){
+                        configManager.config.streamAuthApiKeySha256=old;
+                        res.result(http::status::internal_server_error);
+                        response["error"]="Could not persist API key";
+                    }else{
+                        streamAuthApiKeyDigest_=digest;
+                        response["result"]="ok";
+                        response["api_key"]=raw; // shown exactly once
+                    }
+                }
+            }
+            Json::StreamWriterBuilder writer;
+            res.body()=Json::writeString(writer,response);
+            res.content_length(res.body().size());
+            http::write(socket,res);
+            return;
+        }
+        // Admin-only viewer management, or least-privilege API key.
+        // Never return viewer token/credentials.
         if(target=="/api/stream-auth/sessions" && req.method()==http::verb::get){
             Json::Value data(Json::objectValue);
             data["result"]="ok";

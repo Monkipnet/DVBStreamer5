@@ -808,6 +808,8 @@ Json::Value AppConfig::toJson() const {
     root["stream_auth_backend_timeout_ms"] = streamAuthBackendTimeoutMs;
     root["stream_auth_recheck_minutes"] = streamAuthRecheckMinutes;
     root["stream_auth_end_url"] = streamAuthEndUrl;
+    root["stream_auth_api_key_sha256"] = streamAuthApiKeySha256;
+    root["stream_auth_api_allowed_ips"] = streamAuthApiAllowedIps;
     root["telegram_token"] = telegramToken;
     root["telegram_chat_id"] = telegramChatId;
     root["srt_vps_vds_optimization"] = srtVpsVdsOptimization;
@@ -849,6 +851,10 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.streamAuthRecheckMinutes = std::clamp(
         root.get("stream_auth_recheck_minutes", 5).asInt(), 1, 60);
     config.streamAuthEndUrl = root.get("stream_auth_end_url", "").asString();
+    config.streamAuthApiKeySha256 =
+        root.get("stream_auth_api_key_sha256", "").asString();
+    config.streamAuthApiAllowedIps =
+        root.get("stream_auth_api_allowed_ips", "127.0.0.1,::1").asString();
     if (config.language != "ru" && config.language != "en" && config.language != "hr") {
         config.language = "en";
     }

@@ -119,6 +119,9 @@ private:
     std::atomic<uint64_t> acceptGeneration{0};
     ConfigManager& configManager;
     StreamManager& streamManager;
+    mutable std::mutex streamAuthApiKeyMutex_;
+    std::string streamAuthApiKeyDigest_;
+    std::string streamAuthApiAllowedIps_;
     // Monotonic uptime of this HTTP/control-plane instance, created at startup.
     const std::chrono::steady_clock::time_point startedAt_ =
         std::chrono::steady_clock::now();

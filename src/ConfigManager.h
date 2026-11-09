@@ -211,6 +211,10 @@ struct AppConfig {
     int streamAuthBackendTimeoutMs = 1200;
     int streamAuthRecheckMinutes = 5;
     std::string streamAuthEndUrl; // optional session-end notification endpoint
+    // Independent, least-privilege Telik/middleware integration credential.
+    // Only SHA-256 digest is stored; raw 256-bit key is returned once.
+    std::string streamAuthApiKeySha256;
+    std::string streamAuthApiAllowedIps = "127.0.0.1,::1";
     std::string telegramToken;
     std::string telegramChatId;
     // Opt-in SRT profile for VPS/VDS/container hosts.

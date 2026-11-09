@@ -94,6 +94,12 @@ std::string HttpServer::handleConfigImport(const std::string& body) {
         configRoot["http_port"] = configManager.config.httpPort;
     }
 
+    // Config import must never resurrect a previously rotated/revoked API
+    // key from an older backup, even when restoring a full admin bundle.
+    configRoot["stream_auth_api_key_sha256"] =
+        configManager.config.streamAuthApiKeySha256;
+    configRoot["stream_auth_api_allowed_ips"] =
+        configManager.config.streamAuthApiAllowedIps;
     AppConfig candidate = AppConfig::fromJson(configRoot);
     std::set<std::string> streamIds;
     std::size_t outputCount = 0;
@@ -270,6 +276,9 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
         nextConfig.streamAuthRecheckMinutes = previousConfig.streamAuthRecheckMinutes;
     if (!root.isMember("stream_auth_end_url"))
         nextConfig.streamAuthEndUrl = previousConfig.streamAuthEndUrl;
+    // Only the dedicated key-rotation endpoint can replace credentials.
+    nextConfig.streamAuthApiKeySha256 = previousConfig.streamAuthApiKeySha256;
+    nextConfig.streamAuthApiAllowedIps = previousConfig.streamAuthApiAllowedIps;
     // Partial settings and channel-editor saves must never clear Telegram
     // credentials. Explicit non-empty updates still take effect immediately.
     const auto preserveTelegramField = [&](const char* key, std::string& value,
