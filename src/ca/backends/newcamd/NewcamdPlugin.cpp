@@ -233,6 +233,8 @@ struct ServiceBinding {
     bool icamModeLogged = false;
     uint8_t fastEcmObservedParity = 0; // MPEG-TS scrambling_control: 2=EVEN, 3=ODD
     uint64_t fastEcmPendingActivations = 0;
+    uint64_t fastEcmIgnoredHalves = 0;
+    uint64_t fastEcmStages = 0;
     uint64_t fastEcmZeroCwSkips = 0;
     uint64_t fastEcmUnchangedCwSkips = 0;
     // Service-private, parity-specific Irdeto CW cache; never shared
@@ -1030,6 +1032,7 @@ void configure_service_callback(NewcamdInstance* inst,
                 if (fastEcm && !responseMatchesEcm) {
                     fastAction = "ignore-response-table";
                 } else if (fastEcm && !parityMatchesEcm) {
+                    ++target->fastEcmIgnoredHalves;
                     fastAction = "ignore-nonmatching-half";
                 } else if (fastEcm && zeroCw) {
                     ++target->fastEcmZeroCwSkips;
@@ -1066,6 +1069,7 @@ void configure_service_callback(NewcamdInstance* inst,
                             slot.pendingEcmMode = currentEcmMode;
                             slot.pendingValid = true;
                             staged = true;
+                            ++target->fastEcmStages;
                             fastAction = "stage";
                         } else {
                             install_control_word(slot, currentEcmMode, cw);
@@ -1123,9 +1127,11 @@ void configure_service_callback(NewcamdInstance* inst,
                               << " ecm_mode=" << static_cast<unsigned>(currentEcmMode)
                               << std::endl;
                 }
-                if (fastEcm && (caDiagnosticsEnabled() || staged ||
-                                std::string(fastAction).rfind("skip-", 0) == 0 ||
-                                std::string(fastAction).rfind("ignore-", 0) == 0)) {
+                // V424: routine FastECM decisions are extremely frequent across
+                // 7-10 concurrent iCAM services. Synchronous stderr/journald
+                // writes under this service mutex used to delay TS processing.
+                // Retain exact diagnostics only with explicit CA_DIAGNOSTICS.
+                if (fastEcm && caDiagnosticsEnabled()) {
                     std::cerr << "NEWCAMD FASTECM CW: stream=" << streamId
                               << " sid=" << target->serviceId
                               << " parity=" << ((parity & 1) ? "ODD" : "EVEN")
@@ -1798,11 +1804,15 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
                 enteringSlot.pendingEcmMode = 0;
                 ++binding.cwUpdates;
                 ++binding.fastEcmPendingActivations;
-                std::cerr << "NEWCAMD FASTECM ACTIVATE: stream=" << stream_id
-                          << " sid=" << binding.serviceId
-                          << " parity=" << (scramblingControl == 3 ? "ODD" : "EVEN")
-                          << " activations=" << binding.fastEcmPendingActivations
-                          << std::endl;
+                // This is the normal CW transition, not an error. Keep it
+                // off the synchronous stderr path unless debug is requested.
+                if (diagnostics) {
+                    std::cerr << "NEWCAMD FASTECM ACTIVATE: stream=" << stream_id
+                              << " sid=" << binding.serviceId
+                              << " parity=" << (scramblingControl == 3 ? "ODD" : "EVEN")
+                              << " activations=" << binding.fastEcmPendingActivations
+                              << std::endl;
+                }
             }
         }
 
@@ -2050,6 +2060,9 @@ static const char* newcamd_status_json(void* instance) {
     size_t evenKeys = 0;
     size_t oddKeys = 0;
     size_t pendingEcms = 0;
+    std::uint64_t fastEcmIgnoredHalves = 0;
+    std::uint64_t fastEcmStages = 0;
+    std::uint64_t fastEcmActivations = 0;
     for (const auto& session : sessions) {
         if (!session || !session->connected.load()) continue;
         ++connected;
@@ -2083,6 +2096,9 @@ static const char* newcamd_status_json(void* instance) {
         std::lock_guard<std::mutex> serviceLock(binding->mutex);
         if (binding->even.valid) ++evenKeys;
         if (binding->odd.valid) ++oddKeys;
+        fastEcmIgnoredHalves += binding->fastEcmIgnoredHalves;
+        fastEcmStages += binding->fastEcmStages;
+        fastEcmActivations += binding->fastEcmPendingActivations;
     }
     const std::string state = connected ? "connected" : (readers ? "ready" : "disconnected");
     status = "{\"status\":\"" + state +
@@ -2103,6 +2119,9 @@ static const char* newcamd_status_json(void* instance) {
              ",\"authenticated_clients\":" + std::to_string(authenticated) +
              ",\"streams\":" + std::to_string(services.size()) +
              ",\"pending_ecms\":" + std::to_string(pendingEcms) +
+             ",\"fast_ecm_ignored_halves\":" + std::to_string(fastEcmIgnoredHalves) +
+             ",\"fast_ecm_stages\":" + std::to_string(fastEcmStages) +
+             ",\"fast_ecm_activations\":" + std::to_string(fastEcmActivations) +
              ",\"even_keys\":" + std::to_string(evenKeys) +
              ",\"odd_keys\":" + std::to_string(oddKeys) +
              ",\"newcamd_authenticated\":" + std::string(authenticated ? "true" : "false") +

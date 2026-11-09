@@ -38,6 +38,9 @@ jobs:
       - name: Validate DVB-T/T2 UI, terrestrial API and JavaScript syntax
         run: node tests/web/test_dvb_terrestrial_ui.js
 
+      - name: Verify iCAM multichannel CA logging policy
+        run: node tests/web/test_icam_multichannel_policy.js
+
       - name: Vendor and compile pinned native SRT/codec sources
         run: |
           bash scripts/vendor_srt_source.sh
