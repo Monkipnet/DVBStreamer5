@@ -1,5 +1,8 @@
 #include "media/SharedDvbPidAdmission.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <iostream>
