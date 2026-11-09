@@ -6559,7 +6559,8 @@ function updateSatelliteUnicableUi(triggerSignal=false) {
   const item = selectedDvbFrontend();
   const driverMode = Number(item?.driver_mode ?? -1);
   const mode = String(document.getElementById('satUnicableMode')?.value || 'none');
-  const enabled = mode === 'en50494' || mode === 'en50607';
+  const enabled = !dvbReceptionIsTerrestrial() &&
+    (mode === 'en50494' || mode === 'en50607');
   document.querySelectorAll('.sat-unicable-field').forEach(el => {
     el.style.display = enabled ? '' : 'none';
   });
@@ -6677,6 +6678,15 @@ function setDvbReceptionMode(resetFrequency=true) {
   updateSatelliteUnicableUi(false);
   applyTbsDriverModeUi();
   refreshSatelliteAdapterOptions();
+  // A board may expose DVB-T only or DVB-T2 only. Prefer a delivery
+  // system the selected frontend actually advertises.
+  const current=dvbAdapters.find(a=>Number(a.adapter)===Number(document.getElementById('satAdapter')?.value) &&
+    Number(a.frontend)===Number(document.getElementById('satFrontend')?.value));
+  const supported=Array.isArray(current?.delivery_systems)?current.delivery_systems:[];
+  if (supported.length && !supported.includes(delivery.value)) {
+    const candidate=[...delivery.options].find(o=>supported.includes(o.value));
+    if (candidate) delivery.value=candidate.value;
+  }
   const title=document.getElementById('satAddTitle');
   if (title) title.textContent=terrestrial
     ? subtitleUiTriText('Добавить канал — DVB-T/T2','Add channel — DVB-T/T2','Dodaj kanal — DVB-T/T2')
