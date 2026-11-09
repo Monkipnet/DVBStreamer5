@@ -1400,6 +1400,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.dvbTuneConfig.frontend = dvbParams.frontend;
         relay.dvbTuneConfig.frequencyKHz = dvbParams.frequencyKHz;
         relay.dvbTuneConfig.symbolRateK = dvbParams.symbolRateK;
+        relay.dvbTuneConfig.bandwidthHz = dvbParams.bandwidthHz;
         relay.dvbTuneConfig.polarity = dvbParams.polarity;
         relay.dvbTuneConfig.deliverySystem = dvbParams.deliverySystem;
         relay.dvbTuneConfig.modulation = dvbParams.modulation;

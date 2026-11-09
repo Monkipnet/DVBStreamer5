@@ -22,6 +22,7 @@ std::string HttpServer::dvbAdapters() {
         if (!item.isMember("frequency_khz")) {
             item["frequency_khz"] = params.frequencyKHz;
             item["symbol_rate"] = params.symbolRateK;
+            item["bandwidth_hz"] = params.bandwidthHz;
             item["polarity"] = params.polarity;
             item["delivery_system"] = params.deliverySystem;
             item["modulation"] = params.modulation;
@@ -60,6 +61,7 @@ std::string HttpServer::dvbAdapters() {
         item["consumers"] = item.get("consumers", 0).asUInt() + 1;
         item["frequency_khz"] = params.frequencyKHz;
         item["symbol_rate"] = params.symbolRateK;
+            item["bandwidth_hz"] = params.bandwidthHz;
         item["polarity"] = params.polarity;
         item["delivery_system"] = params.deliverySystem;
         item["modulation"] = params.modulation;
@@ -96,6 +98,7 @@ std::string HttpServer::dvbAdapters() {
                 if (found->second.isMember("frequency_khz")) {
                     adapter["frequency_khz"] = found->second.get("frequency_khz", 0);
                     adapter["symbol_rate"] = found->second.get("symbol_rate", 0);
+                    adapter["bandwidth_hz"] = found->second.get("bandwidth_hz", 8000000);
                     adapter["polarity"] = found->second.get("polarity", "");
                     adapter["delivery_system"] = found->second.get("delivery_system", "");
                     adapter["modulation"] = found->second.get("modulation", "auto");

@@ -34,6 +34,7 @@ std::string transponderKey(const LinuxDvbTuneConfig& config) {
         << config.adapter << ':' << config.frontend
         << "|rf=" << config.frequencyKHz
         << "|sr=" << config.symbolRateK
+        << "|bw=" << config.bandwidthHz
         << "|pol=" << config.polarity
         << "|sys=" << config.deliverySystem
         << "|mod=" << config.modulation

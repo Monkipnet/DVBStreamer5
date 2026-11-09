@@ -39,6 +39,7 @@ bool makeWarmDvbTune(const StreamConfig& cfg,
     tune.frontend = params.frontend;
     tune.frequencyKHz = params.frequencyKHz;
     tune.symbolRateK = params.symbolRateK;
+    tune.bandwidthHz = params.bandwidthHz;
     tune.polarity = params.polarity;
     tune.deliverySystem = params.deliverySystem;
     tune.modulation = params.modulation;
