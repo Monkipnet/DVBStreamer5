@@ -6414,7 +6414,7 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
   if (!adapterSelect || !frontendSelect) return;
   const adapter = Number(adapterSelect.value || 0);
   const frontends = dvbAdapters
-    .filter(item => Number(item.adapter) === adapter)
+    .filter(item => Number(item.adapter) === adapter && dvbFrontendSupportsReception(item))
     .sort((a,b) => Number(a.frontend) - Number(b.frontend));
   const previous = preferredFrontend === null ? Number(frontendSelect.value || 0) : Number(preferredFrontend);
   if (!frontends.length) {
@@ -6452,6 +6452,7 @@ function applySelectedDvbFrontendTuneToForm() {
   const configured = Number(item?.configured_streams || 0);
   const consumers = Number(item?.consumers || 0);
   if (!item || (!(item.in_use === true) && configured <= 0 && consumers <= 0)) return false;
+  if (item.delivery_system && (item.delivery_system.startsWith('dvb-t') !== dvbReceptionIsTerrestrial())) return false;
   const setValue = (id, value) => {
     const input = document.getElementById(id);
     if (input && value !== undefined && value !== null && value !== '') input.value = String(value);
@@ -6464,6 +6465,7 @@ function applySelectedDvbFrontendTuneToForm() {
   if (Number(item.symbol_rate || 0) > 0) setValue('satSymbolRate', Number(item.symbol_rate));
   setValue('satPolarity', item.polarity || 'H');
   setValue('satDeliverySystem', item.delivery_system || 'dvb-s2');
+  if (Number(item.bandwidth_hz || 0)>0) setValue('satBandwidth', item.bandwidth_hz);
   setValue('satModulation', item.modulation || 'auto');
   setValue('satFec', item.fec || 'auto');
   setValue('satDiseqc', Number(item.diseqc_source ?? -1));
@@ -6566,6 +6568,7 @@ function applyTbsDriverModeUi() {
   updateSatelliteUnicableUi(false);
   const hint = document.getElementById('satDriverModeHint');
   if (!hint) return;
+  if (dvbReceptionIsTerrestrial()) {hint.textContent='';return;}
   const selectedUnicable = String(document.getElementById('satUnicableMode')?.value || 'none');
   const ru = [
     'Mode 0: multiswitch / quattro или quad LNB; выбор A–D доступен для спутникового входа.',
@@ -6588,7 +6591,7 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
   const adapterSelect = document.getElementById('satAdapter');
   if (!adapterSelect) return;
   const previous = preferredAdapter === null ? Number(adapterSelect.value || 0) : Number(preferredAdapter);
-  const adapters = [...new Set(dvbAdapters.map(item => Number(item.adapter)).filter(Number.isFinite))].sort((a,b)=>a-b);
+  const adapters = [...new Set(dvbAdapters.filter(dvbFrontendSupportsReception).map(item => Number(item.adapter)).filter(Number.isFinite))].sort((a,b)=>a-b);
   if (!adapters.length) {
     adapterSelect.innerHTML = '<option value="0">Adapter 0</option>';
     adapterSelect.value = '0';
@@ -6609,6 +6612,59 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
   refreshSatelliteFrontendOptions(preferredFrontend);
 }
 
+function dvbReceptionIsTerrestrial() {
+  return document.getElementById('satReceptionType')?.value === 'terrestrial';
+}
+function dvbFrontendSupportsReception(item) {
+  const modes = Array.isArray(item.delivery_systems) ? item.delivery_systems : [];
+  if (!modes.length) return true; // Driver metadata may be unavailable while busy.
+  return modes.some(system => dvbReceptionIsTerrestrial()
+    ? (system === 'dvb-t' || system === 'dvb-t2')
+    : (system === 'dvb-s' || system === 'dvb-s2'));
+}
+function satelliteDeliveryChanged() {
+  const terrestrial = dvbReceptionIsTerrestrial();
+  const id = document.getElementById('satStreamId');
+  const label = document.getElementById('satStreamIdLabel');
+  if (id) {
+    id.disabled = terrestrial && document.getElementById('satDeliverySystem')?.value !== 'dvb-t2';
+    if (id.disabled) id.value = '-1';
+  }
+  if (label) label.textContent = terrestrial ? 'PLP ID (DVB-T2)' : 'ISI / Stream ID';
+  resetSatelliteServicesForTuneChange();
+  updateSatelliteSignal();
+}
+function setDvbReceptionMode(resetFrequency=true) {
+  const terrestrial = dvbReceptionIsTerrestrial();
+  const delivery = document.getElementById('satDeliverySystem');
+  const modulation = document.getElementById('satModulation');
+  const frequency = document.getElementById('satFrequency');
+  if (!delivery || !modulation) return;
+  const previous = delivery.value;
+  delivery.innerHTML = terrestrial
+    ? '<option value="dvb-t2">DVB-T2</option><option value="dvb-t">DVB-T</option>'
+    : '<option value="dvb-s2">DVB-S2</option><option value="dvb-s">DVB-S</option>';
+  delivery.value = [...delivery.options].some(o=>o.value===previous)
+    ? previous : (terrestrial ? 'dvb-t2' : 'dvb-s2');
+  modulation.innerHTML = terrestrial
+    ? '<option value="auto">Auto</option><option value="qpsk">QPSK</option><option value="qam16">16QAM</option><option value="qam64">64QAM</option><option value="qam256">256QAM</option>'
+    : '<option value="auto">Auto</option><option value="qpsk">QPSK</option><option value="8psk">8PSK</option><option value="16apsk">16APSK</option><option value="32apsk">32APSK</option>';
+  if (frequency) {
+    frequency.min=terrestrial?'42':'900';frequency.max=terrestrial?'1002':'14000';
+    if (resetFrequency) frequency.value=terrestrial?'666':'11727';
+  }
+  document.querySelectorAll('.sat-satellite-only').forEach(el=>el.style.display=terrestrial?'none':'');
+  document.querySelectorAll('.sat-terrestrial-only').forEach(el=>el.style.display=terrestrial?'':'none');
+  updateSatelliteUnicableUi(false);
+  applyTbsDriverModeUi();
+  refreshSatelliteAdapterOptions();
+  const title=document.getElementById('satAddTitle');
+  if (title) title.textContent=terrestrial
+    ? subtitleUiTriText('Добавить канал — DVB-T/T2','Add channel — DVB-T/T2','Dodaj kanal — DVB-T/T2')
+    : subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2');
+  satelliteDeliveryChanged();
+}
+
 function satelliteTunePayload() {
   const adapter = Number(document.getElementById('satAdapter')?.value || 0);
   const frontend = Number(document.getElementById('satFrontend')?.value || 0);
@@ -6617,6 +6673,7 @@ function satelliteTunePayload() {
     frontend,
     frequency_mhz:Number(document.getElementById('satFrequency')?.value || 0),
     symbol_rate:Number(document.getElementById('satSymbolRate')?.value || 0),
+    bandwidth_hz:Number(document.getElementById('satBandwidth')?.value || 8000000),
     polarity:document.getElementById('satPolarity')?.value || 'H',
     delivery_system:document.getElementById('satDeliverySystem')?.value || 'dvb-s2',
     modulation:document.getElementById('satModulation')?.value || 'auto',
@@ -6757,7 +6814,7 @@ async function loadSatelliteAdapters() {
       if (info) info.textContent = 'DVB frontend не обнаружен в /dev/dvb.';
       return;
     }
-    const adapters = [...new Set(dvbAdapters.map(item => Number(item.adapter)).filter(Number.isFinite))];
+    const adapters = [...new Set(dvbAdapters.filter(dvbFrontendSupportsReception).map(item => Number(item.adapter)).filter(Number.isFinite))];
     const preferredAdapter = adapters.includes(adapterBeforeLoad)
       ? adapterBeforeLoad
       : Number(dvbAdapters[0].adapter || 0);
@@ -6993,7 +7050,7 @@ async function startSatelliteScan() {
   } catch (error) {
     satelliteServices = [];
     renderSatelliteServices();
-    if (status) status.textContent = 'Ошибка сканирования DVB-S/S2';
+    if (status) status.textContent = subtitleUiTriText('Ошибка сканирования DVB','DVB scan failed','DVB skeniranje nije uspjelo');
   } finally {
     satelliteScanning = false;
     if (button) button.disabled = false;
@@ -7127,40 +7184,42 @@ async function saveSelectedSatelliteChannels() {
 function openAddChannelModal() {
   satelliteServices = [];
   openModal(`
-    <h2>Добавить канал — DVB-S/S2</h2>
+    <h2 id="satAddTitle">${subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
     <div class="sat-signal-panel">
       <div class="sat-meter"><div class="sat-meter-head"><span>Сигнал</span><strong id="satSignalValue">0%</strong></div><div class="sat-bar"><span id="satSignalBar"></span></div></div>
       <div class="sat-meter"><div class="sat-meter-head"><span>Качество</span><strong id="satQualityValue">0%</strong></div><div class="sat-bar"><span id="satQualityBar"></span></div></div>
       <span id="satLock" class="sat-lock">NO LOCK</span>
     </div>
     <div class="sat-form">
+      <div class="sat-field"><label>${subtitleUiTriText('Тип приёма','Reception type','Vrsta prijema')}</label><select id="satReceptionType" onchange="setDvbReceptionMode()"><option value="satellite">DVB-S/S2</option><option value="terrestrial">DVB-T/T2</option></select></div>
       <div class="sat-field"><label>Adapter</label><select id="satAdapter" onchange="satelliteAdapterChanged()"><option value="0">Adapter 0</option></select></div>
       <div class="sat-field"><label>Frontend</label><select id="satFrontend" onchange="satelliteFrontendChanged()"><option value="0">Frontend 0</option></select></div>
-      <div class="sat-field"><label ${subtitleUiTriAttrs('Имя спутника','Satellite name','Naziv satelita')}>
-        ${subtitleUiTriText('Имя спутника','Satellite name','Naziv satelita')}</label>
+      <div class="sat-field"><label ${subtitleUiTriAttrs('Название источника','Source / network name','Naziv izvora / mreže')}>
+        ${subtitleUiTriText('Название источника','Source / network name','Naziv izvora / mreže')}</label>
         <small class="field-help" ${subtitleUiTriAttrs('Только подпись DVB-карты, настройку не меняет.','Card label only, does not affect tuning.','Samo oznaka kartice, bez promjene ugađanja.')}>
         ${subtitleUiTriText('Только подпись DVB-карты, настройку не меняет.','Card label only, does not affect tuning.','Samo oznaka kartice, bez promjene ugađanja.')}</small>
         <input id="satName" maxlength="80" placeholder="Astra 19.2°E" /></div>
       <div class="sat-field"><label>Частота, MHz</label><input id="satFrequency" type="number" min="900" max="14000" step="0.001" value="11727" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field"><label>Symbol Rate, kSym/s</label><input id="satSymbolRate" type="number" min="100" max="60000" step="1" value="27500" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field"><label>Поляризация</label><select id="satPolarity" onchange="updateSatelliteSignal()"><option value="H">H — Horizontal</option><option value="V">V — Vertical</option></select></div>
-      <div class="sat-field"><label>Стандарт</label><select id="satDeliverySystem" onchange="updateSatelliteSignal()"><option value="dvb-s2">DVB-S2</option><option value="dvb-s">DVB-S</option></select></div>
+      <div class="sat-field sat-satellite-only"><label>Symbol Rate, kSym/s</label><input id="satSymbolRate" type="number" min="100" max="60000" step="1" value="27500" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-terrestrial-only" style="display:none"><label>${subtitleUiTriText('Полоса канала','Channel bandwidth','Širina kanala')}</label><select id="satBandwidth" onchange="satelliteDeliveryChanged()"><option value="8000000">8 MHz</option><option value="7000000">7 MHz</option><option value="6000000">6 MHz</option><option value="5000000">5 MHz</option><option value="1712000">1.712 MHz</option><option value="10000000">10 MHz</option></select></div>
+      <div class="sat-field sat-satellite-only"><label>Поляризация</label><select id="satPolarity" onchange="updateSatelliteSignal()"><option value="H">H — Horizontal</option><option value="V">V — Vertical</option></select></div>
+      <div class="sat-field"><label>Стандарт</label><select id="satDeliverySystem" onchange="satelliteDeliveryChanged()"><option value="dvb-s2">DVB-S2</option><option value="dvb-s">DVB-S</option></select></div>
       <div class="sat-field"><label>Модуляция</label><select id="satModulation" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option value="qpsk">QPSK</option><option value="8psk">8PSK</option><option value="16apsk">16APSK</option><option value="32apsk">32APSK</option></select></div>
-      <div class="sat-field"><label>FEC</label><select id="satFec" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option>1/2</option><option>2/3</option><option>3/4</option><option>4/5</option><option>5/6</option><option>7/8</option><option>8/9</option><option>9/10</option><option>3/5</option></select></div>
-      <div class="sat-field"><label>DiSEqC source</label><select id="satDiseqc" onchange="updateSatelliteSignal()"><option value="-1">Отключён</option><option value="0">A (1)</option><option value="1">B (2)</option><option value="2">C (3)</option><option value="3">D (4)</option></select></div>
-      <div class="sat-field"><label>LNB / SCR режим</label><select id="satUnicableMode" onchange="updateSatelliteUnicableUi(true);applyTbsDriverModeUi()"><option value="none">Universal / Legacy</option><option value="en50494">Unicable I — EN50494</option><option value="en50607">Unicable II / JESS — EN50607</option></select></div>
-      <div class="sat-field sat-unicable-field" style="display:none"><label>User Band ID (0-based)</label><input id="satUnicableUserBand" type="number" min="0" max="31" value="0" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field sat-unicable-field" style="display:none"><label>User Band frequency, MHz</label><input id="satUnicableFrequency" type="number" min="950" max="2150" step="1" value="1210" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field sat-unicable-field" style="display:none"><label ${subtitleUiTriAttrs('LNB / спутник Unicable','Unicable LNB / satellite','Unicable LNB / satelit')}>${subtitleUiTriText('LNB / спутник Unicable','Unicable LNB / satellite','Unicable LNB / satelit')}</label><small class="field-help" ${subtitleUiTriAttrs('Выберите вход спутника на мультисвитче (LNB 1–4).','Select the satellite input on the multiswitch (LNB 1–4).','Odaberite satelitski ulaz na multiswitchu (LNB 1–4).')}>${subtitleUiTriText('Выберите вход спутника на мультисвитче (LNB 1–4).','Select the satellite input on the multiswitch (LNB 1–4).','Odaberite satelitski ulaz na multiswitchu (LNB 1–4).')}</small><select id="satUnicablePosition" onchange="updateSatelliteSignal()">${unicablePositionOptions('en50607',0)}</select></div>
-      <div class="sat-field sat-unicable-field" style="display:none"><label>PIN (-1 = off)</label><input id="satUnicablePin" type="number" min="-1" max="255" value="-1" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field"><label>LNB LOF1, MHz</label><input id="satLof1" type="number" value="9750" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field"><label>LNB LOF2, MHz</label><input id="satLof2" type="number" value="10600" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field"><label>LNB SLOF, MHz</label><input id="satSlof" type="number" value="11700" onchange="updateSatelliteSignal()" /></div>
-      <div class="sat-field"><label>ISI / Stream ID</label><input id="satStreamId" type="number" min="-1" max="255" value="-1" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-satellite-only"><label>FEC</label><select id="satFec" onchange="updateSatelliteSignal()"><option value="auto">Auto</option><option>1/2</option><option>2/3</option><option>3/4</option><option>4/5</option><option>5/6</option><option>7/8</option><option>8/9</option><option>9/10</option><option>3/5</option></select></div>
+      <div class="sat-field sat-satellite-only"><label>DiSEqC source</label><select id="satDiseqc" onchange="updateSatelliteSignal()"><option value="-1">Отключён</option><option value="0">A (1)</option><option value="1">B (2)</option><option value="2">C (3)</option><option value="3">D (4)</option></select></div>
+      <div class="sat-field sat-satellite-only"><label>LNB / SCR режим</label><select id="satUnicableMode" onchange="updateSatelliteUnicableUi(true);applyTbsDriverModeUi()"><option value="none">Universal / Legacy</option><option value="en50494">Unicable I — EN50494</option><option value="en50607">Unicable II / JESS — EN50607</option></select></div>
+      <div class="sat-field sat-satellite-only sat-unicable-field" style="display:none"><label>User Band ID (0-based)</label><input id="satUnicableUserBand" type="number" min="0" max="31" value="0" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-satellite-only sat-unicable-field" style="display:none"><label>User Band frequency, MHz</label><input id="satUnicableFrequency" type="number" min="950" max="2150" step="1" value="1210" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-satellite-only sat-unicable-field" style="display:none"><label ${subtitleUiTriAttrs('LNB / спутник Unicable','Unicable LNB / satellite','Unicable LNB / satelit')}>${subtitleUiTriText('LNB / спутник Unicable','Unicable LNB / satellite','Unicable LNB / satelit')}</label><small class="field-help" ${subtitleUiTriAttrs('Выберите вход спутника на мультисвитче (LNB 1–4).','Select the satellite input on the multiswitch (LNB 1–4).','Odaberite satelitski ulaz na multiswitchu (LNB 1–4).')}>${subtitleUiTriText('Выберите вход спутника на мультисвитче (LNB 1–4).','Select the satellite input on the multiswitch (LNB 1–4).','Odaberite satelitski ulaz na multiswitchu (LNB 1–4).')}</small><select id="satUnicablePosition" onchange="updateSatelliteSignal()">${unicablePositionOptions('en50607',0)}</select></div>
+      <div class="sat-field sat-satellite-only sat-unicable-field" style="display:none"><label>PIN (-1 = off)</label><input id="satUnicablePin" type="number" min="-1" max="255" value="-1" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-satellite-only"><label>LNB LOF1, MHz</label><input id="satLof1" type="number" value="9750" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-satellite-only"><label>LNB LOF2, MHz</label><input id="satLof2" type="number" value="10600" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field sat-satellite-only"><label>LNB SLOF, MHz</label><input id="satSlof" type="number" value="11700" onchange="updateSatelliteSignal()" /></div>
+      <div class="sat-field"><label id="satStreamIdLabel">ISI / Stream ID</label><input id="satStreamId" type="number" min="-1" max="255" value="-1" onchange="updateSatelliteSignal()" /></div>
       <div class="sat-field wide"><label>Сканирование</label><div class="checkbox-inline"><input id="satHoldLock" type="checkbox" checked /><span>Удерживать LOCK</span></div></div>
     </div>
     <div id="satDeviceInfo" class="sat-scan-status" style="margin-top:8px">Поиск DVB frontend...</div>
-    <div id="satDriverModeHint" class="sat-scan-status" style="margin-top:4px"></div>
+    <div id="satDriverModeHint" class="sat-scan-status sat-satellite-only" style="margin-top:4px"></div>
     <div id="satDvbInfo" class="sat-scan-status" style="margin-top:4px">Проверка native Linux DVB...</div>
     <div class="cam-panel">
       <div class="cam-head"><strong>CAM clients / Newcamd</strong><button id="satCamRefresh" class="button-secondary" type="button" onclick="refreshCamClients()">Refresh</button></div>
@@ -7171,7 +7230,7 @@ function openAddChannelModal() {
       <button id="satScanButton" class="button-primary" onclick="startSatelliteScan()">Сканировать каналы</button>
       <span id="satScanStatus" class="sat-scan-status">Найдено: <span id="satFoundCount">0</span></span>
     </div>
-    <div class="sat-actions" style="margin-top:8px;align-items:center;flex-wrap:wrap">
+    <div class="sat-actions sat-satellite-only" style="margin-top:8px;align-items:center;flex-wrap:wrap">
       <button id="satDiscoverButton" class="button-secondary" type="button" onclick="discoverSatelliteLnbs()">
         ${subtitleUiTriText('Найти подключённые LNB','Discover connected LNBs','Otkrij povezane LNB-ove')}
       </button>
@@ -7180,7 +7239,7 @@ function openAddChannelModal() {
       </button>
       <span id="satDiscoverStatus" class="sat-scan-status">${subtitleUiTriText('Только свободный frontend. Работающие потоки не прерываются.','Free frontend only. Active streams will not be interrupted.','Samo slobodan frontend. Aktivni tokovi se ne prekidaju.')}</span>
     </div>
-    <div id="satDiscoverResults" class="sat-services" style="margin-top:6px"></div>
+    <div id="satDiscoverResults" class="sat-services sat-satellite-only" style="margin-top:6px"></div>
     <div id="satServices" class="sat-services"><div class="sat-empty">Нажмите «Сканировать каналы».</div></div>
     <div class="sat-output">
       <div class="sat-field"><label>Выходной протокол</label><select id="satOutputType" onchange="updateSatelliteOutputHints(true)">${outputTypeOptions('udp-vbr')}</select></div>
@@ -7207,6 +7266,7 @@ function openAddChannelModal() {
   document.getElementById('modalContent').classList.add('satellite-modal');
   updateHeaderHeight();
   document.getElementById('modal').classList.add('satellite-open');
+  setDvbReceptionMode(false);
   updateSatelliteUnicableUi(false);
   loadSatelliteAdapters();
   updateSatelliteOutputHints(false);
