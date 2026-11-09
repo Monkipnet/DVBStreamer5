@@ -2,6 +2,7 @@
 
 #include "media/LinuxDvbInput.h"
 #include "media/DvbNitMonitor.h"
+#include "media/SharedDvbPidAdmission.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +29,8 @@ public:
         DataCallback onData,
         FinishCallback onFinish,
         std::string& error,
-        bool keepWarmOnIdle = false);
+        bool keepWarmOnIdle = false,
+        std::shared_ptr<SharedDvbPidAdmission> pidAdmission = {});
 
     // Tune/open one full-MPTS DVB bus without attaching a service subscriber.
     // The frontend/DVR reader remains alive and drains input, preserving LOCK,

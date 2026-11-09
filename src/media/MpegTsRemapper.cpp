@@ -178,6 +178,7 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     inputAdmissionPids_.fill(false);
     inputAdmissionPids_[0x0000] = true;
     inputAdmissionPids_[0x0001] = true;
+    ++inputAdmissionGeneration_;
     remapReady_ = false;
     initialized_ = true;
     return true;
@@ -379,6 +380,8 @@ bool Remapper::processCatSection(
             inputAdmissionPids_[pid] = true;
         }
     }
+    // CAT can introduce a new EMM PID for an active service.
+    ++inputAdmissionGeneration_;
     return true;
 }
 
@@ -428,6 +431,7 @@ bool Remapper::processPatSection(
         inputAdmissionPids_[0x0000] = true;
         inputAdmissionPids_[0x0001] = true;
         inputAdmissionPids_[pmtPid_] = true;
+        ++inputAdmissionGeneration_;
         remapReady_ = false;
     }
     return true;
@@ -701,6 +705,7 @@ bool Remapper::processPmtSection(
     if (inputAudioPid_ < inputAdmissionPids_.size()) {
         inputAdmissionPids_[inputAudioPid_] = true;
     }
+    ++inputAdmissionGeneration_;
     // Dynamic SRT/IP relay PMT transitions are decoder generations, not
     // merely a refreshed service listing. One discontinuity packet on the
     // first video/audio PID of each new generation tells VLC to drop stale

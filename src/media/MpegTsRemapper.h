@@ -32,6 +32,11 @@ public:
         const Packet& input, const PacketInfo& info,
         std::vector<Packet>& output, std::string& error);
     void tick(std::vector<Packet>& output);
+    // Monotonic snapshot revision for the shared-DVB producer's per-service
+    // PID admission. Only changes on PAT/CAT/PMT state updates.
+    std::uint64_t inputAdmissionGeneration() const noexcept {
+        return inputAdmissionGeneration_;
+    }
     bool wantsInputPid(std::uint16_t pid) const noexcept {
         // V10.8.132: the shared-DVB hot path executes this predicate for every
         // packet of the full multiplex. All state-dependent admission decisions
@@ -91,6 +96,7 @@ private:
     std::array<bool, 8192> excludedInputAudioPids_ {};
     std::array<bool, 8192> caPids_ {};
     std::array<bool, 8192> inputAdmissionPids_ {};
+    std::uint64_t inputAdmissionGeneration_ = 0;
     std::uint16_t inputServiceId_ = 0;
     std::uint16_t pmtPid_ = 0x1fff;
     std::uint16_t inputVideoPid_ = 0;

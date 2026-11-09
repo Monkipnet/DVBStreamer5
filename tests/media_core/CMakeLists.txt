@@ -137,3 +137,4 @@ add_executable(source_pcr_packet_pacing_test
     ../../src/media/TransportStream.cpp)
 target_include_directories(source_pcr_packet_pacing_test PRIVATE ../../src)
 add_test(NAME source_pcr_packet_pacing COMMAND source_pcr_packet_pacing_test)
+\n# V425: no-hardware regression of pre-queue PID selection for shared DVB\n# multiplexes, including CAT/PMT, EIT and PMT-generation changes.\nadd_executable(shared_dvb_pid_admission_test test_shared_dvb_pid_admission.cpp)\ntarget_include_directories(shared_dvb_pid_admission_test PRIVATE ../../src)\nadd_test(NAME shared_dvb_pid_admission COMMAND shared_dvb_pid_admission_test)\n

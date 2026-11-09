@@ -239,6 +239,9 @@ public:
         streamId_ = streamId;
         dropSourceNullPackets_ = dropSourceNullPackets;
         filteredPackets_.reserve(128);
+        admission_ = std::make_shared<
+            dvbstreamer5::media::network::SharedDvbPidAdmission>();
+        publishedGeneration_ = 0;
         return remapper_.initialize(config, error);
     }
 
@@ -270,6 +273,21 @@ public:
         // Remapper::process() call above.
         remapper_.tick(filteredPackets_);
 
+        // Publish only when PAT/CAT/PMT changed, not for every 64 KiB read.
+        // The immutable mask is consumed by the physical source thread.
+        const auto generation = remapper_.inputAdmissionGeneration();
+        if (admission_ && publishedGeneration_ != generation) {
+            using Mask = dvbstreamer5::media::network::SharedDvbPidAdmission::Mask;
+            auto writable = std::make_shared<Mask>();
+            for (std::size_t pid = 0; pid < writable->size(); ++pid) {
+                (*writable)[pid] = remapper_.wantsInputPid(
+                    static_cast<std::uint16_t>(pid)) ? 1U : 0U;
+            }
+            std::shared_ptr<const Mask> snapshot = std::move(writable);
+            admission_->publish(std::move(snapshot));
+            publishedGeneration_ = generation;
+        }
+
         if (filteredPackets_.empty()) return true;
         static_assert(
             sizeof(dvbstreamer5::media::mpegts::Packet) ==
@@ -281,6 +299,9 @@ public:
             bytes,
             filteredPackets_.size() * dvbstreamer5::media::mpegts::kPacketSize);
     }
+
+    std::shared_ptr<dvbstreamer5::media::network::SharedDvbPidAdmission>
+    pidAdmission() const noexcept { return admission_; }
 
 private:
     struct VisitContext {
@@ -332,6 +353,8 @@ private:
 
     std::string streamId_;
     bool dropSourceNullPackets_ = false;
+    std::shared_ptr<dvbstreamer5::media::network::SharedDvbPidAdmission> admission_;
+    std::uint64_t publishedGeneration_ = 0;
     dvbstreamer5::media::mpegts::PacketFramer framer_;
     dvbstreamer5::media::mpegts::Remapper remapper_;
     std::vector<dvbstreamer5::media::mpegts::Packet> filteredPackets_;
@@ -2002,7 +2025,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                                 ? "shared DVB source stopped"
                                 : finishError);
                     },
-                    sharedDvbError)) {
+                    sharedDvbError, false,
+                    sharedDvbPrefilter ? sharedDvbPrefilter->pidAdmission()
+                                      : nullptr)) {
                 state->nativeRelay->stop();
                 for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
                 if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();

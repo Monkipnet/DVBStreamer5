@@ -1,4 +1,5 @@
 #include "media/SharedDvbInputPool.h"
+#include "media/TransportStream.h"
 
 #include <algorithm>
 #include <array>
@@ -63,6 +64,7 @@ struct SharedDvbInputPool::Impl {
         std::string streamId;
         DataCallback onData;
         FinishCallback onFinish;
+        std::shared_ptr<SharedDvbPidAdmission> pidAdmission;
 
         std::mutex mutex;
         std::condition_variable condition;
@@ -219,6 +221,13 @@ struct SharedDvbInputPool::Impl {
             return;
         }
 
+        // Selection happens outside the subscriber queue lock. The source
+        // producer drops only foreign-service PIDs, never the subscribed
+        // service, its PSI/ECM or EIT needed for EPG.
+        const auto selectedChunk =
+            filterSharedDvbPidChunk(chunk, subscriber->pidAdmission);
+        if (!selectedChunk || selectedChunk->empty()) return;
+
         bool dropped = false;
         bool notify = false;
         std::uint64_t droppedCount = 0;
@@ -230,7 +239,7 @@ struct SharedDvbInputPool::Impl {
             }
 
             while (!subscriber->queue.empty() &&
-                   subscriber->queuedBytes + chunk->size() > kSubscriberQueueBytes) {
+                   subscriber->queuedBytes + selectedChunk->size() > kSubscriberQueueBytes) {
                 const auto& oldest = subscriber->queue.front();
                 subscriber->queuedBytes -= oldest ? oldest->size() : 0;
                 subscriber->queue.pop_front();
@@ -238,7 +247,7 @@ struct SharedDvbInputPool::Impl {
                 dropped = true;
             }
 
-            if (chunk->size() > kSubscriberQueueBytes) {
+            if (selectedChunk->size() > kSubscriberQueueBytes) {
                 ++subscriber->droppedChunks;
                 dropped = true;
             } else {
@@ -247,8 +256,8 @@ struct SharedDvbInputPool::Impl {
                 // queue without sleeping again while data remains, so notifying
                 // on every 64 KiB tuner chunk only creates redundant futex wakeups.
                 notify = subscriber->queue.empty();
-                subscriber->queuedBytes += chunk->size();
-                subscriber->queue.push_back(chunk);
+                subscriber->queuedBytes += selectedChunk->size();
+                subscriber->queue.push_back(selectedChunk);
             }
             droppedCount = subscriber->droppedChunks;
         }
@@ -288,6 +297,10 @@ struct SharedDvbInputPool::Impl {
 
     static void runBus(const std::shared_ptr<Bus>& bus) {
         std::array<std::uint8_t, kReadChunkBytes> buffer {};
+        // Linux DVB DVR read() may split TS packets at arbitrary byte offsets.
+        // Frame once per physical tuner before PID-selective fanout so no
+        // partial packet crosses separately filtered subscriber chunks.
+        dvbstreamer5::media::mpegts::PacketFramer sourceFramer;
         std::string error;
         std::uint64_t diagReads = 0, diagReadBytes = 0;
         std::uint64_t diagReadGapMaxMs = 0, diagReadGapsOver200Ms = 0;
@@ -419,15 +432,27 @@ struct SharedDvbInputPool::Impl {
             // service pipeline to feed. Drain the kernel DVR buffer and discard
             // the bytes without allocating/copying transport chunks while the
             // subscriber set is empty.
-            if (subscribers.empty()) continue;
+            if (subscribers.empty()) {
+                sourceFramer.reset();
+                continue;
+            }
 
-            // Allocate/copy the tuner chunk once. Every service subscriber
-            // references the same immutable buffer; only the downstream relay
-            // performs its own queue copy. This keeps a 20-30 channel
-            // transponder from multiplying the source-copy cost.
-            auto chunk = std::make_shared<std::vector<std::uint8_t>>(
-                buffer.begin(),
-                buffer.begin() + static_cast<std::ptrdiff_t>(received));
+            // Frame once on the producer rather than once in every service.
+            // The trusted fast path does a single ordered copy; a split DVR
+            // packet remains buffered until the next read. This guarantees
+            // that early per-subscriber PID selection never loses partial TS.
+            std::vector<std::uint8_t> aligned;
+            aligned.reserve(received + dvbstreamer5::media::mpegts::kPacketSize);
+            sourceFramer.visitTrustedAlignedInline(
+                buffer.data(), received, [&](const std::uint8_t* packet) {
+                    aligned.insert(
+                        aligned.end(), packet,
+                        packet + dvbstreamer5::media::mpegts::kPacketSize);
+                    return true;
+                });
+            if (aligned.empty()) continue;
+            auto chunk = std::make_shared<const std::vector<std::uint8_t>>(
+                std::move(aligned));
             if (bus->jitterMs.load(std::memory_order_relaxed) > 0 || !jitterQueue.empty()) {
                 jitterBytes += chunk->size();
                 jitterQueue.push_back({readEnd, chunk});
@@ -482,7 +507,8 @@ struct SharedDvbInputPool::Impl {
         DataCallback onData,
         FinishCallback onFinish,
         std::string& error,
-        bool keepWarmOnIdle) {
+        bool keepWarmOnIdle,
+        std::shared_ptr<SharedDvbPidAdmission> pidAdmission) {
         error.clear();
         if (streamId.empty() || !onData) {
             error = "shared DVB subscription requires stream id and data callback";
@@ -584,6 +610,7 @@ struct SharedDvbInputPool::Impl {
             auto subscriber = std::make_shared<Subscriber>();
             subscriber->streamId = streamId;
             subscriber->jitterMs = requested.jitterMs;
+            subscriber->pidAdmission = std::move(pidAdmission);
             subscriber->onData = std::move(onData);
             subscriber->onFinish = std::move(onFinish);
 
@@ -840,10 +867,11 @@ bool SharedDvbInputPool::subscribe(
     DataCallback onData,
     FinishCallback onFinish,
     std::string& error,
-    bool keepWarmOnIdle) {
+    bool keepWarmOnIdle,
+    std::shared_ptr<SharedDvbPidAdmission> pidAdmission) {
     return impl_->subscribe(
         streamId, config, std::move(onData), std::move(onFinish), error,
-        keepWarmOnIdle);
+        keepWarmOnIdle, std::move(pidAdmission));
 }
 
 DvbNitInfo SharedDvbInputPool::nitInfo(int adapter, int frontend) const {
