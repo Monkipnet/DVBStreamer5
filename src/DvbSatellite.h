@@ -11,6 +11,7 @@ struct DvbSatelliteParams {
     int frontend = 0;
     uint32_t frequencyKHz = 11727000;
     uint32_t symbolRateK = 27500;
+    uint32_t bandwidthHz = 8000000; // DVB-T/T2, ignored for satellites
     std::string polarity = "H";
     std::string deliverySystem = "dvb-s2";
     std::string modulation = "auto";

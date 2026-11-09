@@ -429,6 +429,9 @@ fe_modulation_t parseModulation(const LinuxDvbTuneConfig& config) {
     if (config.modulation == "8psk") return PSK_8;
     if (config.modulation == "16apsk") return APSK_16;
     if (config.modulation == "32apsk") return APSK_32;
+    if (config.modulation == "qam16") return QAM_16;
+    if (config.modulation == "qam64") return QAM_64;
+    if (config.modulation == "qam256") return QAM_256;
     return config.deliverySystem == "dvb-s" ? QPSK : QAM_AUTO;
 }
 
@@ -456,8 +459,89 @@ void drainFrontendEvents(int fd) {
     std::clog << "NATIVE DVB TUNE event_queue_drained count=" << drained << '\n';
 }
 
+bool tuneTerrestrialFrontend(const LinuxDvbTuneConfig& config, int fd, std::string& error) {
+    const bool t2 = config.deliverySystem == "dvb-t2";
+    const fe_delivery_system desired = t2 ? SYS_DVBT2 : SYS_DVBT;
+    const bool validBandwidth = config.bandwidthHz == 1712000 ||
+        config.bandwidthHz == 5000000 || config.bandwidthHz == 6000000 ||
+        config.bandwidthHz == 7000000 || config.bandwidthHz == 8000000 ||
+        config.bandwidthHz == 10000000;
+    if (config.adapter < 0 || config.adapter > 31 ||
+        config.frontend < 0 || config.frontend > 31 ||
+        config.frequencyKHz < 42000 || config.frequencyKHz > 1002000 ||
+        !validBandwidth || config.streamId < -1 || config.streamId > 255 ||
+        config.lockTimeoutMs <= 0 || config.lockTimeoutMs > 120000 ||
+        (!t2 && config.streamId >= 0)) {
+        error = "invalid DVB-T/T2 frequency, bandwidth, PLP or timeout";
+        return false;
+    }
+    dtv_property available {};
+    available.cmd = DTV_ENUM_DELSYS;
+    dtv_properties supported {};
+    supported.num = 1;
+    supported.props = &available;
+    if (ioctl(fd, FE_GET_PROPERTY, &supported) == 0 && available.u.buffer.len > 0) {
+        bool found = false;
+        for (std::uint32_t i = 0; i < available.u.buffer.len; ++i)
+            if (available.u.buffer.data[i] == desired) found = true;
+        if (!found) {
+            error = "DVB frontend does not advertise " + config.deliverySystem;
+            return false;
+        }
+    }
+    std::clog << "NATIVE DVB TERRESTRIAL TUNE adapter=" << config.adapter
+              << " frontend=" << config.frontend
+              << " system=" << config.deliverySystem
+              << " frequency_hz=" << (config.frequencyKHz * 1000U)
+              << " bandwidth_hz=" << config.bandwidthHz
+              << " plp=" << config.streamId << '\n';
+    std::vector<dtv_property> clear(1);
+    clear[0].cmd = DTV_CLEAR;
+    if (!setFrontendProperties(fd, clear, error)) return false;
+    std::vector<dtv_property> props;
+    const auto add = [&](std::uint32_t command, std::uint32_t value) {
+        dtv_property p {};
+        p.cmd = command;
+        p.u.data = value;
+        props.push_back(p);
+    };
+    add(DTV_DELIVERY_SYSTEM, desired);
+    add(DTV_FREQUENCY, config.frequencyKHz * 1000U);
+    add(DTV_BANDWIDTH_HZ, config.bandwidthHz);
+    add(DTV_MODULATION, parseModulation(config));
+    add(DTV_INVERSION, INVERSION_AUTO);
+    add(DTV_CODE_RATE_HP, FEC_AUTO);
+    add(DTV_CODE_RATE_LP, FEC_AUTO);
+    add(DTV_TRANSMISSION_MODE, TRANSMISSION_MODE_AUTO);
+    add(DTV_GUARD_INTERVAL, GUARD_INTERVAL_AUTO);
+    add(DTV_HIERARCHY, HIERARCHY_AUTO);
+    if (t2 && config.streamId >= 0) add(DTV_STREAM_ID, static_cast<std::uint32_t>(config.streamId));
+    add(DTV_TUNE, 0);
+    if (!setFrontendProperties(fd, props, error)) {
+        std::clog << "NATIVE DVB TERRESTRIAL TUNE properties_error " << error << '\n';
+        return false;
+    }
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(config.lockTimeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        fe_status_t status {};
+        if (ioctl(fd, FE_READ_STATUS, &status) == 0 && (status & FE_HAS_LOCK)) {
+            std::clog << "NATIVE DVB TERRESTRIAL TUNE LOCK\n";
+            error.clear();
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    }
+    error = "DVB frontend did not lock within " +
+            std::to_string(config.lockTimeoutMs) + " milliseconds";
+    std::clog << "NATIVE DVB TERRESTRIAL TUNE timeout " << error << '\n';
+    return false;
+}
+
 bool tuneFrontend(const LinuxDvbTuneConfig& config, int fd, int tuneAttempt,
                   std::string& error) {
+    if (config.deliverySystem == "dvb-t" || config.deliverySystem == "dvb-t2")
+        return tuneTerrestrialFrontend(config, fd, error);
     if (config.adapter < 0 || config.adapter > 31 ||
         config.frontend < 0 || config.frontend > 31 ||
         config.frequencyKHz < 900000 || config.frequencyKHz > 14000000 ||

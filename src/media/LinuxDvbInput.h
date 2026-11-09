@@ -24,6 +24,7 @@ struct LinuxDvbTuneConfig {
     int frontend = 0;
     std::uint32_t frequencyKHz = 11727000;
     std::uint32_t symbolRateK = 27500;
+    std::uint32_t bandwidthHz = 8000000;
     std::string polarity = "H";
     std::string deliverySystem = "dvb-s2";
     std::string modulation = "auto";

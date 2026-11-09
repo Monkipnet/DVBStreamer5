@@ -59,6 +59,7 @@ struct FrontendMetadata {
     std::string model;
     std::string driverModule;
     int driverMode = -1;
+    std::vector<std::string> deliverySystems;
 };
 
 std::string lower(std::string value) {
@@ -191,36 +192,54 @@ bool validateUnicableParams(const DvbSatelliteParams& params, std::string& error
     return true;
 }
 
+bool isTerrestrialSystem(const std::string& s) { return s == "dvb-t" || s == "dvb-t2"; }
+bool validTerrestrialBandwidth(std::uint32_t hz) {
+    return hz == 1712000 || hz == 5000000 || hz == 6000000 ||
+           hz == 7000000 || hz == 8000000 || hz == 10000000;
+}
+
 DvbSatelliteParams paramsFromJson(const Json::Value& root, std::string& error) {
     DvbSatelliteParams params;
     params.adapter = std::clamp(root.get("adapter", 0).asInt(), 0, 31);
     params.frontend = std::clamp(root.get("frontend", 0).asInt(), 0, 31);
 
-    const double frequencyMHz = root.get("frequency_mhz", 11727.0).asDouble();
-    if (!std::isfinite(frequencyMHz) || frequencyMHz < 900.0 || frequencyMHz > 14000.0) {
-        error = "Frequency must be specified in MHz (900..14000)";
+    params.deliverySystem = lower(root.get("delivery_system", "dvb-s2").asString());
+    const bool terrestrial = isTerrestrialSystem(params.deliverySystem);
+    if (!terrestrial && params.deliverySystem != "dvb-s" && params.deliverySystem != "dvb-s2") {
+        error = "Delivery system must be dvb-s, dvb-s2, dvb-t or dvb-t2";
+        return params;
+    }
+    const double frequencyMHz = root.get("frequency_mhz", terrestrial ? 666.0 : 11727.0).asDouble();
+    if (!std::isfinite(frequencyMHz) ||
+        (terrestrial ? (frequencyMHz < 42.0 || frequencyMHz > 1002.0)
+                     : (frequencyMHz < 900.0 || frequencyMHz > 14000.0))) {
+        error = terrestrial ? "Terrestrial frequency must be 42..1002 MHz"
+                            : "Satellite frequency must be 900..14000 MHz";
         return params;
     }
     params.frequencyKHz = static_cast<uint32_t>(std::llround(frequencyMHz * 1000.0));
+    params.bandwidthHz = root.get("bandwidth_hz", 8000000).asUInt();
+    if (terrestrial && !validTerrestrialBandwidth(params.bandwidthHz)) {
+        error = "DVB-T/T2 bandwidth must be 1.712, 5, 6, 7, 8 or 10 MHz";
+        return params;
+    }
     params.symbolRateK = root.get("symbol_rate", 27500).asUInt();
-    if (params.symbolRateK < 100 || params.symbolRateK > 60000) {
+    if (!terrestrial && (params.symbolRateK < 100 || params.symbolRateK > 60000)) {
         error = "Symbol rate must be in kSym/s (100..60000)";
         return params;
     }
-
     params.polarity = upper(root.get("polarity", "H").asString());
-    if (params.polarity != "H" && params.polarity != "V") {
+    if (!terrestrial && params.polarity != "H" && params.polarity != "V") {
         error = "Polarity must be H or V";
         return params;
     }
-    params.deliverySystem = lower(root.get("delivery_system", "dvb-s2").asString());
-    if (params.deliverySystem != "dvb-s" && params.deliverySystem != "dvb-s2") {
-        error = "Delivery system must be dvb-s or dvb-s2";
-        return params;
-    }
     params.modulation = lower(root.get("modulation", "auto").asString());
-    static const std::set<std::string> allowedModulations = {"auto", "qpsk", "8psk", "16apsk", "32apsk"};
-    if (!allowedModulations.count(params.modulation)) params.modulation = "auto";
+    static const std::set<std::string> allowedModulations = {
+        "auto", "qpsk", "8psk", "16apsk", "32apsk", "qam16", "qam64", "qam256"};
+    if (!allowedModulations.count(params.modulation) ||
+        (terrestrial && params.modulation != "auto" && params.modulation != "qpsk" &&
+         params.modulation != "qam16" && params.modulation != "qam64" &&
+         params.modulation != "qam256")) params.modulation = "auto";
     params.fec = lower(root.get("fec", "auto").asString());
     static const std::set<std::string> allowedFec = {"auto", "1/2", "2/3", "3/4", "4/5", "5/6", "6/7", "7/8", "8/9", "9/10", "3/5", "2/5"};
     if (!allowedFec.count(params.fec)) params.fec = "auto";
@@ -243,7 +262,12 @@ DvbSatelliteParams paramsFromJson(const Json::Value& root, std::string& error) {
         params.unicablePosition = 0;
         params.unicablePin = -1;
     }
-    if (!validateUnicableParams(params, error)) return params;
+    if (terrestrial) {
+        params.unicableMode = "none";
+        params.diseqcSource = -1;
+        params.symbolRateK = 0;
+        params.polarity = "";
+    } else if (!validateUnicableParams(params, error)) return params;
     return params;
 }
 
@@ -304,6 +328,22 @@ FrontendMetadata readFrontendMetadata(int adapter, int frontend) {
             dvb_frontend_info info {};
             if (ioctl(fd, FE_GET_INFO, &info) == 0) {
                 metadata.name = trim(std::string(info.name, strnlen(info.name, sizeof(info.name))));
+            }
+            dtv_property systemsProperty {};
+            systemsProperty.cmd = DTV_ENUM_DELSYS;
+            dtv_properties systemsProperties {};
+            systemsProperties.num = 1;
+            systemsProperties.props = &systemsProperty;
+            if (ioctl(fd, FE_GET_PROPERTY, &systemsProperties) == 0) {
+                for (std::uint32_t i = 0; i < systemsProperty.u.buffer.len; ++i) {
+                    switch (systemsProperty.u.buffer.data[i]) {
+                        case SYS_DVBS: metadata.deliverySystems.emplace_back("dvb-s"); break;
+                        case SYS_DVBS2: metadata.deliverySystems.emplace_back("dvb-s2"); break;
+                        case SYS_DVBT: metadata.deliverySystems.emplace_back("dvb-t"); break;
+                        case SYS_DVBT2: metadata.deliverySystems.emplace_back("dvb-t2"); break;
+                        default: break;
+                    }
+                }
             }
             close(fd);
         }
@@ -927,6 +967,7 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         tune.frontend = params.frontend;
         tune.frequencyKHz = params.frequencyKHz;
         tune.symbolRateK = params.symbolRateK;
+        tune.bandwidthHz = params.bandwidthHz;
         tune.polarity = params.polarity;
         tune.deliverySystem = params.deliverySystem;
         tune.modulation = params.modulation;
@@ -1020,7 +1061,7 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
     if (stats.hasSignalDb) result["signal_db"] = stats.signalDb;
     if (stats.hasCnrDb) result["cnr_db"] = stats.cnrDb;
     if (!tuneError.empty()) result["error"] = tuneError;
-    else if (!tuned) result["error"] = "No satellite signal / frontend lock";
+    else if (!tuned) result["error"] = "No DVB signal / frontend lock";
 
     if (collectServices) {
         Json::Value services(Json::arrayValue);
@@ -1088,6 +1129,7 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
         !parseInt(query, "frontend", params.frontend) ||
         !parseUInt(query, "frequency_khz", params.frequencyKHz) ||
         !parseUInt(query, "symbol_rate", params.symbolRateK) ||
+        !parseUInt(query, "bandwidth_hz", params.bandwidthHz) ||
         !parseInt(query, "diseqc_source", params.diseqcSource) ||
         !parseUInt(query, "lnb_lof1_khz", params.lnbLof1KHz) ||
         !parseUInt(query, "lnb_lof2_khz", params.lnbLof2KHz) ||
@@ -1118,6 +1160,27 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
         error = "DVB jitter_ms must be 0 or 20..500";
         return false;
     }
+    if (isTerrestrialSystem(params.deliverySystem)) {
+        if (params.frequencyKHz < 42000 || params.frequencyKHz > 1002000 ||
+            !validTerrestrialBandwidth(params.bandwidthHz) ||
+            params.streamId < -1 || params.streamId > 255) {
+            error = "Invalid DVB-T/T2 frequency, bandwidth or PLP";
+            return false;
+        }
+        if (params.deliverySystem == "dvb-t" && params.streamId >= 0) {
+            error = "DVB-T does not support PLP";
+            return false;
+        }
+        params.unicableMode = "none";
+        params.unicableUserBand = -1;
+        params.unicableFrequencyKHz = 0;
+        params.unicablePosition = 0;
+        params.unicablePin = -1;
+        params.diseqcSource = -1;
+        params.polarity = "";
+        params.symbolRateK = 0;
+        return true;
+    }
     if (params.frequencyKHz < 900000 || params.frequencyKHz > 14000000 ||
         params.symbolRateK < 100 || params.symbolRateK > 60000 ||
         (params.polarity != "H" && params.polarity != "V") ||
@@ -1130,6 +1193,18 @@ bool parseUri(const std::string& uri, DvbSatelliteParams& params, std::string& e
 
 std::string buildUri(const DvbSatelliteParams& params) {
     std::ostringstream uri;
+    if (isTerrestrialSystem(params.deliverySystem)) {
+        uri << "dvb://terrestrial?adapter=" << params.adapter
+            << "&frontend=" << params.frontend
+            << "&frequency_khz=" << params.frequencyKHz
+            << "&bandwidth_hz=" << params.bandwidthHz
+            << "&delivery_system=" << percentEncode(params.deliverySystem)
+            << "&modulation=" << percentEncode(params.modulation)
+            << "&stream_id=" << params.streamId
+            << "&jitter_ms=" << params.jitterMs
+            << "&pids=" << percentEncode(params.pids.empty() ? "8192" : params.pids);
+        return uri.str();
+    }
     uri << "dvb://satellite?adapter=" << params.adapter
         << "&frontend=" << params.frontend
         << "&frequency_khz=" << params.frequencyKHz
@@ -1186,6 +1261,9 @@ Json::Value adapters() {
                 item["driver_module"] = metadata.driverModule;
                 item["driver_mode"] = metadata.driverMode;
                 item["driver_mode_name"] = driverModeName(metadata.driverMode);
+                Json::Value systems(Json::arrayValue);
+                for (const auto& system : metadata.deliverySystems) systems.append(system);
+                item["delivery_systems"] = systems;
                 item["tbs6909_family"] =
                     lower(metadata.model).find("tbs6909") != std::string::npos;
                 list.append(item);
@@ -1217,6 +1295,7 @@ Json::Value scan(const Json::Value& request) {
     result["input_uri"] = buildUri(params);
     result["frequency_mhz"] = static_cast<double>(params.frequencyKHz) / 1000.0;
     result["symbol_rate"] = params.symbolRateK;
+    result["bandwidth_hz"] = params.bandwidthHz;
     result["polarity"] = params.polarity;
     result["delivery_system"] = params.deliverySystem;
     result["modulation"] = params.modulation;
