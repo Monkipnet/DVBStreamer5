@@ -50,7 +50,8 @@ public:
 private:
     bool processValidated(
         const Packet& input, const PacketInfo& info,
-        std::vector<Packet>& output, std::string& error);
+        std::vector<Packet>& output, std::string& error,
+        bool emitPeriodicPsiNow);
 
     struct PsiSectionState {
         std::vector<std::uint8_t> bytes;

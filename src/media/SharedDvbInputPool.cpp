@@ -107,6 +107,7 @@ struct SharedDvbInputPool::Impl {
         std::uint64_t diagChunks = 0, diagGapMaxMs = 0;
         std::uint64_t diagGapsOver200Ms = 0, diagCallbackMaxMs = 0;
         std::uint64_t diagCallbacksOver100Ms = 0, diagEmptyWaitMaxMs = 0;
+        std::uint64_t slowCallbackEvents = 0;
         std::size_t diagPendingPeakBytes = 0;
         auto lastChunkAt = std::chrono::steady_clock::time_point{};
         for (;;) {
@@ -168,11 +169,19 @@ struct SharedDvbInputPool::Impl {
                               << subscriber->streamId
                               << " error=unknown exception" << std::endl;
                 }
+                const auto callbackEnd = std::chrono::steady_clock::now();
+                const auto callbackMs = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        callbackEnd - callbackBegin).count());
+                if (callbackMs > 100 && logCounter(++slowCallbackEvents)) {
+                    std::cerr << "SHARED DVB SUBSCRIBER SLOW stream="
+                              << subscriber->streamId
+                              << " callback_ms=" << callbackMs
+                              << " input_bytes=" << chunk->size()
+                              << " occurrences=" << slowCallbackEvents
+                              << std::endl;
+                }
                 if (diagnostic) {
-                    const auto callbackEnd = std::chrono::steady_clock::now();
-                    const auto callbackMs = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                            callbackEnd - callbackBegin).count());
                     diagCallbackMaxMs = std::max(diagCallbackMaxMs, callbackMs);
                     if (callbackMs > 100) ++diagCallbacksOver100Ms;
                     if (++diagChunks >= 125) {

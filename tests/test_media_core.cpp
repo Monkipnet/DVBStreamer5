@@ -265,6 +265,47 @@ void testNativeMpegTsMux() {
     assert(sawWrapPcr);
 }
 
+
+void testSharedDvbRemapperBatchTick() {
+    using dvbstreamer5::media::mpegts::Remapper;
+    using dvbstreamer5::media::mpegts::RemapConfig;
+    using dvbstreamer5::media::mpegts::inspectPacket;
+    Remapper remapper;
+    RemapConfig config;
+    config.inputServiceId = 10;
+    config.outputServiceId = 10;
+    std::string error;
+    assert(remapper.initialize(config, error));
+    std::vector<Packet> output;
+    const auto trusted = [&](const Packet& p) {
+        PacketInfo info;
+        assert(inspectPacket(p.data(), p.size(), info));
+        assert(remapper.processTrusted(p, info, output, error));
+    };
+    trusted(sectionPacket(0, 3, makePatSection(10, 0x1000)));
+    trusted(sectionPacket(0x1000, 5, makePmtSection(10, 0x100, 0x101)));
+    assert(output.empty());
+    // Initial regenerated PAT/PMT/SDT precedes the first media payload.
+    trusted(packet(0x100, 1));
+    assert(output.size() == 4);
+    assert(pidOf(output[0]) == 0 && pidOf(output[1]) == 0x1000);
+    assert(pidOf(output[2]) == 0x11 && pidOf(output[3]) == 0x100);
+    output.clear();
+    // Under heavy shared-DVB input, do not emit extra PSI on every packet.
+    for (int i=0; i<100; ++i)
+        trusted(packet(0x100, static_cast<std::uint8_t>(i & 0x0f)));
+    assert(output.size() == 100);
+    remapper.tick(output);
+    assert(output.size() == 100);
+    output.clear();
+    // End-of-block tick is responsible for subsequent periodic updates.
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    trusted(packet(0x100, 3));
+    assert(output.size() == 1);
+    remapper.tick(output);
+    assert(output.size() >= 3 && pidOf(output[1]) == 0);
+}
+
 void testMpegTsRemapper() {
     dvbstreamer5::media::mpegts::Remapper remapper;
     dvbstreamer5::media::mpegts::RemapConfig config;
@@ -1637,6 +1678,7 @@ int main() {
     testNativeMpegTsMux();
     testPtsClock33();
     testMpegTsRemapper();
+    testSharedDvbRemapperBatchTick();
     testPacketInspectionAndPidRewrite();
     testFraming();
     testContinuityTracking();

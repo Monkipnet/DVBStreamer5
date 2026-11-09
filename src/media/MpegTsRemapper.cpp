@@ -869,7 +869,7 @@ bool Remapper::process(const Packet& input, std::vector<Packet>& output, std::st
         error = "native remapper received an invalid MPEG-TS packet";
         return false;
     }
-    return processValidated(input, info, output, error);
+    return processValidated(input, info, output, error, true);
 }
 
 bool Remapper::processTrusted(
@@ -880,19 +880,23 @@ bool Remapper::processTrusted(
         error = "native remapper is not initialized";
         return false;
     }
-    // V10.8.133: shared-DVB already performed inspectPacket() immediately
-    // before this call. Reuse that immutable PacketInfo instead of validating
-    // the same selected-service packet a second time.
-    return processValidated(input, info, output, error);
+    // V428: the selected-service prefilter calls tick() once per DVB block.
+    // Avoid a clock query for every video/audio packet. The immediate-PAT/
+    // PMT/SDT case still emits PSI before the first following media packet.
+    const bool psiStateChanged = remapReady_ &&
+        (nextPatPmtAt_ == std::chrono::steady_clock::time_point{} ||
+         nextSdtAt_ == std::chrono::steady_clock::time_point{});
+    return processValidated(input, info, output, error, psiStateChanged);
 }
 
 bool Remapper::processValidated(
     const Packet& input, const PacketInfo& info,
-    std::vector<Packet>& output, std::string& error) {
-    // Keep the service discoverable independently of the provider table
-    // cadence. The CBR pacer downstream absorbs this tiny deterministic PSI
-    // overhead with its normal NULL stuffing; media/PCR handling is untouched.
-    emitPeriodicPsi(output);
+    std::vector<Packet>& output, std::string& error,
+    bool emitPeriodicPsiNow) {
+    // General MPEG-TS remappers retain the old per-packet PSI deadline.
+    // Shared-DVB has the one-per-input-block tick, so no periodic hot-path
+    // clock calls are necessary.
+    if (emitPeriodicPsiNow) emitPeriodicPsi(output);
 
     std::vector<std::vector<std::uint8_t>> sections;
     if (info.pid == 0x0000) {

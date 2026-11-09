@@ -252,6 +252,7 @@ public:
         if (!relay || !data || size == 0) return false;
 
         filteredPackets_.clear();
+        const auto prefilterStart = std::chrono::steady_clock::now();
         std::string remapError;
         VisitContext visitContext {this, relay, &remapError};
 
@@ -292,6 +293,16 @@ public:
             publishedGeneration_ = generation;
         }
 
+        const auto prefilterMs = std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - prefilterStart).count();
+        if (prefilterMs > 50 && logSlow(++slowPrefilterEvents_)) {
+            std::cerr << "SHARED DVB PREFILTER SLOW stream=" << streamId_
+                      << " input_bytes=" << size
+                      << " selected_packets=" << filteredPackets_.size()
+                      << " elapsed_ms=" << prefilterMs
+                      << " occurrences=" << slowPrefilterEvents_ << std::endl;
+        }
         if (filteredPackets_.empty()) return true;
         static_assert(
             sizeof(dvbstreamer5::media::mpegts::Packet) ==
@@ -299,15 +310,31 @@ public:
             "MPEG-TS packet storage must be contiguous");
         const auto* bytes = reinterpret_cast<const std::uint8_t*>(
             filteredPackets_.data());
-        return relay->pushInput(
+        const auto pushStart = std::chrono::steady_clock::now();
+        const bool accepted = relay->pushInput(
             bytes,
             filteredPackets_.size() * dvbstreamer5::media::mpegts::kPacketSize);
+        const auto pushMs = std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - pushStart).count();
+        if (pushMs > 50 && logSlow(++slowRelayEvents_)) {
+            std::cerr << "SHARED DVB RELAY PUSH SLOW stream=" << streamId_
+                      << " selected_packets=" << filteredPackets_.size()
+                      << " elapsed_ms=" << pushMs
+                      << " occurrences=" << slowRelayEvents_
+                      << " accepted=" << (accepted ? 1 : 0) << std::endl;
+        }
+        return accepted;
     }
 
     std::shared_ptr<dvbstreamer5::media::network::SharedDvbPidAdmission>
     pidAdmission() const noexcept { return admission_; }
 
 private:
+    static bool logSlow(std::uint64_t n) noexcept {
+        return n <= 3 || (n & (n - 1)) == 0;
+    }
+
     struct VisitContext {
         SharedDvbServicePrefilter* self = nullptr;
         dvbstreamer5::media::network::NativeUdpRelay* relay = nullptr;
@@ -359,6 +386,8 @@ private:
     bool dropSourceNullPackets_ = false;
     std::shared_ptr<dvbstreamer5::media::network::SharedDvbPidAdmission> admission_;
     std::uint64_t publishedGeneration_ = 0;
+    std::uint64_t slowPrefilterEvents_ = 0;
+    std::uint64_t slowRelayEvents_ = 0;
     dvbstreamer5::media::mpegts::PacketFramer framer_;
     dvbstreamer5::media::mpegts::Remapper remapper_;
     std::vector<dvbstreamer5::media::mpegts::Packet> filteredPackets_;
