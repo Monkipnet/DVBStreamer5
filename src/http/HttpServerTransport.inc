@@ -514,7 +514,10 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         if(target=="/api/stream-auth/sessions" && req.method()==http::verb::get){
             Json::Value data(Json::objectValue);
             data["result"]="ok";
-            data["sessions"]=dvbstreamer5::stream_auth::SessionRegistry::instance().listing();
+            const bool includeBackendId=dvbstreamer5::stream_auth::api_key::backendIdVisible(
+                configManager.config.streamAuthBackendEnabled,
+                configManager.config.streamAuthApiKeySha256);
+            data["sessions"]=dvbstreamer5::stream_auth::SessionRegistry::instance().listing(includeBackendId);
             Json::StreamWriterBuilder writer;
             res.set(http::field::content_type,"application/json; charset=UTF-8");
             res.body()=Json::writeString(writer,data);

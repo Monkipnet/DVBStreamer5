@@ -25,6 +25,12 @@ int main(){
     assert(api_key::authorize(hash,peers,old,"127.0.0.1"));
     assert(!api_key::authorize(hash,peers,old,"192.168.200.10"));
     assert(!api_key::authorize(api_key::sha256(next),peers,old,"127.0.0.1"));
+    // Identifiers for Telik must not be exposed before middleware AND
+    // the session-management API key have been configured.
+    assert(!api_key::backendIdVisible(false,hash));
+    assert(!api_key::backendIdVisible(true,""));
+    assert(!api_key::backendIdVisible(true,"invalid-key"));
+    assert(api_key::backendIdVisible(true,hash));
     assert(api_key::inScope("/api/stream-auth/sessions","GET"));
     assert(api_key::inScope("/api/stream-auth/sessions/disconnect","POST"));
     assert(!api_key::inScope("/api/state","GET"));

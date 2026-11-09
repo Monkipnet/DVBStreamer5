@@ -119,6 +119,11 @@ inline bool authorize(const std::string& savedDigest,
                       const std::string& candidate,const std::string& peerIp){
     return matches(savedDigest,candidate) && isPeerAllowed(allowedIps,peerIp);
 }
+// Optional session-to-subscriber correlation is exposed only after both
+// middleware authorization and the least-privilege sessions API are enabled.
+inline bool backendIdVisible(bool middlewareEnabled,const std::string& keyDigest) {
+    return middlewareEnabled && isLowerHex(keyDigest);
+}
 inline bool inScope(const std::string& path,const std::string& method) {
     return (path=="/api/stream-auth/sessions" && method=="GET") ||
            (path=="/api/stream-auth/sessions/disconnect" && method=="POST");

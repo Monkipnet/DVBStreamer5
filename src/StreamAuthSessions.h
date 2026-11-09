@@ -258,7 +258,7 @@ public:
         queueEndLocked(it->second);
         return true;
     }
-    Json::Value listing() const {
+    Json::Value listing(bool includeBackendId = false) const {
         Json::Value out(Json::arrayValue);
         std::lock_guard<std::mutex> lock(mutex_);
         for(const auto& item:sessions_) {
@@ -266,6 +266,9 @@ public:
             if(e.revoked)continue;
             Json::Value row(Json::objectValue);
             row["session_id"]=e.id;row["channel_id"]=e.channel;
+            // Same opaque identifier sent to the middleware as X-Session-ID.
+            // Never publish the viewer token or URL query credentials.
+            if(includeBackendId)row["backend_id"]=e.backendId;
             row["protocol"]=e.protocol;row["ip"]=e.ip;row["viewer"]=e.ip;
             row["connections"]=Json::UInt64(e.connections);
             row["started_at"]=Json::Int64(std::chrono::duration_cast<
