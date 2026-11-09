@@ -7580,7 +7580,7 @@ function updateStreamCaMode() {
 }
 function parseDvbTunerUri(value='') {
   const result = {
-    adapter:0, frontend:0, frequency_mhz:11727, symbol_rate:27500,
+    adapter:0, frontend:0, frequency_mhz:11727, symbol_rate:27500, bandwidth_hz:8000000,
     polarity:'H', delivery_system:'dvb-s2', modulation:'auto', fec:'auto',
     diseqc_source:-1, lnb_lof1_khz:9750000, lnb_lof2_khz:10600000,
     lnb_slof_khz:11700000, unicable_mode:'none', unicable_user_band:-1,
@@ -7589,6 +7589,7 @@ function parseDvbTunerUri(value='') {
   };
   const input = String(value || '').trim();
   if (!input.toLowerCase().startsWith('dvb://')) return result;
+  if (input.toLowerCase().startsWith('dvb://terrestrial')) {result.delivery_system='dvb-t2';result.frequency_mhz=666;}
   const q = input.indexOf('?');
   if (q < 0) return result;
   const params = new URLSearchParams(input.slice(q + 1));
@@ -7603,6 +7604,7 @@ function parseDvbTunerUri(value='') {
   result.frontend = num('frontend', result.frontend);
   result.frequency_mhz = num('frequency_khz', result.frequency_mhz * 1000) / 1000;
   result.symbol_rate = num('symbol_rate', result.symbol_rate);
+  result.bandwidth_hz = num('bandwidth_hz', result.bandwidth_hz);
   result.polarity = params.get('polarity') || result.polarity;
   result.delivery_system = params.get('delivery_system') || result.delivery_system;
   result.modulation = params.get('modulation') || result.modulation;
@@ -7624,11 +7626,40 @@ function updateDvbTunerVisibility() {
   const input = document.getElementById('streamInput');
   const panel = document.getElementById('streamDvbTunerPanel');
   if (panel) panel.style.display = String(input?.value || '').toLowerCase().startsWith('dvb://') ? '' : 'none';
+  updateDvbInputSystemUi();
+}
+function updateDvbInputSystemUi() {
+  const delivery = document.getElementById('streamDvbDelivery')?.value || 'dvb-s2';
+  const terrestrial = delivery === 'dvb-t' || delivery === 'dvb-t2';
+  document.querySelectorAll('.stream-dvb-satellite-only').forEach(el=>el.style.display=terrestrial?'none':'');
+  document.querySelectorAll('.stream-dvb-terrestrial-only').forEach(el=>el.style.display=terrestrial?'':'none');
+  const modulation=document.getElementById('streamDvbModulation');
+  if (modulation) {
+    for (const option of modulation.options)
+      option.disabled=terrestrial
+        ? !['auto','qpsk','qam16','qam64','qam256'].includes(option.value)
+        : !['auto','qpsk','8psk','16apsk','32apsk'].includes(option.value);
+    if (modulation.selectedOptions[0]?.disabled)modulation.value='auto';
+  }
+  const frequency=document.getElementById('streamDvbFrequency');
+  if (frequency) {
+    frequency.min=terrestrial?'42':'900';frequency.max=terrestrial?'1002':'14000';
+    if (Number(frequency.value)<Number(frequency.min)||Number(frequency.value)>Number(frequency.max))
+      frequency.value=terrestrial?'666':'11727';
+  }
+  const id=document.getElementById('streamDvbStreamId');
+  if (id) {
+    id.disabled=delivery==='dvb-t';
+    if (id.disabled)id.value='-1';
+  }
+  const label=document.getElementById('streamDvbStreamIdLabel');
+  if (label)label.textContent=terrestrial?'PLP ID (DVB-T2)':'ISI / Stream ID';
+  updateDvbUnicableFields();
 }
 function updateDvbUnicableFields() {
   const mode = document.getElementById('streamDvbUnicableMode')?.value || 'none';
   const row = document.getElementById('streamDvbUnicableFields');
-  if (row) row.style.display = mode === 'none' ? 'none' : 'grid';
+  if (row) row.style.display = mode === 'none' || ['dvb-t','dvb-t2'].includes(document.getElementById('streamDvbDelivery')?.value) ? 'none' : 'grid';
   refreshUnicablePositionSelect(document.getElementById('streamDvbUnicablePosition'), mode);
   const diseqc = document.getElementById('streamDvbDiseqc');
   if (diseqc) diseqc.disabled = mode !== 'none'; // Legacy switch only; retain its stored value.
@@ -7637,7 +7668,9 @@ function rebuildDvbInputUriFromFields() {
   const input = document.getElementById('streamInput');
   if (!input || !String(input.value || '').toLowerCase().startsWith('dvb://')) return;
   const q = input.value.indexOf('?');
-  const base = q >= 0 ? input.value.slice(0, q) : 'dvb://satellite';
+  const delivery = document.getElementById('streamDvbDelivery')?.value || 'dvb-s2';
+  const terrestrial = delivery === 'dvb-t' || delivery === 'dvb-t2';
+  const base = terrestrial ? 'dvb://terrestrial' : 'dvb://satellite';
   const params = new URLSearchParams(q >= 0 ? input.value.slice(q + 1) : '');
   const set = (key, value) => params.set(key, String(value));
   set('adapter', Number(document.getElementById('streamDvbAdapter')?.value || 0));
@@ -7663,6 +7696,13 @@ function rebuildDvbInputUriFromFields() {
   const satelliteName=String(document.getElementById('streamDvbSatelliteName')?.value || '').trim().slice(0,80);
   if (satelliteName) params.set('satellite_name',satelliteName);
   else params.delete('satellite_name');
+  if (terrestrial) {
+    params.set('bandwidth_hz',String(Number(document.getElementById('streamDvbBandwidth')?.value||8000000)));
+    for (const key of ['symbol_rate','polarity','fec','diseqc_source','lnb_lof1_khz',
+      'lnb_lof2_khz','lnb_slof_khz','unicable_mode','unicable_user_band',
+      'unicable_frequency_khz','unicable_position','unicable_pin'])params.delete(key);
+    if (delivery==='dvb-t')params.set('stream_id','-1');
+  } else params.delete('bandwidth_hz');
   input.value = base + '?' + params.toString();
 }
 function subtitleUiTriText(ru, en, hr) {
@@ -7886,32 +7926,33 @@ function openStreamForm(stream) {
         </select></div>
         <div class="form-row full"><div class="input-main-row"><div class="form-row"><label>Входной URL (Основной)</label><input id="streamInput" value="${stream.input_uri||''}" placeholder="rtsp://camera/live, udp://@:9087, udp://239.1.1.1:1234, vdr://host:3000/channel или https://host/live.m3u8" ${caMode==='ciplus'?'readonly':''} oninput="updateDvbTunerVisibility();updateIpSourcePcrVisibility()" /></div><div class="form-row"><label>Интерфейс входа</label><select id="streamInputInterface"><option value="">Auto / все интерфейсы</option>${inputOptions}</select></div><div class="form-row"><label>Режим входа</label><select id="streamInputMode" onchange="updateInputModeVisibility();if(this.value==='vdr'){const ca=document.getElementById('streamCaMode');if(ca){ca.value='ciplus';updateStreamCaMode();}}"><option value="auto" ${(!stream.input_mode || stream.input_mode==='auto')?'selected':''}>Auto</option><option value="rtsp-tcp" ${stream.input_mode==='rtsp-tcp'?'selected':''}>RTSP TCP</option><option value="rtsp-udp" ${stream.input_mode==='rtsp-udp'?'selected':''}>RTSP UDP</option><option value="rtsp-auto" ${stream.input_mode==='rtsp-auto'?'selected':''}>RTSP Auto</option><option value="hls" ${stream.input_mode==='hls'?'selected':''}>HLS</option><option value="http-ts" ${stream.input_mode==='http-ts'?'selected':''}>HTTP MPEG-TS</option><option value="vdr" ${(stream.input_mode==='vdr'||caMode==='ciplus')?'selected':''}>VDR / DVB-CI+</option><option value="caller" ${stream.input_mode==='caller'?'selected':''}>SRT Caller</option><option value="listener" ${stream.input_mode==='listener'?'selected':''}>SRT Listener</option></select></div></div></div>
         <details class="form-row full edit-section edit-collapsible" id="streamDvbTunerPanel" style="display:${String(stream.input_uri||'').toLowerCase().startsWith('dvb://')?'':'none'}">
-          <summary class="edit-section-head"><span ${uiBiAttrs('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}>${uiBiText('Спутник / DVB-S/S2','Satellite / DVB-S/S2')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
+          <summary class="edit-section-head"><span ${uiBiAttrs('DVB-S/S2 / DVB-T/T2','DVB-S/S2 / DVB-T/T2')}>${uiBiText('DVB-S/S2 / DVB-T/T2','DVB-S/S2 / DVB-T/T2')}</span><small ${uiBiAttrs('Нажмите для настройки','Click to configure')}>${uiBiText('Нажмите для настройки','Click to configure')}</small></summary>
           <div class="edit-collapse-body">
           <div class="stream-video-grid">
-            <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('Имя спутника','Satellite name','Naziv satelita')}>
-              ${subtitleUiTriText('Имя спутника','Satellite name','Naziv satelita')}</div>
+            <div class="edit-field"><div class="edit-field-title" ${subtitleUiTriAttrs('Название источника','Source name','Naziv izvora')}>
+              ${subtitleUiTriText('Название источника','Source name','Naziv izvora')}</div>
               <small class="field-help" ${subtitleUiTriAttrs('Название для заголовка карты; не влияет на настройку тюнера.','Label for card header; does not change tuning.','Naziv u zaglavlju kartice; ne mijenja ugađanje.')}>
               ${subtitleUiTriText('Название для заголовка карты; не влияет на настройку тюнера.','Label for card header; does not change tuning.','Naziv u zaglavlju kartice; ne mijenja ugađanje.')}</small>
               <input id="streamDvbSatelliteName" maxlength="80" value="${escapeHtmlValue(dvbTuner.satellite_name)}" placeholder="Astra 19.2°E" /></div>
             <div class="edit-field"><div class="edit-field-title">Adapter</div><small class="field-help" ${uiBiAttrs('Номер DVB адаптера в /dev/dvb.','DVB adapter number in /dev/dvb.')}>${uiBiText('Номер DVB адаптера в /dev/dvb.','DVB adapter number in /dev/dvb.')}</small><input id="streamDvbAdapter" type="number" min="0" max="31" value="${dvbTuner.adapter}" /></div>
             <div class="edit-field"><div class="edit-field-title">Frontend</div><small class="field-help" ${uiBiAttrs('Номер frontend внутри выбранного адаптера.','Frontend number inside the selected adapter.')}>${uiBiText('Номер frontend внутри выбранного адаптера.','Frontend number inside the selected adapter.')}</small><input id="streamDvbFrontend" type="number" min="0" max="31" value="${dvbTuner.frontend}" /></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Частота, MHz','Frequency, MHz')}>${uiBiText('Частота, MHz','Frequency, MHz')}</div><small class="field-help" ${uiBiAttrs('Спутниковая частота транспондера.','Satellite transponder frequency.')}>${uiBiText('Спутниковая частота транспондера.','Satellite transponder frequency.')}</small><input id="streamDvbFrequency" type="number" step="0.001" value="${dvbTuner.frequency_mhz}" /></div>
-            <div class="edit-field"><div class="edit-field-title">Symbol Rate</div><small class="field-help" ${uiBiAttrs('Символьная скорость, ksym/s.','Symbol rate in ksym/s.')}>${uiBiText('Символьная скорость, ksym/s.','Symbol rate in ksym/s.')}</small><input id="streamDvbSymbolRate" type="number" value="${dvbTuner.symbol_rate}" /></div>
+            <div class="edit-field stream-dvb-terrestrial-only" style="display:none"><div class="edit-field-title" ${subtitleUiTriAttrs('Полоса канала','Channel bandwidth','Širina kanala')}>${subtitleUiTriText('Полоса канала','Channel bandwidth','Širina kanala')}</div><small class="field-help">DVB-T/T2 · 1.712 / 5 / 6 / 7 / 8 / 10 MHz</small><select id="streamDvbBandwidth">${[1712000,5000000,6000000,7000000,8000000,10000000].map(n=>`<option value="${n}" ${Number(dvbTuner.bandwidth_hz)===n?'selected':''}>${n/1000000} MHz</option>`).join('')}</select></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">Symbol Rate</div><small class="field-help" ${uiBiAttrs('Символьная скорость, ksym/s.','Symbol rate in ksym/s.')}>${uiBiText('Символьная скорость, ksym/s.','Symbol rate in ksym/s.')}</small><input id="streamDvbSymbolRate" type="number" value="${dvbTuner.symbol_rate}" /></div>
           </div>
           <div class="stream-video-grid secondary">
-            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Поляризация','Polarization')}>${uiBiText('Поляризация','Polarization')}</div><small class="field-help" ${uiBiAttrs('Горизонтальная или вертикальная.','Horizontal or vertical.')}>${uiBiText('Горизонтальная или вертикальная.','Horizontal or vertical.')}</small><select id="streamDvbPolarity"><option value="H" ${dvbTuner.polarity==='H'?'selected':''}>H</option><option value="V" ${dvbTuner.polarity==='V'?'selected':''}>V</option></select></div>
-            <div class="edit-field"><div class="edit-field-title">Delivery</div><small class="field-help" ${uiBiAttrs('Стандарт DVB-S или DVB-S2.','DVB-S or DVB-S2 delivery system.')}>${uiBiText('Стандарт DVB-S или DVB-S2.','DVB-S or DVB-S2 delivery system.')}</small><select id="streamDvbDelivery"><option value="dvb-s2" ${dvbTuner.delivery_system==='dvb-s2'?'selected':''}>DVB-S2</option><option value="dvb-s" ${dvbTuner.delivery_system==='dvb-s'?'selected':''}>DVB-S</option></select></div>
-            <div class="edit-field"><div class="edit-field-title">Modulation</div><small class="field-help" ${uiBiAttrs('Тип модуляции; Auto если неизвестно.','Modulation type; use Auto when unknown.')}>${uiBiText('Тип модуляции; Auto если неизвестно.','Modulation type; use Auto when unknown.')}</small><select id="streamDvbModulation"><option value="auto" ${dvbTuner.modulation==='auto'?'selected':''}>Auto</option><option value="qpsk" ${dvbTuner.modulation==='qpsk'?'selected':''}>QPSK</option><option value="8psk" ${dvbTuner.modulation==='8psk'?'selected':''}>8PSK</option><option value="16apsk" ${dvbTuner.modulation==='16apsk'?'selected':''}>16APSK</option><option value="32apsk" ${dvbTuner.modulation==='32apsk'?'selected':''}>32APSK</option></select></div>
-            <div class="edit-field"><div class="edit-field-title">FEC</div><small class="field-help" ${uiBiAttrs('Например Auto, 3/4, 5/6.','For example Auto, 3/4, 5/6.')}>${uiBiText('Например Auto, 3/4, 5/6.','For example Auto, 3/4, 5/6.')}</small><input id="streamDvbFec" value="${dvbTuner.fec}" /></div>
-            <div class="edit-field"><div class="edit-field-title">DiSEqC</div><small class="field-help" ${uiBiAttrs('-1 отключено; 0..7 — номер источника.','-1 disables it; 0..7 selects the source.')}>${uiBiText('-1 отключено; 0..7 — номер источника.','-1 disables it; 0..7 selects the source.')}</small><input id="streamDvbDiseqc" type="number" min="-1" max="7" value="${dvbTuner.diseqc_source}" /></div>
-            <div class="edit-field"><div class="edit-field-title">ISI / Stream ID</div><small class="field-help" ${uiBiAttrs('-1 для обычного транспондера.','-1 for a normal transponder.')}>${uiBiText('-1 для обычного транспондера.','-1 for a normal transponder.')}</small><input id="streamDvbStreamId" type="number" min="-1" max="255" value="${dvbTuner.stream_id}" /></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title" ${uiBiAttrs('Поляризация','Polarization')}>${uiBiText('Поляризация','Polarization')}</div><small class="field-help" ${uiBiAttrs('Горизонтальная или вертикальная.','Horizontal or vertical.')}>${uiBiText('Горизонтальная или вертикальная.','Horizontal or vertical.')}</small><select id="streamDvbPolarity"><option value="H" ${dvbTuner.polarity==='H'?'selected':''}>H</option><option value="V" ${dvbTuner.polarity==='V'?'selected':''}>V</option></select></div>
+            <div class="edit-field"><div class="edit-field-title">Delivery</div><small class="field-help" ${uiBiAttrs('Стандарт DVB-S или DVB-S2.','DVB-S or DVB-S2 delivery system.')}>${uiBiText('Стандарт DVB-S или DVB-S2.','DVB-S or DVB-S2 delivery system.')}</small><select id="streamDvbDelivery" onchange="updateDvbInputSystemUi()"><option value="dvb-s2" ${dvbTuner.delivery_system==='dvb-s2'?'selected':''}>DVB-S2</option><option value="dvb-s" ${dvbTuner.delivery_system==='dvb-s'?'selected':''}>DVB-S</option><option value="dvb-t2" ${dvbTuner.delivery_system==='dvb-t2'?'selected':''}>DVB-T2</option><option value="dvb-t" ${dvbTuner.delivery_system==='dvb-t'?'selected':''}>DVB-T</option></select></div>
+            <div class="edit-field"><div class="edit-field-title">Modulation</div><small class="field-help" ${uiBiAttrs('Тип модуляции; Auto если неизвестно.','Modulation type; use Auto when unknown.')}>${uiBiText('Тип модуляции; Auto если неизвестно.','Modulation type; use Auto when unknown.')}</small><select id="streamDvbModulation"><option value="auto" ${dvbTuner.modulation==='auto'?'selected':''}>Auto</option><option value="qpsk" ${dvbTuner.modulation==='qpsk'?'selected':''}>QPSK</option><option value="8psk" ${dvbTuner.modulation==='8psk'?'selected':''}>8PSK</option><option value="16apsk" ${dvbTuner.modulation==='16apsk'?'selected':''}>16APSK</option><option value="32apsk" ${dvbTuner.modulation==='32apsk'?'selected':''}>32APSK</option><option value="qam16" ${dvbTuner.modulation==='qam16'?'selected':''}>16QAM</option><option value="qam64" ${dvbTuner.modulation==='qam64'?'selected':''}>64QAM</option><option value="qam256" ${dvbTuner.modulation==='qam256'?'selected':''}>256QAM</option></select></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">FEC</div><small class="field-help" ${uiBiAttrs('Например Auto, 3/4, 5/6.','For example Auto, 3/4, 5/6.')}>${uiBiText('Например Auto, 3/4, 5/6.','For example Auto, 3/4, 5/6.')}</small><input id="streamDvbFec" value="${dvbTuner.fec}" /></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">DiSEqC</div><small class="field-help" ${uiBiAttrs('-1 отключено; 0..7 — номер источника.','-1 disables it; 0..7 selects the source.')}>${uiBiText('-1 отключено; 0..7 — номер источника.','-1 disables it; 0..7 selects the source.')}</small><input id="streamDvbDiseqc" type="number" min="-1" max="7" value="${dvbTuner.diseqc_source}" /></div>
+            <div class="edit-field"><div class="edit-field-title" id="streamDvbStreamIdLabel">ISI / Stream ID</div><small class="field-help" ${uiBiAttrs('-1 для обычного транспондера.','-1 for a normal transponder.')}>${uiBiText('-1 для обычного транспондера.','-1 for a normal transponder.')}</small><input id="streamDvbStreamId" type="number" min="-1" max="255" value="${dvbTuner.stream_id}" /></div>
           </div>
           <div class="stream-video-grid" style="margin-top:8px">
-            <div class="edit-field"><div class="edit-field-title">LOF1, kHz</div><small class="field-help" ${uiBiAttrs('Нижняя частота гетеродина LNB.','Low-band LNB oscillator frequency.')}>${uiBiText('Нижняя частота гетеродина LNB.','Low-band LNB oscillator frequency.')}</small><input id="streamDvbLof1" type="number" value="${dvbTuner.lnb_lof1_khz}" /></div>
-            <div class="edit-field"><div class="edit-field-title">LOF2, kHz</div><small class="field-help" ${uiBiAttrs('Верхняя частота гетеродина LNB.','High-band LNB oscillator frequency.')}>${uiBiText('Верхняя частота гетеродина LNB.','High-band LNB oscillator frequency.')}</small><input id="streamDvbLof2" type="number" value="${dvbTuner.lnb_lof2_khz}" /></div>
-            <div class="edit-field"><div class="edit-field-title">SLOF, kHz</div><small class="field-help" ${uiBiAttrs('Порог переключения low/high band.','Low/high band switching threshold.')}>${uiBiText('Порог переключения low/high band.','Low/high band switching threshold.')}</small><input id="streamDvbSlof" type="number" value="${dvbTuner.lnb_slof_khz}" /></div>
-            <div class="edit-field"><div class="edit-field-title">Unicable</div><small class="field-help" ${uiBiAttrs('Off, EN50494 или EN50607/JESS.','Off, EN50494 or EN50607/JESS.')}>${uiBiText('Off, EN50494 или EN50607/JESS.','Off, EN50494 or EN50607/JESS.')}</small><select id="streamDvbUnicableMode" onchange="updateDvbUnicableFields()"><option value="none" ${dvbTuner.unicable_mode==='none'?'selected':''}>Off</option><option value="en50494" ${dvbTuner.unicable_mode==='en50494'?'selected':''}>EN50494</option><option value="en50607" ${dvbTuner.unicable_mode==='en50607'?'selected':''}>EN50607 / JESS</option></select></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">LOF1, kHz</div><small class="field-help" ${uiBiAttrs('Нижняя частота гетеродина LNB.','Low-band LNB oscillator frequency.')}>${uiBiText('Нижняя частота гетеродина LNB.','Low-band LNB oscillator frequency.')}</small><input id="streamDvbLof1" type="number" value="${dvbTuner.lnb_lof1_khz}" /></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">LOF2, kHz</div><small class="field-help" ${uiBiAttrs('Верхняя частота гетеродина LNB.','High-band LNB oscillator frequency.')}>${uiBiText('Верхняя частота гетеродина LNB.','High-band LNB oscillator frequency.')}</small><input id="streamDvbLof2" type="number" value="${dvbTuner.lnb_lof2_khz}" /></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">SLOF, kHz</div><small class="field-help" ${uiBiAttrs('Порог переключения low/high band.','Low/high band switching threshold.')}>${uiBiText('Порог переключения low/high band.','Low/high band switching threshold.')}</small><input id="streamDvbSlof" type="number" value="${dvbTuner.lnb_slof_khz}" /></div>
+            <div class="edit-field stream-dvb-satellite-only"><div class="edit-field-title">Unicable</div><small class="field-help" ${uiBiAttrs('Off, EN50494 или EN50607/JESS.','Off, EN50494 or EN50607/JESS.')}>${uiBiText('Off, EN50494 или EN50607/JESS.','Off, EN50494 or EN50607/JESS.')}</small><select id="streamDvbUnicableMode" onchange="updateDvbUnicableFields()"><option value="none" ${dvbTuner.unicable_mode==='none'?'selected':''}>Off</option><option value="en50494" ${dvbTuner.unicable_mode==='en50494'?'selected':''}>EN50494</option><option value="en50607" ${dvbTuner.unicable_mode==='en50607'?'selected':''}>EN50607 / JESS</option></select></div>
           </div>
           <div class="stream-video-grid" id="streamDvbUnicableFields" style="margin-top:8px;display:${dvbTuner.unicable_mode==='none'?'none':'grid'}">
             <div class="edit-field"><div class="edit-field-title">User Band</div><small class="field-help" ${uiBiAttrs('Номер SCR/UB выбранного порта.','SCR/UB number for the selected port.')}>${uiBiText('Номер SCR/UB выбранного порта.','SCR/UB number for the selected port.')}</small><input id="streamDvbUb" type="number" min="-1" max="31" value="${dvbTuner.unicable_user_band}" /></div>
