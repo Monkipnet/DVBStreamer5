@@ -47,10 +47,19 @@ std::string lower(std::string value) {
     return value;
 }
 
-bool canDlopen(const char* soname) {
+bool canDlopen(const char* soname, bool reportFailure = false) {
     if (!soname) return false;
+    dlerror();  // Clear any previous loader error before the probe.
     void* h = dlopen(soname, RTLD_LAZY | RTLD_LOCAL);
-    if (!h) return false;
+    if (!h) {
+        if (reportFailure) {
+            const char* detail = dlerror();
+            std::cerr << "NATIVE NVIDIA PROBE dlopen failed library="
+                      << soname << " error="
+                      << (detail ? detail : "unknown") << std::endl;
+        }
+        return false;
+    }
     dlclose(h);
     return true;
 }
@@ -1839,7 +1848,9 @@ NativeHardwareCapabilities inspectNativeHardwareCapabilities() {
     else if (c.vaapiRuntime)
         c.intelBackend = "VAAPI runtime present, no supported encode entrypoint";
 #if defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)
-    c.nvencAvailable = canDlopen("libnvidia-encode.so.1") && canDlopen("libcuda.so.1");
+    const bool nvencRuntime = canDlopen("libnvidia-encode.so.1", true);
+    const bool cudaRuntime = canDlopen("libcuda.so.1", true);
+    c.nvencAvailable = nvencRuntime && cudaRuntime;
     c.nvencH264 = c.nvencAvailable;
     c.nvencHevc = c.nvencAvailable;
     if (c.nvencAvailable) c.nvencBackend = "NVIDIA NVENC SDK";

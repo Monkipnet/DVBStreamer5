@@ -203,6 +203,16 @@ drain_dependency_queue
 LIBC_SOURCE="${COPIED_NAMES[libc.so.6]:-}"
 if [[ -n "$LIBC_SOURCE" ]]; then
     LIBC_DIR="$(dirname -- "$(readlink -f -- "$LIBC_SOURCE")")"
+    # GPU drivers are dlopen()ed at runtime and therefore absent from the
+    # application's static ldd dependency closure. NVIDIA's libcuda/libnvcuvid
+    # still depend on these glibc compatibility SONAMEs. Ship them from the
+    # same glibc installation as the bundled libc and interpreter, otherwise
+    # an older target host supplies incompatible GLIBC_PRIVATE symbols.
+    for glibc_compat in libdl.so.2 libpthread.so.0 librt.so.1; do
+        [[ -f "$LIBC_DIR/$glibc_compat" ]] ||
+            fail "missing matching glibc compatibility DSO: $LIBC_DIR/$glibc_compat"
+        copy_library "$LIBC_DIR/$glibc_compat"
+    done
     for nss in libnss_files.so.2 libnss_dns.so.2 libnss_compat.so.2 libresolv.so.2; do
         [[ -f "$LIBC_DIR/$nss" ]] && copy_library "$LIBC_DIR/$nss"
     done
@@ -501,6 +511,14 @@ EOF_PORTABILITY
 log "Verifying bundled runtime"
 "$STAGE/lib/$LOADER_NAME" --library-path "$STAGE/lib" --verify "$STAGE/bin/$APP" \
     || fail "bundled ELF loader cannot verify DVBStreamer5"
+# Required for dynamically-loaded GPU drivers, even though --verify succeeds
+# without these compatibility stubs.
+if [[ -n "$LIBC_SOURCE" ]]; then
+    for glibc_compat in libdl.so.2 libpthread.so.0 librt.so.1; do
+        [[ -s "$STAGE/lib/$glibc_compat" ]] ||
+            fail "bundled GPU runtime compatibility DSO is missing: $glibc_compat"
+    done
+fi
 
 rm -rf -- "$OUTPUT_DIR"
 mkdir -p -- "$(dirname -- "$OUTPUT_DIR")"
