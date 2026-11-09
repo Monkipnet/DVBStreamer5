@@ -142,7 +142,15 @@ std::string HttpServer::renderIndexPage() {
 #dvbAuthBox small{display:block;color:#b2c4db;margin:9px 0;line-height:1.4}
 #dvbAuthApiKey{font:12px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.02em}
 #dvbAuthApiControls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-#dvbAuthApiControls button{cursor:pointer;border:1px solid #526f92;border-radius:7px;padding:8px 11px;background:#24384f;color:#edf5ff}
+#dvbAuthApiControls button{cursor:pointer;border:1px solid #526f92;border-radius:7px;padding:8px 11px;background:#24384f;color:#edf5ff;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease}
+#dvbAuthApiControls #dvbAuthApiCopy{background:#146ad0;border:1px solid #52a8ff;color:#fff;font-weight:700;box-shadow:0 0 0 1px rgba(68,158,255,.18)}
+#dvbAuthApiControls #dvbAuthApiCopy:not(:disabled):hover{background:#2581e9;border-color:#8dccff;box-shadow:0 0 10px rgba(53,143,243,.45)}
+#dvbAuthApiControls #dvbAuthApiCopy[data-copy-state="copied"]{background:#167447;border-color:#5be2a0;color:#fff;box-shadow:0 0 0 2px rgba(31,198,111,.18)}
+#dvbAuthApiControls #dvbAuthApiCopy[data-copy-state="error"]{background:#a33839;border-color:#ff8484;color:#fff;box-shadow:0 0 0 2px rgba(228,71,71,.18)}
+#dvbAuthApiControls #dvbAuthApiCopy:disabled{background:#283a4c;border-color:#495c70;color:#8797a9;cursor:not-allowed;box-shadow:none}
+#dvbAuthApiControls #dvbAuthApiCopy:focus-visible{outline:2px solid #a9d8ff;outline-offset:2px}
+#dvbAuthApiKeyStatus[data-copy-state="copied"]{color:#61e5a7;font-weight:600}
+#dvbAuthApiKeyStatus[data-copy-state="error"]{color:#ff9a9a;font-weight:600}
 #dvbAuthApiKeyStatus{color:#c0d7ee;min-height:1.2em}
 .dvb-auth-actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px}
 #dvbAuthSave{background:#266bc1;color:#fff}
@@ -219,7 +227,9 @@ apiIps:'Разрешённые IP для ключа',apiIpsHelp:'Список IP
 apiKeyHelp:'Ключ разрешает только список и отключение сессий. Старый ключ после замены перестанет работать. Новый ключ показывается один раз.',
 apiKeyStored:'Ключ создан (скрыт)',apiKeyMissing:'Ключ ещё не создан',apiKeyCreated:'Сохраните ключ в Telik Server сейчас: повторно показать его невозможно.',
 apiKeyPrompt:'Сгенерировать новый ключ? Старый ключ немедленно перестанет работать, а новый будет показан только один раз.',
-apiKeyCopied:'Ключ скопирован',apiKeySaveHint:'Сохраните разрешённые IP кнопкой «Сохранить»'
+apiKeyCopied:'✓ Ключ скопирован в буфер обмена',apiKeyCopyError:'Не удалось скопировать автоматически. Ключ выделен: нажмите Ctrl+C.',
+apiCopyDone:'✓ Скопировано',apiCopyFailed:'Не скопировано',
+apiKeySaveHint:'Сохраните разрешённые IP кнопкой «Сохранить»'
 },
 en:{
 title:'Stream authorization — Cesbo Astra HTTP Backend',enabled:'Enable middleware authorization',
@@ -235,7 +245,9 @@ apiIps:'Allowed IP addresses for API key',apiIpsHelp:'Comma-separated IP address
 apiKeyHelp:'Key grants only session listing and disconnect. Rotation revokes the old key. New key is shown once.',
 apiKeyStored:'API key configured (hidden)',apiKeyMissing:'API key not configured',apiKeyCreated:'Store this key in Telik Server now. It cannot be displayed again.',
 apiKeyPrompt:'Generate a new key? The old key will be revoked immediately and the new key shown only once.',
-apiKeyCopied:'Key copied',apiKeySaveHint:'Save allowed IP addresses with Save'
+apiKeyCopied:'✓ API key copied to clipboard',apiKeyCopyError:'Automatic copy failed. Key is selected: press Ctrl+C.',
+apiCopyDone:'✓ Copied',apiCopyFailed:'Copy failed',
+apiKeySaveHint:'Save allowed IP addresses with Save'
 },
 hr:{
 title:'Autorizacija tokova — Cesbo Astra HTTP Backend',enabled:'Uključi autorizaciju putem middlewarea',
@@ -251,7 +263,9 @@ apiIps:'Dopuštene IP adrese za ključ',apiIpsHelp:'IP adrese odvojene zarezima.
 apiKeyHelp:'Ključ dopušta samo popis i prekid sesija. Novi ključ opoziva stari. Prikazuje se samo jednom.',
 apiKeyStored:'API ključ je postavljen (skriven)',apiKeyMissing:'API ključ nije postavljen',apiKeyCreated:'Odmah spremite ključ u Telik Server. Ne može se ponovno prikazati.',
 apiKeyPrompt:'Generirati novi ključ? Stari će odmah prestati vrijediti, a novi se prikazuje samo jednom.',
-apiKeyCopied:'Ključ kopiran',apiKeySaveHint:'Spremite dopuštene IP adrese gumbom Spremi'
+apiKeyCopied:'✓ Ključ je kopiran u međuspremnik',apiKeyCopyError:'Automatsko kopiranje nije uspjelo. Ključ je označen: pritisnite Ctrl+C.',
+apiCopyDone:'✓ Kopirano',apiCopyFailed:'Kopiranje nije uspjelo',
+apiKeySaveHint:'Spremite dopuštene IP adrese gumbom Spremi'
 }
 };
 let currentSessions=[];
@@ -287,6 +301,9 @@ function closeDialog(dialog){
   // Never retain the one-time raw API key in the DOM after closing.
   $('dvbAuthApiKey').value='';
   $('dvbAuthApiCopy').disabled=true;
+  $('dvbAuthApiCopy').removeAttribute('data-copy-state');
+  $('dvbAuthApiCopy').textContent=labels().apiCopy;
+  $('dvbAuthApiKeyStatus').removeAttribute('data-copy-state');
   $('dvbAuthApiKeyStatus').textContent='';
  }
 }
@@ -307,6 +324,9 @@ window.openDvbAuthSettings=async function(){
   $('dvbAuthApiKey').value='';
   $('dvbAuthApiKey').placeholder=data.api_key_configured?labels().apiKeyStored:labels().apiKeyMissing;
   $('dvbAuthApiCopy').disabled=true;
+  $('dvbAuthApiCopy').removeAttribute('data-copy-state');
+  $('dvbAuthApiCopy').textContent=labels().apiCopy;
+  $('dvbAuthApiKeyStatus').removeAttribute('data-copy-state');
   $('dvbAuthApiKeyStatus').textContent='';
  }catch(error){$('dvbAuthStatus').textContent=labels().error+': '+error.message;}
 };
@@ -327,6 +347,9 @@ $('dvbAuthApiGenerate').addEventListener('click',async function(){
   $('dvbAuthApiKey').value=data.api_key;
   $('dvbAuthApiKey').select();
   $('dvbAuthApiCopy').disabled=false;
+  $('dvbAuthApiCopy').removeAttribute('data-copy-state');
+  $('dvbAuthApiCopy').textContent=labels().apiCopy;
+  $('dvbAuthApiKeyStatus').removeAttribute('data-copy-state');
   $('dvbAuthApiKeyStatus').textContent=labels().apiKeyCreated;
  }catch(error){$('dvbAuthApiKeyStatus').textContent=labels().error+': '+error.message;}
  finally{this.disabled=false;}
@@ -334,17 +357,48 @@ $('dvbAuthApiGenerate').addEventListener('click',async function(){
 $('dvbAuthApiCopy').addEventListener('click',async()=>{
  const input=$('dvbAuthApiKey');
  if(!input.value)return;
- input.select();
+ const button=$('dvbAuthApiCopy');
+ const status=$('dvbAuthApiKeyStatus');
+ // Legacy clipboard API works on plain HTTP and must be called directly
+ // inside the user's click. A read-only input alone may not be copyable in
+ // some browsers, so select a short-lived offscreen textarea instead.
+ let copied=false;
+ const transient=document.createElement('textarea');
+ transient.value=input.value;
+ transient.setAttribute('readonly','');
+ transient.setAttribute('aria-hidden','true');
+ transient.style.cssText='position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none';
+ document.body.appendChild(transient);
  try{
-  if(navigator.clipboard && window.isSecureContext){
+  transient.focus();
+  transient.select();
+  transient.setSelectionRange(0,transient.value.length);
+  copied=!!document.execCommand('copy');
+ }catch(error){copied=false;}
+ finally{transient.remove();}
+ // Modern Clipboard API is a second choice when legacy copying is denied.
+ if(!copied && window.isSecureContext && navigator.clipboard &&
+    typeof navigator.clipboard.writeText==='function'){
+  try{
    await navigator.clipboard.writeText(input.value);
-   $('dvbAuthApiKeyStatus').textContent=labels().apiKeyCopied;
-  }else{
-   // On plain-HTTP administration connections the operator can manually
-   // copy the selected read-only field; no clipboard permission assumed.
-   $('dvbAuthApiKeyStatus').textContent=labels().apiKeyCreated;
-  }
- }catch(error){$('dvbAuthApiKeyStatus').textContent=labels().apiKeyCreated;}
+   copied=true;
+  }catch(error){copied=false;}
+ }
+ const t=labels();
+ if(copied){
+  button.setAttribute('data-copy-state','copied');
+  button.textContent=t.apiCopyDone;
+  status.setAttribute('data-copy-state','copied');
+  status.textContent=t.apiKeyCopied;
+ }else{
+  input.focus();
+  input.select();
+  input.setSelectionRange(0,input.value.length);
+  button.setAttribute('data-copy-state','error');
+  button.textContent=t.apiCopyFailed;
+  status.setAttribute('data-copy-state','error');
+  status.textContent=t.apiKeyCopyError;
+ }
 });
 $('dvbAuthApiIps').addEventListener('input',()=>{
  $('dvbAuthApiKeyStatus').textContent=labels().apiKeySaveHint;

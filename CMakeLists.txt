@@ -485,7 +485,8 @@ add_test(NAME http_ts_shared_epoll COMMAND dvbstreamer5_http_epoll_test)
 
 add_executable(dvbstreamer5_stream_api_key_test tests/test_stream_auth_api_key.cpp)
 target_include_directories(dvbstreamer5_stream_api_key_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(dvbstreamer5_stream_api_key_test PRIVATE OpenSSL::Crypto)
+target_link_libraries(dvbstreamer5_stream_api_key_test PRIVATE
+    OpenSSL::Crypto dvbstreamer5_boost_headers)
 add_test(NAME stream_api_key_scope COMMAND dvbstreamer5_stream_api_key_test)
 
 target_compile_definitions(DVBStreamer5 PRIVATE DVBSTREAMER5_HAVE_EPG_ZLIB=1)
