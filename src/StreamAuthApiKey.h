@@ -3,6 +3,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/address_v4.hpp>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -49,8 +50,14 @@ inline std::string normalizedAddress(const std::string& text) {
     boost::system::error_code ec;
     const auto addr=boost::asio::ip::make_address(text,ec);
     if(ec)return {};
-    if(addr.is_v6() && addr.to_v6().is_v4_mapped())
-        return addr.to_v6().to_v4().to_string();
+    if(addr.is_v6() && addr.to_v6().is_v4_mapped()){
+        // Boost.Asio address_v6 has no to_v4() on Ubuntu 24.04.
+        // Decode the final IPv4 octets of a valid v4-mapped IPv6 address.
+        const auto bytes=addr.to_v6().to_bytes();
+        boost::asio::ip::address_v4::bytes_type v4{{
+            bytes[12],bytes[13],bytes[14],bytes[15]}};
+        return boost::asio::ip::address_v4(v4).to_string();
+    }
     return addr.to_string();
 }
 inline std::vector<std::string> addressList(const std::string& csv) {
