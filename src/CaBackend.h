@@ -2,6 +2,7 @@
 
 #include <jsoncpp/json/json.h>
 #include <cstddef>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -111,6 +112,11 @@ private:
     Json::Value backendToJsonLocked(const LoadedBackend& backend) const;
 
     mutable std::mutex mutex_;
+    // Last-reader closes are serialized with new opens of the same client.
+    using ReaderIdentity = std::pair<std::string, std::string>;
+    std::map<ReaderIdentity, unsigned> stoppingReaders_;
+    std::set<ReaderIdentity> closingReaders_;
+    std::condition_variable readerClosedCv_;
     std::map<std::string, LoadedBackend> backends_;
     std::map<std::string, ServiceSession> sessions_;
     std::vector<CamClientConfig> clientPolicies_;

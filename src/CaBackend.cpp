@@ -344,17 +344,27 @@ void CaBackendManager::releaseReaderLocked(LoadedBackend& backend, const std::st
         --found->second;
         return;
     }
-    if (backend.id != "passthrough" && backend.api && backend.api->close_reader) {
+    const ReaderIdentity identity{backend.id, readerKey};
+    backend.readerRefs.erase(found);
+    if (backend.id == "passthrough") return;
+    if (stoppingReaders_.count(identity)) {
+        // The previous teardown still holds a plugin call. Its last finisher
+        // will close the reader, and new opens must wait for that close.
+        closingReaders_.insert(identity);
+    } else if (backend.api && backend.api->close_reader) {
         backend.api->close_reader(backend.instance, readerKey.c_str());
     }
-    backend.readerRefs.erase(found);
 }
 
 bool CaBackendManager::startService(const StreamConfig& stream,
                                     const CaBackendReaderBinding& reader,
                                     std::string* error) {
     if (error) error->clear();
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string backendId = reader.backendId.empty() ? "passthrough" : reader.backendId;
+    const ReaderIdentity identity{backendId, reader.key};
+    std::unique_lock<std::mutex> lock(mutex_);
+    // Prevent an old close_reader from deleting newly started channels.
+    readerClosedCv_.wait(lock, [&] { return closingReaders_.count(identity) == 0; });
     if (auto existing = sessions_.find(stream.id); existing != sessions_.end()) {
         if (existing->second.stopping) {
             if (error) *error = "CA backend session is still stopping: " + stream.id;
@@ -362,8 +372,6 @@ bool CaBackendManager::startService(const StreamConfig& stream,
         }
         return true;
     }
-
-    const std::string backendId = reader.backendId.empty() ? "passthrough" : reader.backendId;
     LoadedBackend* backend = findBackendLocked(backendId);
     if (!backend || !backend->usable) {
         if (error) *error = "CA backend is not loaded: " + backendId;
@@ -431,7 +439,7 @@ void CaBackendManager::stopService(const std::string& streamId) {
     const dvbstreamer5_ca_backend_api_v1* api = nullptr;
     void* instance = nullptr;
     bool passthroughBackend = true;
-    bool closeReader = false;
+    ReaderIdentity identity;
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -455,17 +463,18 @@ void CaBackendManager::stopService(const std::string& streamId) {
         passthroughBackend = backend->id == "passthrough";
         api = backend->api;
         instance = backend->instance;
+        identity = {backend->id, session.readerKey};
 
-        // Update only the reference counter while holding mutex_.  The plugin
-        // close_reader callback can block on I/O or join a worker thread, so it
-        // must never execute under the global CaBackendManager lock.
+        // Wait for all in-progress stop_service callbacks before closing
+        // the last reader. Keep other readers independent.
+        if (!passthroughBackend) ++stoppingReaders_[identity];
         auto readerRef = backend->readerRefs.find(session.readerKey);
         if (readerRef != backend->readerRefs.end()) {
             if (readerRef->second > 1) {
                 --readerRef->second;
             } else {
                 backend->readerRefs.erase(readerRef);
-                closeReader = true;
+                if (!passthroughBackend) closingReaders_.insert(identity);
             }
         }
     }
@@ -476,17 +485,32 @@ void CaBackendManager::stopService(const std::string& streamId) {
     if (!passthroughBackend && api && api->stop_service) {
         api->stop_service(instance, streamId.c_str());
     }
-    if (closeReader && !passthroughBackend && api && api->close_reader) {
+
+    bool closeReader = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!passthroughBackend) {
+            auto stop = stoppingReaders_.find(identity);
+            if (stop != stoppingReaders_.end() && --stop->second == 0)
+                stoppingReaders_.erase(stop);
+            closeReader = closingReaders_.count(identity) &&
+                          stoppingReaders_.count(identity) == 0;
+        }
+    }
+    // New starts wait for the last close to finish, not for other readers.
+    if (closeReader && api && api->close_reader) {
         api->close_reader(instance, session.readerKey.c_str());
     }
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (closeReader) closingReaders_.erase(identity);
         auto found = sessions_.find(streamId);
         if (found != sessions_.end() && found->second.stopping) {
             sessions_.erase(found);
         }
     }
+    readerClosedCv_.notify_all();
 
     std::cerr << "CA backend service stopped: stream=" << streamId
               << " client=" << session.readerKey

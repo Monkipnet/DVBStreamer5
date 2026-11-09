@@ -2,8 +2,10 @@
 
 #include <jsoncpp/json/json.h>
 #include <chrono>
+#include <condition_variable>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -67,6 +69,9 @@ private:
 
     mutable std::mutex mutex_;
     std::map<std::string, ServiceSlot> slotsByStream_;
+    // A rapid restart must wait until the preceding CA session has been released.
+    std::set<std::string> releasingStreams_;
+    std::condition_variable releaseCv_;
 
     mutable std::mutex configMutex_;
     std::vector<CamClientConfig> clients_;

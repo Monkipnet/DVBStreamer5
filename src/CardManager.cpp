@@ -244,7 +244,8 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
     if (client.backendId.empty()) client.backendId = "newcamd";
     if (client.backendConfig.empty()) client.backendConfig = "{}";
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
+    releaseCv_.wait(lock, [&] { return releasingStreams_.count(config.id) == 0; });
     if (slotsByStream_.count(config.id)) return true;
 
     const auto used = static_cast<unsigned>(std::count_if(
@@ -300,7 +301,7 @@ void CardManager::activateService(const std::string& streamId) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto found = slotsByStream_.find(streamId);
-        if (found == slotsByStream_.end()) return;
+        if (found == slotsByStream_.end() || releasingStreams_.count(streamId)) return;
         found->second.active = true;
         if (found->second.lastStatus.empty() || found->second.lastStatus == "RESERVED") {
             found->second.lastStatus = "ACTIVE";
@@ -313,23 +314,33 @@ void CardManager::activateService(const std::string& streamId) {
 }
 
 void CardManager::releaseService(const std::string& streamId) {
-    bool existed = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto found = slotsByStream_.find(streamId);
         if (found == slotsByStream_.end()) return;
-        std::cerr << "CAM manager: released client=" << found->second.clientId
+        if (!releasingStreams_.insert(streamId).second) return;
+        found->second.active = false;
+        found->second.lastStatus = "STOPPING";
+        std::cerr << "CAM manager: releasing client=" << found->second.clientId
                   << " stream=" << found->second.streamId
                   << " sid=" << found->second.serviceId << std::endl;
-        slotsByStream_.erase(found);
-        existed = true;
     }
-    if (existed) CaBackendManager::instance().stopService(streamId);
+
+    // Keep the slot reserved during the entire Newcamd teardown, but do not
+    // hold the global CardManager mutex while a socket/thread is closing.
+    CaBackendManager::instance().stopService(streamId);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        slotsByStream_.erase(streamId);
+        releasingStreams_.erase(streamId);
+    }
+    releaseCv_.notify_all();
 }
 
 void CardManager::releaseAll() {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
+        releaseCv_.wait(lock, [&] { return releasingStreams_.empty(); });
         slotsByStream_.clear();
     }
     CaBackendManager::instance().stopAll();
