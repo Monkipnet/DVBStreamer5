@@ -1045,7 +1045,32 @@ static void *stream_client_handler(void *arg)
 						ParseTsPackets(data, stream_buf + startOffset, packetCount * packetSize, packetSize);
 					}
 
-					clientStatus = send(conndata->connfd, stream_buf + startOffset, packetCount * packetSize, 0);
+					// A blocking TCP send() may complete only part of a TS block.
+					// Dropping the remainder corrupts continuity counters and
+					// produces visible pixelation, especially under heavy load.
+					const uint32_t tsBlockBytes = packetCount * packetSize;
+					uint32_t tsBytesSent = 0;
+					while (tsBytesSent < tsBlockBytes)
+					{
+						ssize_t sent = send(conndata->connfd,
+								stream_buf + startOffset + tsBytesSent,
+								tsBlockBytes - tsBytesSent, MSG_NOSIGNAL);
+						if (sent > 0)
+						{
+							if (tsBytesSent == 0 && (uint32_t)sent < tsBlockBytes)
+							{
+								cs_log_dbg(D_READER, "iCAM StreamRelay short TS send conn=%d sent=%zd expected=%u",
+										conndata->connid, sent, tsBlockBytes);
+							}
+							tsBytesSent += (uint32_t)sent;
+							continue;
+						}
+						if (sent < 0 && errno == EINTR) { continue; }
+						cs_log("WARNING: iCAM StreamRelay TS output failed conn=%d sent=%u expected=%u errno=%d",
+								conndata->connid, tsBytesSent, tsBlockBytes, errno);
+						break;
+					}
+					clientStatus = tsBytesSent == tsBlockBytes ? (int32_t)tsBlockBytes : -1;
 
 					remainingDataPos = startOffset + (packetCount * packetSize);
 					remainingDataLength = bytesRead - remainingDataPos;
