@@ -1,9 +1,6 @@
 #define MODULE_LOG_PREFIX "relay"
 
 #include "globals.h"
-#include <errno.h>
-#include <stdint.h>
-#include <sys/time.h>
 
 #ifdef MODULE_STREAMRELAY
 
@@ -40,102 +37,55 @@ static uint8_t stream_server_mutex_init = 0;
 static pthread_mutex_t stream_server_mutex;
 static int32_t glistenfd, gconncount = 0, gconnfd[STREAM_SERVER_MAX_CONNECTIONS];
 
-static pthread_mutex_t fixed_key_srvid_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t fixed_key_srvid_mutex;
 static uint16_t stream_cur_srvid[STREAM_SERVER_MAX_CONNECTIONS];
 static stream_client_key_data key_data[STREAM_SERVER_MAX_CONNECTIONS];
 
 #ifdef MODULE_RADEGAST
-static int32_t gRadegastFd = -1;
-static pthread_mutex_t radegast_socket_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// The StreamRelay callback in module-radegast.c updates the CW directly;
-// the TCP reply is only an acknowledgement and must be drained. All StreamRelay
-// workers share this one connection, so reconnect/send/drain are serialized.
-static void close_radegast_connection(void)
-{
-	if (gRadegastFd >= 0)
-	{
-		close(gRadegastFd);
-		gRadegastFd = -1;
-	}
-}
+static int32_t gRadegastFd = 0;
 
 static bool connect_to_radegast(void)
 {
 	struct SOCKADDR cservaddr;
-	int32_t fd;
 
-	if (gRadegastFd >= 0) { return true; }
-	fd = socket(DEFAULT_AF, SOCK_STREAM, 0);
-	if (fd < 0)
+	if (gRadegastFd == 0)
+		gRadegastFd = socket(DEFAULT_AF, SOCK_STREAM, 0);
+
+	if (gRadegastFd < 0)
 	{
-		cs_log("WARNING: iCAM Radegast socket creation failed errno=%d", errno);
+		gRadegastFd = 0;
 		return false;
 	}
 
-	// Loopback is local. Bound a blocked send rather than stalling all iCAM
-	// workers forever; a failed transaction will reconnect on the next ECM.
-	struct timeval timeout;
-	timeout.tv_sec = 1;
-	timeout.tv_usec = 0;
-	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+	int32_t flags = fcntl(gRadegastFd, F_GETFL);
+	fcntl(gRadegastFd, F_SETFL, flags | O_NONBLOCK);
 
 	bzero(&cservaddr, sizeof(cservaddr));
 	SIN_GET_FAMILY(cservaddr) = DEFAULT_AF;
 	SIN_GET_PORT(cservaddr) = htons(cfg.rad_port);
 	SIN_GET_ADDR(cservaddr) = cfg.rad_srvip;
-	if (connect(fd, (struct sockaddr *)&cservaddr, sizeof(cservaddr)) != 0)
+
+	if (connect(gRadegastFd, (struct sockaddr *)&cservaddr, sizeof(cservaddr)) == -1)
 	{
-		cs_log("WARNING: iCAM Radegast loopback connect failed errno=%d", errno);
-		close(fd);
 		return false;
 	}
-	gRadegastFd = fd;
+
 	return true;
 }
 
-static void drain_radegast_responses(void)
+static void close_radegast_connection(void)
 {
-	uint8_t reply[256];
-	while (gRadegastFd >= 0)
-	{
-		ssize_t n = recv(gRadegastFd, reply, sizeof(reply), MSG_DONTWAIT);
-		if (n > 0) { continue; }
-		if (n == 0)
-		{
-			cs_log("WARNING: iCAM Radegast loopback closed connection");
-			close_radegast_connection();
-			return;
-		}
-		if (errno == EINTR) { continue; }
-		if (errno == EAGAIN || errno == EWOULDBLOCK) { return; }
-		cs_log("WARNING: iCAM Radegast loopback recv failed errno=%d", errno);
-		close_radegast_connection();
-		return;
-	}
+	close(gRadegastFd);
+	gRadegastFd = 0;
 }
 
-static bool send_to_radegast(const uint8_t *data, size_t len)
+static bool send_to_radegast(uint8_t* data, int len)
 {
-	size_t sent = 0;
-	if (!connect_to_radegast()) { return false; }
-	drain_radegast_responses();
-	if (!connect_to_radegast()) { return false; }
-	while (sent < len)
+	if (send(gRadegastFd, data, len, 0) < 0)
 	{
-		ssize_t n = send(gRadegastFd, data + sent, len - sent, MSG_NOSIGNAL);
-		if (n > 0)
-		{
-			sent += (size_t)n;
-			continue;
-		}
-		if (n < 0 && errno == EINTR) { continue; }
-		cs_log("WARNING: iCAM Radegast ECM send failed sent=%zu total=%zu errno=%d",
-				sent, len, errno);
-		close_radegast_connection();
+		cs_log("send_to_radegast: Send failure");
 		return false;
 	}
-	drain_radegast_responses();
 	return true;
 }
 
@@ -146,17 +96,14 @@ static void radegast_client_ecm(stream_client_data *cdata)
 	MD5(cdata->ecm_data, section_length, md5tmp);
 
 	if (!memcmp(cdata->ecm_md5, md5tmp, MD5_DIGEST_LENGTH)) { return; }
+	memcpy(cdata->ecm_md5, md5tmp, MD5_DIGEST_LENGTH);
 
 	uint16_t packet_len;
 	static uint8_t header_len = 2;
 	static uint8_t payload_static_len = 12;
 
-	if (section_length > 255 - payload_static_len)
-	{
-		cs_log("WARNING: iCAM Radegast ECM too large for 8-bit protocol length: %u",
-			(unsigned int)section_length);
-		return;
-	}
+	if (gRadegastFd <= 0)
+		{ connect_to_radegast(); }
 
 	packet_len = header_len + payload_static_len + section_length;
 	uint8_t outgoing_data[packet_len];
@@ -175,19 +122,14 @@ static void radegast_client_ecm(stream_client_data *cdata)
 
 	memcpy(outgoing_data + header_len + payload_static_len, cdata->ecm_data, section_length);
 
-	// Shared socket: one complete ECM frame at a time. An unsuccessful send
-	// must remain eligible for retransmission on the next ECM copy.
-	SAFE_MUTEX_LOCK(&radegast_socket_mutex);
-	if (send_to_radegast(outgoing_data, packet_len))
+	if (!send_to_radegast(outgoing_data, packet_len))
 	{
-		memcpy(cdata->ecm_md5, md5tmp, MD5_DIGEST_LENGTH);
+		close_radegast_connection();
+		if (connect_to_radegast())
+		{
+			send_to_radegast(outgoing_data, packet_len);
+		}
 	}
-	else
-	{
-		// The next section can retry after the socket is reconnected.
-		cs_log("WARNING: iCAM Radegast ECM delivery failed srvid=%04X", cdata->srvid);
-	}
-	SAFE_MUTEX_UNLOCK(&radegast_socket_mutex);
 }
 
 void ParseEcmData(stream_client_data *cdata)
@@ -235,7 +177,7 @@ bool stream_write_cw(ECM_REQUEST *er)
 	if (er->rc == E_FOUND)
 	{
 		bool cw_written = false;
-		SAFE_MUTEX_LOCK(&fixed_key_srvid_mutex);
+		//SAFE_MUTEX_LOCK(&fixed_key_srvid_mutex);
 		for (i = 0; i < STREAM_SERVER_MAX_CONNECTIONS; i++)
 		{
 			if (stream_cur_srvid[i] == er->srvid)
@@ -245,7 +187,7 @@ bool stream_write_cw(ECM_REQUEST *er)
 				// don't return as there might be more connections for the same channel (e.g. recordings)
 			}
 		}
-		SAFE_MUTEX_UNLOCK(&fixed_key_srvid_mutex);
+		//SAFE_MUTEX_UNLOCK(&fixed_key_srvid_mutex);
 		return cw_written;
 	}
 	return true;
@@ -852,8 +794,6 @@ static void stream_client_disconnect(stream_client_conn_data *conndata)
 		{
 			gconnfd[i] = -1;
 			gconncount--;
-			cs_log("INFO: iCAM StreamRelay active connections=%d/%d",
-					gconncount, STREAM_SERVER_MAX_CONNECTIONS);
 		}
 	}
 	SAFE_MUTEX_UNLOCK(&stream_server_mutex);
@@ -1105,23 +1045,7 @@ static void *stream_client_handler(void *arg)
 						ParseTsPackets(data, stream_buf + startOffset, packetCount * packetSize, packetSize);
 					}
 
-					// send() can return a short positive write under load.
-					// Never silently discard the rest of an encrypted/clear TS block.
-					uint32_t bytesToSend = packetCount * packetSize;
-					uint32_t bytesSent = 0;
-					while (bytesSent < bytesToSend)
-					{
-						ssize_t n = send(conndata->connfd,
-								stream_buf + startOffset + bytesSent,
-								bytesToSend - bytesSent, MSG_NOSIGNAL);
-						if (n > 0) { bytesSent += (uint32_t)n; continue; }
-						if (n < 0 && errno == EINTR) { continue; }
-						cs_log("WARNING: iCAM StreamRelay TS send failed conn=%d sent=%u total=%u errno=%d",
-								conndata->connid, bytesSent, bytesToSend, errno);
-						clientStatus = -1;
-						break;
-					}
-					if (bytesSent == bytesToSend) clientStatus = (int32_t)bytesSent;
+					clientStatus = send(conndata->connfd, stream_buf + startOffset, packetCount * packetSize, 0);
 
 					remainingDataPos = startOffset + (packetCount * packetSize);
 					remainingDataLength = bytesRead - remainingDataPos;
@@ -1146,14 +1070,8 @@ static void *stream_client_handler(void *arg)
 	NULLFREE(http_buf);
 	NULLFREE(stream_buf);
 
-	// Reject late CW deliveries before freeing the per-connection keys.
-	SAFE_MUTEX_LOCK(&fixed_key_srvid_mutex);
-	stream_cur_srvid[conndata->connid] = NO_SRVID_VALUE;
 	dvbcsa_bs_key_free(key_data[conndata->connid].key[ODD]);
 	dvbcsa_bs_key_free(key_data[conndata->connid].key[EVEN]);
-	key_data[conndata->connid].key[ODD] = NULL;
-	key_data[conndata->connid].key[EVEN] = NULL;
-	SAFE_MUTEX_UNLOCK(&fixed_key_srvid_mutex);
 	NULLFREE(tsbbatch);
 
 	NULLFREE(data);
@@ -1297,8 +1215,6 @@ void *stream_server(void *UNUSED(a))
 					{
 						gconnfd[i] = connfd;
 						gconncount++;
-						cs_log("INFO: iCAM StreamRelay active connections=%d/%d",
-								gconncount, STREAM_SERVER_MAX_CONNECTIONS);
 						connaccepted = 1;
 
 						conndata->connfd = connfd;
@@ -1375,9 +1291,7 @@ void stop_stream_server(void)
 	SAFE_MUTEX_UNLOCK(&stream_server_mutex);
 
 #ifdef MODULE_RADEGAST
-	SAFE_MUTEX_LOCK(&radegast_socket_mutex);
 	close_radegast_connection();
-	SAFE_MUTEX_UNLOCK(&radegast_socket_mutex);
 #endif
 
 	shutdown(glistenfd, 2);
