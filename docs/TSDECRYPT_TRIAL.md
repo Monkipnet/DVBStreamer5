@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.461 — TSDecrypt per-tile CA backend (experimental)
+# DVBStreamer5 V10.8.462 — TSDecrypt per-tile CA backend (experimental)
 
 The plugin `ca-plugins/dvbstreamer5-ca-tsdecrypt.so` is opt-in per CAM client;
 Newcamd, OSCam-mini and DVB-CI remain unchanged. The external `bin/tsdecrypt`
@@ -110,3 +110,34 @@ The trial runs until stopped with Ctrl+C; **no production DVBStreamer5 service i
 5. A/B media validation, tests and production rollback.
 
 Do not mark TSDecrypt as an implemented in-tile CA engine until these steps are completed and verified.
+
+## V10.8.462 — experimental iCAM-aware external TSDecrypt build
+
+V461's externally supplied TSDecrypt binary used FFdecsa, without carrying
+the VideoGuard/iCAM ECM mode into its CSA key schedule. New script
+`scripts/build_tsdecrypt_icam.sh` copies existing upstream TSDecrypt sources
+into an isolated temporary directory, patches ECM mode propagation to the
+CAMD reply, then builds with DVBStreamer5's vendored ECM-aware static
+`libdvbcsa`. It uses `dvbcsa_bs_key_set_ecm()` for nonzero modes and the
+bitslice decrypt API for even a single iCAM packet. Unmodified source,
+installed TSDecrypt, and the working Newcamd plugin remain untouched.
+
+From the source root on the build host:
+
+```bash
+cmake -S . -B build
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
+bash scripts/build_tsdecrypt_icam.sh /tmp/dvbstreamer5-tsdecrypt build
+bash scripts/make_portable_linux_bundle.sh --build-dir build \
+    --tsdecrypt-binary build/tsdecrypt-icam/tsdecrypt --archive
+cp -a dist/DVBStreamer5-linux-x86_64.tar.gz \
+    dist/DVBStreamer5-10.8.462-linux-x86_64.tar.gz
+sha256sum dist/DVBStreamer5-10.8.462-linux-x86_64.tar.gz \
+    > dist/DVBStreamer5-10.8.462-linux-x86_64.tar.gz.sha256
+```
+
+**Not yet runtime verified:** Before deploying any production tile, validate
+one authorized test SID and its video/audio PES, actual playback, and CW
+changes. A valid CW or cleared scrambling bit does not prove decryption.
+Keep the standard Newcamd backend as the per-tile rollback option.
