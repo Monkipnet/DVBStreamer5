@@ -10,9 +10,12 @@ update_phase(){
   case "$1" in downloading|verifying|installing|restarting|done|error) ;;
     *) return 1 ;;
   esac
-  printf '%s\\n' "$1" > "$UPDATE_STATUS"
+  printf '%s\n' "$1" > "$UPDATE_STATUS"
 }
-die(){ echo "UPDATE ERROR: $*" >&2; exit 1; }
+die(){
+  if [[ "${UPDATE_INSTALL_ACTIVE:-0}" == 1 ]]; then update_phase error || true; fi
+  echo "UPDATE ERROR: $*" >&2; exit 1
+}
 valid_version(){ [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
 newer(){
   local a b c x y z
@@ -138,6 +141,7 @@ install_release(){
   trap "rm -rf -- '$tmp'" EXIT
   mkdir -p -m 0755 /var/lib/dvbstreamer5
   # Preserve a visible error state even when a later command exits under -e.
+  UPDATE_INSTALL_ACTIVE=1
   trap 'update_phase error || true' ERR
   update_phase downloading
   read_release "$tmp"
@@ -180,6 +184,7 @@ install_release(){
     update_phase error
     die 'Installation failed; rolled back runtime'
   fi
+  UPDATE_INSTALL_ACTIVE=0
   update_phase done
   echo "UPDATE: completed $RELEASE_VERSION"
 }
