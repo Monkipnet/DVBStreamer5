@@ -127,7 +127,7 @@ for(const marker of [
   'html[data-dashboard-theme="light"] .modal-content',
   'html[data-dashboard-theme="light"] header'
 ]) assert.ok(web.includes(marker),'Missing light theme integration: '+marker);
-assert.ok(web.includes('  updateDashboardThemeButton();\\n'.replace('\\n','\\n')),
+assert.match(web,/function applyLanguage\(\)\s*\{[\s\S]*?updateDashboardThemeButton\(\);\s*\}/,
   'Language reapply must refresh the theme switch label');
 const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
 assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
