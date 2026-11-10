@@ -5817,7 +5817,9 @@ function deleteStream(id) {
 let latestVerifiedUpdate=null;
 let updateRequestBusy=false;
 function releaseText(ru,en,hr){return language==='ru'?ru:language==='hr'?hr:en;}
+let updateProgressDismissed=false;
 function closeBinaryUpdateProgress(){
+  updateProgressDismissed=true;
   const surface=document.getElementById('binaryUpdateProgress');
   if(surface)surface.hidden=true;
 }
@@ -5825,7 +5827,7 @@ function updateProgress(phase,detail=''){
   const surface=document.getElementById('binaryUpdateProgress');
   const text=document.getElementById('binaryUpdateProgressText');
   if(!surface||!text)return;
-  surface.hidden=false;
+  if(!updateProgressDismissed)surface.hidden=false;
   surface.dataset.phase=phase;
   const captions={
     checking:releaseText('Проверка версии на сайте…','Checking website release…','Provjera verzije na stranici…'),
@@ -5851,6 +5853,7 @@ async function checkBinaryUpdates(){
   const button=document.getElementById('checkReleaseButton');
   const installButton=document.getElementById('installReleaseButton');
   setUpdateButtonBusy(button,true);
+  updateProgressDismissed=false;
   updateProgress('checking');
   latestVerifiedUpdate=null;
   if(installButton){installButton.hidden=true;installButton.style.display='none';}
@@ -5914,6 +5917,7 @@ async function installBinaryUpdate(){
   const installButton=document.getElementById('installReleaseButton');
   setUpdateButtonBusy(checkButton,true);
   setUpdateButtonBusy(installButton,true);
+  updateProgressDismissed=false;
   updateProgress('starting',version);
   try{
     const response=await fetch('/api/update/install',{
