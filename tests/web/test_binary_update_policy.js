@@ -91,6 +91,12 @@ for(const marker of [
   '" 2>&1"',
   'Json::parseFromStream(reader, jsonInput, &parsed, &parseErrors)'
 ]) assert.ok(transport.includes(marker),'Missing update diagnostics: '+marker);
+for(const marker of [
+  'const bool panelAdminAuthenticated =',
+  'isPanelSessionAuthorized(req) || isAuthorized(req)',
+  'if (apiKeyAttempt || !panelAdminAuthenticated ||',
+  'requestedWith->value() != "DVBStreamer5"'
+]) assert.ok(transport.includes(marker),'Updater install must use panel Basic/session auth, deny API keys: '+marker);
 assert.ok(!transport.includes('" 2>/dev/null"'), 'Updater stderr must not be discarded');
 for(const marker of [
   'Unsafe non-HTTPS download redirect',
