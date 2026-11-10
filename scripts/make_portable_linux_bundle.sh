@@ -124,7 +124,7 @@ if [[ -n "$TSDECRYPT_BINARY" ]]; then
     [[ "$TSDECRYPT_BINARY" == /* ]] || TSDECRYPT_BINARY="$PROJECT_ROOT/$TSDECRYPT_BINARY"
     [[ -f "$TSDECRYPT_BINARY" && -x "$TSDECRYPT_BINARY" ]] || fail "not an executable TSDecrypt binary: $TSDECRYPT_BINARY"
     file -b "$TSDECRYPT_BINARY" | grep -q 'ELF 64-bit' || fail "not a 64-bit TSDecrypt ELF executable: $TSDECRYPT_BINARY"
-    install -m 0755 "$TSDECRYPT_BINARY" "$STAGE/bin/tsdecrypt"
+    install -m 0755 "$TSDECRYPT_BINARY" "$STAGE/bin/tsdecrypt.bin"
 fi
 VERSION="$(sed -n 's/.*kProgramVersion = "\([^"]*\)".*/\1/p' "$PROJECT_ROOT/src/AppVersion.h")"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "cannot determine binary release version"
@@ -268,6 +268,20 @@ cd "\$ROOT"
 exec "\$ROOT/lib/$LOADER_NAME" --library-path "\$ROOT/lib" "\$ROOT/bin/$APP" "\$@"
 EOF_RUN
 chmod 0755 "$STAGE/run.sh"
+
+# TSDecrypt must run with the bundled library closure rather than target-host
+# libraries. Keep the public path bin/tsdecrypt as a small launcher.
+if [[ -n "$TSDECRYPT_BINARY" ]]; then
+    cat > "$STAGE/bin/tsdecrypt" <<EOF_TSDECRYPT
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="\$(cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")/.." && pwd -P)"
+exec "\$ROOT/lib/$LOADER_NAME" --library-path "\$ROOT/lib" "\$ROOT/bin/tsdecrypt.bin" "\$@"
+EOF_TSDECRYPT
+    chmod 0755 "$STAGE/bin/tsdecrypt"
+    "$STAGE/lib/$LOADER_NAME" --library-path "$STAGE/lib" --verify "$STAGE/bin/tsdecrypt.bin" ||
+        fail "bundled ELF loader cannot verify TSDecrypt"
+fi
 
 if [[ -n "$OSCAM_SOURCE" ]]; then
     cat > "$STAGE/oscam-mini/oscam-mini" <<EOF_OSCAM
