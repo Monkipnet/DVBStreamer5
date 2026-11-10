@@ -92,20 +92,23 @@ read_release(){
       RELEASE_VERSION="$site_version"
       return 0
     fi
-    curl -fsSLI --proto '=https' --proto-redir '=https' --max-redirs 3 --max-time 20 -D "$header" "$URL" -o /dev/null || die 'Cannot inspect website download'
-    local name
-    name="$(tr -d '\r' < "$header" | sed -nE 's/^[Cc]ontent-[Dd]isposition:.*filename="?([^";]+)"?.*/\1/p' | tail -1)"
+    # PHP download endpoints may answer HEAD with 404 while accepting GET.
+    # HEAD failure must never abort the normal archive-download fallback.
+    local name='' archive="$tmp/release.tar.gz"
+    if curl -fsSLI --proto '=https' --proto-redir '=https' --max-redirs 3 \
+        --max-time 20 -D "$header" "$URL" -o /dev/null 2>/dev/null; then
+      name="$(tr -d '\r' < "$header" | sed -nE 's/^[Cc]ontent-[Dd]isposition:.*filename="?([^";]+)"?.*/\1/p' | tail -1)"
+    fi
     if [[ "$name" =~ ^DVBStreamer5-([0-9]+\.[0-9]+\.[0-9]+)(-linux-x86_64)?\.tar\.gz$ ]]; then
       RELEASE_VERSION="${BASH_REMATCH[1]}"
     else
-      # download.php may send an unversioned attachment filename. Inspect the
-      # bundled directory name in the actual tar.gz rather than guessing.
-      local archive="$tmp/release.tar.gz" first root
+      # GET is authoritative for PHP attachment downloads; validate the
+      # archive and infer the version from VERSION, directory or ELF.
       download_archive "$archive"
       tar -tzf "$archive" > "$tmp/entries" || die 'Downloaded file is not a valid tar.gz'
       [[ -s "$tmp/entries" ]] || die 'Downloaded archive is empty'
       determine_archive_release "$archive" "$tmp/entries"
-      # The same archive can be reused by install_release (no second download).
+      # install_release reuses the already-downloaded archive.
     fi
   fi
   valid_version "$RELEASE_VERSION" || die 'Bad release version'
