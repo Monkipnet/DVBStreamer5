@@ -7009,14 +7009,21 @@ function newcamdRowHtml(client={}, index=0) {
     <div class="form-row"><label>User</label><input data-cam-field="user" value="${satEscape(cfg.user || client.user || 'user')}" /></div>
     <div class="form-row"><label>Password</label><input data-cam-field="pass" type="password" value="${satEscape(cfg.pass || client.pass || '')}" /></div>
     <div class="form-row full"><label>DES key</label><input data-cam-field="des" value="${satEscape(cfg.des || client.des || '0102030405060708091011121314')}" /></div>
-    <div class="form-row"><label>CAMD protocol (TSDecrypt)</label><select data-cam-field="protocol"><option value="NEWCAMD" ${(cfg.protocol || 'NEWCAMD').toUpperCase()==='NEWCAMD'?'selected':''}>Newcamd</option><option value="CS378X" ${String(cfg.protocol || '').toUpperCase()==='CS378X'?'selected':''}>CS378x</option></select></div>
-    <div class="form-row"><label>CAID (TSDecrypt)</label><input data-cam-field="caid" maxlength="4" placeholder="098D" value="${satEscape(cfg.caid || '098D')}" /></div>
-    <div class="form-row"><label>ECM PID (TSDecrypt, 0 = auto)</label><input data-cam-field="ecm_pid" type="number" min="0" max="8190" value="${Number(cfg.ecm_pid || 0)}" /></div>
-    <div class="form-row full"><small class="field-help">TSDecrypt: optional experimental CA engine. Select this backend on a dedicated CAM client, then select that client in a DVB tile. Default remains Newcamd. Dual ECM is not implemented.</small></div>
+    <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>CAMD protocol (TSDecrypt)</label><select data-cam-field="protocol"><option value="NEWCAMD" ${(cfg.protocol || 'NEWCAMD').toUpperCase()==='NEWCAMD'?'selected':''}>Newcamd</option><option value="CS378X" ${String(cfg.protocol || '').toUpperCase()==='CS378X'?'selected':''}>CS378x</option></select></div>
+    <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>CAID (TSDecrypt)</label><input data-cam-field="caid" maxlength="4" placeholder="098D" value="${satEscape(cfg.caid || '098D')}" /></div>
+    <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>ECM PID (TSDecrypt, 0 = auto)</label><input data-cam-field="ecm_pid" type="number" min="0" max="8190" value="${Number(cfg.ecm_pid || 0)}" /></div>
+    <div class="form-row full" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><small class="field-help">TSDecrypt: optional experimental CA engine. Select this backend on a dedicated CAM client, then select that client in a DVB tile. Default remains Newcamd. Dual ECM is not implemented.</small></div>
     <div class="form-row"><label>Max channels</label><input data-cam-field="max_services" type="number" min="1" max="64" value="${Number(client.max_services || 10)}" /></div>
-    <div class="form-row"><label>Backend</label><select data-cam-field="backend_id">${caBackendOptions(client.backend_id || 'newcamd')}</select></div>
+    <div class="form-row"><label>Backend</label><select data-cam-field="backend_id" onchange="updateCamRowBackend(this.closest('.newcamd-row'))">${caBackendOptions(client.backend_id || 'newcamd')}</select></div>
     <div class="form-row"><label>&nbsp;</label><button class="button-secondary" type="button" onclick="removeNewcamdRow(this)">Remove</button></div>
   </div>`;
+}
+function updateCamRowBackend(row) {
+  if (!row) return;
+  const enabled = row.querySelector('[data-cam-field="backend_id"]')?.value === 'tsdecrypt';
+  row.querySelectorAll('[data-tsdecrypt-field]').forEach(item => {
+    item.style.display = enabled ? '' : 'none';
+  });
 }
 function addNewcamdRow(client=null) {
   const rows = document.getElementById('newcamdRows');
@@ -7073,6 +7080,14 @@ async function openNewcamdModal() {
   loadCaManager().then(snapshot => {
     const status = document.getElementById('newcamdSettingsStatus');
     if (status) status.textContent = `${(snapshot.clients || []).length} CAM client(s) configured. Use Add CAM client for another OSCam/Newcamd server.`;
+    document.querySelectorAll('.newcamd-row').forEach(row => {
+      const select = row.querySelector('[data-cam-field="backend_id"]');
+      if (!select) return;
+      const selected = select.value || 'newcamd';
+      select.innerHTML = caBackendOptions(selected);
+      select.value = selected;
+      updateCamRowBackend(row);
+    });
   }).catch(error => {
     const status = document.getElementById('newcamdSettingsStatus');
     if (status) status.textContent = error?.message || 'CAM manager refresh failed';
