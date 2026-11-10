@@ -67,8 +67,10 @@ inline EcmReport parseEcmReport(const char* line) noexcept {
     // Strict format and safe bounds; no ECM payload or CW material.
     if (std::sscanf(start, "%llu (%llu dup) and processed %llu in %llu seconds.",
                     &seen, &dup, &done, &seconds) == 4 &&
-        seconds >= 1 && seconds <= 86400 &&
-        dup <= seen && done <= seen) {
+        seconds >= 1 && seconds <= 86400) {
+        // Duplicates are counted per repeated ECM section, independently of
+        // unique requests (seen); they can legitimately exceed seen.
+        // Processed requests can cross a reporting interval boundary, too.
         result.received = static_cast<uint64_t>(seen);
         result.duplicates = static_cast<uint64_t>(dup);
         result.processed = static_cast<uint64_t>(done);
