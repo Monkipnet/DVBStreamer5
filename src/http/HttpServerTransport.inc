@@ -950,7 +950,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 // Signed manifest from the fixed project host; never accept a client URL.
                 res.set(http::field::content_type, "application/json");
                 const std::string command =
-                    "/usr/bin/python3 /opt/DVBStreamer5/updater.py check " +
+                    "/bin/bash /opt/DVBStreamer5/updater.sh check " +
                     std::string(kProgramVersion) + " 2>/dev/null";
                 std::string output;
                 if (FILE* pipe = popen(command.c_str(), "r")) {
@@ -1303,7 +1303,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body() = R"({"result":"error","error":"Panel login and same-origin request required"})";
                 } else {
                     const std::string command =
-                        "nohup /usr/bin/python3 /opt/DVBStreamer5/updater.py install " +
+                        "nohup /bin/bash /opt/DVBStreamer5/updater.sh install " +
                         std::string(kProgramVersion) +
                         " >>/var/log/dvbstreamer5-update.log 2>&1 </dev/null &";
                     const int rc = std::system(command.c_str());
