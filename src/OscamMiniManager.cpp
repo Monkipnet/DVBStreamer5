@@ -1535,6 +1535,26 @@ html[data-dashboard-theme="light"] .activity-down{color:#ad2637}
 html[data-dashboard-theme="light"] .activity-idle{color:#80600f}
 html[data-dashboard-theme="light"] .activity-disabled{color:#53687f}
 
+/* V10.8.456: explicit OSCam-mini full-page light palette including dynamically generated rows. */
+html[data-dashboard-theme="light"] body,
+html[data-dashboard-theme="light"] .w{background:#f3f7fc;color:#182e46}
+html[data-dashboard-theme="light"] .w .c,
+html[data-dashboard-theme="light"] .w .compact-item,
+html[data-dashboard-theme="light"] .w .compact-body{background:#fff;color:#1b344e;border-color:#c5d4e4}
+html[data-dashboard-theme="light"] .w :is(p,h2,h3,label,.msg,.compact-status,.compact-main,.compact-body,.grow){color:#223951}
+html[data-dashboard-theme="light"] .w :is(.hint,.compact-sub){color:#405a75}
+html[data-dashboard-theme="light"] .w :is(input:not([type=checkbox]),select,textarea){background:#fff!important;color:#122d47!important;border:1px solid #a9bed2!important}
+html[data-dashboard-theme="light"] .w :is(input,textarea)::placeholder{color:#58718a!important;opacity:1}
+html[data-dashboard-theme="light"] .w .compact-head{background:#e9f1fb;color:#183653}
+html[data-dashboard-theme="light"] .w .compact-head:hover{background:#dbe9f7}
+html[data-dashboard-theme="light"] .w pre{background:#f8fbff;color:#192f45;border-color:#cbd9e8}
+html[data-dashboard-theme="light"] .w .alt{background:#e3eef9!important;color:#193954!important}
+html[data-dashboard-theme="light"] .w .danger{background:#ffe2e5!important;color:#8c2130!important}
+html[data-dashboard-theme="light"] .w .status-ok,
+html[data-dashboard-theme="light"] .w .success{color:#11663b}
+html[data-dashboard-theme="light"] .w .status-bad,
+html[data-dashboard-theme="light"] .w .error{color:#a32232}
+
 </style>
 <script>(function(){try{document.documentElement.dataset.dashboardTheme=localStorage.getItem('dvbstreamer5-dashboard-theme')==='light'?'light':'dark';}catch(_){document.documentElement.dataset.dashboardTheme='dark';}})();</script>
 </head>
