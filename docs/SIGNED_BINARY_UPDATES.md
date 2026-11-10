@@ -1,70 +1,41 @@
-# Signed DVBStreamer5 binary updates (V10.8.434)
+# DVBStreamer5 binary updates (V10.8.436)
 
-The root menu exposes **Check for updates** and, only if a signed release is newer, **Install update**. Neither action changes streaming configuration. Installation is **explicit** and temporarily restarts broadcasting.
+The updater is a Bash shell script, not Python: scripts/dvbstreamer5_update.sh.
+It uses the fixed website download URL:
 
-## Publishing on https://tvstreammersat5.tech/
+https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c3d
 
-Publish these files (same HTTPS host, no CDN redirect):
+In Menu, click **Check for updates**. The **Install update** button becomes visible if the advertised version is greater than the running version. Installation needs explicit confirmation; it interrupts live streaming.
 
-- `/downloads/dvbstreamer5/latest.json`
-- `/downloads/dvbstreamer5/latest.json.sig` (detached Ed25519 signature of the **exact JSON bytes**)
-- `/downloads/dvbstreamer5/DVBStreamer5-VERSION-linux-x86_64.tar.gz`
+## Release version discovery
 
-Release manifest example:
+Preferred (unsigned) metadata URL:
+
+https://tvstreammersat5.tech/downloads/dvbstreamer5/latest.json
+
+Example (replace placeholders with actual binary archive details):
 
 ```json
 {
-  "version": "10.8.435",
-  "url": "https://tvstreammersat5.tech/downloads/dvbstreamer5/DVBStreamer5-10.8.435-linux-x86_64.tar.gz",
-  "sha256": "REPLACE_WITH_64_HEX_DIGEST",
+  "version": "10.8.437",
+  "url": "https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c3d",
+  "sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
   "size": 12345678
 }
 ```
 
-The archive must come from `scripts/make_portable_linux_bundle.sh --archive` and include `bin/DVBStreamer5`, `run.sh`, `install.sh` and `SHA256SUMS`. Publish files atomically: archive first, then signature, then manifest. Never publish a manifest that points to an incomplete upload.
+Bash requires the `jq` utility only for parsing this JSON metadata. Without metadata it reads the HTTP attachment filename from the `Content-Disposition` header of the download endpoint. The filename must resemble `DVBStreamer5-10.8.437-linux-x86_64.tar.gz`. Without either a valid JSON version or versioned attachment name, the updater declines to proceed.
 
-### Signing key (publisher only)
+## Manual checks
 
-Generate **once** on an offline/trusted publisher machine:
-
-```bash
-openssl genpkey -algorithm Ed25519 -out release-private.pem
-openssl pkey -in release-private.pem -pubout -out release-public.pem
-chmod 0600 release-private.pem
-```
-
-**Never put `release-private.pem` in GitHub, a web-accessible directory, or the application server.** Back it up securely.
-
-After preparing a real manifest with a matching version, size, and SHA256:
+From the installed server:
 
 ```bash
-openssl pkeyutl -sign -inkey release-private.pem -rawin \
-  -in latest.json -out latest.json.sig
-```
-
-Upload `latest.json`, `latest.json.sig` and the release archive to the fixed paths above. The `.sig` is binary data, not base64.
-
-### Install trusted public key on each streaming server
-
-Provision the public key over a separately trusted administration channel:
-
-```bash
-sudo install -d -m 0700 /etc/dvbstreamer5
-sudo install -m 0644 release-public.pem /etc/dvbstreamer5/update-public.pem
-```
-
-Install V10.8.434 or later using its normal portable package first. Then in the web UI use **Menu → Check for updates**. A button to install is shown only when the detached signature validates and the advertised version compares greater than the running version.
-
-### Updating and rollback
-
-The updater runs outside the application process, under the installed root systemd service. It verifies the signature using the **locally installed key**, enforces the fixed site and archive filename, compares version tuples, verifies both archive size and SHA256, rejects dangerous tar entries, verifies bundle `SHA256SUMS`, and backs up `/opt/DVBStreamer5` before running the bundled installer.
-
-```bash
+bash /opt/DVBStreamer5/updater.sh check 10.8.436
 sudo tail -n 100 /var/log/dvbstreamer5-update.log
-sudo systemctl status dvbstreamer5.service oscam-mini.service --no-pager
-sudo ls -lah /var/lib/dvbstreamer5/update-backups
+systemctl status dvbstreamer5.service oscam-mini.service --no-pager
 ```
 
-When installation fails, it attempts to restore the backed-up runtime and restart the program. Keep the previous portable archive for manual disaster recovery. App configuration lives outside the runtime under `/etc/dvbstreamer5`; do not remove it.
+The updater accepts only the built-in download URL, limits archive size, checks an optional SHA256 digest and the internal SHA256SUMS, inspects archive paths and types, backs up the runtime under `/var/lib/dvbstreamer5/update-backups`, installs with the bundle installer, and attempts to restore the runtime if installation fails.
 
-**Security:** the check does not use client-supplied download URLs. The install endpoint is limited to an authenticated browser panel session and explicitly marked same-origin AJAX request; API-key authorization cannot trigger a binary install. Update signing is mandatory. No background auto-install, no silent upgrades, and no version downgrade.
+**Temporary security exception:** release signatures and public keys are *not* required. HTTPS and SHA256 values published by the same site cannot establish publisher authenticity if the website is compromised. For production deployments, prefer restoring signed release manifests when the publishing infrastructure is ready. Do not run unattended updates. Configuration in `/etc/dvbstreamer5` is not intentionally overwritten by the installer.
