@@ -109,6 +109,7 @@ mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/web" "$STAGE/ca-plugins" \
          "$STAGE/oscam-mini" "$STAGE/etc/ssl/certs" "$STAGE/data"
 
 install -m 0755 "$BINARY" "$STAGE/bin/$APP"
+install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_update.py" "$STAGE/updater.py"
 cp -a -- "$WEB_DIR/." "$STAGE/web/"
 
 mapfile -t PLUGINS < <(find "$BUILD_DIR" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)
@@ -317,7 +318,7 @@ if [[ -d "$INSTALL_DIR/oscam-mini/config" ]]; then
 fi
 
 log "Installing application runtime under $INSTALL_DIR"
-for item in bin lib web ca-plugins etc run.sh PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
+for item in bin lib web ca-plugins etc run.sh updater.py PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
     [[ -e "$BUNDLE_DIR/$item" ]] || continue
     rm -rf -- "$INSTALL_DIR/$item"
     cp -a -- "$BUNDLE_DIR/$item" "$INSTALL_DIR/$item"
