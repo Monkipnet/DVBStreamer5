@@ -26,7 +26,7 @@ for(const text of [
 for(const text of [
   'scripts/dvbstreamer5_update.sh',
   '"$STAGE/updater.sh"',
-  'run.sh updater.sh PORTABILITY.txt'
+  'run.sh updater.sh VERSION PORTABILITY.txt'
 ]) assert.ok(packageScript.includes(text),'Missing bundled updater: '+text);
 for(const marker of [
   'download.php?id=5c15e7ab4ff1c26daef79d745d211c3d',
