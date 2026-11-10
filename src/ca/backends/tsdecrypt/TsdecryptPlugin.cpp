@@ -17,6 +17,7 @@
 #include <cstring>
 #include <deque>
 #include <fcntl.h>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -30,6 +31,29 @@
 namespace {
 constexpr size_t kPacket = 188;
 constexpr size_t kMaxQueueBytes = 4 * 1024 * 1024;
+
+// Prefer the executable shipped beside DVBStreamer5. An explicit absolute
+// override is useful for isolated A/B testing; host locations are fallbacks.
+std::string locateTsdecrypt() {
+    std::vector<std::string> paths;
+    if (const char* overridePath = std::getenv("DVBSTREAMER5_TSDECRYPT_BINARY")) {
+        if (overridePath[0] == '/') paths.emplace_back(overridePath);
+    }
+    std::array<char, 4096> executable{};
+    const ssize_t len = ::readlink("/proc/self/exe", executable.data(), executable.size() - 1);
+    if (len > 0) {
+        const std::string path(executable.data(), static_cast<size_t>(len));
+        const size_t slash = path.rfind('/');
+        if (slash != std::string::npos) paths.push_back(path.substr(0, slash) + "/tsdecrypt");
+    }
+    paths.push_back("/opt/DVBStreamer5/bin/tsdecrypt");
+    paths.push_back("/usr/local/bin/tsdecrypt");
+    paths.push_back("/usr/bin/tsdecrypt");
+    for (const auto& path : paths) {
+        if (::access(path.c_str(), X_OK) == 0) return path;
+    }
+    return {};
+}
 struct Reader {
     std::string host, user, pass, des, protocol = "NEWCAMD", caid = "098D";
     uint32_t ecmPid = 0;
@@ -69,8 +93,9 @@ struct Service {
 
     bool start(const Reader& config, uint32_t sid, std::string& error) {
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
-        if (::access("/usr/bin/tsdecrypt", X_OK) != 0) {
-            error = "missing executable /usr/bin/tsdecrypt"; return false;
+        const std::string tsdecryptBinary = locateTsdecrypt();
+        if (tsdecryptBinary.empty()) {
+            error = "TSDecrypt executable missing (expected bin/tsdecrypt or /usr/bin/tsdecrypt)"; return false;
         }
         // Prepare all allocations before fork: the main host is multithreaded.
         // The child must call only async-signal-safe operations before exec.
@@ -103,7 +128,7 @@ struct Service {
             if (nullFd >= 0) { ::dup2(nullFd, STDERR_FILENO); ::close(nullFd); }
             ::close(inputPipe[0]); ::close(inputPipe[1]);
             ::close(outputPipe[0]); ::close(outputPipe[1]);
-            ::execv("/usr/bin/tsdecrypt", argv.data());
+            ::execv(tsdecryptBinary.c_str(), argv.data());
             _exit(127);
         }
         ::close(inputPipe[0]); ::close(outputPipe[1]);
