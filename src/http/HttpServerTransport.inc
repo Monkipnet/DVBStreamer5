@@ -958,23 +958,40 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 res.set(http::field::cache_control, "no-store");
                 res.body() = std::string(R"({"phase":")") + phase + R"("})";
             } else if (target == "/api/update/check") {
-                // Signed manifest from the fixed project host; never accept a client URL.
+                // Fixed download host; never accept a URL from the browser.
                 res.set(http::field::content_type, "application/json");
-                const std::string command =
-                    "/bin/bash /opt/DVBStreamer5/updater.sh check " +
-                    std::string(kProgramVersion) + " 2>/dev/null";
-                std::string output;
-                if (FILE* pipe = popen(command.c_str(), "r")) {
-                    char buffer[1024];
-                    while (output.size() < 4096 && fgets(buffer, sizeof(buffer), pipe))
-                        output += buffer;
-                    pclose(pipe);
-                }
-                if (output.empty() || output.size() >= 4096) {
+                res.set(http::field::cache_control, "no-store");
+                const char* updaterPath = "/opt/DVBStreamer5/updater.sh";
+                std::ifstream updaterFile(updaterPath);
+                if (!updaterFile.good()) {
                     res.result(http::status::service_unavailable);
-                    res.body() = R"({"result":"error","error":"Updater is not installed or unavailable"})";
+                    res.body() = R"({"result":"error","error":"Updater missing: install /opt/DVBStreamer5/updater.sh from the portable bundle"})";
                 } else {
-                    res.body() = output;
+                    const std::string command = std::string("/bin/bash ") +
+                        updaterPath + " check " + std::string(kProgramVersion) +
+                        " 2>/dev/null";
+                    std::string output;
+                    int exitCode = -1;
+                    if (FILE* pipe = popen(command.c_str(), "r")) {
+                        char buffer[1024];
+                        while (output.size() < 4096 && fgets(buffer, sizeof(buffer), pipe))
+                            output += buffer;
+                        exitCode = pclose(pipe);
+                    }
+                    Json::Value parsed;
+                    Json::CharReaderBuilder reader;
+                    std::string parseErrors;
+                    std::istringstream jsonInput(output);
+                    if (!output.empty() && output.size() < 4096 &&
+                        Json::parseFromStream(reader, jsonInput, &parsed, &parseErrors) &&
+                        parsed.isObject() && parsed.isMember("result")) {
+                        if (parsed["result"].asString() != "ok" || exitCode != 0)
+                            res.result(http::status::service_unavailable);
+                        res.body() = output;
+                    } else {
+                        res.result(http::status::service_unavailable);
+                        res.body() = R"({"result":"error","error":"Updater check failed: run /bin/bash /opt/DVBStreamer5/updater.sh check VERSION on the server"})";
+                    }
                 }
             } else if (target == "/api/state") {
                 res.set(http::field::content_type, "application/json");
