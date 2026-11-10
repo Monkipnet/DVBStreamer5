@@ -56,6 +56,8 @@ for(const marker of [
   'id="binaryUpdateClose"',
   'onclick="closeBinaryUpdateProgress()"',
   'function closeBinaryUpdateProgress()',
+  'let updateProgressDismissed=false;',
+  'if(!updateProgressDismissed)surface.hidden=false;',
   '#binaryUpdateProgress[hidden]{display:none}',
   'aria-live="polite"'
 ]) assert.ok(web.includes(marker),'Missing visible updater progress: '+marker);
