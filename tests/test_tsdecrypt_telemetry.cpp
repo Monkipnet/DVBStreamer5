@@ -8,7 +8,7 @@ using namespace dvbstreamer5::ca::tsdecrypt_detail;
 
 static void check(bool ok, const char* what) {
     if (!ok) {
-        std::fprintf(stderr, "TSDecrypt telemetry test failed: %s\\n", what);
+        std::fprintf(stderr, "TSDecrypt telemetry test failed: %s\n", what);
         std::exit(1);
     }
 }
