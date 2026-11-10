@@ -2105,12 +2105,15 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
         }
     } else if (binding.healthWaitingSinceMs != 0) {
         const uint64_t now = monotonic_ms();
-        std::cerr << "CA HEALTH RECOVERED: event=missing_parity_key"
-                  << " stream=" << stream_id
-                  << " sid=" << binding.serviceId
-                  << " duration_ms=" << (now >= binding.healthWaitingSinceMs
-                     ? now - binding.healthWaitingSinceMs : 0)
-                  << std::endl;
+        const uint64_t elapsed = now >= binding.healthWaitingSinceMs
+            ? now - binding.healthWaitingSinceMs : 0;
+        if (elapsed >= 1000) {
+            std::cerr << "CA HEALTH RECOVERED: event=missing_parity_key"
+                      << " stream=" << stream_id
+                      << " sid=" << binding.serviceId
+                      << " duration_ms=" << elapsed
+                      << std::endl;
+        }
         binding.healthWaitingSinceMs = 0;
         binding.healthLastWaitingLogMs = 0;
     }
