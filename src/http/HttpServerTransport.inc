@@ -946,6 +946,17 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body() = Json::writeString(
                         writer, streamManager.epgSnapshot(streamId));
                 }
+            } else if (target == "/api/update/status") {
+                res.set(http::field::content_type, "application/json");
+                // Only fixed phase words can enter the JSON response.
+                std::ifstream statusFile("/var/lib/dvbstreamer5/update-status");
+                std::string phase;
+                if (!std::getline(statusFile, phase) ||
+                    (phase != "downloading" && phase != "verifying" &&
+                     phase != "installing" && phase != "restarting" &&
+                     phase != "done" && phase != "error")) phase = "idle";
+                res.set(http::field::cache_control, "no-store");
+                res.body() = std::string(R"({"phase":")") + phase + R"("})";
             } else if (target == "/api/update/check") {
                 // Signed manifest from the fixed project host; never accept a client URL.
                 res.set(http::field::content_type, "application/json");
