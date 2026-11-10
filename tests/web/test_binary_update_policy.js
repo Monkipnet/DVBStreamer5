@@ -112,6 +112,23 @@ try {
 } finally {
   fs.rmSync(tempRoot,{force:true,recursive:true});
 }
+// Light/dark dashboard styling stays browser-local and does not touch stream state.
+for(const marker of [
+  'id="dashboardThemeButton"',
+  'function toggleDashboardTheme()',
+  'function updateDashboardThemeButton()',
+  'dvbstreamer5-dashboard-theme',
+  'document.documentElement.dataset.dashboardTheme=dashboardTheme',
+  'localStorage.setItem(dashboardThemeKey,dashboardTheme)',
+  'data-ui-ru="Светлая тема"',
+  'data-ui-en="Light theme"',
+  'data-ui-hr="Svijetla tema"',
+  'html[data-dashboard-theme="light"] .tile',
+  'html[data-dashboard-theme="light"] .modal-content',
+  'html[data-dashboard-theme="light"] header'
+]) assert.ok(web.includes(marker),'Missing light theme integration: '+marker);
+assert.ok(web.includes('  updateDashboardThemeButton();\\n'.replace('\\n','\\n')),
+  'Language reapply must refresh the theme switch label');
 const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
 assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
 console.log('PASS: Bash update UI, API, portable packaging and syntax');
