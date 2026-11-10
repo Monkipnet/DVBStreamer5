@@ -77,6 +77,8 @@ struct Service {
     std::atomic<uint64_t> inputScrambledPackets{0}, outputNullPackets{0};
     std::atomic<uint64_t> outputClearMediaPes{0}, outputClearOnScrambledPid{0};
     std::atomic<uint64_t> outputClearMediaPesOnScrambledPid{0};
+    std::atomic<uint64_t> outputClearVideoPesOnScrambledPid{0};
+    std::atomic<uint64_t> outputClearAudioPesOnScrambledPid{0};
     std::atomic<bool> cwValidReported{false};
     // Input/output are asynchronous, so classify decoded evidence by observed
     // encrypted PID rather than assuming the next output TS matches the input.
@@ -437,6 +439,10 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                                 service->outputClearOnScrambledPid.fetch_add(1);
                                 if (facts.clearMediaPesStart)
                                     service->outputClearMediaPesOnScrambledPid.fetch_add(1);
+                                if (facts.clearVideoPesStart)
+                                    service->outputClearVideoPesOnScrambledPid.fetch_add(1);
+                                if (facts.clearAudioPesStart)
+                                    service->outputClearAudioPesOnScrambledPid.fetch_add(1);
                             }
                             if (facts.clearMediaPesStart)
                                 service->outputClearMediaPes.fetch_add(1);
@@ -460,6 +466,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "ecm_duplicates=%llu cw_valid_events=%llu cw_warnings=%llu "
                 "input_scrambled=%llu output_clear_encrypted_pid=%llu "
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
+                "video_pes_encrypted_pid=%llu audio_pes_encrypted_pid=%llu "
                 "output_null=%llu csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
@@ -471,6 +478,8 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->outputClearOnScrambledPid.load()),
                 static_cast<unsigned long long>(service->outputClearMediaPes.load()),
                 static_cast<unsigned long long>(service->outputClearMediaPesOnScrambledPid.load()),
+                static_cast<unsigned long long>(service->outputClearVideoPesOnScrambledPid.load()),
+                static_cast<unsigned long long>(service->outputClearAudioPesOnScrambledPid.load()),
                 static_cast<unsigned long long>(service->outputNullPackets.load()));
         }
     }
@@ -488,7 +497,15 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
             service->cwValidReported.load() ? "TSDECRYPT_CW_SIGNAL_NO_PES" :
             service->ecmProcessed.load() ? "TSDECRYPT_ECM_NO_PES" :
             "TSDECRYPT_WAITING_ECM";
-        std::snprintf(result->status,sizeof(result->status),"%s",state);
+        // Keep one concise, key-free sample in the public stream CA state.
+        std::snprintf(result->status,sizeof(result->status),
+            "%s ECM=%llu CW_OK=%llu V_PES=%llu A_PES=%llu%s",
+            state,
+            static_cast<unsigned long long>(service->ecmProcessed.load()),
+            static_cast<unsigned long long>(service->cwValidSignalEvents.load()),
+            static_cast<unsigned long long>(service->outputClearVideoPesOnScrambledPid.load()),
+            static_cast<unsigned long long>(service->outputClearAudioPesOnScrambledPid.load()),
+            service->csaAltUnverified ? " CSA_ALT=UNVERIFIED" : "");
     }
     return DVBSTREAMER5_CA_RESULT_OK;
 }
@@ -520,6 +537,11 @@ const char* statusJson(void* self) {
         item["output_clear_media_pes_on_input_scrambled_pid"] =
             Json::UInt64(entry.second->outputClearMediaPesOnScrambledPid.load());
         item["output_null_packets"] = Json::UInt64(entry.second->outputNullPackets.load());
+        item["clear_video_pes_starts_on_input_scrambled_pid"] =
+            Json::UInt64(entry.second->outputClearVideoPesOnScrambledPid.load());
+        item["clear_audio_pes_starts_on_input_scrambled_pid"] =
+            Json::UInt64(entry.second->outputClearAudioPesOnScrambledPid.load());
+        item["possible_csa_alt_service"] = entry.second->csaAltUnverified;
         item["decryption_verified"] = false;
         item["csa_alt_verified"] = false;
         item["note"] = "PES evidence is not confirmed video decode; iCAM CSA-ALT is unverified";
