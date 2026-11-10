@@ -7,6 +7,10 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
+#include <cctype>
+#include <cstdio>
+#include <pthread.h>
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
@@ -215,9 +219,15 @@ bool parseReader(const char* raw, Reader& out, std::string& error) {
     out.user = value("user"); out.pass = value("pass"); out.des = value("des");
     out.protocol = value("protocol");
     if (out.protocol.empty()) out.protocol = "NEWCAMD";
-    std::transform(out.protocol.begin(),out.protocol.end(),out.protocol.begin(),::toupper);
+    std::transform(out.protocol.begin(), out.protocol.end(), out.protocol.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
     out.caid = value("caid");
     if (out.caid.empty()) out.caid = "098D";
+    if (out.caid.size() != 4 ||
+        !std::all_of(out.caid.begin(), out.caid.end(),
+            [](unsigned char ch) { return std::isxdigit(ch); })) {
+        error = "CAID must contain exactly four hexadecimal digits"; return false;
+    }
     if (port < 1 || port > 65535 || host.empty() || host.find_first_of(" \r\n\t") != std::string::npos ||
         out.user.empty() || out.pass.empty() ||
         (out.protocol != "NEWCAMD" && out.protocol != "CS378X") ||
