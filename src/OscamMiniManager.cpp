@@ -1511,7 +1511,32 @@ std::string OscamMiniManager::renderPage() {
 <style>
 body{font-family:Arial,sans-serif;background:#0f1218;color:#eee;margin:0}.w{max-width:1320px;margin:auto;padding:16px}.c{background:#161b25;border:1px solid #2a3241;border-radius:18px;padding:20px;margin:14px 0}.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}label{display:flex;flex-direction:column;gap:6px;font-size:14px;color:#c6d1e3}input,select{background:#0e131c;border:1px solid #334058;color:#fff;border-radius:10px;padding:11px;font-size:15px}button,a.btn{border:0;border-radius:10px;padding:11px 16px;background:#218cff;color:white;cursor:pointer;text-decoration:none;font-size:15px}.alt{background:#30394a!important}.danger{background:#56313a!important}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.grow{flex:1}.status-ok{color:#77e79d}.status-bad{color:#ff8b8b}.msg{margin-left:10px}.error{color:#ff8b8b}.success{color:#77e79d}pre{white-space:pre-wrap;background:#0b0f16;padding:12px;border-radius:10px;max-height:280px;overflow:auto}h2,h3{margin-top:0}.hint{color:#9ba9bd;font-size:13px;margin-top:8px}
 .compact-item{border:1px solid #2c3546;border-radius:12px;margin-top:10px;overflow:hidden;background:#111722}.compact-head{display:grid;grid-template-columns:18px minmax(130px,1.2fr) minmax(120px,1fr) minmax(135px,1fr) minmax(90px,.7fr) 24px;gap:10px;align-items:center;width:100%;box-sizing:border-box;padding:11px 13px;background:#171e2a;color:#eef4ff;border:0;border-radius:0;text-align:left;cursor:pointer}.compact-head:hover{background:#1b2432}.compact-main{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.compact-sub{color:#aebbd0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.compact-status{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chev{font-size:18px;color:#91a0b7;transition:transform .15s ease}.compact-item.open .chev{transform:rotate(90deg)}.compact-body{display:none;padding:14px;border-top:1px solid #2c3546}.compact-item.open .compact-body{display:block}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;box-shadow:0 0 0 2px rgba(255,255,255,.08)}.dot-active{background:#49d17d}.dot-idle{background:#e8b844}.dot-down{background:#e25d66}.dot-disabled{background:#798394}.activity-active{color:#65df92}.activity-idle{color:#e8c45d}.activity-down{color:#ef7b83}.activity-disabled{color:#929cac}@media(max-width:760px){.compact-head{grid-template-columns:18px 1fr 24px}.compact-head .hide-small{display:none}}
+/* V10.8.455: OSCam-mini shares the same persisted light/dark preference as dashboard. */
+html[data-dashboard-theme="light"]{color-scheme:light}
+html[data-dashboard-theme="light"] body{background:#f2f6fb;color:#1d2d43}
+html[data-dashboard-theme="light"] .c{background:#fff;border-color:#ccd9e7;box-shadow:0 4px 16px rgba(32,62,96,.06)}
+html[data-dashboard-theme="light"] :is(h2,h3,.compact-main){color:#162a42}
+html[data-dashboard-theme="light"] :is(label,.hint,.compact-sub,.chev){color:#455c76}
+html[data-dashboard-theme="light"] :is(input,select,textarea){background:#fff;border-color:#b5c6d9;color:#1b3048}
+html[data-dashboard-theme="light"] :is(input,select,textarea)::placeholder{color:#63778a;opacity:1}
+html[data-dashboard-theme="light"] pre{background:#f6f9fd;color:#20364f;border:1px solid #d4dfeb}
+html[data-dashboard-theme="light"] .compact-item{background:#fff;border-color:#ccdae8}
+html[data-dashboard-theme="light"] .compact-head{background:#eaf2fa;color:#1a324e}
+html[data-dashboard-theme="light"] .compact-head:hover{background:#dceaf7}
+html[data-dashboard-theme="light"] .compact-body{border-top-color:#d0ddea;color:#263e57}
+html[data-dashboard-theme="light"] .alt{background:#e4edf7!important;color:#193b60}
+html[data-dashboard-theme="light"] .danger{background:#ffe6e9!important;color:#972b3b}
+html[data-dashboard-theme="light"] .status-ok,
+html[data-dashboard-theme="light"] .success,
+html[data-dashboard-theme="light"] .activity-active{color:#137342}
+html[data-dashboard-theme="light"] .status-bad,
+html[data-dashboard-theme="light"] .error,
+html[data-dashboard-theme="light"] .activity-down{color:#ad2637}
+html[data-dashboard-theme="light"] .activity-idle{color:#80600f}
+html[data-dashboard-theme="light"] .activity-disabled{color:#53687f}
+
 </style>
+<script>(function(){try{document.documentElement.dataset.dashboardTheme=localStorage.getItem('dvbstreamer5-dashboard-theme')==='light'?'light':'dark';}catch(_){document.documentElement.dataset.dashboardTheme='dark';}})();</script>
 </head>
 <body><div class="w">
 <div class="row"><a class="btn alt" href="/">← DVBStreamer5</a><h2 style="margin:0">OSCam-mini</h2><span id="state"></span></div>
