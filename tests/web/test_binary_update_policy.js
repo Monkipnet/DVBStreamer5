@@ -31,6 +31,9 @@ for(const text of [
 for(const marker of [
   'download.php?id=5c15e7ab4ff1c26daef79d745d211c3d',
   'latest.json',
+  'site_header_version',
+  'https://tvstreammersat5.tech/',
+  'RELEASE_VERSION="$site_version"',
   'sha256sum',
   'flock -n',
   'tar -tzf',
