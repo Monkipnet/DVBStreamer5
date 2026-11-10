@@ -109,7 +109,7 @@ mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/web" "$STAGE/ca-plugins" \
          "$STAGE/oscam-mini" "$STAGE/etc/ssl/certs" "$STAGE/data"
 
 install -m 0755 "$BINARY" "$STAGE/bin/$APP"
-VERSION="$(sed -n 's/.*kProgramVersion = "\\([^"]*\\)".*/\\1/p' "$PROJECT_ROOT/src/AppVersion.h")"
+VERSION="$(sed -n 's/.*kProgramVersion = "\([^"]*\)".*/\1/p' "$PROJECT_ROOT/src/AppVersion.h")"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "cannot determine binary release version"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 
