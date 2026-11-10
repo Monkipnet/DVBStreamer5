@@ -60,10 +60,10 @@ if [[ -n "$ECM_PID" ]]; then
 fi
 [[ "$PROTO" == "NEWCAMD" || "$PROTO" == "CS378X" ]] || { echo "Protocol must be NEWCAMD or CS378X" >&2; exit 2; }
 [[ "$SERVER" =~ ^[^[:space:]]+:[0-9]+$ ]] || { echo "Invalid CAMD host:port" >&2; exit 2; }
-[[ "$INPUT" =~ ^(file://|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+:) || "$INPUT" =~ ^\\[[0-9a-fA-F:]+\\]: ]] || { echo "Input must be a file:// path or UDP IP:port" >&2; exit 2; }
-[[ "$OUTPUT" =~ ^(file://|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+:) || "$OUTPUT" =~ ^\\[[0-9a-fA-F:]+\\]: ]] || { echo "Output must be a file:// path or UDP IP:port" >&2; exit 2; }
+[[ "$INPUT" == file://* || "$INPUT" =~ ^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+:[0-9]+$ ]] || { echo "Input must be file:// or UDP IPv4:port" >&2; exit 2; }
+[[ "$OUTPUT" == file://* || "$OUTPUT" =~ ^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+:[0-9]+$ ]] || { echo "Output must be file:// or UDP IPv4:port" >&2; exit 2; }
 command -v "$BINARY" >/dev/null 2>&1 || { echo "tsdecrypt binary not found: $BINARY" >&2; exit 1; }
-args=(-I "$INPUT" -O "$OUTPUT" -M "$SERVICE" -C "$CAID" -c VIDEOGUARD -A "$PROTO" -s "$SERVER" -e -K)
+args=(-I "$INPUT" -O "$OUTPUT" -M "$SERVICE" -C "$CAID" -c VIDEOGUARD -A "$PROTO" -s "$SERVER" -K)
 if [[ -n "$ECM_PID" ]]; then args+=(-X "$ECM_PID"); fi
 echo "TSDecrypt trial: input=$INPUT output=$OUTPUT service=$SERVICE caid=$CAID ecm_pid=${ECM_PID:-auto} camd=$SERVER protocol=$PROTO"
 if (( ! EXECUTE )); then echo "Preflight OK (not started; use --execute for isolated test)."; exit 0; fi
