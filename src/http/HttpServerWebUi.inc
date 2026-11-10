@@ -672,6 +672,87 @@ html[data-dashboard-theme="light"] #tickerOverlayModal h2{color:#23415f!importan
 html[data-dashboard-theme="light"] :is(.edit-section-head,.quality-card>strong,.modal-content .transcode-section-caption){color:#255d90}
 html[data-dashboard-theme="light"] .epg-hover-tooltip .epg-hover-heading{color:inherit}
 
+/* V10.8.450: restore distinct controls and visible running tiles in LIGHT mode only. */
+html[data-dashboard-theme="light"] .tile.active{
+  background:linear-gradient(180deg,#f2fff7 0%,#ffffff 44%);
+  border:2px solid #20a567;
+  box-shadow:0 0 0 2px rgba(24,166,95,.17),0 9px 24px rgba(29,106,70,.15);
+}
+html[data-dashboard-theme="light"] .tile.active:before{
+  background:linear-gradient(180deg,#26c87b,#138a50);width:5px;
+}
+html[data-dashboard-theme="light"] .tile.active:hover{
+  border-color:#138f52;
+  box-shadow:0 0 0 2px rgba(24,166,95,.24),0 12px 28px rgba(29,106,70,.19);
+}
+html[data-dashboard-theme="light"] .tile.error{
+  background:linear-gradient(180deg,#fff3f4 0%,#fff 48%);
+  border:2px solid #d65361;
+  box-shadow:0 0 0 1px rgba(214,83,97,.15),0 8px 20px rgba(100,38,48,.10);
+}
+html[data-dashboard-theme="light"] .tile.error:before{background:#d65361;width:5px}
+html[data-dashboard-theme="light"] .tile .controls button{
+  transition:background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .1s ease;
+}
+html[data-dashboard-theme="light"] .tile .controls button.start-button{
+  color:#12663a;background:#d8f5e4;border-color:#96d9b1;
+  box-shadow:inset 0 0 0 1px rgba(24,156,81,.16);
+}
+html[data-dashboard-theme="light"] .tile .controls button.start-button:hover{
+  background:#bcebcf;box-shadow:0 0 0 2px #83d2a5;
+}
+html[data-dashboard-theme="light"] .tile .controls button.stop-button{
+  color:#a52f39;background:#ffe5e7;border-color:#eaa8af;
+  box-shadow:inset 0 0 0 1px rgba(201,68,82,.16);
+}
+html[data-dashboard-theme="light"] .tile .controls button.stop-button:hover{
+  background:#ffd0d5;box-shadow:0 0 0 2px #eaa4ad;
+}
+html[data-dashboard-theme="light"] .tile .controls button[data-stream-action="edit"]{
+  color:#81520c;background:#fff0d0;border-color:#ecd39d;
+  box-shadow:inset 0 0 0 1px rgba(175,123,31,.13);
+}
+html[data-dashboard-theme="light"] .tile .controls button[data-stream-action="edit"]:hover{
+  background:#ffe1a7;box-shadow:0 0 0 2px #e9ca8d;
+}
+html[data-dashboard-theme="light"] .tile .controls button.quality-button{
+  color:#105e85;background:#def3ff;border-color:#9bcee6;
+  box-shadow:inset 0 0 0 1px rgba(24,132,192,.13);
+}
+html[data-dashboard-theme="light"] .tile .controls button.quality-button:hover{
+  background:#bae6fb;box-shadow:0 0 0 2px #83c6e4;
+}
+html[data-dashboard-theme="light"] .tile .controls button.copy-button{
+  color:#66429b;background:#eee5ff;border-color:#c9b5ed;
+  box-shadow:inset 0 0 0 1px rgba(116,74,188,.13);
+}
+html[data-dashboard-theme="light"] .tile .controls button.copy-button:hover{
+  background:#dfceff;box-shadow:0 0 0 2px #bea5ec;
+}
+html[data-dashboard-theme="light"] .tile .controls button.copy-button.copied{
+  color:#155d37;background:#d3f2de;border-color:#8bd2a7;
+}
+html[data-dashboard-theme="light"] .tile .controls button.copy-button.copy-error{
+  color:#81580d;background:#fff1d2;border-color:#e8c879;
+}
+html[data-dashboard-theme="light"] .tile .controls button:focus-visible{
+  outline:2px solid #257ecc;outline-offset:2px;
+}
+html[data-dashboard-theme="light"] .tile .controls button:disabled{
+  opacity:.48;cursor:wait;box-shadow:none;
+}
+/* Keep hover/keyboard feedback in dialogs and menus, but preserve semantic button fills. */
+html[data-dashboard-theme="light"] :is(.modal-content button,.system-menu-item,.system-submenu>summary,.period-tabs button,.button-secondary):not(:disabled):hover{
+  box-shadow:0 0 0 1px rgba(38,134,210,.38),0 3px 12px rgba(42,115,182,.13);
+  filter:brightness(.97);
+}
+html[data-dashboard-theme="light"] :is(.modal-content button,.system-menu-item,.system-submenu>summary,.period-tabs button,.button-secondary):focus-visible{
+  outline:2px solid #2686d6;outline-offset:2px;
+}
+html[data-dashboard-theme="light"] :is(.modal-content button,.system-menu-item,.period-tabs button):not(:disabled):active{
+  box-shadow:inset 0 0 0 2px rgba(38,134,210,.4);
+}
+
 </style>
 </head>
 <body>
