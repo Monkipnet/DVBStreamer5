@@ -523,6 +523,18 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .system-menu .system-menu-root-actions>.logout-button{background:rgba(255,95,95,.1);color:#ffc4c4}
 .system-menu .system-menu-root-actions>.system-menu-item:hover{filter:brightness(1.2)}
 .system-menu .system-menu-root-actions>.system-menu-item:focus-visible{outline:2px solid #7dd1ff;outline-offset:2px}
+/* Release actions: visibly active during network checks and installation. */
+.update-action-busy::before{content:'';width:12px;height:12px;flex:none;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:updateActionSpin .75s linear infinite;margin-right:8px}
+@keyframes updateActionSpin{to{transform:rotate(360deg)}}
+#binaryUpdateProgress{position:fixed;right:14px;bottom:14px;z-index:100005;width:min(380px,calc(100vw - 28px));box-sizing:border-box;background:#162638;border:1px solid rgba(125,209,255,.38);border-radius:11px;padding:12px 14px;box-shadow:0 12px 40px rgba(0,0,0,.55);color:#e4f4ff}
+#binaryUpdateProgress[hidden]{display:none}
+#binaryUpdateProgress .update-progress-label{font-size:.84rem;line-height:1.5}
+#binaryUpdateProgress .update-progress-track{margin-top:9px;height:4px;border-radius:8px;background:rgba(255,255,255,.14);overflow:hidden}
+#binaryUpdateProgress .update-progress-fill{height:100%;width:34%;background:#64caff;border-radius:8px;animation:updateProgressIndeterminate 1.2s ease-in-out infinite alternate}
+#binaryUpdateProgress[data-phase=done] .update-progress-fill{width:100%;background:#4cdd95;animation:none}
+#binaryUpdateProgress[data-phase=error] .update-progress-fill{width:100%;background:#ff7373;animation:none}
+@keyframes updateProgressIndeterminate{from{transform:translateX(-105%)}to{transform:translateX(300%)}}
+
 
 /* V327: ticker inputs use the same label, column and toolbar standards. */
 #tickerOverlayModal{--settings-accent:#80cbff;--settings-gap:9px}
@@ -647,6 +659,10 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 </div>
 </div>
 </details>
+<aside id="binaryUpdateProgress" hidden role="status" aria-live="polite" data-phase="idle">
+<div id="binaryUpdateProgressText" class="update-progress-label"></div>
+<div class="update-progress-track"><div class="update-progress-fill"></div></div>
+</aside>
 <button class="button-secondary" onclick="openSubscribersModal()" data-i18n="subscribers">Subscribers</button>
 <button class="button-secondary" onclick="openAddChannelModal()" data-i18n="addChannel">+ Add channel</button>
 <button class="button-primary" onclick="openStreamModal()" data-i18n="addStream">+ Add stream</button>
@@ -5718,59 +5734,117 @@ function deleteStream(id) {
     });
 }
 let latestVerifiedUpdate=null;
-function releaseText(ru,en,hr) {
-  return language==='ru'?ru:language==='hr'?hr:en;
+let updateRequestBusy=false;
+function releaseText(ru,en,hr){return language==='ru'?ru:language==='hr'?hr:en;}
+function updateProgress(phase,detail=''){
+  const surface=document.getElementById('binaryUpdateProgress');
+  const text=document.getElementById('binaryUpdateProgressText');
+  if(!surface||!text)return;
+  surface.hidden=false;
+  surface.dataset.phase=phase;
+  const captions={
+    checking:releaseText('Проверка версии на сайте…','Checking website release…','Provjera verzije na stranici…'),
+    available:releaseText('Доступно обновление','Update available','Dostupno ažuriranje'),
+    current:releaseText('Установлена актуальная версия','Already up to date','Verzija je ažurna'),
+    downloading:releaseText('Загрузка бинарного архива…','Downloading binary archive…','Preuzimanje binarne arhive…'),
+    verifying:releaseText('Проверка архива…','Checking archive integrity…','Provjera arhive…'),
+    installing:releaseText('Установка и перезапуск службы…','Installing and restarting service…','Instalacija i ponovno pokretanje servisa…'),
+    done:releaseText('Обновление завершено','Update completed','Ažuriranje završeno'),
+    error:releaseText('Ошибка обновления','Update failed','Ažuriranje nije uspjelo'),
+    starting:releaseText('Запуск обновления…','Starting update…','Pokretanje ažuriranja…')
+  };
+  text.textContent=(captions[phase]||captions.starting)+(detail?' — '+detail:'');
 }
-async function checkBinaryUpdates() {
+function setUpdateButtonBusy(button,busy){
+  if(!button)return;
+  button.disabled=busy;
+  button.classList.toggle('update-action-busy',busy);
+}
+async function checkBinaryUpdates(){
+  if(updateRequestBusy)return;
+  updateRequestBusy=true;
   const button=document.getElementById('checkReleaseButton');
   const installButton=document.getElementById('installReleaseButton');
-  if(button)button.disabled=true;
+  setUpdateButtonBusy(button,true);
+  updateProgress('checking');
   latestVerifiedUpdate=null;
   if(installButton){installButton.hidden=true;installButton.style.display='none';}
-  try {
+  try{
     const response=await fetch('/api/update/check',{cache:'no-store',credentials:'same-origin'});
     const data=await response.json();
-    if(data.result!=='ok')throw Error(data.error||'Release check failed');
-    if(data.available) {
+    if(!response.ok||data.result!=='ok')throw Error(data.error||'Release check failed');
+    if(data.available){
       latestVerifiedUpdate=data.latest;
-      if(installButton) {
+      if(installButton){
         installButton.hidden=false;
         installButton.style.display='';
         installButton.textContent=releaseText('Обновить до ','Update to ','Ažuriraj na ')+data.latest;
       }
-      window.alert(releaseText('Доступна новая бинарная версия: ','New binary release available: ','Dostupna nova binarna verzija: ')+data.latest);
-    } else {
-      window.alert(releaseText('Установлена актуальная версия: ','Already up to date: ','Već je ažurirano: ')+data.current);
-    }
-  } catch(e) {
-    window.alert(releaseText('Ошибка проверки обновлений: ','Update check failed: ','Provjera ažuriranja nije uspjela: ')+(e?.message||e));
-  } finally {if(button)button.disabled=false;}
+      updateProgress('available',data.latest);
+    }else updateProgress('current',data.current);
+  }catch(e){updateProgress('error',String(e?.message||e));}
+  finally{setUpdateButtonBusy(button,false);updateRequestBusy=false;}
 }
-async function installBinaryUpdate() {
-  if(!latestVerifiedUpdate)return;
+async function watchBinaryUpdate(version){
+  // The update worker may terminate the old HTTP server during systemd restart.
+  let offlineSeen=false;
+  for(let attempt=0;attempt<180;attempt++){
+    await new Promise(resolve=>setTimeout(resolve,2000));
+    try{
+      const response=await fetch('/api/update/status',{cache:'no-store',credentials:'same-origin'});
+      if(!response.ok)throw Error('Status unavailable');
+      const data=await response.json();
+      if(data.phase==='error'){updateProgress('error',releaseText(
+        'См. /var/log/dvbstreamer5-update.log',
+        'See /var/log/dvbstreamer5-update.log',
+        'Pogledajte /var/log/dvbstreamer5-update.log'));return;}
+      if(data.phase==='done'){
+        updateProgress('done',version);
+        // A successful replacement can restart the web server before this response.
+        window.setTimeout(()=>window.location.reload(),1500);
+        return;
+      }
+      if(['downloading','verifying','installing','restarting'].includes(data.phase))
+        updateProgress(data.phase,version);
+      if(offlineSeen&&data.phase==='idle'){
+        updateProgress('installing',version);
+      }
+    }catch(_){
+      offlineSeen=true;
+      updateProgress('installing',version);
+    }
+  }
+  updateProgress('error',releaseText('Проверка времени ожидания: см. журнал','Status timeout: inspect log','Isteklo vrijeme: provjerite zapisnik'));
+}
+async function installBinaryUpdate(){
+  if(!latestVerifiedUpdate||updateRequestBusy)return;
   const version=latestVerifiedUpdate;
   const question=releaseText(
-    'Установить проверенную версию '+version+'? Вещание будет прервано на время перезапуска.',
-    'Install verified version '+version+'? Streaming will be interrupted during restart.',
-    'Instalirati provjerenu verziju '+version+'? Emitiranje će biti prekinuto tijekom ponovnog pokretanja.');
+    'Установить версию '+version+'? Во время перезапуска вещание прервётся.',
+    'Install version '+version+'? Streaming will be interrupted during restart.',
+    'Instalirati '+version+'? Emitiranje će biti prekinuto pri ponovnom pokretanju.');
   if(!window.confirm(question))return;
-  const button=document.getElementById('installReleaseButton');
-  if(button)button.disabled=true;
-  try {
+  updateRequestBusy=true;
+  const checkButton=document.getElementById('checkReleaseButton');
+  const installButton=document.getElementById('installReleaseButton');
+  setUpdateButtonBusy(checkButton,true);
+  setUpdateButtonBusy(installButton,true);
+  updateProgress('starting',version);
+  try{
     const response=await fetch('/api/update/install',{
       method:'POST',credentials:'same-origin',
       headers:{'X-Requested-With':'DVBStreamer5','Content-Type':'application/json'},
       body:'{}'
     });
     const data=await response.json();
-    if(!response.ok||data.result!=='started')throw Error(data.error||'Update worker unavailable');
-    window.alert(releaseText(
-      'Обновление запущено. Состояние: /var/log/dvbstreamer5-update.log',
-      'Update started. Log: /var/log/dvbstreamer5-update.log',
-      'Ažuriranje pokrenuto. Zapisnik: /var/log/dvbstreamer5-update.log'));
-  } catch(e) {
-    if(button)button.disabled=false;
-    window.alert(releaseText('Ошибка запуска обновления: ','Update start failed: ','Pokretanje ažuriranja nije uspjelo: ')+(e?.message||e));
+    if(!response.ok||data.result!=='started')throw Error(data.error||'Update unavailable');
+    updateProgress('downloading',version);
+    await watchBinaryUpdate(version);
+  }catch(e){updateProgress('error',String(e?.message||e));}
+  finally{
+    setUpdateButtonBusy(checkButton,false);
+    setUpdateButtonBusy(installButton,false);
+    updateRequestBusy=false;
   }
 }
 async function restartProgram() {
