@@ -592,6 +592,43 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
   .modal-content .modal-actions button{flex:1;min-width:0}
 }
 
+
+/* V10.8.444: opt-in light palette. All changes are presentation-only. */
+html[data-dashboard-theme="light"]{color-scheme:light}
+html[data-dashboard-theme="light"] body{background:#f1f5fa;color:#24344b}
+html[data-dashboard-theme="light"] body:before{background:radial-gradient(circle at top left,rgba(72,152,225,.11),transparent 32%),linear-gradient(180deg,#f4f8fd,#e9f0f8)}
+html[data-dashboard-theme="light"] header{background:rgba(255,255,255,.97);border-bottom-color:#cedae7;box-shadow:0 4px 18px rgba(34,68,105,.1);color:#24344b}
+html[data-dashboard-theme="light"] :is(.header-left,.header-right,.header-monitor,.header-title-block,.server-name,.header-uptime){color:#324863}
+html[data-dashboard-theme="light"] :is(.system-menu-list,.system-submenu-list){background:#fff;border-color:#d5e0eb;box-shadow:0 15px 30px rgba(38,77,124,.14)}
+html[data-dashboard-theme="light"] :is(.system-menu-item,.system-menu summary,.system-submenu summary,.button-secondary){color:#263c55;background:#f7fafd;border-color:#d1dfeb}
+html[data-dashboard-theme="light"] :is(.system-menu-item,.system-menu summary,.system-submenu summary,.button-secondary):hover{background:#e7f0fb}
+html[data-dashboard-theme="light"] :is(.dvb-card-group,.non-dvb-tile-group,.input-subgroup){background:#f8fbff;border-color:#ccdaea;box-shadow:0 6px 22px rgba(37,74,111,.06)}
+html[data-dashboard-theme="light"] :is(.dvb-card-group>summary,.input-subgroup>summary,.dvb-card-title,.input-subgroup-title,.non-dvb-tile-heading){color:#253c55}
+html[data-dashboard-theme="light"] :is(.dvb-card-tiles,.input-subgroup-tiles,.system-submenu-list){border-top-color:#d7e3ef}
+html[data-dashboard-theme="light"] .tile{background:#fff;border-color:#cddae8;box-shadow:0 8px 24px rgba(40,77,116,.1);color:#24344b}
+html[data-dashboard-theme="light"] .tile:hover{border-color:#79aee6;box-shadow:0 11px 27px rgba(40,77,116,.16)}
+html[data-dashboard-theme="light"] .tile.active{border-color:#26aa68}
+html[data-dashboard-theme="light"] .tile.error{border-color:#db6262}
+html[data-dashboard-theme="light"] .tile :is(.info,.info-row,.tile-uptime){color:#526980}
+html[data-dashboard-theme="light"] .tile .info-row strong{color:#1f354d}
+html[data-dashboard-theme="light"] .tile .controls button{background:#eaf1f8;color:#2a415a;border:1px solid #d4e0ec}
+html[data-dashboard-theme="light"] .tile .controls button:hover{background:#dcebf9}
+html[data-dashboard-theme="light"] :is(.modal,.modal.quality-open,.modal.stream-open){background:rgba(34,56,82,.4)}
+html[data-dashboard-theme="light"] .modal-content{background:#fff;border-color:#d2dfeb;box-shadow:0 25px 60px rgba(37,66,100,.22);color:#24344b}
+html[data-dashboard-theme="light"] .modal-content :is(.edit-section,.quality-card,.quality-board,.mpts-row,.output-row,.form-row,.settings-section){background-color:#f8fbff;border-color:#d6e2ee}
+html[data-dashboard-theme="light"] .modal-content :is(.edit-section-head,.transcode-section-caption,.quality-card>strong){color:#225b8d}
+html[data-dashboard-theme="light"] .modal-content :is(label,small,.field-help){color:#52657d}
+html[data-dashboard-theme="light"] :is(input:not([type=checkbox]):not([type=radio]),select,textarea){background:#fff;color:#21374f;border-color:#b9cadc}
+html[data-dashboard-theme="light"] :is(input,select,textarea)::placeholder{color:#788a9e}
+html[data-dashboard-theme="light"] :is(.button-secondary,.system-menu-item,.tile .controls button):focus-visible{outline:2px solid #2686d6;outline-offset:2px}
+html[data-dashboard-theme="light"] :is(.button-primary.save-clean,.button-secondary){background:#e8f1fa;color:#244361}
+html[data-dashboard-theme="light"] :is(.modal-content .modal-actions,.stream-modal .modal-actions){background:#f7faff;border-top-color:#d6e1ed}
+html[data-dashboard-theme="light"] #binaryUpdateProgress{background:#fff;color:#24405d;border-color:#9dc4e9;box-shadow:0 14px 30px rgba(44,78,112,.18)}
+html[data-dashboard-theme="light"] :is(.dvb-card-fe,.dvb-card-meter){background:#eff5fc;border-color:#c5d8ea}
+html[data-dashboard-theme="light"] :is(.dvb-card-fe-name,.dvb-card-status,.input-subgroup-count){color:#426787}
+html[data-dashboard-theme="light"] .system-menu .system-menu-root-actions>.restart-button{color:#8a5b16;background:#fff2d7}
+html[data-dashboard-theme="light"] .system-menu .system-menu-root-actions>.logout-button{color:#a52e36;background:#ffeff0}
+@media(prefers-reduced-motion:reduce){html[data-dashboard-theme="light"] .tile{transition:none}}
 </style>
 </head>
 <body>
@@ -649,6 +686,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <summary data-ui-ru="Администрирование" data-ui-en="Administration" data-ui-hr="Administracija">Администрирование</summary>
 <div class="system-submenu-list">
 <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()" data-ui-ru="Конфигурация" data-ui-en="Configuration" data-ui-hr="Konfiguracija">Конфигурация</button>
+<button class="system-menu-item" id="dashboardThemeButton" onclick="toggleDashboardTheme()" aria-pressed="false" data-ui-ru="Светлая тема" data-ui-en="Light theme" data-ui-hr="Svijetla tema">Светлая тема</button>
 <button class="system-menu-item" onclick="openAboutModal();closeSystemMenu()" data-i18n="about">About</button>
 </div>
 </details>
@@ -677,6 +715,28 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 <script src="/preview/mpegts.min.js" defer></script>
 <script src="/preview/hls.min.js" defer></script>
 <script>
+const dashboardThemeKey='dvbstreamer5-dashboard-theme';
+let dashboardTheme='dark';
+try{dashboardTheme=localStorage.getItem(dashboardThemeKey)==='light'?'light':'dark';}catch(_){}
+document.documentElement.dataset.dashboardTheme=dashboardTheme;
+function updateDashboardThemeButton(){
+  const button=document.getElementById('dashboardThemeButton');
+  if(!button)return;
+  const light=dashboardTheme==='light';
+  button.dataset.uiRu=light?'Тёмная тема':'Светлая тема';
+  button.dataset.uiEn=light?'Dark theme':'Light theme';
+  button.dataset.uiHr=light?'Tamna tema':'Svijetla tema';
+  button.setAttribute('aria-pressed',String(light));
+  button.textContent=light
+    ? (language==='ru'?'Тёмная тема':language==='hr'?'Tamna tema':'Dark theme')
+    : (language==='ru'?'Светлая тема':language==='hr'?'Svijetla tema':'Light theme');
+}
+function toggleDashboardTheme(){
+  dashboardTheme=dashboardTheme==='light'?'dark':'light';
+  document.documentElement.dataset.dashboardTheme=dashboardTheme;
+  try{localStorage.setItem(dashboardThemeKey,dashboardTheme);}catch(_){}
+  updateDashboardThemeButton();
+}
 const translations = {
   en: {
     subtitle:'Broadcast monitoring and stream control', total:'Total:', active:'Active:', network:'Network', system:'Menu', user:'User', addStream:'+ Add stream', addChannel:'+ Add channel',
@@ -3227,6 +3287,7 @@ function applyLanguage() {
   }
   applyExplicitBilingual(document.body);
   applyRuntimeLocalization(document.body);
+  updateDashboardThemeButton();
 }
 function toggleLanguage() {
   language = language === 'en' ? 'ru' : language === 'ru' ? 'hr' : 'en';
