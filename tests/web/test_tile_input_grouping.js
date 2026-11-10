@@ -83,4 +83,8 @@ assert.ok(!source.includes("addInputSubgroup(nested,'tp:'"),
   'satellite TP groups must not remain nested inside a DVB card');
 for(const marker of ["meters.dataset.tpMeters='1'","[data-tp-meters]","renderDvbFrontendMeters(container,{streams}","function renderDvbFrontendMeters("])
  assert.ok(source.includes(marker),'missing TP signal/quality meter integration: '+marker);
+assert.match(source,/\.container\{[^}]*width:100%;max-width:none;[^}]*\}/,
+ 'Dashboard must span the available browser width');
+assert.match(source,/\.tile-grid\{[^}]*grid-template-columns:repeat\(auto-fill,minmax\(min\(100%,210px\),1fr\)\)/,
+ 'Tile count must adapt automatically to screen width');
 console.log('PASS: transponder groups and flat IP-sorted network tiles');
