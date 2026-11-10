@@ -15,7 +15,7 @@ newer(){
 read_release(){
   local tmp="$1" manifest="$1/manifest.json" header="$1/header.txt" link
   RELEASE_SHA=''; RELEASE_SIZE=0
-  if curl -fsSL --proto '=https' --proto-redir '=https' --max-redirs 3 --max-time 20 --max-filesize 8192 "$META" -o "$manifest"; then
+  if curl -fsSL --proto '=https' --proto-redir '=https' --max-redirs 3 --max-time 20 --max-filesize 8192 "$META" -o "$manifest" 2>/dev/null; then
     command -v jq >/dev/null || die 'jq is required to parse release metadata'
     RELEASE_VERSION="$(jq -er '.version | strings' "$manifest")" || die 'Missing release version'
     link="$(jq -er '.url | strings' "$manifest")" || die 'Missing release URL'
@@ -29,8 +29,22 @@ read_release(){
     curl -fsSLI --proto '=https' --proto-redir '=https' --max-redirs 3 --max-time 20 -D "$header" "$URL" -o /dev/null || die 'Cannot inspect website download'
     local name
     name="$(tr -d '\r' < "$header" | sed -nE 's/^[Cc]ontent-[Dd]isposition:.*filename="?([^";]+)"?.*/\1/p' | tail -1)"
-    [[ "$name" =~ ^DVBStreamer5-([0-9]+\.[0-9]+\.[0-9]+)(-linux-x86_64)?\.tar\.gz$ ]] || die 'No versioned filename; publish latest.json'
-    RELEASE_VERSION="${BASH_REMATCH[1]}"
+    if [[ "$name" =~ ^DVBStreamer5-([0-9]+\.[0-9]+\.[0-9]+)(-linux-x86_64)?\.tar\.gz$ ]]; then
+      RELEASE_VERSION="${BASH_REMATCH[1]}"
+    else
+      # download.php may send an unversioned attachment filename. Inspect the
+      # bundled directory name in the actual tar.gz rather than guessing.
+      local archive="$tmp/release.tar.gz" first root
+      download_archive "$archive"
+      tar -tzf "$archive" > "$tmp/entries" || die 'Downloaded file is not a valid tar.gz'
+      [[ -s "$tmp/entries" ]] || die 'Downloaded archive is empty'
+      IFS= read -r first < "$tmp/entries"
+      root="${first%%/*}"
+      [[ "$root" =~ ^DVBStreamer5-([0-9]+\.[0-9]+\.[0-9]+)-linux-x86_64$ ]] ||
+        die 'Cannot determine release version from the archive directory'
+      RELEASE_VERSION="${BASH_REMATCH[1]}"
+      # The same archive can be reused by install_release (no second download).
+    fi
   fi
   valid_version "$RELEASE_VERSION" || die 'Bad release version'
 }
@@ -63,8 +77,8 @@ install_release(){
   trap 'rm -rf -- "$tmp"' EXIT
   read_release "$tmp"
   newer "$RELEASE_VERSION" "$2" || die 'No newer release'
-  archive="$tmp/update.tar.gz"
-  download_archive "$archive"
+  archive="$tmp/release.tar.gz"
+  if [[ ! -f "$archive" ]]; then download_archive "$archive"; fi
   root="DVBStreamer5-$RELEASE_VERSION-linux-x86_64"
   tar -tzf "$archive" > "$tmp/names"
   [[ -s "$tmp/names" ]] || die 'Empty archive'
