@@ -946,6 +946,25 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body() = Json::writeString(
                         writer, streamManager.epgSnapshot(streamId));
                 }
+            } else if (target == "/api/update/check") {
+                // Signed manifest from the fixed project host; never accept a client URL.
+                res.set(http::field::content_type, "application/json");
+                const std::string command =
+                    "/usr/bin/python3 /opt/DVBStreamer5/updater.py check " +
+                    std::string(kProgramVersion) + " 2>/dev/null";
+                std::string output;
+                if (FILE* pipe = popen(command.c_str(), "r")) {
+                    char buffer[1024];
+                    while (output.size() < 4096 && fgets(buffer, sizeof(buffer), pipe))
+                        output += buffer;
+                    pclose(pipe);
+                }
+                if (output.empty() || output.size() >= 4096) {
+                    res.result(http::status::service_unavailable);
+                    res.body() = R"({"result":"error","error":"Updater is not installed or unavailable"})";
+                } else {
+                    res.body() = output;
+                }
             } else if (target == "/api/state") {
                 res.set(http::field::content_type, "application/json");
                 // 202.68: server-side A/B probe for the /api/state allocation path.
@@ -1272,6 +1291,29 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/stop-stream") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleStopStream(req.body());
+            } else if (target == "/api/update/install") {
+                res.set(http::field::content_type, "application/json");
+                // Require a panel session and a same-origin AJAX request.
+                // API tokens deliberately cannot authorize binary installation.
+                const auto requestedWith = req.find("X-Requested-With");
+                if (apiKeyAttempt || !isPanelSessionAuthorized(req) ||
+                    requestedWith == req.end() ||
+                    requestedWith->value() != "DVBStreamer5") {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"result":"error","error":"Panel login and same-origin request required"})";
+                } else {
+                    const std::string command =
+                        "nohup /usr/bin/python3 /opt/DVBStreamer5/updater.py install " +
+                        std::string(kProgramVersion) +
+                        " >>/var/log/dvbstreamer5-update.log 2>&1 </dev/null &";
+                    const int rc = std::system(command.c_str());
+                    if (rc != 0) {
+                        res.result(http::status::service_unavailable);
+                        res.body() = R"({"result":"error","error":"Unable to start update worker"})";
+                    } else {
+                        res.body() = R"({"result":"started"})";
+                    }
+                }
             } else if (target == "/api/restart-program") {
                 handleRestartProgram();
                 res.set(http::field::content_type, "application/json");
