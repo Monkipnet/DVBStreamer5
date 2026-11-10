@@ -55,6 +55,10 @@ for(const marker of [
   '.update-action-busy::before',
   'id="binaryUpdateClose"',
   'onclick="closeBinaryUpdateProgress()"',
+  'id="binaryUpdateClose" onclick="closeBinaryUpdateProgress()" aria-label="Закрыть уведомление"',
+  "updateClose.textContent='×'",
+  '#binaryUpdateClose{position:absolute;top:8px;right:8px;width:18px;height:18px;',
+
   'function closeBinaryUpdateProgress()',
   'let updateProgressDismissed=false;',
   'if(!updateProgressDismissed)surface.hidden=false;',
@@ -93,6 +97,7 @@ for(const marker of [
   'Refused local/private archive redirect',
   "Download HTTP $status"
 ]) assert.ok(updater.includes(marker),'Missing HTTPS redirect guard: '+marker);
+assert.ok(!web.includes('data-ui-ru="Закрыть уведомление"'),'Close icon must not be replaced by localized button text');
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
 assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
 const versionHeader=fs.readFileSync('src/AppVersion.h','utf8');
