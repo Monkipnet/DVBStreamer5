@@ -72,6 +72,19 @@ struct Service {
         if (::access("/usr/bin/tsdecrypt", X_OK) != 0) {
             error = "missing executable /usr/bin/tsdecrypt"; return false;
         }
+        // Prepare all allocations before fork: the main host is multithreaded.
+        // The child must call only async-signal-safe operations before exec.
+        std::vector<std::string> args{
+            "tsdecrypt", "-M", std::to_string(sid), "-c", "VIDEOGUARD",
+            "-C", config.caid, "-A", config.protocol, "-s", config.host,
+            "-U", config.user, "-P", config.pass, "-K", "-3", "-p"
+        };
+        if (config.protocol == "NEWCAMD") { args.push_back("-B"); args.push_back(config.des); }
+        if (config.ecmPid) { args.push_back("-X"); args.push_back(std::to_string(config.ecmPid)); }
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+        argv.push_back(nullptr);
         int inputPipe[2]{-1,-1}, outputPipe[2]{-1,-1};
         if (::pipe(inputPipe) != 0) { error = "input pipe failed"; return false; }
         if (::pipe(outputPipe) != 0) {
@@ -90,21 +103,6 @@ struct Service {
             if (nullFd >= 0) { ::dup2(nullFd, STDERR_FILENO); ::close(nullFd); }
             ::close(inputPipe[0]); ::close(inputPipe[1]);
             ::close(outputPipe[0]); ::close(outputPipe[1]);
-            std::vector<std::string> args{
-                "tsdecrypt", "-M", std::to_string(sid), "-c", "VIDEOGUARD",
-                "-C", config.caid, "-A", config.protocol, "-s", config.host,
-                "-U", config.user, "-P", config.pass,
-                "-K", "-3", "-p"
-            };
-            // "-3" allows TS pass-through while CW is unavailable. To ensure
-            // that encrypted packets do not masquerade as clear, the host-side
-            // process_ts strips any scrambling-marked packet (see below).
-            if (config.protocol == "NEWCAMD") { args.push_back("-B"); args.push_back(config.des); }
-            if (config.ecmPid) { args.push_back("-X"); args.push_back(std::to_string(config.ecmPid)); }
-            std::vector<char*> argv;
-            argv.reserve(args.size() + 1);
-            for (auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
-            argv.push_back(nullptr);
             ::execv("/usr/bin/tsdecrypt", argv.data());
             _exit(127);
         }
