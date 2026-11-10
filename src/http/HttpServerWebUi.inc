@@ -532,6 +532,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 #binaryUpdateProgress .update-progress-track{margin-top:9px;height:4px;border-radius:8px;background:rgba(255,255,255,.14);overflow:hidden}
 #binaryUpdateProgress .update-progress-fill{height:100%;width:34%;background:#64caff;border-radius:8px;animation:updateProgressIndeterminate 1.2s ease-in-out infinite alternate}
 #binaryUpdateProgress[data-phase=done] .update-progress-fill{width:100%;background:#4cdd95;animation:none}
+#binaryUpdateProgress[data-phase=current] .update-progress-fill,#binaryUpdateProgress[data-phase=available] .update-progress-fill{width:100%;background:#64caff;animation:none}
 #binaryUpdateProgress[data-phase=error] .update-progress-fill{width:100%;background:#ff7373;animation:none}
 @keyframes updateProgressIndeterminate{from{transform:translateX(-105%)}to{transform:translateX(300%)}}
 
