@@ -87,4 +87,18 @@ assert.match(source,/\.container\{[^}]*width:100%;max-width:none;[^}]*\}/,
  'Dashboard must span the available browser width');
 assert.match(source,/\.tile-grid\{[^}]*grid-template-columns:repeat\(auto-fill,minmax\(min\(100%,210px\),1fr\)\)/,
  'Tile count must adapt automatically to screen width');
+
+for(const selector of [
+ 'html[data-dashboard-theme="light"] .tile.active{',
+ 'html[data-dashboard-theme="light"] .tile.error{',
+ 'html[data-dashboard-theme="light"] .tile .controls button.start-button{',
+ 'html[data-dashboard-theme="light"] .tile .controls button.stop-button{',
+ 'html[data-dashboard-theme="light"] .tile .controls button[data-stream-action="edit"]{',
+ 'html[data-dashboard-theme="light"] .tile .controls button.quality-button{',
+ 'html[data-dashboard-theme="light"] .tile .controls button.copy-button{',
+ 'html[data-dashboard-theme="light"] .tile .controls button:focus-visible{',
+ 'html[data-dashboard-theme="light"] .modal-content h2{'
+]) assert.ok(source.includes(selector),'Missing light-theme contrast/color styling: '+selector);
+assert.ok(source.includes("tile.classList.toggle('active', !!stream.active)"),
+ 'Running tile visual state must follow stream.active');
 console.log('PASS: transponder groups and flat IP-sorted network tiles');
