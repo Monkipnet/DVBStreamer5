@@ -639,6 +639,8 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 </div>
 </details>
 <div class="system-menu-root-actions">
+<button class="system-menu-item" id="checkReleaseButton" onclick="checkBinaryUpdates()" data-ui-ru="Проверка обновлений" data-ui-en="Check for updates" data-ui-hr="Provjeri ažuriranja">Проверка обновлений</button>
+<button class="system-menu-item" id="installReleaseButton" hidden style="display:none;color:#9fe7b3" onclick="installBinaryUpdate()" data-ui-ru="Обновить программу" data-ui-en="Install update" data-ui-hr="Instaliraj ažuriranje">Обновить программу</button>
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
 <button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
 </div>
@@ -5667,6 +5669,62 @@ function deleteStream(id) {
       allowEmptyStreamStateOnce = false;
       uiError(error?.message || error);
     });
+}
+let latestVerifiedUpdate=null;
+function releaseText(ru,en,hr) {
+  return language==='ru'?ru:language==='hr'?hr:en;
+}
+async function checkBinaryUpdates() {
+  const button=document.getElementById('checkReleaseButton');
+  const installButton=document.getElementById('installReleaseButton');
+  if(button)button.disabled=true;
+  latestVerifiedUpdate=null;
+  if(installButton){installButton.hidden=true;installButton.style.display='none';}
+  try {
+    const response=await fetch('/api/update/check',{cache:'no-store',credentials:'same-origin'});
+    const data=await response.json();
+    if(data.result!=='ok')throw Error(data.error||'Release check failed');
+    if(data.available) {
+      latestVerifiedUpdate=data.latest;
+      if(installButton) {
+        installButton.hidden=false;
+        installButton.style.display='';
+        installButton.textContent=releaseText('Обновить до ','Update to ','Ažuriraj na ')+data.latest;
+      }
+      window.alert(releaseText('Доступна новая бинарная версия: ','New binary release available: ','Dostupna nova binarna verzija: ')+data.latest);
+    } else {
+      window.alert(releaseText('Установлена актуальная версия: ','Already up to date: ','Već je ažurirano: ')+data.current);
+    }
+  } catch(e) {
+    window.alert(releaseText('Ошибка проверки обновлений: ','Update check failed: ','Provjera ažuriranja nije uspjela: ')+(e?.message||e));
+  } finally {if(button)button.disabled=false;}
+}
+async function installBinaryUpdate() {
+  if(!latestVerifiedUpdate)return;
+  const version=latestVerifiedUpdate;
+  const question=releaseText(
+    'Установить проверенную версию '+version+'? Вещание будет прервано на время перезапуска.',
+    'Install verified version '+version+'? Streaming will be interrupted during restart.',
+    'Instalirati provjerenu verziju '+version+'? Emitiranje će biti prekinuto tijekom ponovnog pokretanja.');
+  if(!window.confirm(question))return;
+  const button=document.getElementById('installReleaseButton');
+  if(button)button.disabled=true;
+  try {
+    const response=await fetch('/api/update/install',{
+      method:'POST',credentials:'same-origin',
+      headers:{'X-Requested-With':'DVBStreamer5','Content-Type':'application/json'},
+      body:'{}'
+    });
+    const data=await response.json();
+    if(!response.ok||data.result!=='started')throw Error(data.error||'Update worker unavailable');
+    window.alert(releaseText(
+      'Обновление запущено. Состояние: /var/log/dvbstreamer5-update.log',
+      'Update started. Log: /var/log/dvbstreamer5-update.log',
+      'Ažuriranje pokrenuto. Zapisnik: /var/log/dvbstreamer5-update.log'));
+  } catch(e) {
+    if(button)button.disabled=false;
+    window.alert(releaseText('Ошибка запуска обновления: ','Update start failed: ','Pokretanje ažuriranja nije uspjelo: ')+(e?.message||e));
+  }
 }
 async function restartProgram() {
   if (!window.confirm(t('restartConfirm'))) return;
