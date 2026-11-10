@@ -2,6 +2,7 @@
 // Each selected DVBStreamer5 service owns an isolated, bounded stdin/stdout
 // pipeline. The legacy newcamd backend remains the default.
 #include "../../CaBackendPluginApi.h"
+#include "SpawnFdIsolation.h"
 #include <jsoncpp/json/json.h>
 #include <algorithm>
 #include <array>
@@ -115,6 +116,9 @@ struct Service {
         if (::pipe(outputPipe) != 0) {
             ::close(inputPipe[0]); ::close(inputPipe[1]); error = "output pipe failed"; return false;
         }
+        // Snapshot the limit before fork; the child must avoid getrlimit/sysconf.
+        const unsigned int inheritedFdLimit =
+            dvbstreamer5::ca::tsdecrypt_detail::inheritedFdLimit();
         pid = ::fork();
         if (pid < 0) {
             ::close(inputPipe[0]); ::close(inputPipe[1]);
@@ -122,12 +126,14 @@ struct Service {
             error = "fork failed"; return false;
         }
         if (pid == 0) {
-            ::dup2(inputPipe[0], STDIN_FILENO);
-            ::dup2(outputPipe[1], STDOUT_FILENO);
-            int nullFd = ::open("/dev/null", O_WRONLY);
-            if (nullFd >= 0) { ::dup2(nullFd, STDERR_FILENO); ::close(nullFd); }
-            ::close(inputPipe[0]); ::close(inputPipe[1]);
-            ::close(outputPipe[0]); ::close(outputPipe[1]);
+            if (::dup2(inputPipe[0], STDIN_FILENO) < 0 ||
+                ::dup2(outputPipe[1], STDOUT_FILENO) < 0) _exit(127);
+            const int nullFd = ::open("/dev/null", O_WRONLY);
+            if (nullFd < 0 || ::dup2(nullFd, STDERR_FILENO) < 0) _exit(127);
+            // Do not keep HTTP listeners, accepted client sockets or other
+            // parent resources alive in this external decoder. The sweep also
+            // closes both pipe originals; only descriptors 0, 1, 2 survive.
+            dvbstreamer5::ca::tsdecrypt_detail::closeInheritedFds(inheritedFdLimit);
             ::execv(tsdecryptBinary.c_str(), argv.data());
             _exit(127);
         }
