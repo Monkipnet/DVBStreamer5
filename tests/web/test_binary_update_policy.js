@@ -53,6 +53,10 @@ for(const marker of [
   "updateProgress('error'",
   "fetch('/api/update/status'",
   '.update-action-busy::before',
+  'id="binaryUpdateClose"',
+  'onclick="closeBinaryUpdateProgress()"',
+  'function closeBinaryUpdateProgress()',
+  '#binaryUpdateProgress[hidden]{display:none}',
   'aria-live="polite"'
 ]) assert.ok(web.includes(marker),'Missing visible updater progress: '+marker);
 for(const marker of [
@@ -81,6 +85,12 @@ for(const marker of [
   'Json::parseFromStream(reader, jsonInput, &parsed, &parseErrors)'
 ]) assert.ok(transport.includes(marker),'Missing update diagnostics: '+marker);
 assert.ok(!transport.includes('" 2>/dev/null"'), 'Updater stderr must not be discarded');
+for(const marker of [
+  'Unsafe non-HTTPS download redirect',
+  'Unsafe credential-bearing redirect',
+  'Refused local/private archive redirect',
+  "Download HTTP $status"
+]) assert.ok(updater.includes(marker),'Missing HTTPS redirect guard: '+marker);
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
 assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
 const versionHeader=fs.readFileSync('src/AppVersion.h','utf8');
