@@ -198,7 +198,7 @@ struct Service {
                 if (n == 0) break;
                 if (n < 0) { if (errno == EINTR || errno == EAGAIN) continue; break; }
                 for (ssize_t i = 0; i < n; ++i) {
-                    if (chunk[i] != '\\n' && chunk[i] != '\\r') {
+                    if (chunk[i] != '\n' && chunk[i] != '\r') {
                         if (line.size() < 1024) line.push_back(chunk[i]);
                         continue;
                     }
@@ -460,7 +460,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "ecm_duplicates=%llu cw_valid_events=%llu cw_warnings=%llu "
                 "input_scrambled=%llu output_clear_encrypted_pid=%llu "
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
-                "output_null=%llu csa_alt_verified=no\\n",
+                "output_null=%llu csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
                 static_cast<unsigned long long>(service->ecmProcessed.load()),
