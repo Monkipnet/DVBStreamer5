@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.460 — TSDecrypt per-tile CA backend (experimental)
+# DVBStreamer5 V10.8.461 — TSDecrypt per-tile CA backend (experimental)
 
 The plugin `ca-plugins/dvbstreamer5-ca-tsdecrypt.so` is opt-in per CAM client;
 Newcamd, OSCam-mini and DVB-CI remain unchanged. The external `bin/tsdecrypt`
@@ -17,6 +17,10 @@ journalctl -u dvbstreamer5.service --since '-5 min' -o cat --no-pager |
   grep 'TSDECRYPT DIAG' | tail -n 30
 ```
 
+- `ecm_reports`: number of successfully parsed periodic `-H 10` reports;
+  distinguish unavailable telemetry (`ecm_reports=0`) from a real zero ECM
+  count. In V461, duplicate and completed ECM counts are not restricted to the
+  number of unique requests in the same interval; they are independent counts.
 - `ecm_received`, `ecm_processed`, `ecm_duplicates`: accumulated numeric
   counts from **TSDecrypt's own periodic `-H 10` reports**, not host-side guesses.
   These can remain zero until the first report interval.
