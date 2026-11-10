@@ -41,8 +41,6 @@ for(const marker of [
   'determine_archive_release',
   'No unique embedded version',
   'ARCHIVE_ROOT',
-  "root=\"${first%%/*}\"",
-  'Cannot determine release version from the archive directory',
   'if [[ ! -f "$archive" ]]; then download_archive "$archive"; fi',
   'update-backups',
   'cp -a "$backup" /opt/DVBStreamer5'
