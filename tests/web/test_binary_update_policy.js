@@ -134,7 +134,9 @@ try {
   fs.writeFileSync(curl,[
     '#!/usr/bin/env bash',
     'for arg in "$@"; do',
-    '  if [[ "$arg" == "-I" || "$arg" == "-D" ]]; then exit 22; fi',
+    '  case "$arg" in',
+    '    -I|-D|*latest.json*|https://tvstreammersat5.tech/) exit 22 ;;',
+    '  esac',
     'done',
     'dest=""',
     'while (( $# )); do',
