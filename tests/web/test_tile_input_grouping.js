@@ -55,7 +55,9 @@ assert.equal(groups.find(g=>g.key==='other').streams.length,1);
 assert.equal(grouping.makeDvbCardGroups([s1,inputs[0]]).cards.length,1);
 assert.equal(grouping.makeDvbCardGroups(inputs).network.length,inputs.length);
 for(const marker of ['inputSubgroupStorageKey','updateInputSubgroupCounts(tiles);',
-  "addInputSubgroup(nested,'tp:'","addInputSubgroup(list,'net:'",
+  "addInputSubgroup(tiles,'tp:'","addInputSubgroup(list,'net:'",
   "tiles.classList.toggle('grouped-tiles', streams.length > 0)"])
  assert.ok(source.includes(marker),'missing grouping UI integration: '+marker);
+assert.ok(!source.includes("addInputSubgroup(nested,'tp:'"),
+  'satellite TP groups must not remain nested inside a DVB card');
 console.log('PASS: satellite transponder and IPv4/IPv6 input subnet tile grouping');
