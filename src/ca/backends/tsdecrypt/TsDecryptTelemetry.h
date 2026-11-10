@@ -12,6 +12,8 @@ struct TsPacketFacts {
     bool valid = false;
     bool scrambled = false;
     bool clearMediaPesStart = false;
+    bool clearVideoPesStart = false;
+    bool clearAudioPesStart = false;
 };
 
 inline TsPacketFacts inspectTsPacket(const uint8_t* p, size_t size) noexcept {
@@ -31,10 +33,12 @@ inline TsPacketFacts inspectTsPacket(const uint8_t* p, size_t size) noexcept {
     }
     if (start + 4 > 188) return facts;
     const uint8_t id = p[start + 3];
-    facts.clearMediaPesStart =
-        p[start] == 0 && p[start + 1] == 0 && p[start + 2] == 1 &&
-        ((id >= 0xc0 && id <= 0xdf) || (id >= 0xe0 && id <= 0xef) ||
-         id == 0xbd);
+    const bool validPesPrefix =
+        p[start] == 0 && p[start + 1] == 0 && p[start + 2] == 1;
+    facts.clearVideoPesStart = validPesPrefix && id >= 0xe0 && id <= 0xef;
+    facts.clearAudioPesStart = validPesPrefix && id >= 0xc0 && id <= 0xdf;
+    facts.clearMediaPesStart = facts.clearVideoPesStart ||
+        facts.clearAudioPesStart || (validPesPrefix && id == 0xbd);
     return facts;
 }
 
