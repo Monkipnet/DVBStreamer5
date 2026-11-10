@@ -8242,6 +8242,18 @@ function updateVdrCiPlusPreview() {
   if (preview) preview.textContent = uri ? `Источник: ${uri}` : 'Укажите VDR host и канал.';
   if (input && uri) input.value = uri;
 }
+function updateStreamCaEngine() {
+  const requested = document.getElementById('streamCaEngine')?.value || 'newcamd';
+  const select = document.getElementById('streamConditionalAccessClient');
+  if (!select) return;
+  const current = select.value;
+  const matches = camClientsForUi().filter(client =>
+    String(client.backend_id || 'newcamd') === requested);
+  select.innerHTML = matches.length
+    ? matches.map(client => `<option value="${satEscape(client.id)}">${satEscape(camClientSummary(client.id) || client.id)}</option>`).join('')
+    : '<option value="">No configured CAM client for this engine</option>';
+  if (matches.some(client => String(client.id) === current)) select.value = current;
+}
 function updateStreamCaMode() {
   const caMode = document.getElementById('streamCaMode')?.value || 'fta';
   const camRow = document.getElementById('streamCamRow');
@@ -8257,6 +8269,7 @@ function updateStreamCaMode() {
   }
   updateVdrCiPlusPreview();
   updateInputModeVisibility();
+  updateStreamCaEngine();
 }
 function parseDvbTunerUri(value='') {
   const result = {
@@ -8663,8 +8676,9 @@ function openStreamForm(stream) {
           <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Режим доступа','Access mode')}>${uiBiText('Режим доступа','Access mode')}</div><small class="field-help" ${uiBiAttrs('FTA без CAM; iCAM использует native Newcamd; CI+ получает уже разрешённый TS через VDR.','FTA uses no CAM; iCAM uses native Newcamd; CI+ receives a descrambled TS from VDR.')}>${uiBiText('FTA без CAM; iCAM использует native Newcamd; CI+ получает уже разрешённый TS через VDR.','FTA uses no CAM; iCAM uses native Newcamd; CI+ receives a descrambled TS from VDR.')}</small><select id="streamCaMode" onchange="updateStreamCaMode()"><option value="fta" ${caMode==='fta'?'selected':''} ${uiBiAttrs('FTA / без CAM','FTA / no CAM')}>${uiBiText('FTA / без CAM','FTA / no CAM')}</option><option value="icam" ${caMode==='icam'?'selected':''}>iCAM / Newcamd — native DVB-S/S2</option><option value="ciplus" ${caMode==='ciplus'?'selected':''}>DVB-CI+ / VDR — external CAM</option></select></div>
         </div>
         <div class="form-row full edit-section" id="streamCamRow" style="display:${caMode==='icam'?'':'none'}">
-          <div class="edit-section-head">iCAM / Newcamd</div>
-          <div class="edit-field"><div class="edit-field-title">Newcamd client</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select><small class="field-help">CA engine is selected by this CAM client: Newcamd (default) or TSDecrypt (experimental). Configure TSDecrypt under Menu → Newcamd / OSCam CAM clients. It affects only this DVB tile.</small></div>
+          <div class="edit-section-head">iCAM / Newcamd / TSDecrypt</div>
+          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CA-движок','CA engine')}>${uiBiText('CA-движок','CA engine')}</div><small class="field-help" ${uiBiAttrs('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}>${uiBiText('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}</small><select id="streamCaEngine" onchange="updateStreamCaEngine()"><option value="newcamd" ${(camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id || 'newcamd') !== 'tsdecrypt'?'selected':''}>Newcamd / OSCam-mini</option><option value="tsdecrypt" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'tsdecrypt'?'selected':''}>TSDecrypt (experimental)</option></select></div>
+          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CAM-клиент','CAM client')}>${uiBiText('CAM-клиент','CAM client')}</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select><small class="field-help">CA engine is selected by this CAM client: Newcamd (default) or TSDecrypt (experimental). Configure TSDecrypt under Menu → Newcamd / OSCam CAM clients. It affects only this DVB tile.</small></div>
         </div>
         <div class="form-row full edit-section" id="streamCiPlusRow" style="display:${caMode==='ciplus'?'':'none'}">
           <div class="edit-section-head"><span>DVB-CI+ / VDR</span><small>VDR streamdev</small></div>
