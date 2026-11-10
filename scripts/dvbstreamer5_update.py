@@ -41,9 +41,17 @@ def install(current):
   if ver(version)<=ver(current): fail('No newer version')
   with tempfile.TemporaryDirectory(prefix='dvb5-upd-',dir='/var/tmp') as tmp:
    root=pathlib.Path(tmp); archive=root/'release.tar.gz'
-   data=fetch(url,MAX)
-   if len(data)!=size or hashlib.sha256(data).hexdigest()!=digest: fail('Archive SHA256/size mismatch')
-   archive.write_bytes(data)
+   h=hashlib.sha256(); count=0
+   with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'DVBStreamer5-Updater'}),timeout=30) as stream:
+    if urllib.parse.urlsplit(stream.geturl()).netloc!='tvstreammersat5.tech': fail('Untrusted archive redirect')
+    with archive.open('wb') as output:
+     while True:
+      block=stream.read(1024*1024)
+      if not block: break
+      count+=len(block)
+      if count>size or count>MAX: fail('Archive exceeds declared size')
+      h.update(block); output.write(block)
+   if count!=size or h.hexdigest()!=digest: fail('Archive SHA256/size mismatch')
    with tarfile.open(archive,'r:gz') as tar:
     members=tar.getmembers()
     if not members or len(members)>50000: fail('Invalid archive')
@@ -57,7 +65,7 @@ def install(current):
    bundle=root/'extract'/next(iter(tops))
    if not all((bundle/x).is_file() for x in ('bin/DVBStreamer5','install.sh','run.sh','SHA256SUMS')): fail('Incomplete bundle')
    subprocess.run(['/usr/bin/sha256sum','-c','SHA256SUMS'],cwd=bundle,stdout=subprocess.DEVNULL,timeout=90,check=True)
-   backups=pathlib.Path('/var/lib/dvbstreamer5/update-backups'); backups.mkdir(parents=True,exist_ok=True)
+   backups=pathlib.Path('/var/lib/dvbstreamer5/update-backups'); backups.mkdir(parents=True,exist_ok=True,mode=0o700)
    backup=backups/('before-'+version+'-'+current)
    if backup.exists() or not HOME.is_dir(): fail('Backup collision or missing installation')
    shutil.copytree(HOME,backup,symlinks=True)
