@@ -462,13 +462,15 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
         if (nowSec >= service->lastDiagSecond + 15) {
             service->lastDiagSecond = nowSec;
             std::fprintf(stderr,
-                "TSDECRYPT DIAG stream=%s ecm_received=%llu ecm_processed=%llu "
-                "ecm_duplicates=%llu cw_valid_events=%llu cw_warnings=%llu "
+                "TSDECRYPT DIAG stream=%s ecm_reports=%llu ecm_received=%llu "
+                "ecm_processed=%llu ecm_duplicates=%llu "
+                "cw_valid_events=%llu cw_warnings=%llu "
                 "input_scrambled=%llu output_clear_encrypted_pid=%llu "
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
                 "video_pes_encrypted_pid=%llu audio_pes_encrypted_pid=%llu "
                 "output_null=%llu csa_alt_verified=no\n",
                 service->id.c_str(),
+                static_cast<unsigned long long>(service->ecmReportCount.load()),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
                 static_cast<unsigned long long>(service->ecmProcessed.load()),
                 static_cast<unsigned long long>(service->ecmDuplicates.load()),
