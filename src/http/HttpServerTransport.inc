@@ -969,7 +969,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 } else {
                     const std::string command = std::string("/bin/bash ") +
                         updaterPath + " check " + std::string(kProgramVersion) +
-                        " 2>/dev/null";
+                        " 2>&1";
                     std::string output;
                     int exitCode = -1;
                     if (FILE* pipe = popen(command.c_str(), "r")) {
@@ -989,8 +989,24 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                             res.result(http::status::service_unavailable);
                         res.body() = output;
                     } else {
+                        // Return the actual updater error, JSON-escaped by JsonCpp.
+                        // Previously 2>/dev/null hid all Bash, curl and permission
+                        // diagnostics, leaving only an unhelpful generic message.
                         res.result(http::status::service_unavailable);
-                        res.body() = R"({"result":"error","error":"Updater check failed: run /bin/bash /opt/DVBStreamer5/updater.sh check VERSION on the server"})";
+                        Json::Value failure;
+                        failure["result"] = "error";
+                        std::string detail = output;
+                        const auto lastLine = detail.find_last_of("\\r\\n");
+                        if (lastLine != std::string::npos && lastLine + 1 < detail.size())
+                            detail = detail.substr(lastLine + 1);
+                        if (detail.size() > 300)
+                            detail = detail.substr(detail.size() - 300);
+                        if (detail.empty())
+                            detail = "Bash updater exited without output (check service user and server logs)";
+                        failure["error"] = "Updater check failed: " + detail;
+                        failure["exit_status"] = exitCode;
+                        Json::StreamWriterBuilder writer;
+                        res.body() = Json::writeString(writer, failure);
                     }
                 }
             } else if (target == "/api/state") {
