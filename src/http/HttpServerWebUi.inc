@@ -647,6 +647,31 @@ html[data-dashboard-theme="light"] :is(.dvb-card-fe-name,.dvb-card-status,.input
 html[data-dashboard-theme="light"] .system-menu .system-menu-root-actions>.restart-button{color:#8a5b16;background:#fff2d7}
 html[data-dashboard-theme="light"] .system-menu .system-menu-root-actions>.logout-button{color:#a52e36;background:#ffeff0}
 @media(prefers-reduced-motion:reduce){html[data-dashboard-theme="light"] .tile{transition:none}}
+
+/* V10.8.450: light-theme contrast pass for inherited dark-theme labels.
+   Only apply to the light palette; leave colored badges and filled actions intact. */
+html[data-dashboard-theme="light"] :is(.header-left .title,.header-monitor strong,.header-monitor .status span){color:#203a58}
+html[data-dashboard-theme="light"] .system-menu .system-submenu[open]>summary{color:#1e568a;background:#e5f1ff}
+html[data-dashboard-theme="light"] :is(.modal-content h1,.modal-content h2,.modal-content h3,.connection-monitor-head h3,.quality-decode strong,.quality-card strong,.about-row span,.about-row a,.unknown-connection-stream,.sat-meter-head strong,.cam-row .cam-name,.mpts-name){color:#223a54}
+html[data-dashboard-theme="light"] :is(.sat-meter-head,.cam-device,.mpts-endpoint,.mpts-services,.connection-monitor-head,.about-row,.modal-content p,.modal-content li){color:#445d79}
+html[data-dashboard-theme="light"] :is(.modal-content .form-row,.modal-content .sat-field,.modal-content .cam-head,.modal-content .cam-row,.modal-content .mpts-row,.modal-content .subscriber-row,.modal-content .quality-card,.modal-content .edit-section){color:#28435e}
+html[data-dashboard-theme="light"] :is(.cam-head strong,.mpts-row strong,.subscriber-row strong,.sat-meter strong,.stream-modal strong,.quality-board strong){color:#213e5c}
+html[data-dashboard-theme="light"] :is(.modal-content input:not([type=checkbox]):not([type=radio]),.modal-content select,.modal-content textarea,.sat-field input,.sat-field select,.subscriber-row input){background:#fff;color:#1f3650;border-color:#b9c9da}
+html[data-dashboard-theme="light"] :is(.modal-content input,.modal-content select,.modal-content textarea):disabled{background:#e8eef5;color:#63778b}
+html[data-dashboard-theme="light"] .tile .controls .stop-button{color:#a32b36;background:#ffebed;border-color:#efc2c5}
+html[data-dashboard-theme="light"] .tile .controls .copy-button.copied{color:#155d37;background:#daf3e5}
+html[data-dashboard-theme="light"] .tile .controls .copy-button.copy-error{color:#81580d;background:#fff1d2}
+html[data-dashboard-theme="light"] :is(.button-danger,.output-row .remove-output,.subscriber-row .remove-subscriber,.block-client,.blocked-ip-row){color:#a6313f;background:#ffebed;border-color:#efbec4}
+html[data-dashboard-theme="light"] .reset-session{color:#82530b;background:#fff1d8;border-color:#ead29c}
+html[data-dashboard-theme="light"] :is(.modal-content .field-help,.modal-content small,.sat-field label,.modal-content .form-row label){color:#516b85}
+html[data-dashboard-theme="light"] .tvp-dialog{background:#fff;color:#243a53;border-color:#ceddeb;box-shadow:0 22px 55px rgba(29,60,94,.24)}
+html[data-dashboard-theme="light"] .tvp-close{background:#e7eff9;color:#29435f}
+html[data-dashboard-theme="light"] .tvp-status{color:#536b83}
+html[data-dashboard-theme="light"] .tvp-error{color:#b43835}
+html[data-dashboard-theme="light"] #tickerOverlayModal h2{color:#23415f!important}
+html[data-dashboard-theme="light"] :is(.edit-section-head,.quality-card>strong,.modal-content .transcode-section-caption){color:#255d90}
+html[data-dashboard-theme="light"] .epg-hover-tooltip .epg-hover-heading{color:inherit}
+
 </style>
 </head>
 <body>
