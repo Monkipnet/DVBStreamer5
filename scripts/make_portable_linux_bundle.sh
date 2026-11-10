@@ -322,7 +322,7 @@ if [[ -d "$INSTALL_DIR/oscam-mini/config" ]]; then
 fi
 
 log "Installing application runtime under $INSTALL_DIR"
-for item in bin lib web ca-plugins etc run.sh updater.sh PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
+for item in bin lib web ca-plugins etc run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
     [[ -e "$BUNDLE_DIR/$item" ]] || continue
     rm -rf -- "$INSTALL_DIR/$item"
     cp -a -- "$BUNDLE_DIR/$item" "$INSTALL_DIR/$item"
@@ -333,6 +333,9 @@ if [[ -d "$BUNDLE_DIR/oscam-mini" && -x "$BUNDLE_DIR/oscam-mini/oscam-mini" ]]; 
     cp -a -- "$BUNDLE_DIR/oscam-mini" "$INSTALL_DIR/oscam-mini"
 fi
 
+[[ -s "$INSTALL_DIR/updater.sh" && -s "$INSTALL_DIR/VERSION" ]] ||
+    { echo "ERROR: portable bundle has no updater.sh or VERSION" >&2; exit 1; }
+chmod 0755 "$INSTALL_DIR/updater.sh"
 chmod 0755 "$INSTALL_DIR/run.sh" "$INSTALL_DIR/bin/$APP"
 if [[ -x "$INSTALL_DIR/oscam-mini/oscam-mini" ]]; then
     chmod 0755 "$INSTALL_DIR/oscam-mini/oscam-mini" "$INSTALL_DIR/oscam-mini/oscam-mini.bin"
