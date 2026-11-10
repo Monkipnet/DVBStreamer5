@@ -529,10 +529,10 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 #binaryUpdateProgress{position:fixed;right:14px;bottom:14px;z-index:100005;width:min(380px,calc(100vw - 28px));box-sizing:border-box;background:#162638;border:1px solid rgba(125,209,255,.38);border-radius:11px;padding:12px 14px;box-shadow:0 12px 40px rgba(0,0,0,.55);color:#e4f4ff}
 #binaryUpdateProgress[hidden]{display:none}
 #binaryUpdateProgress{padding-right:40px}
-#binaryUpdateClose{position:absolute;top:6px;right:7px;width:27px;height:27px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(160,198,230,.25);border-radius:7px;background:rgba(255,255,255,.075);color:inherit;cursor:pointer;font-size:20px;line-height:1}
-#binaryUpdateClose:hover{background:rgba(255,255,255,.18)}
+#binaryUpdateClose{position:absolute;top:8px;right:8px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:50%;background:#d9363e;color:#fff;cursor:pointer;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;line-height:1;box-shadow:0 3px 8px rgba(0,0,0,.24)}
+#binaryUpdateClose:hover{background:#f0444d;transform:scale(1.08)}
 #binaryUpdateClose:focus-visible{outline:2px solid #74c9ff;outline-offset:2px}
-html[data-dashboard-theme="light"] #binaryUpdateClose{background:#eaf2fc;border-color:#d1e0ef;color:#24405d}
+html[data-dashboard-theme="light"] #binaryUpdateClose{background:#d9363e;color:#fff;border:0}
 
 #binaryUpdateProgress .update-progress-label{font-size:.84rem;line-height:1.5}
 #binaryUpdateProgress .update-progress-track{margin-top:9px;height:4px;border-radius:8px;background:rgba(255,255,255,.14);overflow:hidden}
@@ -823,7 +823,7 @@ html[data-dashboard-theme="light"] :is(.modal-content button,.system-menu-item,.
 </div>
 </details>
 <aside id="binaryUpdateProgress" hidden role="status" aria-live="polite" data-phase="idle">
-<button type="button" id="binaryUpdateClose" onclick="closeBinaryUpdateProgress()" aria-label="Close update notification" title="Close update notification" data-ui-ru="Закрыть уведомление" data-ui-en="Close notification" data-ui-hr="Zatvori obavijest">×</button>
+<button type="button" id="binaryUpdateClose" onclick="closeBinaryUpdateProgress()" aria-label="Закрыть уведомление" title="Закрыть уведомление">×</button>
 <div id="binaryUpdateProgressText" class="update-progress-label"></div>
 <div class="update-progress-track"><div class="update-progress-fill"></div></div>
 </aside>
@@ -3413,6 +3413,13 @@ function applyLanguage() {
   applyExplicitBilingual(document.body);
   applyRuntimeLocalization(document.body);
   updateDashboardThemeButton();
+  const updateClose=document.getElementById('binaryUpdateClose');
+  if(updateClose){
+    const closeLabel=language==='ru'?'Закрыть уведомление':language==='hr'?'Zatvori obavijest':'Close notification';
+    updateClose.setAttribute('aria-label',closeLabel);
+    updateClose.title=closeLabel;
+    updateClose.textContent='×';
+  }
 }
 function toggleLanguage() {
   language = language === 'en' ? 'ru' : language === 'ru' ? 'hr' : 'en';
