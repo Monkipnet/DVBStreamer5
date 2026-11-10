@@ -12,7 +12,7 @@ assert.ok(begin>=0&&end>begin,'group helper block missing');
 const sandbox={URL,URLSearchParams,language:'en',
  subtitleUiTriText:(ru,en)=>en};
 const grouping=vm.runInNewContext(source.slice(begin,end)+
- '\n({makeDvbCardGroups,makeSatelliteTransponderGroups,streamSatelliteTransponderInfo,makeNetworkInputGroups,streamInputNetworkGroup});',sandbox);
+ '\n({makeDvbCardGroups,makeSatelliteTransponderGroups,streamSatelliteTransponderInfo,makeNetworkInputGroups,streamInputNetworkGroup,sortNetworkInputStreams,inputHostSortKey});',sandbox);
 const sat=(id,{freq='11836000',pol='H',sr='27500',adapter=1,frontend=0,isi=-1,diseqc=0,delivery='dvb-s2'}={})=>({
  id:'sat'+id,name:'SAT '+id,dvb_input:true,dvb_adapter:adapter,dvb_frontend:frontend,
  dvb_card_key:'pci:0000:01:00.0',
@@ -54,12 +54,33 @@ assert.equal(groups.find(g=>g.key==='dns:stream.example.org').streams.length,1);
 assert.equal(groups.find(g=>g.key==='other').streams.length,1);
 assert.equal(grouping.makeDvbCardGroups([s1,inputs[0]]).cards.length,1);
 assert.equal(grouping.makeDvbCardGroups(inputs).network.length,inputs.length);
+const flat=Array.from(grouping.sortNetworkInputStreams([
+ ip('high','udp://@225.2.2.99:5000'),
+ ip('low','http://225.2.2.9/live'),
+ ip('last','file:///tmp/test.ts'),
+ ip('dns2','http://stream.example.net/live'),
+ ip('first','udp://@10.1.1.1:5000'),
+ ip('v6high','srt://[2001:db8::2]:9000'),
+ ip('v6low','http://[2001:db8::1]/live'),
+ ip('backup-sort','udp://@225.2.2.10:5000','udp://@1.1.1.1:5000')
+])).map(s=>s.id);
+assert.deepEqual(flat,['first','low','backup-sort','high','v6low','v6high','dns2','last'],
+ 'Network tiles must be sorted numerically by primary input IP');
+assert.equal(grouping.inputHostSortKey(ip('udp','udp://@239.3.2.1:5000')).kind,0);
+assert.equal(grouping.inputHostSortKey(ip('v6','http://[2001:db8::1]/x')).kind,1);
+assert.ok(source.includes("grid.className='tile-grid network-input-tiles'"),
+ 'Network streams require a visible grid');
+assert.ok(source.includes('for(const stream of sortNetworkInputStreams(grouped.network))'),
+ 'Network streams must use the sorted order');
+assert.ok(!source.includes("addInputSubgroup(list,'net:'"),
+ 'Network streams must not have collapsible subnet groups');
+
 for(const marker of ['inputSubgroupStorageKey','updateInputSubgroupCounts(tiles);',
-  "addInputSubgroup(tiles,'tp:'","addInputSubgroup(list,'net:'",
+  "addInputSubgroup(tiles,'tp:'","sortNetworkInputStreams(grouped.network)",
   "tiles.classList.toggle('grouped-tiles', streams.length > 0)"])
  assert.ok(source.includes(marker),'missing grouping UI integration: '+marker);
 assert.ok(!source.includes("addInputSubgroup(nested,'tp:'"),
   'satellite TP groups must not remain nested inside a DVB card');
 for(const marker of ["meters.dataset.tpMeters='1'","[data-tp-meters]","renderDvbFrontendMeters(container,{streams}","function renderDvbFrontendMeters("])
  assert.ok(source.includes(marker),'missing TP signal/quality meter integration: '+marker);
-console.log('PASS: satellite transponder and IPv4/IPv6 input subnet tile grouping');
+console.log('PASS: transponder groups and flat IP-sorted network tiles');
