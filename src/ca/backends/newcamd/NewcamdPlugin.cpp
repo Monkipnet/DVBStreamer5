@@ -193,6 +193,12 @@ struct ServiceBinding {
     std::string lastSuccessfulEcmSignature;
     uint64_t ecmRequests = 0;
     uint64_t cwUpdates = 0;
+    // Passive health counters, scoped to this service and never used to select CW.
+    uint64_t healthCwReplies = 0;
+    uint64_t healthNoCwReplies = 0;
+    uint64_t healthLastCwMs = 0;
+    uint64_t healthWaitingSinceMs = 0;
+    uint64_t healthLastWaitingLogMs = 0;
 
     // Irdeto ECMs on one service can rotate through several CHIDs.  OSCam/Astra
     // only keeps using the CHID that actually returns a valid CW.  Track that
@@ -355,6 +361,10 @@ struct NewcamdInstance {
     // affecting any other service that uses the same OSCam reader/account.
     std::map<std::string, std::shared_ptr<NewcamdSession>> sessionsByStream;
     std::map<std::string, std::shared_ptr<ServiceBinding>> servicesByStream;
+    // Short, bounded cross-service correlation window for reader-wide failures.
+    std::mutex healthMutex;
+    std::map<std::string, std::deque<std::pair<uint64_t, std::string>>> healthRejects;
+    std::map<std::string, uint64_t> healthLastMassLogMs;
 };
 
 constexpr size_t kMaxSessionsPerReader = 0; // 0 = unlimited
@@ -888,6 +898,41 @@ bool forward_irdeto_emm(const std::string& clientKey, const std::string& streamI
     return true;
 }
 
+// Diagnostic-only correlation: three distinct service failures within eight
+// seconds point to a shared upstream reader outage rather than one bad ECM.
+// Never retain CW, ECM bytes, signatures, passwords or reader configuration.
+void report_ca_health_reject(NewcamdInstance* inst,
+                             const std::string& clientKey,
+                             const std::string& streamId) {
+    if (!inst) return;
+    const uint64_t now = monotonic_ms();
+    size_t affected = 0;
+    bool report = false;
+    {
+        std::lock_guard<std::mutex> lock(inst->healthMutex);
+        auto& recent = inst->healthRejects[clientKey];
+        while (!recent.empty() &&
+               (now < recent.front().first || now - recent.front().first > 8000))
+            recent.pop_front();
+        recent.emplace_back(now, streamId);
+        if (recent.size() > 128) recent.pop_front();
+        std::set<std::string> streams;
+        for (const auto& item : recent) streams.insert(item.second);
+        affected = streams.size();
+        auto& last = inst->healthLastMassLogMs[clientKey];
+        if (affected >= 3 && (last == 0 || now < last || now - last >= 30000)) {
+            last = now;
+            report = true;
+        }
+    }
+    if (report) {
+        std::cerr << "CA HEALTH WARNING: event=multi_service_no_cw"
+                  << " client=" << clientKey
+                  << " affected_services=" << affected
+                  << " window_ms=8000" << std::endl;
+    }
+}
+
 void configure_service_callback(NewcamdInstance* inst,
                                 const std::string& clientKey,
                                 const std::string& streamId,
@@ -983,6 +1028,11 @@ void configure_service_callback(NewcamdInstance* inst,
                           << " msg=" << messageId
                           << " reason=no-control-word" << std::endl;
             }
+            if (auto healthTarget = weakBinding.lock()) {
+                std::lock_guard<std::mutex> healthLock(healthTarget->mutex);
+                ++healthTarget->healthNoCwReplies;
+            }
+            report_ca_health_reject(inst, clientKey, streamId);
             pump_ecm_queue(inst, clientKey, session);
             return;
         }
@@ -1143,6 +1193,19 @@ void configure_service_callback(NewcamdInstance* inst,
                               << static_cast<unsigned>(target->fastEcmObservedParity)
                               << " action=" << fastAction
                               << std::endl;
+                }
+                if ((parity & 1U) != 0U) {
+                    ++target->healthCwReplies;
+                    target->healthLastCwMs = monotonic_ms();
+                    const uint64_t latency = target->healthLastCwMs >= startedMs
+                        ? target->healthLastCwMs - startedMs : 0;
+                    if (latency >= 1000) {
+                        std::cerr << "CA HEALTH WARNING: event=slow_ecm"
+                                  << " client=" << clientKey
+                                  << " stream=" << streamId
+                                  << " sid=" << target->serviceId
+                                  << " latency_ms=" << latency << std::endl;
+                    }
                 }
                 sid = target->serviceId;
                 if (target->tsMonitor && (parity & 1U) && acceptedCw) {
@@ -2016,6 +2079,40 @@ static int newcamd_process_ts(void* instance, const char* stream_id, uint8_t* da
             << " odd_to_even=" << binding.diagParitySwapOddToEven
             << " sample_pid=" << binding.diagVerifySamplePid
             << std::endl;
+    }
+
+    // Report only sustained missing-key periods, not transient TS startup.
+    // This does not clear, extend, install or reuse any control word.
+    if (waitingForKey) {
+        const uint64_t now = monotonic_ms();
+        if (binding.healthWaitingSinceMs == 0)
+            binding.healthWaitingSinceMs = now;
+        const uint64_t elapsed = now >= binding.healthWaitingSinceMs
+            ? now - binding.healthWaitingSinceMs : 0;
+        if (elapsed >= 1000 &&
+            (binding.healthLastWaitingLogMs == 0 ||
+             now < binding.healthLastWaitingLogMs ||
+             now - binding.healthLastWaitingLogMs >= 10000)) {
+            binding.healthLastWaitingLogMs = now;
+            std::cerr << "CA HEALTH WARNING: event=missing_parity_key"
+                      << " stream=" << stream_id
+                      << " sid=" << binding.serviceId
+                      << " duration_ms=" << elapsed
+                      << " even_valid=" << (binding.even.valid ? 1 : 0)
+                      << " odd_valid=" << (binding.odd.valid ? 1 : 0)
+                      << " no_cw_replies=" << binding.healthNoCwReplies
+                      << std::endl;
+        }
+    } else if (binding.healthWaitingSinceMs != 0) {
+        const uint64_t now = monotonic_ms();
+        std::cerr << "CA HEALTH RECOVERED: event=missing_parity_key"
+                  << " stream=" << stream_id
+                  << " sid=" << binding.serviceId
+                  << " duration_ms=" << (now >= binding.healthWaitingSinceMs
+                     ? now - binding.healthWaitingSinceMs : 0)
+                  << std::endl;
+        binding.healthWaitingSinceMs = 0;
+        binding.healthLastWaitingLogMs = 0;
     }
 
     if (changed) {
