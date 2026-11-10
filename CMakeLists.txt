@@ -361,9 +361,9 @@ set_target_properties(dvbstreamer5_ca_newcamd PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
 
-# V10.8.457: optional TSDecrypt CA backend, isolated per-service worker.
-# It requires the /usr/bin/tsdecrypt executable at runtime and never starts
-# unless a tile explicitly selects a CAM client using backend_id=tsdecrypt.
+# V10.8.459: optional TSDecrypt CA backend, isolated per-service worker.
+# It prefers the portable bin/tsdecrypt executable; host binaries are fallbacks.
+# It never starts unless a tile explicitly selects backend_id=tsdecrypt.
 add_library(dvbstreamer5_ca_tsdecrypt SHARED
     src/ca/backends/tsdecrypt/TsdecryptPlugin.cpp
 )
@@ -379,6 +379,12 @@ set_target_properties(dvbstreamer5_ca_tsdecrypt PROPERTIES
     OUTPUT_NAME "dvbstreamer5-ca-tsdecrypt"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
+
+# V10.8.459: ensure forked TSDecrypt does not retain HTTP/server sockets.
+add_executable(dvbstreamer5_tsdecrypt_fd_isolation_test
+    tests/test_tsdecrypt_fd_isolation.cpp)
+add_test(NAME tsdecrypt_fd_isolation
+    COMMAND dvbstreamer5_tsdecrypt_fd_isolation_test)
 
 # V326: audio PID track selection and PMT codec/language discovery.
 add_executable(dvbstreamer5_audio_track_test
