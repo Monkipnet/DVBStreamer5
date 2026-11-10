@@ -60,4 +60,6 @@ for(const marker of ['inputSubgroupStorageKey','updateInputSubgroupCounts(tiles)
  assert.ok(source.includes(marker),'missing grouping UI integration: '+marker);
 assert.ok(!source.includes("addInputSubgroup(nested,'tp:'"),
   'satellite TP groups must not remain nested inside a DVB card');
+for(const marker of ["meters.dataset.tpMeters='1'","[data-tp-meters]","renderDvbFrontendMeters(container,{streams}","function renderDvbFrontendMeters("])
+ assert.ok(source.includes(marker),'missing TP signal/quality meter integration: '+marker);
 console.log('PASS: satellite transponder and IPv4/IPv6 input subnet tile grouping');
