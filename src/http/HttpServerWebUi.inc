@@ -780,6 +780,29 @@ html[data-dashboard-theme="light"] .modal-content :is(.button-primary,.button-da
   color:inherit;
 }
 
+/* V10.8.456: high-contrast light mode for all API/config dialogs and network monitor. */
+html[data-dashboard-theme="light"] :is(.modal-content.quality-modal,.modal-content.stream-modal,.modal-content.network-modal,.modal-content){
+  background:#fff;color:#172b43;border-color:#c2d3e5;
+}
+html[data-dashboard-theme="light"] :is(.modal-content h2,.modal-content h3,.modal-content h4,.modal-content .form-row label,.modal-content .form-row strong,.modal-content .cam-name,.modal-content .cam-head strong){
+  color:#152b43;
+}
+html[data-dashboard-theme="light"] :is(.modal-content .cam-empty,.modal-content .cam-row,.modal-content .cam-device,.modal-content .field-help,.modal-content .form-hint,.modal-content .hint,.modal-content .network-empty){
+  color:#354e6b;
+}
+html[data-dashboard-theme="light"] .network-table{color:#172b43;background:#fff}
+html[data-dashboard-theme="light"] .network-table :is(td,th){color:#172b43;border-bottom-color:#d7e1eb}
+html[data-dashboard-theme="light"] .network-table th{color:#294966;font-weight:700}
+html[data-dashboard-theme="light"] :is(.network-empty,.connection-monitor-hint){color:#3d5670}
+html[data-dashboard-theme="light"] .modal-content :is(.form-grid,.form-row,.cam-row,.network-table,.network-table td,.cam-empty){background-color:transparent}
+html[data-dashboard-theme="light"] .modal-content :is(.button-secondary,.period-tabs button:not(.active)){
+  background:#e7eff9;color:#173851;border-color:#bfd2e5;
+}
+html[data-dashboard-theme="light"] .modal-content .button-primary{color:#fff}
+html[data-dashboard-theme="light"] .modal-content .modal-close{color:#fff}
+html[data-dashboard-theme="light"] .quality-head :is(.quality-title,.quality-title small,.quality-refresh,.quality-output-select,.quality-legend,.quality-legend .value,.quality-legend .unit){color:#2c455f}
+html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-output-chart-head,.quality-output-chart-head strong,.quality-output-chart-head span){color:#223a55}
+
 </style>
 </head>
 <body>
