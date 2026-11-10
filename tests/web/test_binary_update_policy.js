@@ -138,7 +138,7 @@ try {
   // Regression: PHP download.php may reject HEAD but accept normal GET.
   const fixtureDir=path.join(tempRoot,'fixture','DVBStreamer5-10.8.411-linux-x86_64');
   fs.mkdirSync(fixtureDir,{recursive:true});
-  fs.writeFileSync(path.join(fixtureDir,'VERSION'),'10.8.411\\n');
+  fs.writeFileSync(path.join(fixtureDir,'VERSION'),'10.8.411\n');
   const archive=path.join(tempRoot,'fixture.tar.gz');
   const packed=spawnSync('tar',['-czf',archive,'-C',path.join(tempRoot,'fixture'),
     'DVBStreamer5-10.8.411-linux-x86_64'],{encoding:'utf8'});
@@ -147,7 +147,8 @@ try {
     '#!/usr/bin/env bash',
     'for arg in "$@"; do',
     '  case "$arg" in',
-    '    -I|-D|*latest.json*|https://tvstreammersat5.tech/) exit 22 ;;',
+    '    *latest.json*|https://tvstreammersat5.tech/) exit 22 ;;',
+    '    -fsSLI|-I|--head) exit 22 ;;',
     '  esac',
     'done',
     'dest=""',
@@ -159,7 +160,7 @@ try {
     'cp '+JSON.stringify(archive)+' "$dest"',
     "printf '200 https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c3d'",
     'exit 0'
-  ].join('\\n')+'\\n',{mode:0o755});
+  ].join('\n')+'\n',{mode:0o755});
   const fallback=spawnSync('bash',['scripts/dvbstreamer5_update.sh','check','10.8.440'],{
     encoding:'utf8',timeout:15000,
     env:{...process.env,PATH:tempRoot+path.delimiter+process.env.PATH}
