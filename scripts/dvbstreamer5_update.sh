@@ -114,7 +114,8 @@ download_archive(){
 check(){
   local tmp available=false
   tmp="$(mktemp -d)"
-  trap 'rm -rf -- "$tmp"' EXIT
+  # Expand the temporary directory now: local variables are gone at shell EXIT.
+  trap "rm -rf -- '$tmp'" EXIT
   read_release "$tmp"
   if newer "$RELEASE_VERSION" "$2"; then available=true; fi
   printf '{"result":"ok","current":"%s","latest":"%s","available":%s}\n' "$2" "$RELEASE_VERSION" "$available"
@@ -125,7 +126,8 @@ install_release(){
   flock -n 9 || die 'Update already running'
   local tmp archive root bundle backup name line expected_version
   tmp="$(mktemp -d -p /var/tmp dvb5-update.XXXXXXXX)"
-  trap 'rm -rf -- "$tmp"' EXIT
+  # Expand the temporary directory now: local variables are gone at shell EXIT.
+  trap "rm -rf -- '$tmp'" EXIT
   read_release "$tmp"
   newer "$RELEASE_VERSION" "$2" || die 'No newer release'
   expected_version="$RELEASE_VERSION"
