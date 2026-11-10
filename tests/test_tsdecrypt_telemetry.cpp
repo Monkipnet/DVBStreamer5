@@ -45,7 +45,7 @@ int main() {
     check(r.valid && r.received == 52 && r.duplicates == 4 && r.processed == 48, "r.valid && r.received == 52 && r.duplicates == 4 && r.processed == 48");
     check(!parseEcmReport("CW | SID 0x69 Data: SECRET").valid, "!parseEcmReport(\"CW | SID 0x69 Data: SECRET\").valid");
     check(!parseEcmReport("ECM | Received 1 (4 dup) and processed 3 in 10 seconds.").valid, "!parseEcmReport(\"ECM | Received 1 (4 dup) and processed 3 in 10 seconds.\").valid");
-    assert(hasSafeLogEvent("2026 | CW  | OK: Valid code word was received.",
-                           "CW  | OK: Valid code word was received."));
+    check(hasSafeLogEvent("2026 | CW  | OK: Valid code word was received.",
+                           "CW  | OK: Valid code word was received."), "CW safe event");
     std::puts("TSDecrypt safe telemetry tests passed");
 }
