@@ -4,6 +4,14 @@ umask 077
 URL='https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c3d'
 META='https://tvstreammersat5.tech/downloads/dvbstreamer5/latest.json'
 MAX_BYTES=1073741824
+UPDATE_STATUS='/var/lib/dvbstreamer5/update-status'
+update_phase(){
+  # Fixed, non-user-controlled phase strings; readable by the web status API.
+  case "$1" in downloading|verifying|installing|restarting|done|error) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\\n' "$1" > "$UPDATE_STATUS"
+}
 die(){ echo "UPDATE ERROR: $*" >&2; exit 1; }
 valid_version(){ [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
 newer(){
@@ -128,12 +136,17 @@ install_release(){
   tmp="$(mktemp -d -p /var/tmp dvb5-update.XXXXXXXX)"
   # Expand the temporary directory now: local variables are gone at shell EXIT.
   trap "rm -rf -- '$tmp'" EXIT
+  mkdir -p -m 0755 /var/lib/dvbstreamer5
+  # Preserve a visible error state even when a later command exits under -e.
+  trap 'update_phase error || true' ERR
+  update_phase downloading
   read_release "$tmp"
   newer "$RELEASE_VERSION" "$2" || die 'No newer release'
   expected_version="$RELEASE_VERSION"
   archive="$tmp/release.tar.gz"
   if [[ ! -f "$archive" ]]; then download_archive "$archive"; fi
   tar -tzf "$archive" > "$tmp/names"
+  update_phase verifying
   determine_archive_release "$archive" "$tmp/names"
   root="$ARCHIVE_ROOT"
   [[ "$RELEASE_VERSION" == "$expected_version" ]] || die 'Downloaded archive version mismatch'
@@ -157,14 +170,17 @@ install_release(){
   backup="/var/lib/dvbstreamer5/update-backups/before-$RELEASE_VERSION-from-$2"
   [[ -d /opt/DVBStreamer5 && ! -e "$backup" ]] || die 'Missing runtime or backup collision'
   cp -a /opt/DVBStreamer5 "$backup"
+  update_phase installing
   echo "UPDATE: installing $RELEASE_VERSION; backup=$backup"
   if ! (cd "$bundle" && /bin/bash ./install.sh) || ! systemctl is-active --quiet dvbstreamer5.service; then
     systemctl stop dvbstreamer5.service || true
     rm -rf -- /opt/DVBStreamer5
     cp -a "$backup" /opt/DVBStreamer5
     systemctl restart dvbstreamer5.service || true
+    update_phase error
     die 'Installation failed; rolled back runtime'
   fi
+  update_phase done
   echo "UPDATE: completed $RELEASE_VERSION"
 }
 (( $# == 2 )) || die 'Usage: dvbstreamer5_update.sh check|install VERSION'
