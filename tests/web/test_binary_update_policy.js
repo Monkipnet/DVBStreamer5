@@ -74,9 +74,13 @@ for(const marker of [
 ]) assert.ok(packageScript.includes(marker),'Missing installer updater guard: '+marker);
 for(const marker of [
   'Updater missing: install /opt/DVBStreamer5/updater.sh',
-  'Updater check failed: run /bin/bash',
+  'Updater check failed: ',
+  'failure["exit_status"] = exitCode',
+  'Json::writeString(writer, failure)',
+  '" 2>&1"',
   'Json::parseFromStream(reader, jsonInput, &parsed, &parseErrors)'
 ]) assert.ok(transport.includes(marker),'Missing update diagnostics: '+marker);
+assert.ok(!transport.includes('" 2>/dev/null"'), 'Updater stderr must not be discarded');
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
 assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
 const versionHeader=fs.readFileSync('src/AppVersion.h','utf8');
