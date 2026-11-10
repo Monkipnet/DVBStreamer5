@@ -754,6 +754,32 @@ html[data-dashboard-theme="light"] :is(.modal-content button,.system-menu-item,.
   box-shadow:inset 0 0 0 2px rgba(38,134,210,.4);
 }
 
+/* V10.8.455: readable light theme in all dashboard dialogs; no effect on dark theme. */
+html[data-dashboard-theme="light"] .modal-content,
+html[data-dashboard-theme="light"] .modal-content :is(div,span,p,li,td,th,dt,dd,summary,fieldset,legend){
+  color:#25364b;
+}
+html[data-dashboard-theme="light"] .modal-content :is(h1,h2,h3,h4,h5,h6,strong,b,label,.form-label,.field-label,.option-title){
+  color:#152b43;
+}
+html[data-dashboard-theme="light"] .modal-content :is(small,.hint,.field-help,.description,.muted,.secondary,.help-text){
+  color:#42566d;
+}
+html[data-dashboard-theme="light"] .modal-content :is(input,select,textarea,pre,code){
+  color:#152b43;background-color:#fff;border-color:#b9cbdc;
+}
+html[data-dashboard-theme="light"] .modal-content :is(input,textarea)::placeholder{color:#536b82;opacity:1}
+html[data-dashboard-theme="light"] .modal-content :is(.quality-board,.quality-charts,.quality-output-chart,.quality-card,.quality-details,.quality-table){
+  background:#fff;color:#22354a;border-color:#ccd9e6;
+}
+html[data-dashboard-theme="light"] :is(.quality-board,.quality-board canvas){background:#fff}
+html[data-dashboard-theme="light"] .quality-output-chart-head,
+html[data-dashboard-theme="light"] .quality-output-chart-head :is(strong,span){color:#253b54}
+/* Intentional semantic actions remain colored on light backgrounds. */
+html[data-dashboard-theme="light"] .modal-content :is(.button-primary,.button-danger,.modal-close,.status-pill,.badge){
+  color:inherit;
+}
+
 </style>
 </head>
 <body>
@@ -862,6 +888,9 @@ function toggleDashboardTheme(){
   document.documentElement.dataset.dashboardTheme=dashboardTheme;
   try{localStorage.setItem(dashboardThemeKey,dashboardTheme);}catch(_){}
   updateDashboardThemeButton();
+  if (typeof qualityChart !== 'undefined' && qualityChart.streamId && typeof loadQualityChart === 'function') {
+    loadQualityChart();
+  }
 }
 const translations = {
   en: {
@@ -9683,7 +9712,10 @@ function drawQualityChart(data) {
   const width = canvas.width / targetRatio;
   const height = 320;
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#0f1622';
+  const chartLight = document.documentElement.dataset.dashboardTheme === 'light';
+  const chartText = chartLight ? '#23364c' : '#cfd8ea';
+  const chartAxis = chartLight ? '#42566d' : '#c8d0dc';
+  ctx.fillStyle = chartLight ? '#ffffff' : '#0f1622';
   ctx.fillRect(0, 0, width, height);
 
   const streamName = stream.name || data.id || 'Поток';
@@ -9723,7 +9755,7 @@ function drawQualityChart(data) {
   `;
 
   if (!samples.length) {
-    ctx.fillStyle = '#cfd8ea';
+    ctx.fillStyle = chartText;
     ctx.font = '700 13px Arial';
     ctx.textAlign = 'center';
     ctx.fillText('История пока пустая. Данные появятся после нескольких обновлений состояния.', width / 2, height / 2);
@@ -9767,7 +9799,7 @@ function drawQualityChart(data) {
   const rightMax = Math.max(5, rightAxis.max);
   const rightStep = Math.max(1, rightAxis.step);
 
-  ctx.fillStyle = '#cfd8ea';
+  ctx.fillStyle = chartText;
   ctx.font = '700 13px Arial';
   ctx.textAlign = 'center';
   let titleText = `${state.server_name || 'DVBStreamer5'}: ${streamName} — ${qualityOutputLabel(output, selectedIndex)}`;
@@ -9777,7 +9809,7 @@ function drawQualityChart(data) {
   ctx.fillText(titleText, width / 2, 18);
 
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(255,255,255,.24)';
+  ctx.strokeStyle = chartLight ? 'rgba(45,70,100,.48)' : 'rgba(255,255,255,.24)';
   ctx.beginPath();
   ctx.moveTo(left, top - 8);
   ctx.lineTo(left, plotBottom);
@@ -9786,9 +9818,9 @@ function drawQualityChart(data) {
   ctx.lineTo(plotRight, plotBottom);
   ctx.stroke();
 
-  ctx.strokeStyle = 'rgba(255,255,255,.13)';
+  ctx.strokeStyle = chartLight ? 'rgba(55,80,112,.17)' : 'rgba(255,255,255,.13)';
   ctx.setLineDash([2, 2]);
-  ctx.fillStyle = '#c8d0dc';
+  ctx.fillStyle = chartAxis;
   ctx.font = '11px Arial';
   ctx.textAlign = 'right';
   for (let value=0; value<=leftMaxMbit; value+=bitrateStep) {
@@ -9817,7 +9849,7 @@ function drawQualityChart(data) {
     ctx.save();
     ctx.translate(correctedX, height - 10);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillStyle = edge ? '#ff7f7f' : '#c8d0dc';
+    ctx.fillStyle = edge ? (chartLight ? '#b83232' : '#ff7f7f') : chartAxis;
     ctx.textAlign = 'left';
     ctx.fillText(edge ? edgeTime(ts) : formatTime(ts, data.period_seconds), 0, 4);
     ctx.restore();
