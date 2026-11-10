@@ -117,6 +117,9 @@ download_archive(){
   local out="$1" details status effective size
   details="$(curl -sSL --show-error --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 600 --max-filesize "$MAX_BYTES" -o "$out" -w '%{http_code} %{url_effective}' "$URL")" || die 'Archive download failed'
   read -r status effective <<< "$details"
+  if [[ "$status" == 404 ]]; then
+    die "Archive not found (HTTP 404): verify the download.php file ID on tvstreammersat5.tech"
+  fi
   [[ "$status" == 200 ]] || die "Download HTTP $status (final URL: $effective)"
   # download.php may point to an external HTTPS CDN. The source URL is fixed,
   # and curl permits only HTTPS redirect targets with verified TLS.
