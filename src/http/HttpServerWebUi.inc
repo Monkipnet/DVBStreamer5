@@ -116,6 +116,16 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .dvb-card-meter-label{position:relative;z-index:1;color:#fff;font-size:9px;font-weight:800;line-height:15px;text-shadow:0 1px 2px rgba(0,0,0,.95);white-space:nowrap;font-variant-numeric:tabular-nums}
 .dvb-card-count{flex:none;color:#9fe7b3;font-size:.72rem;font-variant-numeric:tabular-nums}
 .dvb-card-tiles{padding:10px 12px 12px;border-top:1px solid rgba(255,255,255,.07)}
+.dvb-transponder-groups,.network-subnet-list{display:flex;flex-direction:column;gap:9px;min-width:0}
+.input-subgroup{width:100%;min-width:0;box-sizing:border-box;border:1px solid rgba(125,209,255,.17);border-radius:10px;background:rgba(11,20,33,.42);overflow:hidden}
+.input-subgroup>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:9px;padding:9px 11px;color:#d8e9f9;user-select:none;min-width:0}
+.input-subgroup>summary::-webkit-details-marker{display:none}
+.input-subgroup>summary:before{content:'▸';color:#7dd1ff;flex:none;font-size:.87rem}
+.input-subgroup[open]>summary:before{content:'▾'}
+.input-subgroup>summary:hover{background:rgba(57,145,227,.08)}
+.input-subgroup-title{font-size:.78rem;font-weight:700;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;text-align:left}
+.input-subgroup-count{font-size:.72rem;flex:none;color:#9fe7b3;font-variant-numeric:tabular-nums}
+.input-subgroup-tiles{padding:10px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
 .non-dvb-tile-heading{color:#c2d3e6;margin:0 0 9px;font-size:.84rem;font-weight:700}
 @media(max-width:700px){.dvb-card-group>summary{flex-wrap:wrap;gap:6px 9px}.dvb-card-title{flex:1 1 calc(100% - 26px);white-space:normal;overflow-wrap:anywhere}.dvb-card-status{width:calc(100% - 19px);margin-left:19px;gap:8px;justify-content:space-between}.dvb-card-meters{max-width:68%;overflow-x:auto}.dvb-card-tiles,.non-dvb-tile-group{padding:9px}}
@@ -3271,6 +3281,13 @@ try {
   }
 } catch (_) { /* Browser storage may be disabled. */ }
 const dvbCardGroupStorageKey = 'dvbstreamer5-dvb-card-group-open-v1';
+const inputSubgroupStorageKey = 'dvbstreamer5-input-subgroup-open-v1';
+let inputSubgroupOpen = {};
+try {
+  const savedSubgroups = JSON.parse(localStorage.getItem(inputSubgroupStorageKey) || '{}');
+  if (savedSubgroups && typeof savedSubgroups === 'object' && !Array.isArray(savedSubgroups))
+    inputSubgroupOpen = savedSubgroups;
+} catch (_) { /* Subgroups remain usable when browser storage is blocked. */ }
 let dvbCardGroupOpen = {};
 try {
   const savedGroups = JSON.parse(localStorage.getItem(dvbCardGroupStorageKey) || '{}');
@@ -4803,6 +4820,181 @@ function makeDvbCardGroups(streams) {
   for(const group of sorted) group.streams.sort(sortDvbCardStreams);
   return {cards:sorted,network};
 }
+
+function streamIsTerrestrialDvb(stream) {
+  if (stream?.dvb_input !== true) return false;
+  const uri=String(stream.input_uri||'');
+  const question=uri.indexOf('?');
+  const params=new URLSearchParams(question<0?'':uri.slice(question+1));
+  const delivery=String(params.get('delivery_system')||'dvb-s2').toLowerCase();
+  return delivery==='dvb-t'||delivery==='dvb-t2';
+}
+function streamSatelliteTransponderInfo(stream) {
+  if (stream?.dvb_input !== true || streamIsTerrestrialDvb(stream)) return null;
+  const uri=String(stream.input_uri||'');
+  const question=uri.indexOf('?');
+  const params=new URLSearchParams(question<0?'':uri.slice(question+1));
+  const adapter=Number(stream.dvb_adapter);
+  const frontend=Number(stream.dvb_frontend);
+  const frequency=Number(params.get('frequency_khz'));
+  const symbolRate=Number(params.get('symbol_rate'));
+  const polarity=String(params.get('polarity')||'').toUpperCase();
+  const delivery=String(params.get('delivery_system')||'dvb-s2').toLowerCase();
+  const isi=Number(params.get('stream_id')??stream.dvb_stream_id??-1);
+  const diseqc=Number(params.get('diseqc_source')??stream.dvb_diseqc_source??-1);
+  const unicableMode=String(params.get('unicable_mode')||stream.dvb_unicable_mode||'none');
+  const unicablePosition=Number(params.get('unicable_position')??stream.dvb_unicable_position??0);
+  const frontendLabel='A'+(Number.isInteger(adapter)&&adapter>=0?adapter:'?')+
+    '/FE'+(Number.isInteger(frontend)&&frontend>=0?frontend:'?');
+  const nit=String(stream.dvb_nit_network_name||'').trim().slice(0,80);
+  const orbit=String(stream.dvb_nit_orbital_position||'').trim().slice(0,30);
+  const manual=String(params.get('satellite_name')||'').trim().slice(0,80);
+  const satellite=nit ? nit+(orbit&&!nit.includes(orbit)?' · '+orbit:'') : (orbit||manual);
+  const valid=params.has('frequency_khz')&&params.has('symbol_rate')&&
+    params.has('polarity')&&Number.isInteger(frequency)&&
+    frequency>=900000&&frequency<=14000000&&
+    Number.isFinite(symbolRate)&&symbolRate>=100&&symbolRate<=60000&&
+    /^[HV]$/.test(polarity);
+  const extra=Number.isInteger(isi)&&isi>=0?' · ISI '+isi:'';
+  // Do not guess a transponder when the configured RF data is missing.
+  const title=(satellite?satellite+' · ':'')+
+    (valid?'TP '+Number((frequency/1000).toFixed(3))+' '+polarity+
+      ' '+symbolRate+extra:'TP —')+' · '+frontendLabel;
+  // Physical frontend, satellite selection and MIS form the tuning identity.
+  // Different programmes/SIDs on the same TP deliberately share one group.
+  const key=valid?JSON.stringify([
+    adapter,frontend,delivery,frequency,polarity,symbolRate,
+    Number.isInteger(isi)?isi:-1,
+    unicableMode==='en50494'||unicableMode==='en50607'
+      ? 'unicable:'+unicableMode+':'+unicablePosition
+      : 'diseqc:'+diseqc
+  ]):'unconfigured:'+String(stream.id);
+  return {key,title};
+}
+function makeSatelliteTransponderGroups(streams) {
+  const groups=new Map();
+  const terrestrial=[];
+  for(const stream of streams) {
+    const info=streamSatelliteTransponderInfo(stream);
+    if(!info){terrestrial.push(stream);continue;}
+    if(!groups.has(info.key))groups.set(info.key,{key:info.key,title:info.title,streams:[]});
+    groups.get(info.key).streams.push(stream);
+  }
+  const transponders=[...groups.values()].sort((a,b)=>
+    a.title.localeCompare(b.title,language,{numeric:true,sensitivity:'base'})||
+    a.key.localeCompare(b.key));
+  for(const group of transponders)group.streams.sort(sortDvbCardStreams);
+  terrestrial.sort(sortDvbCardStreams);
+  return {transponders,terrestrial};
+}
+function streamInputNetworkGroup(stream) {
+  // Classify the CONFIGURED primary input, not a backup URI that can change
+  // at runtime. This keeps tile groups stable during source failover.
+  const raw=String(stream?.input_uri||'').trim();
+  let hostname='';
+  try {
+    const uri=/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)?raw:'udp://'+raw;
+    hostname=String(new URL(uri).hostname||'').replace(/^\[|\]$/g,'').toLowerCase();
+  } catch (_) { /* Raw paths and unsupported endpoints have no IP subnet. */ }
+  const octets=hostname.split('.');
+  if(octets.length===4&&octets.every(part=>
+    /^\d{1,3}$/.test(part)&&Number(part)>=0&&Number(part)<=255)) {
+    const subnet=octets.slice(0,3).map(Number).join('.')+'.0/24';
+    return {key:'ipv4:'+subnet,title:subtitleUiTriText(
+      'Подсеть ','Subnet ','Podmreža ')+subnet};
+  }
+  if(hostname.includes(':')) {
+    // WHATWG URL.hostname normalizes IPv6 into hexadecimal groups. Expand
+    // '::' to identify the exact high 64 bits, without DNS or network calls.
+    const halves=hostname.split('::');
+    if(halves.length<=2) {
+      const left=halves[0]?halves[0].split(':'):[];
+      const right=halves.length===2&&halves[1]?halves[1].split(':'):[];
+      const missing=8-left.length-right.length;
+      const segments=halves.length===2
+        ? [...left,...Array(Math.max(0,missing)).fill('0'),...right]
+        : left;
+      if(segments.length===8&&segments.every(s=>/^[0-9a-f]{1,4}$/.test(s))) {
+        const prefix=segments.slice(0,4).map(s=>Number.parseInt(s,16).toString(16)).join(':')+'::/64';
+        return {key:'ipv6:'+prefix,title:subtitleUiTriText(
+          'Подсеть ','Subnet ','Podmreža ')+prefix};
+      }
+    }
+  }
+  if(hostname&&/^[a-z0-9.-]+$/.test(hostname))
+    return {key:'dns:'+hostname,title:'DNS: '+hostname};
+  return {key:'other',title:subtitleUiTriText(
+    'Другие входы (без IP-подсети)','Other inputs (no IP subnet)',
+    'Ostali ulazi (bez IP podmreže)')};
+}
+function makeNetworkInputGroups(streams) {
+  const groups=new Map();
+  for(const stream of streams) {
+    const info=streamInputNetworkGroup(stream);
+    if(!groups.has(info.key))groups.set(info.key,{key:info.key,title:info.title,streams:[]});
+    groups.get(info.key).streams.push(stream);
+  }
+  const result=[...groups.values()].sort((a,b)=>{
+    const rank=key=>key.startsWith('ipv4:')?0:key.startsWith('ipv6:')?1:
+      key.startsWith('dns:')?2:3;
+    return rank(a.key)-rank(b.key)||
+      a.title.localeCompare(b.title,language,{numeric:true,sensitivity:'base'});
+  });
+  for(const group of result)
+    group.streams.sort((a,b)=>String(a.name||a.id).localeCompare(
+      String(b.name||b.id),language,{numeric:true,sensitivity:'base'}));
+  return result;
+}
+function rememberInputSubgroup(key,open) {
+  inputSubgroupOpen[key]=open;
+  try {
+    const keys=Object.keys(inputSubgroupOpen);
+    if(keys.length>256)for(const old of keys.slice(0,keys.length-256))
+      delete inputSubgroupOpen[old];
+    localStorage.setItem(inputSubgroupStorageKey,JSON.stringify(inputSubgroupOpen));
+  }catch(_){ /* Groups still toggle without persistent storage. */ }
+}
+function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
+  const details=document.createElement('details');
+  details.className='input-subgroup';
+  details.dataset.subgroupKey=key;
+  // Unlike the existing card (collapsed by default), keep tiles visible by
+  // default so enabling subgrouping does not hide working network streams.
+  details.open=inputSubgroupOpen[key]!==false;
+  const summary=document.createElement('summary');
+  const heading=document.createElement('strong');
+  heading.className='input-subgroup-title';
+  heading.textContent=title;
+  heading.title=title;
+  const count=document.createElement('span');
+  count.className='input-subgroup-count';
+  count.dataset.subgroupCount='1';
+  count.textContent=streams.filter(s=>s.active).length+'/'+streams.length+' '+t('cardActive');
+  summary.append(heading,count);
+  const grid=document.createElement('div');
+  grid.className='tile-grid input-subgroup-tiles';
+  details.append(summary,grid);
+  details.addEventListener('toggle',()=>rememberInputSubgroup(key,details.open));
+  parent.appendChild(details);
+  for(const stream of streams) {
+    parents.set(String(stream.id),grid);
+    orderedStreams.push(stream);
+  }
+}
+function updateInputSubgroupCounts(tiles) {
+  const byId=new Map((state.streams||[]).map(s=>[String(s.id),s]));
+  for(const details of tiles.querySelectorAll('.input-subgroup[data-subgroup-key]')) {
+    let active=0,total=0;
+    for(const tile of details.querySelectorAll('.tile[data-stream-id]')) {
+      const stream=byId.get(tile.dataset.streamId);
+      if(!stream)continue;
+      ++total;
+      if(stream.active===true)++active;
+    }
+    const count=details.querySelector('[data-subgroup-count]');
+    if(count)count.textContent=active+'/'+total+' '+t('cardActive');
+  }
+}
 function dvbCardFrontendEntries(group) {
   // Group by the real physical frontend, never by service/channel count.
   const byFrontend=new Map();
@@ -5254,6 +5446,7 @@ function updateLiveTiles() {
   const byId = new Map(tileElements.map(tile => [tile.dataset.streamId, tile]));
   (state.streams || []).forEach(stream => updateStreamTile(byId.get(String(stream.id)), stream));
   updateDvbCardGroupCounts(tiles);
+  updateInputSubgroupCounts(tiles);
 }
 function render(force=false) {
   const tiles = document.getElementById('tiles');
@@ -5271,67 +5464,86 @@ function render(force=false) {
   tiles.innerHTML = '';
   const grouped = makeDvbCardGroups(streams);
   const hasDvbCards = grouped.cards.length > 0;
-  tiles.classList.toggle('grouped-tiles', hasDvbCards);
+  // A network-only installation must also get subnet groups.
+  tiles.classList.toggle('grouped-tiles', streams.length > 0);
   const parents = new Map();
-  let orderedStreams = streams;
-  if (hasDvbCards) {
-    orderedStreams = [];
-    for (const group of grouped.cards) {
-      const details = document.createElement('details');
-      details.className = 'dvb-card-group';
-      details.dataset.cardKey = group.key;
-      // Default closed; retain the user's choice on refresh and page reload.
-      details.open = dvbCardGroupOpen[group.key] === true;
-      const summary = document.createElement('summary');
-      const title = document.createElement('strong');
-      title.className = 'dvb-card-title';
-      title.textContent = dvbCardDisplayTitle(group);
-      const device = document.createElement('span');
-      device.className = 'dvb-card-device';
-      device.textContent = dvbCardDisplayDevice(group);
-      device.title = device.textContent;
-      const count = document.createElement('span');
-      count.className = 'dvb-card-count';
-      count.dataset.cardCount = '1';
-      count.textContent = group.streams.filter(stream => stream.active).length +
-        '/' + group.streams.length + ' ' + t('cardActive');
-      const status = document.createElement('span');
-      status.className = 'dvb-card-status';
-      const meters = document.createElement('span');
-      meters.className = 'dvb-card-meters';
-      meters.dataset.cardMeters = '1';
-      status.append(meters, count);
-      title.title = title.textContent;
-      summary.title = dvbCardDisplayDevice(group);
-      summary.append(title, status);
-      const grid = document.createElement('div');
-      grid.className = 'tile-grid dvb-card-tiles';
-      details.append(summary, grid);
-      details.addEventListener('toggle', () => {
-        dvbCardGroupOpen[group.key] = details.open;
-        saveDvbCardGroupOpen();
-      });
-      tiles.appendChild(details);
-      for (const stream of group.streams) {
-        parents.set(String(stream.id), grid);
+  const orderedStreams = [];
+  for (const group of grouped.cards) {
+    const details = document.createElement('details');
+    details.className = 'dvb-card-group';
+    details.dataset.cardKey = group.key;
+    // Keep the old physical DVB card fold state unchanged.
+    details.open = dvbCardGroupOpen[group.key] === true;
+    const summary = document.createElement('summary');
+    const title = document.createElement('strong');
+    title.className = 'dvb-card-title';
+    title.textContent = dvbCardDisplayTitle(group);
+    const device = document.createElement('span');
+    device.className = 'dvb-card-device';
+    device.textContent = dvbCardDisplayDevice(group);
+    device.title = device.textContent;
+    const count = document.createElement('span');
+    count.className = 'dvb-card-count';
+    count.dataset.cardCount = '1';
+    count.textContent = group.streams.filter(stream => stream.active).length +
+      '/' + group.streams.length + ' ' + t('cardActive');
+    const status = document.createElement('span');
+    status.className = 'dvb-card-status';
+    const meters = document.createElement('span');
+    meters.className = 'dvb-card-meters';
+    meters.dataset.cardMeters = '1';
+    status.append(meters,count);
+    title.title = title.textContent;
+    summary.title = dvbCardDisplayDevice(group);
+    summary.append(title,status);
+    details.appendChild(summary);
+    details.addEventListener('toggle', () => {
+      dvbCardGroupOpen[group.key] = details.open;
+      saveDvbCardGroupOpen();
+    });
+    tiles.appendChild(details);
+
+    const buckets=makeSatelliteTransponderGroups(group.streams);
+    if(buckets.transponders.length) {
+      const nested=document.createElement('div');
+      nested.className='dvb-card-tiles dvb-transponder-groups';
+      details.appendChild(nested);
+      for(const tp of buckets.transponders)
+        addInputSubgroup(nested,'tp:'+group.key+':'+tp.key,
+          tp.title,tp.streams,parents,orderedStreams);
+      if(buckets.terrestrial.length) {
+        const grid=document.createElement('div');
+        grid.className='tile-grid';
+        nested.appendChild(grid);
+        for(const stream of buckets.terrestrial) {
+          parents.set(String(stream.id),grid);
+          orderedStreams.push(stream);
+        }
+      }
+    } else {
+      // DVB-T/T2 stays grouped by physical card, as before.
+      const grid=document.createElement('div');
+      grid.className='tile-grid dvb-card-tiles';
+      details.appendChild(grid);
+      for(const stream of buckets.terrestrial) {
+        parents.set(String(stream.id),grid);
         orderedStreams.push(stream);
       }
     }
-    if (grouped.network.length) {
-      const section = document.createElement('section');
-      section.className = 'non-dvb-tile-group';
-      const heading = document.createElement('h2');
-      heading.className = 'non-dvb-tile-heading';
-      heading.textContent = t('networkStreams') + ' (' + grouped.network.length + ')';
-      const grid = document.createElement('div');
-      grid.className = 'tile-grid';
-      section.append(heading, grid);
-      tiles.appendChild(section);
-      for (const stream of grouped.network) {
-        parents.set(String(stream.id), grid);
-        orderedStreams.push(stream);
-      }
-    }
+  }
+  if(grouped.network.length) {
+    const section=document.createElement('section');
+    section.className='non-dvb-tile-group';
+    const heading=document.createElement('h2');
+    heading.className='non-dvb-tile-heading';
+    heading.textContent=t('networkStreams')+' ('+grouped.network.length+')';
+    const list=document.createElement('div');
+    list.className='network-subnet-list';
+    section.append(heading,list);
+    tiles.appendChild(section);
+    for(const input of makeNetworkInputGroups(grouped.network))
+      addInputSubgroup(list,'net:'+input.key,input.title,input.streams,
+        parents,orderedStreams);
   }
   orderedStreams.forEach(stream => {
     const outputs = outputConfigsForStream(stream);
