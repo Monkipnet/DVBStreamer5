@@ -38,6 +38,9 @@ for(const marker of [
   'flock -n',
   'tar -tzf',
   'tar -tvzf',
+  'determine_archive_release',
+  'No unique embedded version',
+  'ARCHIVE_ROOT',
   "root=\"${first%%/*}\"",
   'Cannot determine release version from the archive directory',
   'if [[ ! -f "$archive" ]]; then download_archive "$archive"; fi',
@@ -45,6 +48,7 @@ for(const marker of [
   'cp -a "$backup" /opt/DVBStreamer5'
 ]) assert.ok(updater.includes(marker),'Missing Bash updater protection: '+marker);
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
+assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
 const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
 assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
 console.log('PASS: Bash update UI, API, portable packaging and syntax');
