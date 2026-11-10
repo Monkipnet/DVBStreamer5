@@ -7009,6 +7009,10 @@ function newcamdRowHtml(client={}, index=0) {
     <div class="form-row"><label>User</label><input data-cam-field="user" value="${satEscape(cfg.user || client.user || 'user')}" /></div>
     <div class="form-row"><label>Password</label><input data-cam-field="pass" type="password" value="${satEscape(cfg.pass || client.pass || '')}" /></div>
     <div class="form-row full"><label>DES key</label><input data-cam-field="des" value="${satEscape(cfg.des || client.des || '0102030405060708091011121314')}" /></div>
+    <div class="form-row"><label>CAMD protocol (TSDecrypt)</label><select data-cam-field="protocol"><option value="NEWCAMD" ${(cfg.protocol || 'NEWCAMD').toUpperCase()==='NEWCAMD'?'selected':''}>Newcamd</option><option value="CS378X" ${String(cfg.protocol || '').toUpperCase()==='CS378X'?'selected':''}>CS378x</option></select></div>
+    <div class="form-row"><label>CAID (TSDecrypt)</label><input data-cam-field="caid" maxlength="4" placeholder="098D" value="${satEscape(cfg.caid || '098D')}" /></div>
+    <div class="form-row"><label>ECM PID (TSDecrypt, 0 = auto)</label><input data-cam-field="ecm_pid" type="number" min="0" max="8190" value="${Number(cfg.ecm_pid || 0)}" /></div>
+    <div class="form-row full"><small class="field-help">TSDecrypt: optional experimental CA engine. Select this backend on a dedicated CAM client, then select that client in a DVB tile. Default remains Newcamd. Dual ECM is not implemented.</small></div>
     <div class="form-row"><label>Max channels</label><input data-cam-field="max_services" type="number" min="1" max="64" value="${Number(client.max_services || 10)}" /></div>
     <div class="form-row"><label>Backend</label><select data-cam-field="backend_id">${caBackendOptions(client.backend_id || 'newcamd')}</select></div>
     <div class="form-row"><label>&nbsp;</label><button class="button-secondary" type="button" onclick="removeNewcamdRow(this)">Remove</button></div>
@@ -7032,7 +7036,7 @@ function collectNewcamdClients() {
       name: value('name') || id,
       max_services: Math.max(1, Math.min(64, Number(value('max_services') || 10))),
       backend_id: value('backend_id') || 'newcamd',
-      backend_config: {host:value('host') || '127.0.0.1', port:Number(value('port') || 15000), user:value('user') || 'user', pass:value('pass'), des:value('des') || '0102030405060708091011121314'}
+      backend_config: {host:value('host') || '127.0.0.1', port:Number(value('port') || 15000), user:value('user') || 'user', pass:value('pass'), des:value('des') || '0102030405060708091011121314', protocol:value('protocol') || 'NEWCAMD', caid:value('caid') || '098D', ecm_pid:Number(value('ecm_pid') || 0)}
     };
   }).filter(client => client.id);
 }
@@ -8660,7 +8664,7 @@ function openStreamForm(stream) {
         </div>
         <div class="form-row full edit-section" id="streamCamRow" style="display:${caMode==='icam'?'':'none'}">
           <div class="edit-section-head">iCAM / Newcamd</div>
-          <div class="edit-field"><div class="edit-field-title">Newcamd client</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select></div>
+          <div class="edit-field"><div class="edit-field-title">Newcamd client</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select><small class="field-help">CA engine is selected by this CAM client: Newcamd (default) or TSDecrypt (experimental). Configure TSDecrypt under Menu → Newcamd / OSCam CAM clients. It affects only this DVB tile.</small></div>
         </div>
         <div class="form-row full edit-section" id="streamCiPlusRow" style="display:${caMode==='ciplus'?'':'none'}">
           <div class="edit-section-head"><span>DVB-CI+ / VDR</span><small>VDR streamdev</small></div>
