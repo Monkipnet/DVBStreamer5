@@ -45,6 +45,28 @@ for(const marker of [
   'update-backups',
   'cp -a "$backup" /opt/DVBStreamer5'
 ]) assert.ok(updater.includes(marker),'Missing Bash updater protection: '+marker);
+for(const marker of [
+  'id="binaryUpdateProgress"',
+  'async function watchBinaryUpdate(version)',
+  "updateProgress('checking')",
+  "updateProgress('downloading',version)",
+  "updateProgress('error'",
+  "fetch('/api/update/status'",
+  '.update-action-busy::before',
+  'aria-live="polite"'
+]) assert.ok(web.includes(marker),'Missing visible updater progress: '+marker);
+for(const marker of [
+  'target == "/api/update/status"',
+  '/var/lib/dvbstreamer5/update-status',
+  'phase != "downloading"'
+]) assert.ok(transport.includes(marker),'Missing status API protection: '+marker);
+for(const marker of [
+  'update_phase downloading',
+  'update_phase verifying',
+  'update_phase installing',
+  'update_phase done',
+  'UPDATE_INSTALL_ACTIVE=1'
+]) assert.ok(updater.includes(marker),'Missing real update lifecycle phase: '+marker);
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
 assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
 const versionHeader=fs.readFileSync('src/AppVersion.h','utf8');
