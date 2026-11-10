@@ -12,6 +12,21 @@ newer(){
   IFS=. read -r x y z <<< "$2"
   (( 10#$a > 10#$x || (10#$a == 10#$x && 10#$b > 10#$y) || (10#$a == 10#$x && 10#$b == 10#$y && 10#$c > 10#$z) ))
 }
+site_header_version(){
+  local page="$1" header="$2" versions
+  curl -fsSL --proto '=https' --proto-redir '=https' --max-redirs 3 \
+    --connect-timeout 10 --max-time 20 --max-filesize 262144 \
+    'https://tvstreammersat5.tech/' -o "$page" 2>/dev/null || return 1
+  # Only inspect the actual HTML header, never scripts or arbitrary body links.
+  sed -n '/<[Hh][Ee][Aa][Dd][Ee][Rr][ >]/,/<\/[Hh][Ee][Aa][Dd][Ee][Rr]>/p' "$page" > "$header"
+  [[ -s "$header" ]] || return 1
+  # Remove tags while preserving text such as "DVBStreamer5 V10.8.437".
+  versions="$(sed -E 's/<[^>]*>/ /g' "$header" |
+    grep -Eo '[Vv]?[0-9]+\.[0-9]+\.[0-9]+' |
+    sed -E 's/^[Vv]//' | sort -u)" || return 1
+  [[ "$(printf '%s\n' "$versions" | grep -c .)" == 1 ]] || return 1
+  printf '%s\n' "$versions"
+}
 read_release(){
   local tmp="$1" manifest="$1/manifest.json" header="$1/header.txt" link
   RELEASE_SHA=''; RELEASE_SIZE=0
@@ -26,6 +41,14 @@ read_release(){
     [[ "$RELEASE_SIZE" =~ ^[0-9]+$ ]] || die 'Bad archive size'
     (( RELEASE_SIZE <= MAX_BYTES )) || die 'Archive too large'
   else
+    # The homepage header advertises the current program release.
+    # This is a quick check: no full tar.gz download is needed.
+    local site_version
+    if site_version="$(site_header_version "$tmp/site.html" "$tmp/site-header.html")" &&
+       valid_version "$site_version"; then
+      RELEASE_VERSION="$site_version"
+      return 0
+    fi
     curl -fsSLI --proto '=https' --proto-redir '=https' --max-redirs 3 --max-time 20 -D "$header" "$URL" -o /dev/null || die 'Cannot inspect website download'
     local name
     name="$(tr -d '\r' < "$header" | sed -nE 's/^[Cc]ontent-[Dd]isposition:.*filename="?([^";]+)"?.*/\1/p' | tail -1)"
