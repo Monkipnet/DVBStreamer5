@@ -530,6 +530,7 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 #binaryUpdateProgress[hidden]{display:none}
 #binaryUpdateProgress{padding-right:40px}
 #binaryUpdateClose{position:absolute;top:8px;right:8px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;border-radius:50%;background:#d9363e;color:#fff;cursor:pointer;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;line-height:1;box-shadow:0 3px 8px rgba(0,0,0,.24)}
+#binaryUpdateClose::before{content:'×';display:block;font-size:15px;font-weight:700;line-height:18px;color:#fff}
 #binaryUpdateClose:hover{background:#f0444d;transform:scale(1.08)}
 #binaryUpdateClose:focus-visible{outline:2px solid #74c9ff;outline-offset:2px}
 html[data-dashboard-theme="light"] #binaryUpdateClose{background:#d9363e;color:#fff;border:0}
@@ -823,7 +824,7 @@ html[data-dashboard-theme="light"] :is(.modal-content button,.system-menu-item,.
 </div>
 </details>
 <aside id="binaryUpdateProgress" hidden role="status" aria-live="polite" data-phase="idle">
-<button type="button" id="binaryUpdateClose" onclick="closeBinaryUpdateProgress()" aria-label="Закрыть уведомление" title="Закрыть уведомление">×</button>
+<button type="button" id="binaryUpdateClose" onclick="closeBinaryUpdateProgress()" aria-label="Закрыть уведомление" title="Закрыть уведомление"></button>
 <div id="binaryUpdateProgressText" class="update-progress-label"></div>
 <div class="update-progress-track"><div class="update-progress-fill"></div></div>
 </aside>
@@ -3418,7 +3419,7 @@ function applyLanguage() {
     const closeLabel=language==='ru'?'Закрыть уведомление':language==='hr'?'Zatvori obavijest':'Close notification';
     updateClose.setAttribute('aria-label',closeLabel);
     updateClose.title=closeLabel;
-    updateClose.textContent='×';
+    updateClose.textContent=''; // The close glyph is CSS-only, never translated.
   }
 }
 function toggleLanguage() {
