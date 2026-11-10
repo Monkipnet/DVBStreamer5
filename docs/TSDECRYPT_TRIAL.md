@@ -1,19 +1,63 @@
-# DVBStreamer5 V10.8.457 — TSDecrypt per-tile CA backend (experimental)
+# DVBStreamer5 V10.8.460 — TSDecrypt per-tile CA backend (experimental)
 
-The in-tile backend is now present as a dynamically loaded plugin `dvbstreamer5-ca-tsdecrypt.so`, built by CMake and packaged in `ca-plugins/`. The old standalone `scripts/tsdecrypt_trial.sh` remains available for A/B testing.
+The plugin `ca-plugins/dvbstreamer5-ca-tsdecrypt.so` is opt-in per CAM client;
+Newcamd, OSCam-mini and DVB-CI remain unchanged. The external `bin/tsdecrypt`
+executable is included in portable bundles only when the packager is given
+`--tsdecrypt-binary /path/to/tsdecrypt`. For current builds, use
+`bash scripts/make_portable_linux_bundle.sh --build-dir build --tsdecrypt-binary /tmp/dvbstreamer5-tsdecrypt/tsdecrypt --archive`.
+No production service restart is needed to compile or package the bundle.
 
-## Opt-in selection on one DVB tile
+## Safe ECM/CW monitoring (V10.8.460)
 
-1. Install **upstream TSDecrypt** at `/usr/bin/tsdecrypt` separately. DVBStreamer5 does not build or ship the TSDecrypt executable.
-2. In **Menu → Newcamd / OSCam CAM clients**, add a **new dedicated CAM client** (never overwrite the existing working Newcamd client).
-3. Select backend **TSDecrypt (external, experimental)** for this new CAM client and configure host, port, user, password, DES key, CAMD protocol, CAID and optional decimal ECM PID (0 = auto).
-4. In a **single test DVB tile**, choose **iCAM / Newcamd** and select the newly created TSDecrypt CAM client. The backend is selected by the CAM client; other tiles stay on their existing CA backend.
-5. Save and restart **only that test tile**. If the selected plugin is missing, `/usr/bin/tsdecrypt` does not exist, or the DVB service ID is missing, the tile start fails without silently switching the CAM service to another backend.
-6. Verify `CA backend service reserved ... backend=tsdecrypt`, `TSDECRYPT_ACTIVE` or `TSDECRYPT_WAITING_CW`, and decoded A/V packet counters. Stop the test tile and select the previously working CAM client to roll back.
+After selecting the experimental TSDecrypt backend for **one test tile**,
+inspect these key-free counters:
 
-**Important limitations.** This is an early experimental per-tile integration, not a production-ready/validated full integration. TSDecrypt processes a bounded asynchronous TS pipe (not packet-by-packet synchronously), so its output may lag input, or emit NULL TS packets while awaiting output. Verify continuity, PAT/PMT, EPG and AV sync before using it for subscribers. Loss of TSDecrypt output does **not** automatically switch to the internal Newcamd decoder. A tile restart is required to recover an exited subprocess. No parallel dual-ECM logic exists; only one manually selected ECM PID is supported. Never enable on an operational channel without isolated media testing.
+```bash
+journalctl -u dvbstreamer5.service --since '-5 min' -o cat --no-pager |
+  grep 'TSDECRYPT DIAG' | tail -n 30
+```
 
-CAMD credentials are passed as TSDecrypt command-line options (a limitation of the upstream CLI), which can be exposed in process listings. Use a dedicated non-privileged test server and restricted OS permissions, not shared accounts.
+- `ecm_received`, `ecm_processed`, `ecm_duplicates`: accumulated numeric
+  counts from **TSDecrypt's own periodic `-H 10` reports**, not host-side guesses.
+  These can remain zero until the first report interval.
+- `cw_valid_events`: the number of **first-valid-CW status transitions**
+  reported by the external TSDecrypt process with `-K` active. This is
+  **not** a count of every new CW, since upstream suppresses detailed per-CW
+  logs to avoid leaking key material. `cw_warnings` tracks emitted no-CW
+  warnings. No CW bytes, ECM payloads or CAMD credentials are logged.
+- `input_scrambled`: scrambled input TS packets; `output_null`: output
+  padding/NULL TS packets.
+- `output_clear_encrypted_pid`: clear output packets on PIDs that have
+  carried scrambled input; not necessarily valid media.
+- `video_pes_encrypted_pid`, `audio_pes_encrypted_pid`: plausible **clear
+  video/audio PES starts on previously scrambled PIDs**. These are stronger
+  evidence than a cleared scrambling bit, but do **not** prove a successful
+  media decode or functional audio/video.
+- `csa_alt_verified=no`: verification of iCAM/CSA-ALT is deliberately NOT
+  claimed. CAID 098D is a hint but does not uniquely identify CSA-ALT.
+  A valid CW response alone does not establish CSA-ALT support.
+
+The stream CA status shows `TSDECRYPT_WAITING_ECM`,
+`TSDECRYPT_ECM_NO_PES`, `TSDECRYPT_CW_SIGNAL_NO_PES`,
+`TSDECRYPT_PES_EVIDENCE`, or `TSDECRYPT_EXITED` with key-free
+`ECM`, `CW_OK`, `V_PES`, `A_PES` counters. For CAID 098D it also
+reports `CSA_ALT=UNVERIFIED`. No status claims successful decryption
+based solely on a CAMD connection, received ECM/CW, or clear scrambling bits.
+
+The child process stderr is consumed by an allowlisted parser and never
+relayed verbatim to the main journal; `-K` remains enabled.
+
+## Important limitations
+
+This remains an experimental bounded asynchronous stdin/stdout TS processor.
+Output can lag, contain NULL TS or be suppressed while waiting for CAMD.
+The external process is not automatically restarted after failure and
+does not fall back to Newcamd. No parallel dual-ECM selection is implemented.
+Dedicated A/B tests with video/audio decoding and continuity/PCR checks are
+required before serving subscribers. Upstream CAMD credentials are still passed
+via command-line arguments, so use dedicated credentials and restricted hosts.
+Do **not** paste `pgrep -a`, `ps -ef` or `/proc/<pid>/cmdline` containing
+CAMD credentials into public logs or chats.
 
 ---
 # TSDecrypt A/B integration trial — DVBStreamer5 V10.8.456
