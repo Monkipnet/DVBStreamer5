@@ -4949,6 +4949,50 @@ function makeNetworkInputGroups(streams) {
       String(b.name||b.id),language,{numeric:true,sensitivity:'base'}));
   return result;
 }
+// Sort tiles by the configured PRIMARY input host, not a backup/failover URI.
+// IPv4 and IPv6 compare numerically, then DNS names and non-network sources.
+function inputHostSortKey(stream) {
+  const raw=String(stream?.input_uri||'').trim();
+  let host='';
+  try {
+    // udp://@239.x.x.x is multicast input syntax; the @ is not part of the IP.
+    const uri=/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)?raw:'udp://'+raw;
+    host=String(new URL(uri).hostname||'').replace(/^\[|\]$/g,'').toLowerCase();
+  } catch (_) { /* Keep malformed/local input sources at the end. */ }
+  const ipv4=host.split('.');
+  if(ipv4.length===4&&ipv4.every(p=>/^\d{1,3}$/.test(p)&&Number(p)<=255))
+    return {kind:0,bytes:ipv4.map(Number),host};
+  if(host.includes(':')) {
+    const halves=host.split('::');
+    const left=halves[0]?halves[0].split(':'):[];
+    const right=halves.length===2&&halves[1]?halves[1].split(':'):[];
+    const missing=8-left.length-right.length;
+    const groups=halves.length===2?[...left,...Array(Math.max(0,missing)).fill('0'),...right]:left;
+    if(halves.length<=2&&missing>=0&&groups.length===8&&
+       groups.every(p=>/^[0-9a-f]{1,4}$/.test(p))) {
+      const bytes=groups.flatMap(p=>[Number.parseInt(p,16)>>8,Number.parseInt(p,16)&255]);
+      return {kind:1,bytes,host};
+    }
+  }
+  if(host&&/^[a-z0-9.-]+$/.test(host))return {kind:2,bytes:[],host};
+  return {kind:3,bytes:[],host:raw.toLowerCase()};
+}
+function sortNetworkInputStreams(streams) {
+  const keyed=streams.map((stream,index)=>({stream,index,key:inputHostSortKey(stream)}));
+  keyed.sort((a,b)=>{
+    if(a.key.kind!==b.key.kind)return a.key.kind-b.key.kind;
+    if(a.key.kind<2) {
+      for(let i=0;i<a.key.bytes.length;i++)
+        if(a.key.bytes[i]!==b.key.bytes[i])
+          return a.key.bytes[i]-b.key.bytes[i];
+    }
+    return a.key.host.localeCompare(b.key.host,'en',{numeric:true})||
+      String(a.stream.name||a.stream.id).localeCompare(
+        String(b.stream.name||b.stream.id),language,{numeric:true,sensitivity:'base'})||
+      a.index-b.index;
+  });
+  return keyed.map(item=>item.stream);
+}
 function rememberInputSubgroup(key,open) {
   inputSubgroupOpen[key]=open;
   try {
@@ -5535,18 +5579,20 @@ function render(force=false) {
     }
   }
   if(grouped.network.length) {
+    // No IP subnet spoilers: all network tiles share one visible grid.
     const section=document.createElement('section');
     section.className='non-dvb-tile-group';
     const heading=document.createElement('h2');
     heading.className='non-dvb-tile-heading';
     heading.textContent=t('networkStreams')+' ('+grouped.network.length+')';
-    const list=document.createElement('div');
-    list.className='network-subnet-list';
-    section.append(heading,list);
+    const grid=document.createElement('div');
+    grid.className='tile-grid network-input-tiles';
+    section.append(heading,grid);
     tiles.appendChild(section);
-    for(const input of makeNetworkInputGroups(grouped.network))
-      addInputSubgroup(list,'net:'+input.key,input.title,input.streams,
-        parents,orderedStreams);
+    for(const stream of sortNetworkInputStreams(grouped.network)) {
+      parents.set(String(stream.id),grid);
+      orderedStreams.push(stream);
+    }
   }
   orderedStreams.forEach(stream => {
     const outputs = outputConfigsForStream(stream);
