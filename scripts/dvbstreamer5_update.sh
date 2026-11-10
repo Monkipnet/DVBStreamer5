@@ -117,7 +117,25 @@ download_archive(){
   local out="$1" details status effective size
   details="$(curl -sSL --show-error --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 600 --max-filesize "$MAX_BYTES" -o "$out" -w '%{http_code} %{url_effective}' "$URL")" || die 'Archive download failed'
   read -r status effective <<< "$details"
-  [[ "$status" == 200 && "$effective" == https://tvstreammersat5.tech/* ]] || die 'Untrusted download redirect'
+  [[ "$status" == 200 ]] || die "Download HTTP $status (final URL: $effective)"
+  # download.php may point to an external HTTPS CDN. The source URL is fixed,
+  # and curl permits only HTTPS redirect targets with verified TLS.
+  # Never follow userinfo URLs or localhost/private-address redirects.
+  local authority host
+  [[ "$effective" =~ ^https://([^/?#]+)(/|[?]|$) ]] ||
+    die "Unsafe non-HTTPS download redirect: $effective"
+  authority="${BASH_REMATCH[1]}"
+  [[ "$authority" != *@* ]] || die "Unsafe credential-bearing redirect: $effective"
+  host="${authority%%:*}"
+  host="${host,,}"
+  case "$host" in
+    localhost|localhost.*|*.localhost|127.*|10.*|192.168.*|169.254.*|0.*|::1|[[]::1[]]|*.local|*.internal)
+      die "Refused local/private archive redirect: $effective" ;;
+  esac
+  if [[ "$host" =~ ^172[.](1[6-9]|2[0-9]|3[01])[.] ]] ||
+     [[ "$host" =~ ^[[]?(fc|fd|fe80): ]]; then
+    die "Refused private archive redirect: $effective"
+  fi
   size="$(stat -c %s "$out")"
   (( size > 0 && size <= MAX_BYTES )) || die 'Invalid archive size'
   if (( RELEASE_SIZE > 0 )); then (( size == RELEASE_SIZE )) || die 'Archive size mismatch'; fi
