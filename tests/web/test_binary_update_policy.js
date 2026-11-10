@@ -47,6 +47,18 @@ for(const marker of [
 ]) assert.ok(updater.includes(marker),'Missing Bash updater protection: '+marker);
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
 assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
+const versionHeader=fs.readFileSync('src/AppVersion.h','utf8');
+const sedLine=packageScript.split('\n').find(line=>line.startsWith('VERSION="$(sed -n '));
+assert.ok(sedLine,'Portable bundle version parser missing');
+const sedExpression=sedLine.match(/sed -n '([^']+)'/);
+assert.ok(sedExpression,'Missing portable version sed expression');
+const parsed=spawnSync('sed',['-n',sedExpression[1]],{
+  input:versionHeader,encoding:'utf8'
+});
+assert.equal(parsed.status,0,'Portable VERSION extraction command failed');
+assert.match(parsed.stdout.trim(),/^\d+\.\d+\.\d+$/,
+  'Portable VERSION extraction must return a semantic version');
+
 const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
 assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
 console.log('PASS: Bash update UI, API, portable packaging and syntax');
