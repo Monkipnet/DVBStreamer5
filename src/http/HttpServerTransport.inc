@@ -1337,10 +1337,13 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 res.body() = handleStopStream(req.body());
             } else if (target == "/api/update/install") {
                 res.set(http::field::content_type, "application/json");
-                // Require a panel session and a same-origin AJAX request.
-                // API tokens deliberately cannot authorize binary installation.
+                // Accept the same administrator logins as the web panel:
+                // session cookie or HTTP Basic. Never allow an API key to
+                // authorize executable installation.
                 const auto requestedWith = req.find("X-Requested-With");
-                if (apiKeyAttempt || !isPanelSessionAuthorized(req) ||
+                const bool panelAdminAuthenticated =
+                    isPanelSessionAuthorized(req) || isAuthorized(req);
+                if (apiKeyAttempt || !panelAdminAuthenticated ||
                     requestedWith == req.end() ||
                     requestedWith->value() != "DVBStreamer5") {
                     res.result(http::status::forbidden);
