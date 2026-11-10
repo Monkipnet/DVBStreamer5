@@ -56,7 +56,8 @@ for(const marker of [
   'id="binaryUpdateClose"',
   'onclick="closeBinaryUpdateProgress()"',
   'id="binaryUpdateClose" onclick="closeBinaryUpdateProgress()" aria-label="Закрыть уведомление"',
-  "updateClose.textContent='×'",
+  "#binaryUpdateClose::before{content:'×';",
+  "updateClose.textContent='';",
   '#binaryUpdateClose{position:absolute;top:8px;right:8px;width:18px;height:18px;',
 
   'function closeBinaryUpdateProgress()',
