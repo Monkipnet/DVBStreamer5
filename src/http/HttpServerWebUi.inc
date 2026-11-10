@@ -123,6 +123,8 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .input-subgroup>summary:before{content:'▸';color:#7dd1ff;flex:none;font-size:.87rem}
 .input-subgroup[open]>summary:before{content:'▾'}
 .input-subgroup>summary:hover{background:rgba(57,145,227,.08)}
+.input-subgroup .dvb-card-meters{flex:none;max-width:48vw}
+@media(max-width:700px){.input-subgroup>summary{flex-wrap:wrap}.input-subgroup-title{flex-basis:100%}.input-subgroup .dvb-card-meters{max-width:100%}}
 .input-subgroup-title{font-size:.78rem;font-weight:700;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;text-align:left}
 .input-subgroup-count{font-size:.72rem;flex:none;color:#9fe7b3;font-variant-numeric:tabular-nums}
 .input-subgroup-tiles{padding:10px;border-top:1px solid rgba(255,255,255,.07)}
@@ -4970,7 +4972,12 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   count.className='input-subgroup-count';
   count.dataset.subgroupCount='1';
   count.textContent=streams.filter(s=>s.active).length+'/'+streams.length+' '+t('cardActive');
-  summary.append(heading,count);
+  if(key.startsWith('tp:')) {
+    const meters=document.createElement('span');
+    meters.className='dvb-card-meters';
+    meters.dataset.tpMeters='1';
+    summary.append(heading,meters,count);
+  } else summary.append(heading,count);
   const grid=document.createElement('div');
   grid.className='tile-grid input-subgroup-tiles';
   details.append(summary,grid);
@@ -4993,6 +5000,14 @@ function updateInputSubgroupCounts(tiles) {
     }
     const count=details.querySelector('[data-subgroup-count]');
     if(count)count.textContent=active+'/'+total+' '+t('cardActive');
+    // Top-level satellite TP groups show live frontend signal and quality.
+    if(details.dataset.subgroupKey.startsWith('tp:')) {
+      const streams=[...details.querySelectorAll('.tile[data-stream-id]')]
+        .map(tile=>byId.get(tile.dataset.streamId)).filter(Boolean);
+      const container=details.querySelector('[data-tp-meters]');
+      if(container)renderDvbFrontendMeters(container,{streams},
+        details.querySelector('.input-subgroup-title')?.textContent||'');
+    }
   }
 }
 function dvbCardFrontendEntries(group) {
@@ -5071,23 +5086,7 @@ function saveDvbCardGroupOpen() {
     localStorage.setItem(dvbCardGroupStorageKey,JSON.stringify(dvbCardGroupOpen));
   } catch (_) { /* Keeping the current collapse state is still possible. */ }
 }
-function updateDvbCardGroupCounts(tiles) {
-  const groups=makeDvbCardGroups(state.streams || []).cards;
-  const byKey=new Map(groups.map(group=>[group.key,group]));
-  for (const details of tiles.querySelectorAll('.dvb-card-group[data-card-key]')) {
-    const group=byKey.get(details.dataset.cardKey);
-    if (!group) continue;
-    const count=details.querySelector('[data-card-count]');
-    if (count) count.textContent=group.streams.filter(stream=>stream.active).length+
-      '/'+group.streams.length+' '+t('cardActive');
-    const title=details.querySelector('.dvb-card-title');
-    if (title) {
-      const value=dvbCardDisplayTitle(group);
-      if (title.textContent!==value) title.textContent=value;
-      title.title=value;
-    }
-    const container=details.querySelector('[data-card-meters]');
-    if (!container) continue;
+function renderDvbFrontendMeters(container,group,title) {
     const entries=dvbCardFrontendEntries(group);
     const fragment=document.createDocumentFragment();
     const multi=entries.length>1;
@@ -5135,7 +5134,26 @@ function updateDvbCardGroupCounts(tiles) {
       fragment.appendChild(meter);
     }
     container.replaceChildren(fragment);
-    container.title=dvbCardDisplayDevice(group);
+    container.title=title;
+}
+function updateDvbCardGroupCounts(tiles) {
+  const groups=makeDvbCardGroups(state.streams || []).cards;
+  const byKey=new Map(groups.map(group=>[group.key,group]));
+  for (const details of tiles.querySelectorAll('.dvb-card-group[data-card-key]')) {
+    const group=byKey.get(details.dataset.cardKey);
+    if (!group) continue;
+    const count=details.querySelector('[data-card-count]');
+    if (count) count.textContent=group.streams.filter(stream=>stream.active).length+
+      '/'+group.streams.length+' '+t('cardActive');
+    const title=details.querySelector('.dvb-card-title');
+    if (title) {
+      const value=dvbCardDisplayTitle(group);
+      if (title.textContent!==value) title.textContent=value;
+      title.title=value;
+    }
+    const container=details.querySelector('[data-card-meters]');
+    if (!container) continue;
+    renderDvbFrontendMeters(container,group,dvbCardDisplayDevice(group));
   }
 }
 function dvbMeterColor(value, locked) {
