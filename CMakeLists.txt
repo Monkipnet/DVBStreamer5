@@ -380,6 +380,12 @@ set_target_properties(dvbstreamer5_ca_tsdecrypt PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
 
+# V10.8.460: key-free TSDecrypt ECM report parsing and clear PES validation.
+add_executable(dvbstreamer5_tsdecrypt_telemetry_test
+    tests/test_tsdecrypt_telemetry.cpp)
+add_test(NAME tsdecrypt_safe_telemetry
+    COMMAND dvbstreamer5_tsdecrypt_telemetry_test)
+
 # V10.8.459: ensure forked TSDecrypt does not retain HTTP/server sockets.
 add_executable(dvbstreamer5_tsdecrypt_fd_isolation_test
     tests/test_tsdecrypt_fd_isolation.cpp)
