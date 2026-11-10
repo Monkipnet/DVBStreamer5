@@ -5469,66 +5469,49 @@ function render(force=false) {
   const parents = new Map();
   const orderedStreams = [];
   for (const group of grouped.cards) {
-    const details = document.createElement('details');
-    details.className = 'dvb-card-group';
-    details.dataset.cardKey = group.key;
-    // Keep the old physical DVB card fold state unchanged.
-    details.open = dvbCardGroupOpen[group.key] === true;
-    const summary = document.createElement('summary');
-    const title = document.createElement('strong');
-    title.className = 'dvb-card-title';
-    title.textContent = dvbCardDisplayTitle(group);
-    const device = document.createElement('span');
-    device.className = 'dvb-card-device';
-    device.textContent = dvbCardDisplayDevice(group);
-    device.title = device.textContent;
-    const count = document.createElement('span');
-    count.className = 'dvb-card-count';
-    count.dataset.cardCount = '1';
-    count.textContent = group.streams.filter(stream => stream.active).length +
-      '/' + group.streams.length + ' ' + t('cardActive');
-    const status = document.createElement('span');
-    status.className = 'dvb-card-status';
-    const meters = document.createElement('span');
-    meters.className = 'dvb-card-meters';
-    meters.dataset.cardMeters = '1';
+    const buckets=makeSatelliteTransponderGroups(group.streams);
+    // Satellite transponders are first-level groups, not children of a DVB card.
+    // Preserve the physical card identity in each subgroup's key and TP label.
+    for(const tp of buckets.transponders)
+      addInputSubgroup(tiles,'tp:'+group.key+':'+tp.key,
+        tp.title,tp.streams,parents,orderedStreams);
+    if(!buckets.terrestrial.length)continue;
+
+    // Keep the physical card wrapper only for DVB-T/T2 channels.
+    const details=document.createElement('details');
+    details.className='dvb-card-group';
+    details.dataset.cardKey=group.key;
+    details.open=dvbCardGroupOpen[group.key]===true;
+    const summary=document.createElement('summary');
+    const title=document.createElement('strong');
+    title.className='dvb-card-title';
+    title.textContent=dvbCardDisplayTitle(group);
+    title.title=title.textContent;
+    const count=document.createElement('span');
+    count.className='dvb-card-count';
+    count.dataset.cardCount='1';
+    count.textContent=buckets.terrestrial.filter(stream=>stream.active).length+
+      '/'+buckets.terrestrial.length+' '+t('cardActive');
+    const status=document.createElement('span');
+    status.className='dvb-card-status';
+    const meters=document.createElement('span');
+    meters.className='dvb-card-meters';
+    meters.dataset.cardMeters='1';
     status.append(meters,count);
-    title.title = title.textContent;
-    summary.title = dvbCardDisplayDevice(group);
+    summary.title=dvbCardDisplayDevice(group);
     summary.append(title,status);
     details.appendChild(summary);
-    details.addEventListener('toggle', () => {
-      dvbCardGroupOpen[group.key] = details.open;
+    details.addEventListener('toggle',()=>{
+      dvbCardGroupOpen[group.key]=details.open;
       saveDvbCardGroupOpen();
     });
+    const grid=document.createElement('div');
+    grid.className='tile-grid dvb-card-tiles';
+    details.appendChild(grid);
     tiles.appendChild(details);
-
-    const buckets=makeSatelliteTransponderGroups(group.streams);
-    if(buckets.transponders.length) {
-      const nested=document.createElement('div');
-      nested.className='dvb-card-tiles dvb-transponder-groups';
-      details.appendChild(nested);
-      for(const tp of buckets.transponders)
-        addInputSubgroup(nested,'tp:'+group.key+':'+tp.key,
-          tp.title,tp.streams,parents,orderedStreams);
-      if(buckets.terrestrial.length) {
-        const grid=document.createElement('div');
-        grid.className='tile-grid';
-        nested.appendChild(grid);
-        for(const stream of buckets.terrestrial) {
-          parents.set(String(stream.id),grid);
-          orderedStreams.push(stream);
-        }
-      }
-    } else {
-      // DVB-T/T2 stays grouped by physical card, as before.
-      const grid=document.createElement('div');
-      grid.className='tile-grid dvb-card-tiles';
-      details.appendChild(grid);
-      for(const stream of buckets.terrestrial) {
-        parents.set(String(stream.id),grid);
-        orderedStreams.push(stream);
-      }
+    for(const stream of buckets.terrestrial) {
+      parents.set(String(stream.id),grid);
+      orderedStreams.push(stream);
     }
   }
   if(grouped.network.length) {
