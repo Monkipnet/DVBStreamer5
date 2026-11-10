@@ -11,6 +11,7 @@ BINARY=""
 DO_BUILD=0
 DO_ARCHIVE=0
 INCLUDE_OSCAM=auto
+TSDECRYPT_BINARY=""
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 2)"
 
 usage() {
@@ -28,6 +29,7 @@ Options:
   --jobs N              Parallel build jobs used with --build
   --with-oscam          Require and include build/oscam-mini/oscam-mini
   --without-oscam       Do not include oscam-mini
+  --tsdecrypt-binary FILE   Bundle a supplied executable as bin/tsdecrypt
   --archive             Also create <bundle>.tar.gz
   -h, --help            Show this help
 
@@ -44,11 +46,12 @@ log() { printf '\n==> %s\n' "$*"; }
 
 while (($#)); do
     case "$1" in
-        --build-dir|--binary|--output-dir|--jobs)
+        --build-dir|--binary|--output-dir|--jobs|--tsdecrypt-binary)
             (($# >= 2)) || fail "$1 requires a value"
             case "$1" in
                 --build-dir) BUILD_DIR="$2" ;;
                 --binary) BINARY="$2" ;;
+                --tsdecrypt-binary) TSDECRYPT_BINARY="$2" ;;
                 --output-dir) OUTPUT_DIR="$2" ;;
                 --jobs) JOBS="$2" ;;
             esac
@@ -109,6 +112,20 @@ mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/web" "$STAGE/ca-plugins" \
          "$STAGE/oscam-mini" "$STAGE/etc/ssl/certs" "$STAGE/data"
 
 install -m 0755 "$BINARY" "$STAGE/bin/$APP"
+if [[ -z "$TSDECRYPT_BINARY" ]]; then
+    for candidate in "$BUILD_DIR/tsdecrypt" "$PROJECT_ROOT/tsdecrypt" "$PROJECT_ROOT/third_party/tsdecrypt/tsdecrypt"; do
+        if [[ -f "$candidate" && -x "$candidate" ]]; then
+            TSDECRYPT_BINARY="$candidate"
+            break
+        fi
+    done
+fi
+if [[ -n "$TSDECRYPT_BINARY" ]]; then
+    [[ "$TSDECRYPT_BINARY" == /* ]] || TSDECRYPT_BINARY="$PROJECT_ROOT/$TSDECRYPT_BINARY"
+    [[ -f "$TSDECRYPT_BINARY" && -x "$TSDECRYPT_BINARY" ]] || fail "not an executable TSDecrypt binary: $TSDECRYPT_BINARY"
+    file -b "$TSDECRYPT_BINARY" | grep -q 'ELF 64-bit' || fail "not a 64-bit TSDecrypt ELF executable: $TSDECRYPT_BINARY"
+    install -m 0755 "$TSDECRYPT_BINARY" "$STAGE/bin/tsdecrypt"
+fi
 VERSION="$(sed -n 's/.*kProgramVersion = "\([^"]*\)".*/\1/p' "$PROJECT_ROOT/src/AppVersion.h")"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "cannot determine binary release version"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
@@ -155,6 +172,7 @@ declare -A COPIED_NAMES=()
 QUEUE=("$BINARY")
 for plugin in "${PLUGINS[@]}"; do QUEUE+=("$plugin"); done
 [[ -z "$OSCAM_SOURCE" ]] || QUEUE+=("$OSCAM_SOURCE")
+[[ -z "$TSDECRYPT_BINARY" ]] || QUEUE+=("$TSDECRYPT_BINARY")
 
 list_deps() {
     local object="$1" output missing
@@ -509,6 +527,7 @@ EOF_PORTABILITY
     echo "libraries=${#COPIED_NAMES[@]}"
     echo "plugins=${#PLUGINS[@]}"
     [[ -z "$OSCAM_SOURCE" ]] || echo "oscam_source=$OSCAM_SOURCE"
+    [[ -z "$TSDECRYPT_BINARY" ]] || echo "tsdecrypt_source=$TSDECRYPT_BINARY"
 } > "$STAGE/BUNDLE-INFO.txt"
 
 (
@@ -553,3 +572,4 @@ echo "Bundle size: $(du -sh "$OUTPUT_DIR" | awk '{print $1}')"
 echo "Shared libraries: ${#COPIED_NAMES[@]}"
 echo "CA plugins: ${#PLUGINS[@]}"
 [[ -z "$OSCAM_SOURCE" ]] || echo "OSCam-mini: included"
+[[ -z "$TSDECRYPT_BINARY" ]] || echo "TSDecrypt: included"
