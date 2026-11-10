@@ -97,7 +97,7 @@ for(const selector of [
  'html[data-dashboard-theme="light"] .tile .controls button.quality-button{',
  'html[data-dashboard-theme="light"] .tile .controls button.copy-button{',
  'html[data-dashboard-theme="light"] .tile .controls button:focus-visible{',
- 'html[data-dashboard-theme="light"] .modal-content h2{'
+ 'html[data-dashboard-theme="light"] :is(.modal-content h1,.modal-content h2'
 ]) assert.ok(source.includes(selector),'Missing light-theme contrast/color styling: '+selector);
 assert.ok(source.includes("tile.classList.toggle('active', !!stream.active)"),
  'Running tile visual state must follow stream.active');
