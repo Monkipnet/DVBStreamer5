@@ -888,8 +888,8 @@ function toggleDashboardTheme(){
   document.documentElement.dataset.dashboardTheme=dashboardTheme;
   try{localStorage.setItem(dashboardThemeKey,dashboardTheme);}catch(_){}
   updateDashboardThemeButton();
-  if (typeof qualityChart !== 'undefined' && qualityChart.streamId && typeof loadQualityChart === 'function') {
-    loadQualityChart();
+  if (typeof qualityChart !== 'undefined' && qualityChart.streamId && qualityChart.lastData && typeof drawQualityChart === 'function') {
+    drawQualityChart(qualityChart.lastData);
   }
 }
 const translations = {
