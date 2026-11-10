@@ -67,6 +67,16 @@ for(const marker of [
   'update_phase done',
   'UPDATE_INSTALL_ACTIVE=1'
 ]) assert.ok(updater.includes(marker),'Missing real update lifecycle phase: '+marker);
+for(const marker of [
+  'run.sh updater.sh VERSION PORTABILITY.txt',
+  '[[ -s "$INSTALL_DIR/updater.sh" && -s "$INSTALL_DIR/VERSION" ]]',
+  'chmod 0755 "$INSTALL_DIR/updater.sh"'
+]) assert.ok(packageScript.includes(marker),'Missing installer updater guard: '+marker);
+for(const marker of [
+  'Updater missing: install /opt/DVBStreamer5/updater.sh',
+  'Updater check failed: run /bin/bash',
+  'Json::parseFromStream(reader, jsonInput, &parsed, &parseErrors)'
+]) assert.ok(transport.includes(marker),'Missing update diagnostics: '+marker);
 assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
 assert.ok(packageScript.includes('"$STAGE/VERSION"'),'Bundle must record explicit version');
 const versionHeader=fs.readFileSync('src/AppVersion.h','utf8');
