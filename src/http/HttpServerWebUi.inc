@@ -80,8 +80,9 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .button-primary.save-dirty:hover{background:#ffc968}
 .button-secondary:hover{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.24)}
 .button-danger{padding:7px 10px;border:1px solid rgba(239,68,68,.35);border-radius:999px;color:#ffc4c7;background:rgba(239,68,68,.10);cursor:pointer;font-size:.78rem}.button-danger:hover{background:rgba(239,68,68,.20)}
-.container{padding:calc(var(--header-height,58px) + 10px) 12px 12px;max-width:1180px;margin:0 auto;box-sizing:border-box}
-.tile-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(calc(180px * 1.15), 1fr));gap:12px 1ch;justify-content:start}
+.container{padding:calc(var(--header-height,58px) + 10px) 12px 12px;width:100%;max-width:none;margin:0;box-sizing:border-box}
+/* Tile columns follow available viewport width, not a fixed dashboard width. */
+.tile-grid{display:grid;width:100%;min-width:0;grid-template-columns:repeat(auto-fill,minmax(min(100%,210px),1fr));gap:12px;justify-content:stretch}
 #tiles.tile-grid.grouped-tiles{display:flex;flex-direction:column;align-items:stretch;gap:12px}
 .restart-schedule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
 .restart-schedule-dropdown{position:relative;min-width:0;border:1px solid rgba(125,209,255,.22);border-radius:10px;padding:8px 9px;background:rgba(255,255,255,.035)}
