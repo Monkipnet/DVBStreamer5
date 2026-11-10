@@ -325,9 +325,12 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 auto packet = std::move(service->output.front());
                 service->output.pop_front();
                 std::memcpy(data+i,packet.data(),kPacket);
-                ++changed;
-                if ((packet[3] & 0xC0) == 0) ++clear;
-                else ++scrambled;
+                const uint16_t pid = static_cast<uint16_t>(((packet[1] & 0x1F) << 8) | packet[2]);
+                if (pid != 0x1FFF) {
+                    ++changed;
+                    if ((packet[3] & 0xC0) == 0) ++clear;
+                    else ++scrambled;
+                }
             } else {
                 std::memset(data+i,0xFF,kPacket);
                 data[i]=0x47; data[i+1]=0x1F; data[i+2]=0xFF; data[i+3]=0x10;
