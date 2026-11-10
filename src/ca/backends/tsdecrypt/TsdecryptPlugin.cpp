@@ -3,6 +3,7 @@
 // pipeline. The legacy newcamd backend remains the default.
 #include "../../CaBackendPluginApi.h"
 #include "SpawnFdIsolation.h"
+#include "TsDecryptTelemetry.h"
 #include <jsoncpp/json/json.h>
 #include <algorithm>
 #include <array>
@@ -70,9 +71,21 @@ struct Service {
     std::atomic<bool> exited{false};
     std::atomic<uint64_t> inputDrops{0};
     std::atomic<uint64_t> outputDrops{0};
-    int inFd = -1, outFd = -1;
+    // All reported values are metadata only; never retain raw CW/ECM payloads.
+    std::atomic<uint64_t> ecmReceived{0}, ecmDuplicates{0}, ecmProcessed{0};
+    std::atomic<uint64_t> ecmReportCount{0}, cwValidSignalEvents{0}, cwWarningEvents{0};
+    std::atomic<uint64_t> inputScrambledPackets{0}, outputNullPackets{0};
+    std::atomic<uint64_t> outputClearMediaPes{0}, outputClearOnScrambledPid{0};
+    std::atomic<uint64_t> outputClearMediaPesOnScrambledPid{0};
+    std::atomic<bool> cwValidReported{false};
+    // Input/output are asynchronous, so classify decoded evidence by observed
+    // encrypted PID rather than assuming the next output TS matches the input.
+    std::array<bool, 8192> inputScrambledPids{};
+    bool csaAltUnverified = false;
+    uint64_t lastDiagSecond = 0;
+    int inFd = -1, outFd = -1, logFd = -1;
     pid_t pid = -1;
-    std::thread writer, reader;
+    std::thread writer, reader, logReader;
 
     ~Service() { stop(); }
 
@@ -94,6 +107,7 @@ struct Service {
 
     bool start(const Reader& config, uint32_t sid, std::string& error) {
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
+        csaAltUnverified = config.caid == "098D";
         const std::string tsdecryptBinary = locateTsdecrypt();
         if (tsdecryptBinary.empty()) {
             error = "TSDecrypt executable missing (expected bin/tsdecrypt or /usr/bin/tsdecrypt)"; return false;
@@ -103,7 +117,10 @@ struct Service {
         std::vector<std::string> args{
             "tsdecrypt", "-M", std::to_string(sid), "-c", "VIDEOGUARD",
             "-C", config.caid, "-A", config.protocol, "-s", config.host,
-            "-U", config.user, "-P", config.pass, "-K", "-3", "-p"
+            "-U", config.user, "-P", config.pass,
+            // -K suppresses raw ECM/CW dumps; -H emits numeric aggregate
+            // ECM reports. The child stderr is parsed with an allowlist only.
+            "-K", "-H", "10", "-J", "10", "-3", "-p"
         };
         if (config.protocol == "NEWCAMD") { args.push_back("-B"); args.push_back(config.des); }
         if (config.ecmPid) { args.push_back("-X"); args.push_back(std::to_string(config.ecmPid)); }
@@ -111,7 +128,7 @@ struct Service {
         argv.reserve(args.size() + 1);
         for (auto& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
         argv.push_back(nullptr);
-        int inputPipe[2]{-1,-1}, outputPipe[2]{-1,-1};
+        int inputPipe[2]{-1,-1}, outputPipe[2]{-1,-1}, logPipe[2]{-1,-1};
         if (::pipe(inputPipe) != 0) { error = "input pipe failed"; return false; }
         if (::pipe(outputPipe) != 0) {
             ::close(inputPipe[0]); ::close(inputPipe[1]); error = "output pipe failed"; return false;
@@ -119,17 +136,22 @@ struct Service {
         // Snapshot the limit before fork; the child must avoid getrlimit/sysconf.
         const unsigned int inheritedFdLimit =
             dvbstreamer5::ca::tsdecrypt_detail::inheritedFdLimit();
+        if (::pipe(logPipe) != 0) {
+            ::close(inputPipe[0]); ::close(inputPipe[1]);
+            ::close(outputPipe[0]); ::close(outputPipe[1]);
+            error = "TSDecrypt diagnostics pipe failed"; return false;
+        }
         pid = ::fork();
         if (pid < 0) {
             ::close(inputPipe[0]); ::close(inputPipe[1]);
             ::close(outputPipe[0]); ::close(outputPipe[1]);
+            ::close(logPipe[0]); ::close(logPipe[1]);
             error = "fork failed"; return false;
         }
         if (pid == 0) {
             if (::dup2(inputPipe[0], STDIN_FILENO) < 0 ||
                 ::dup2(outputPipe[1], STDOUT_FILENO) < 0) _exit(127);
-            const int nullFd = ::open("/dev/null", O_WRONLY);
-            if (nullFd < 0 || ::dup2(nullFd, STDERR_FILENO) < 0) _exit(127);
+            if (::dup2(logPipe[1], STDERR_FILENO) < 0) _exit(127);
             // Do not keep HTTP listeners, accepted client sockets or other
             // parent resources alive in this external decoder. The sweep also
             // closes both pipe originals; only descriptors 0, 1, 2 survive.
@@ -137,7 +159,8 @@ struct Service {
             ::execv(tsdecryptBinary.c_str(), argv.data());
             _exit(127);
         }
-        ::close(inputPipe[0]); ::close(outputPipe[1]);
+        ::close(inputPipe[0]); ::close(outputPipe[1]); ::close(logPipe[1]);
+        logFd = logPipe[0];
         inFd = inputPipe[1];
         outFd = outputPipe[0];
         ::fcntl(inFd, F_SETFL, ::fcntl(inFd, F_GETFL, 0) | O_NONBLOCK);
@@ -161,6 +184,43 @@ struct Service {
                 if (!writeBytes(inFd, chunk.data(), chunk.size(), stopping)) break;
             }
             exited.store(true);
+        });
+        logReader = std::thread([this] {
+            // Parse only fixed, numeric summaries. Never relay raw stderr:
+            // upstream CLI may expose passwords, ECMs or control words.
+            std::array<char, 4096> chunk{};
+            std::string line;
+            line.reserve(512);
+            while (!stopping.load()) {
+                pollfd event{logFd, POLLIN, 0};
+                if (::poll(&event, 1, 100) <= 0) continue;
+                const ssize_t n = ::read(logFd, chunk.data(), chunk.size());
+                if (n == 0) break;
+                if (n < 0) { if (errno == EINTR || errno == EAGAIN) continue; break; }
+                for (ssize_t i = 0; i < n; ++i) {
+                    if (chunk[i] != '\\n' && chunk[i] != '\\r') {
+                        if (line.size() < 1024) line.push_back(chunk[i]);
+                        continue;
+                    }
+                    const auto report = dvbstreamer5::ca::tsdecrypt_detail::parseEcmReport(line.c_str());
+                    if (report.valid) {
+                        ecmReceived.fetch_add(report.received);
+                        ecmDuplicates.fetch_add(report.duplicates);
+                        ecmProcessed.fetch_add(report.processed);
+                        ecmReportCount.fetch_add(1);
+                    }
+                    if (dvbstreamer5::ca::tsdecrypt_detail::hasSafeLogEvent(
+                            line.c_str(), "CW  | OK: Valid code word was received.")) {
+                        cwValidSignalEvents.fetch_add(1);
+                        cwValidReported.store(true);
+                    } else if (dvbstreamer5::ca::tsdecrypt_detail::hasSafeLogEvent(
+                            line.c_str(), "CW  | *ERR* No valid code word")) {
+                        cwWarningEvents.fetch_add(1);
+                        cwValidReported.store(false);
+                    }
+                    line.clear();
+                }
+            }
         });
         reader = std::thread([this] {
             std::array<uint8_t, 32 * 1024> temp{};
@@ -208,8 +268,10 @@ struct Service {
         if (pid > 0) ::kill(pid, SIGTERM);
         if (writer.joinable()) writer.join();
         if (reader.joinable()) reader.join();
+        if (logReader.joinable()) logReader.join();
         if (inFd >= 0) { ::close(inFd); inFd = -1; }
         if (outFd >= 0) { ::close(outFd); outFd = -1; }
+        if (logFd >= 0) { ::close(logFd); logFd = -1; }
         if (pid > 0) {
             int status = 0; bool done = false;
             for (int i=0; i<20; ++i) {
@@ -344,6 +406,13 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
     {
         std::lock_guard<std::mutex> lock(service->mutex);
         if (!service->stopping.load()) {
+            for (size_t i=0; i<size; i+=kPacket) {
+                const auto facts = dvbstreamer5::ca::tsdecrypt_detail::inspectTsPacket(data+i, kPacket);
+                if (facts.valid && facts.scrambled && facts.pid != 0x1fff) {
+                    service->inputScrambledPids[facts.pid] = true;
+                    service->inputScrambledPackets.fetch_add(1);
+                }
+            }
             if (service->inputBytes + size <= kMaxQueueBytes) {
                 service->input.push_back(std::move(original)); service->inputBytes += size;
                 service->cv.notify_one();
@@ -358,14 +427,51 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 std::memcpy(data+i,packet.data(),kPacket);
                 const uint16_t pid = static_cast<uint16_t>(((packet[1] & 0x1F) << 8) | packet[2]);
                 if (pid != 0x1FFF) {
-                    ++changed;
-                    if ((packet[3] & 0xC0) == 0) ++clear;
-                    else ++scrambled;
-                }
+                    const auto facts = dvbstreamer5::ca::tsdecrypt_detail::inspectTsPacket(
+                        packet.data(), packet.size());
+                    if (facts.valid) {
+                        if (!facts.scrambled) {
+                            ++clear;
+                            if (service->inputScrambledPids[pid]) {
+                                ++changed; // clear output on an encrypted input PID; not proof of CW
+                                service->outputClearOnScrambledPid.fetch_add(1);
+                                if (facts.clearMediaPesStart)
+                                    service->outputClearMediaPesOnScrambledPid.fetch_add(1);
+                            }
+                            if (facts.clearMediaPesStart)
+                                service->outputClearMediaPes.fetch_add(1);
+                        } else ++scrambled;
+                    }
+                } else service->outputNullPackets.fetch_add(1);
             } else {
+                service->outputNullPackets.fetch_add(1);
                 std::memset(data+i,0xFF,kPacket);
                 data[i]=0x47; data[i+1]=0x1F; data[i+2]=0xFF; data[i+3]=0x10;
             }
+        }
+        // Rate-limit key-free counters; do not put child log lines in journal.
+        const uint64_t nowSec = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        if (nowSec >= service->lastDiagSecond + 15) {
+            service->lastDiagSecond = nowSec;
+            std::fprintf(stderr,
+                "TSDECRYPT DIAG stream=%s ecm_received=%llu ecm_processed=%llu "
+                "ecm_duplicates=%llu cw_valid_events=%llu cw_warnings=%llu "
+                "input_scrambled=%llu output_clear_encrypted_pid=%llu "
+                "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
+                "output_null=%llu csa_alt_verified=no\\n",
+                service->id.c_str(),
+                static_cast<unsigned long long>(service->ecmReceived.load()),
+                static_cast<unsigned long long>(service->ecmProcessed.load()),
+                static_cast<unsigned long long>(service->ecmDuplicates.load()),
+                static_cast<unsigned long long>(service->cwValidSignalEvents.load()),
+                static_cast<unsigned long long>(service->cwWarningEvents.load()),
+                static_cast<unsigned long long>(service->inputScrambledPackets.load()),
+                static_cast<unsigned long long>(service->outputClearOnScrambledPid.load()),
+                static_cast<unsigned long long>(service->outputClearMediaPes.load()),
+                static_cast<unsigned long long>(service->outputClearMediaPesOnScrambledPid.load()),
+                static_cast<unsigned long long>(service->outputNullPackets.load()));
         }
     }
     if (result) {
@@ -373,9 +479,16 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
         result->packets_changed = changed;
         result->packets_clear = clear;
         result->packets_scrambled = scrambled;
-        std::snprintf(result->status,sizeof(result->status),"%s",
-            service->exited.load() ? "TSDECRYPT_EXITED" :
-            changed ? "TSDECRYPT_ACTIVE" : "TSDECRYPT_WAITING_CW");
+        // A CW event or a cleared scrambling bit is NOT proof that CSA-ALT
+        // decoded usable video. A valid clear PES header is stronger evidence,
+        // but is still not a full media decode verification.
+        const bool hasPesEvidence = service->outputClearMediaPesOnScrambledPid.load() > 0;
+        const char* state = service->exited.load() ? "TSDECRYPT_EXITED" :
+            hasPesEvidence ? "TSDECRYPT_PES_EVIDENCE" :
+            service->cwValidReported.load() ? "TSDECRYPT_CW_SIGNAL_NO_PES" :
+            service->ecmProcessed.load() ? "TSDECRYPT_ECM_NO_PES" :
+            "TSDECRYPT_WAITING_ECM";
+        std::snprintf(result->status,sizeof(result->status),"%s",state);
     }
     return DVBSTREAMER5_CA_RESULT_OK;
 }
@@ -393,6 +506,23 @@ const char* statusJson(void* self) {
         item["status"] = entry.second->exited.load() ? "EXITED" : "ACTIVE";
         item["input_drops"] = Json::UInt64(entry.second->inputDrops.load());
         item["output_drops"] = Json::UInt64(entry.second->outputDrops.load());
+        item["ecm_received_reported"] = Json::UInt64(entry.second->ecmReceived.load());
+        item["ecm_processed_reported"] = Json::UInt64(entry.second->ecmProcessed.load());
+        item["ecm_duplicates_reported"] = Json::UInt64(entry.second->ecmDuplicates.load());
+        item["ecm_reports"] = Json::UInt64(entry.second->ecmReportCount.load());
+        item["cw_valid_signal_events"] = Json::UInt64(entry.second->cwValidSignalEvents.load());
+        item["cw_warning_events"] = Json::UInt64(entry.second->cwWarningEvents.load());
+        item["cw_count_available"] = false;
+        item["input_scrambled_packets"] = Json::UInt64(entry.second->inputScrambledPackets.load());
+        item["output_clear_packets_on_input_scrambled_pid"] =
+            Json::UInt64(entry.second->outputClearOnScrambledPid.load());
+        item["output_clear_media_pes_starts"] = Json::UInt64(entry.second->outputClearMediaPes.load());
+        item["output_clear_media_pes_on_input_scrambled_pid"] =
+            Json::UInt64(entry.second->outputClearMediaPesOnScrambledPid.load());
+        item["output_null_packets"] = Json::UInt64(entry.second->outputNullPackets.load());
+        item["decryption_verified"] = false;
+        item["csa_alt_verified"] = false;
+        item["note"] = "PES evidence is not confirmed video decode; iCAM CSA-ALT is unverified";
         list.append(std::move(item));
     }
     root["active"] = list;
