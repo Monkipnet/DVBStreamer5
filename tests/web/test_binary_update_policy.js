@@ -59,6 +59,37 @@ assert.equal(parsed.status,0,'Portable VERSION extraction command failed');
 assert.match(parsed.stdout.trim(),/^\d+\.\d+\.\d+$/,
   'Portable VERSION extraction must return a semantic version');
 
+// Exercise the successful check path with a fake HTTP header (no network).
+// A scoped tmp cleanup trap must not reference an unset local at shell exit.
+const os=require('node:os');
+const path=require('node:path');
+const tempRoot=fs.mkdtempSync(path.join(os.tmpdir(),'dvb5-updater-test-'));
+try {
+  const curl=path.join(tempRoot,'curl');
+  fs.writeFileSync(curl, [
+    '#!/usr/bin/env bash',
+    'while (( $# )); do',
+    '  if [[ "$1" == "-D" ]]; then',
+    '    shift',
+    "    printf 'HTTP/2 200\\r\\nContent-Disposition: attachment; filename=\"DVBStreamer5-10.8.411-linux-x86_64.tar.gz\"\\r\\n' > \"$1\"",
+    '    exit 0',
+    '  fi',
+    '  shift',
+    'done',
+    'exit 22'
+  ].join('\n')+'\n',{mode:0o755});
+  const result=spawnSync('bash',['scripts/dvbstreamer5_update.sh','check','10.8.440'],{
+    encoding:'utf8',timeout:15000,
+    env:{...process.env,PATH:tempRoot+path.delimiter+process.env.PATH}
+  });
+  assert.equal(result.status,0,'check/EXIT must succeed: '+result.stderr);
+  assert.equal(result.stderr.trim(),'','No error may appear after the JSON check');
+  const report=JSON.parse(result.stdout.trim());
+  assert.equal(report.latest,'10.8.411');
+  assert.equal(report.available,false);
+} finally {
+  fs.rmSync(tempRoot,{force:true,recursive:true});
+}
 const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
 assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
 console.log('PASS: Bash update UI, API, portable packaging and syntax');
