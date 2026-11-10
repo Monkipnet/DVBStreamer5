@@ -5,7 +5,7 @@ const {spawnSync}=require('node:child_process');
 const web=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
 const transport=fs.readFileSync('src/http/HttpServerTransport.inc','utf8');
 const packageScript=fs.readFileSync('scripts/make_portable_linux_bundle.sh','utf8');
-const updater=fs.readFileSync('scripts/dvbstreamer5_update.py','utf8');
+const updater=fs.readFileSync('scripts/dvbstreamer5_update.sh','utf8');
 for(const text of [
   'id="checkReleaseButton"',
   'id="installReleaseButton" hidden',
@@ -21,25 +21,24 @@ for(const text of [
   '!isPanelSessionAuthorized(req)',
   'apiKeyAttempt',
   '"X-Requested-With"',
-  '/opt/DVBStreamer5/updater.py'
+  '/opt/DVBStreamer5/updater.sh'
 ]) assert.ok(transport.includes(text),'Missing secure update route: '+text);
 for(const text of [
-  'scripts/dvbstreamer5_update.py',
-  '"$STAGE/updater.py"',
-  'run.sh updater.py PORTABILITY.txt'
+  'scripts/dvbstreamer5_update.sh',
+  '"$STAGE/updater.sh"',
+  'run.sh updater.sh PORTABILITY.txt'
 ]) assert.ok(packageScript.includes(text),'Missing bundled updater: '+text);
-for(const text of [
-  'release signature',
-  "'-verify'",
-  "'sha256'",
-  'Archive SHA256/size mismatch',
-  "if ver(version)<=ver(current)",
-  "update-backups",
-  "tar.extractall",
-  "shutil.copytree(backup,HOME"
-]) assert.ok(updater.toLowerCase().includes(text.toLowerCase()),'Missing updater protection: '+text);
-const py=spawnSync('python3',['-c','import ast,sys;ast.parse(sys.stdin.read())'],{
-  input:updater,encoding:'utf8'
-});
-assert.equal(py.status,0,'Updater Python syntax: '+py.stderr);
-console.log('PASS: signed binary updater UI, policy, packaging and Python syntax');
+for(const marker of [
+  'download.php?id=5c15e7ab4ff1c26daef79d745d211c3d',
+  'latest.json',
+  'sha256sum',
+  'flock -n',
+  'tar -tzf',
+  'tar -tvzf',
+  'update-backups',
+  'cp -a "$backup" /opt/DVBStreamer5'
+]) assert.ok(updater.includes(marker),'Missing Bash updater protection: '+marker);
+assert.ok(!packageScript.includes('updater.py'),'Python updater must not be bundled');
+const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
+assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
+console.log('PASS: Bash update UI, API, portable packaging and syntax');
