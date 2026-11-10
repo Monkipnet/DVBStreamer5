@@ -170,6 +170,57 @@ std::string HttpServer::renderIndexPage() {
  .dvb-auth-session button{grid-column:1/-1}
  #dvbAuthBox,#dvbAuthSessionsBox{padding:13px}
 }
+
+/* V10.8.457: independent middleware authorization dialogs now follow the dashboard theme.
+   These dialogs are injected outside .modal-content and need explicit selectors. */
+html[data-dashboard-theme="light"] #dvbAuthModal,
+html[data-dashboard-theme="light"] #dvbAuthSessionsModal{
+  background:rgba(37,56,80,.38);
+}
+html[data-dashboard-theme="light"] #dvbAuthBox,
+html[data-dashboard-theme="light"] #dvbAuthSessionsBox{
+  color:#172c44;background:#ffffff;border-color:#c4d4e4;
+  box-shadow:0 22px 60px rgba(23,48,77,.2);
+}
+html[data-dashboard-theme="light"] #dvbAuthSessionsBox>.dvb-auth-head{
+  background:#ffffff;
+}
+html[data-dashboard-theme="light"] :is(#dvbAuthBox,#dvbAuthSessionsBox) :is(h3,span,p,div){
+  color:#223951;
+}
+html[data-dashboard-theme="light"] #dvbAuthBox label,
+html[data-dashboard-theme="light"] #dvbAuthBox label.dvb-auth-checkbox{
+  color:#203a54;
+}
+html[data-dashboard-theme="light"] #dvbAuthBox small,
+html[data-dashboard-theme="light"] :is(#dvbAuthStatus,#dvbAuthSessionsStatus,#dvbAuthApiKeyStatus,#dvbAuthSessionsTotal){
+  color:#3a5570;
+}
+html[data-dashboard-theme="light"] :is(#dvbAuthBox,#dvbAuthSessionsBox) :is(input[type=url],input[type=number],input[type=text],#dvbAuthSessionsFilter){
+  background:#fff;color:#152f49;border-color:#aebfd1;
+}
+html[data-dashboard-theme="light"] :is(#dvbAuthBox,#dvbAuthSessionsBox) input::placeholder{
+  color:#59718a;opacity:1;
+}
+html[data-dashboard-theme="light"] :is(.dvb-auth-head button,.dvb-auth-actions button,#dvbAuthSessionsRefresh,#dvbAuthApiControls button){
+  background:#e7f0fa;color:#193b5b;border-color:#b6c9dc;
+}
+html[data-dashboard-theme="light"] #dvbAuthSave,
+html[data-dashboard-theme="light"] #dvbAuthApiControls #dvbAuthApiCopy{
+  background:#166ab9;color:#fff;border-color:#166ab9;
+}
+html[data-dashboard-theme="light"] #dvbAuthSessionsList{
+  background:#fff;color:#20354c;border-color:#cbd9e8;
+}
+html[data-dashboard-theme="light"] .dvb-auth-session{
+  color:#20354c;border-bottom-color:#d5e1ed;
+}
+html[data-dashboard-theme="light"] .dvb-auth-session .dvb-auth-protocol{color:#195b93}
+html[data-dashboard-theme="light"] .dvb-auth-session .dvb-auth-meta{color:#3e5870}
+html[data-dashboard-theme="light"] .dvb-auth-session button{background:#ffe7ea;color:#962d3b;border-color:#e4b9be}
+html[data-dashboard-theme="light"] #dvbAuthApiKeyStatus[data-copy-state="copied"]{color:#167343}
+html[data-dashboard-theme="light"] #dvbAuthApiKeyStatus[data-copy-state="error"]{color:#ab303a}
+
 </style>
 <div id="dvbAuthModal" role="dialog" aria-modal="true" aria-labelledby="dvbAuthHeading">
 <section id="dvbAuthBox">
