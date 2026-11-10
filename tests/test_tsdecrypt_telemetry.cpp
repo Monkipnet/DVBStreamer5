@@ -44,7 +44,16 @@ int main() {
         "2026-11-10 17:22:01 | ECM | Received 52 (4 dup) and processed 48 in 10 seconds.");
     check(r.valid && r.received == 52 && r.duplicates == 4 && r.processed == 48, "r.valid && r.received == 52 && r.duplicates == 4 && r.processed == 48");
     check(!parseEcmReport("CW | SID 0x69 Data: SECRET").valid, "!parseEcmReport(\"CW | SID 0x69 Data: SECRET\").valid");
-    check(!parseEcmReport("ECM | Received 1 (4 dup) and processed 3 in 10 seconds.").valid, "!parseEcmReport(\"ECM | Received 1 (4 dup) and processed 3 in 10 seconds.\").valid");
+    // Upstream counts repeated ECM sections independently; duplicates can
+    // exceed unique ECMs. Async CAMD can also finish an earlier request in
+    // the next report interval, so processed may exceed received.
+    const auto repeated = parseEcmReport(
+        "2026-11-10 17:22:11 | ECM | Received 1 (41 dup) and processed 3 in 10 seconds.");
+    check(repeated.valid && repeated.received == 1 &&
+          repeated.duplicates == 41 && repeated.processed == 3,
+          "duplicate/processed ECM counters may exceed received");
+    check(!parseEcmReport("ECM | Received 1 (4 dup) and processed 3 in 0 seconds.").valid,
+          "zero-length interval should be rejected");
     check(hasSafeLogEvent("2026 | CW  | OK: Valid code word was received.",
                            "CW  | OK: Valid code word was received."), "CW safe event");
     std::puts("TSDecrypt safe telemetry tests passed");
