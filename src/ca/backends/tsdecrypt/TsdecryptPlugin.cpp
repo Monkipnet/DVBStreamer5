@@ -109,7 +109,7 @@ struct Service {
 
     bool start(const Reader& config, uint32_t sid, std::string& error) {
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
-        csaAltUnverified = config.caid == "098D";
+        csaAltUnverified = config.caid == "098D" || config.caid == "098d";
         const std::string tsdecryptBinary = locateTsdecrypt();
         if (tsdecryptBinary.empty()) {
             error = "TSDecrypt executable missing (expected bin/tsdecrypt or /usr/bin/tsdecrypt)"; return false;
