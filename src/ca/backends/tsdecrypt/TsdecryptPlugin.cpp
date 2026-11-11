@@ -67,7 +67,7 @@ struct Reader {
 struct Service {
     std::string id, readerKey;
     std::shared_ptr<dvbstreamer5::ca::tsdecrypt_detail::PidStore> pidStore;
-    std::string pidStoreKey;
+    std::string pidStoreKey, pidStoreLegacyKey;
     std::atomic<uint32_t> learnedEcmPid{0}, cachedHintPid{0};
     std::atomic<uint64_t> pidSelectedSinceMs{0}, pidVideoPesBase{0};
     std::atomic<uint64_t> childDenialsBase{0}, cachedHintFallbacks{0};
@@ -445,7 +445,10 @@ struct Service {
                  dvbstreamer5::ca::tsdecrypt_detail::shouldAbandonCachedEcmPid(
                      probe, true))) {
                 const uint32_t oldHint = cachedHintPid.exchange(0);
-                if (pidStore) pidStore->forget(pidStoreKey, oldHint);
+                if (pidStore) {
+                    pidStore->forget(pidStoreKey, oldHint);
+                    pidStore->forget(pidStoreLegacyKey, oldHint);
+                }
                 learnedEcmPid.store(0);
                 cachedHintFallbacks.fetch_add(1);
                 restartCount.fetch_add(1);
@@ -522,7 +525,9 @@ struct Service {
     bool start(const Reader& config, uint32_t sid, std::string& error) {
         Reader first = config;
         if (config.ecmPid == 0 && pidStore) {
-            const uint32_t remembered = pidStore->lookup(pidStoreKey);
+            uint32_t remembered = pidStore->lookup(pidStoreKey);
+            if (!remembered && pidStoreLegacyKey != pidStoreKey)
+                remembered = pidStore->lookup(pidStoreLegacyKey);
             if (remembered) {
                 first.ecmPid = remembered;
                 cachedHintPid.store(remembered);
@@ -631,6 +636,9 @@ int startService(void* self, const char* readerKey, const dvbstreamer5_ca_servic
     session->id = info->stream_id; session->readerKey = readerKey;
     session->pidStore = b->pidStore;
     session->pidStoreKey = dvbstreamer5::ca::tsdecrypt_detail::pidStoreKey(
+        session->id, info->service_id, readerKey, config.host,
+        config.caid, config.protocol);
+    session->pidStoreLegacyKey = dvbstreamer5::ca::tsdecrypt_detail::pidStoreLegacyKey(
         session->id, info->service_id, readerKey, config.host,
         config.caid, config.protocol);
     std::string reason;
