@@ -32,10 +32,12 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/dvbstreamer5-tsdecrypt-XXXXXX")"
 trap 'rm -rf -- "$WORK"' EXIT
 cp -a "$SRC"/. "$WORK"/
 
-python3 - "$WORK" <<'PY'
+python3 - "$WORK" "$ROOT/src/ca/backends/tsdecrypt/TsDecryptEcmPidPolicy.h" <<'PY'
 from pathlib import Path
+import shutil
 import sys
 root = Path(sys.argv[1])
+shutil.copyfile(sys.argv[2], root / 'dvb5_ecm_pid_policy.h')
 
 def change(name, changes):
     p = root / name
@@ -126,7 +128,44 @@ change('camd.c', [
      '\t/* ECM request and corresponding CW response are sequential. */\n'
      '\tc->ecm_mode = icam_mode_for_ecm(msg);\n'),
 ])
-print('Patched isolated source: ECM-aware key scheduling + bitslice iCAM')
+# V471: keep a recently proven ECM PID after transient negative CW
+# replies instead of immediately bouncing between every PMT candidate.
+change('data.h', [
+    ('\tuint16_t\t\t\tecm_pids[MAX_ECM_PIDS];',
+     '\tuint16_t\t\t\tecm_pids[MAX_ECM_PIDS];\n'
+     '\tuint16_t\t\t\tlast_successful_ecm_pid;\n'
+     '\tunsigned int\t\tecm_pid_consecutive_denials;'),
+])
+change('camd.c', [
+    ('#include "camd.h"\n',
+     '#include "camd.h"\n#include "dvb5_ecm_pid_policy.h"\n'),
+    ('\t\t// get_cw returned error, lets try other ecm pids, we might be lucky...\n'
+     '\t\tif (ts->n_ecm_pids > 1) {',
+     '\t\tif (ret == 0) ++ts->ecm_pid_consecutive_denials;\n'
+     '\t\telse ts->ecm_pid_consecutive_denials = 0;\n'
+     '\t\tconst int should_rotate = dvb5_should_rotate_ecm_pid(\n'
+     '\t\t\tts->forced_ecm_pid, ts->n_ecm_pids, ret,\n'
+     '\t\t\tts->ecm_pid_consecutive_denials, ts->ecm_pid,\n'
+     '\t\t\tts->last_successful_ecm_pid, c->key->is_valid_cw,\n'
+     '\t\t\tc->key->ts, time(NULL));\n'
+     '\t\tif (should_rotate) {\n'
+     '\t\t\tts->ecm_pid_consecutive_denials = 0;'),
+    ('\t\t\tts_LOGf("ECM | Switching ECM pid to 0x%04x (%d) idx:%d\\n", ts->ecm_pid, ts->ecm_pid, ts->ecm_pid_idx);\n'
+     '\t\t}\n'
+     '\t\tif (ret == -1)',
+     '\t\t\tts_LOGf("ECM | Switching ECM pid to 0x%04x (%d) idx:%d\\n", ts->ecm_pid, ts->ecm_pid, ts->ecm_pid_idx);\n'
+     '\t\t} else if (ret == 0 && ts->n_ecm_pids > 1 && !ts->forced_ecm_pid) {\n'
+     '\t\t\tts_LOGf("ECM | Holding recently valid ECM pid after transient card denial.\\n");\n'
+     '\t\t}\n'
+     '\t\tif (ret == -1)'),
+    ('\tc->key->is_valid_cw = valid_cw;\n',
+     '\tc->key->is_valid_cw = valid_cw;\n'
+     '\tif (valid_cw) {\n'
+     '\t\tts->last_successful_ecm_pid = ts->ecm_pid;\n'
+     '\t\tts->ecm_pid_consecutive_denials = 0;\n'
+     '\t}\n'),
+])
+print('Patched isolated TSDecrypt: ECM-aware CSA + sticky ECM PID policy')
 PY
 
 mkdir -p "$WORK/.vendor-lib" "$(dirname -- "$OUT")"

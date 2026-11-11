@@ -89,6 +89,7 @@ struct Service {
     std::atomic<uint64_t> camdUnexpectedResponses{0}, camdLoginErrors{0};
     std::atomic<uint32_t> currentEcmPid{0};
     std::atomic<uint64_t> ecmPidSwitches{0};
+    std::atomic<uint64_t> ecmPidHolds{0};
     std::atomic<uint64_t> lastCamdErrorMs{0};
     std::atomic<uint64_t> inputScrambledPackets{0}, outputNullPackets{0};
     std::atomic<uint64_t> outputClearMediaPes{0}, outputClearOnScrambledPid{0};
@@ -307,6 +308,9 @@ struct Service {
                         currentEcmPid.store(pidEvent.pid);
                         if (pidEvent.switched) ecmPidSwitches.fetch_add(1);
                     }
+                    if (dvbstreamer5::ca::tsdecrypt_detail::isEcmPidHoldEvent(
+                            line.c_str()))
+                        ecmPidHolds.fetch_add(1);
                     line.clear();
                 }
             }
@@ -658,7 +662,8 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "camd_bad_msg_id=%llu camd_card_denied=%llu "
                 "camd_checksum_errors=%llu camd_unexpected=%llu "
                 "camd_login_errors=%llu ecm_pid=%u "
-                "ecm_pid_switches=%llu csa_alt_verified=no\n",
+                "ecm_pid_switches=%llu ecm_pid_holds=%llu "
+                "csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReportCount.load()),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
@@ -691,7 +696,8 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->camdUnexpectedResponses.load()),
                 static_cast<unsigned long long>(service->camdLoginErrors.load()),
                 static_cast<unsigned>(service->currentEcmPid.load()),
-                static_cast<unsigned long long>(service->ecmPidSwitches.load()));
+                static_cast<unsigned long long>(service->ecmPidSwitches.load()),
+                static_cast<unsigned long long>(service->ecmPidHolds.load()));
         }
     }
     if (result) {
@@ -757,6 +763,7 @@ const char* statusJson(void* self) {
         if (selectedPid) item["ecm_pid"] = Json::UInt(selectedPid);
         else item["ecm_pid"] = Json::nullValue;
         item["ecm_pid_switches"] = Json::UInt64(entry.second->ecmPidSwitches.load());
+        item["ecm_pid_holds"] = Json::UInt64(entry.second->ecmPidHolds.load());
         const uint64_t lastClearPes = entry.second->lastClearPesMs.load();
         const uint64_t nowMs = Service::monotonicMs();
         if (lastClearPes && nowMs >= lastClearPes)

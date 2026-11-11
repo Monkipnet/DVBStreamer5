@@ -99,5 +99,10 @@ int main() {
           "Reject oversized ECM PID hexadecimal");
     check(!parseEcmPidReport("CW | SID 0x0105 0x0123 Secret").valid,
           "Never interpret code-word logs as ECM PID");
+    check(isEcmPidHoldEvent(
+        "ECM | Holding recently valid ECM pid after transient card denial."),
+        "PID hold event is safe to count");
+    check(!isEcmPidHoldEvent("CW | Secret content"),
+        "PID hold filter cannot inspect CW payload");
     std::puts("TSDecrypt safe telemetry tests passed");
 }

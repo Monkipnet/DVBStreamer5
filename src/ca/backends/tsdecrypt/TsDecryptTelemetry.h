@@ -135,6 +135,11 @@ inline EcmPidReport parseEcmPidReport(const char* line) noexcept {
     return result;
 }
 
+inline bool isEcmPidHoldEvent(const char* line) noexcept {
+    return hasSafeLogEvent(line,
+        "ECM | Holding recently valid ECM pid after transient card denial.");
+}
+
 enum class CamdEvent : uint8_t {
     None = 0, Connecting, Connected, ConnectionError,
     ReconnectRequested, NoCodeWord, EcmQueueOverflow, ProtocolError,

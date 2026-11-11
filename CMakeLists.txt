@@ -392,6 +392,12 @@ add_executable(dvbstreamer5_tsdecrypt_recovery_test
 add_test(NAME tsdecrypt_recovery
     COMMAND dvbstreamer5_tsdecrypt_recovery_test)
 
+# V10.8.471: experiment to keep the last valid ECM PID on transient errors.
+add_executable(dvbstreamer5_tsdecrypt_ecm_pid_policy_test
+    tests/test_tsdecrypt_ecm_pid_policy.c)
+add_test(NAME tsdecrypt_ecm_pid_policy
+    COMMAND dvbstreamer5_tsdecrypt_ecm_pid_policy_test)
+
 # V10.8.459: ensure forked TSDecrypt does not retain HTTP/server sockets.
 add_executable(dvbstreamer5_tsdecrypt_fd_isolation_test
     tests/test_tsdecrypt_fd_isolation.cpp)

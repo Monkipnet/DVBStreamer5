@@ -258,3 +258,36 @@ CW or raw ECM; all telemetry counters remain key-free.
 Test on one or two authorized services only. More than two or three
 services on the same remote reader should not be enabled until
 upstream timeouts are resolved.
+
+## V10.8.471 — ECM PID stickiness after transient Newcamd denial
+
+On home2 V470, SID 105/108 kept stable decoding while SID 132 had
+92 Newcamd card-denied replies with 92 ECM PID changes. During a
+90-second sample SID 132 added six denials and six switches, but
+`clear_media_pes` continued to increase. The original external
+TSDecrypt changes ECM PID immediately on any negative CW reply.
+
+The *experimental external TSDecrypt builder*, not the normal
+Newcamd backend, now retains a previously successful ECM PID after
+the first two consecutive negative card replies if its last valid
+CW was received within the past 30 seconds. A third denial permits
+automatic rotation; a never-proven or expired PID still rotates on
+the first denial. Transport failures continue through upstream's
+existing reconnect path. A forced PID is never auto-rotated.
+
+This policy applies separately to each TSDecrypt child, so it
+does not force SID 105, 108 and 132 to share one ECM PID. The host
+adds a safe `ecm_pid_holds` count, which should be inspected with
+`camd_card_denied`, `ecm_pid_switches`, and increasing
+`clear_media_pes`. No raw ECM/CW or CAMD login details are logged.
+
+**Important:** To activate the change, rebuild the *external*
+TSDecrypt executable using `scripts/build_tsdecrypt_icam.sh`
+and package that newly built executable using
+`--tsdecrypt-binary build/tsdecrypt-icam/tsdecrypt`.
+Rebuilding only DVBStreamer5 does not update a previously
+installed TSDecrypt executable.
+
+Build/run the pure C policy test with:
+`ctest --test-dir build -R 'tsdecrypt_ecm_pid_policy|tsdecrypt_safe_telemetry' --output-on-failure`.
+This patch is experimental and has not yet been A/B-tested on home2.
