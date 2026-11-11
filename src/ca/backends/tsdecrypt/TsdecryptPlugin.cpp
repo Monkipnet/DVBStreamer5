@@ -4,6 +4,7 @@
 #include "../../CaBackendPluginApi.h"
 #include "SpawnFdIsolation.h"
 #include "TsDecryptTelemetry.h"
+#include "TsDecryptRecoveryPolicy.h"
 #include <jsoncpp/json/json.h>
 #include <algorithm>
 #include <array>
@@ -68,7 +69,12 @@ struct Service {
     std::deque<std::array<uint8_t, kPacket>> output;
     size_t inputBytes = 0;
     std::atomic<bool> stopping{false};
+    std::atomic<bool> workerStop{false};
     std::atomic<bool> exited{false};
+    std::atomic<bool> recovering{false};
+    std::atomic<uint64_t> restartCount{0};
+    std::atomic<uint64_t> childStartedMs{0}, lastEncryptedInputMs{0};
+    std::atomic<uint64_t> lastChildOutputMs{0}, lastClearPesMs{0};
     std::atomic<uint64_t> inputDrops{0};
     std::atomic<uint64_t> outputDrops{0};
     // All reported values are metadata only; never retain raw CW/ECM payloads.
@@ -87,9 +93,15 @@ struct Service {
     uint64_t lastDiagSecond = 0;
     int inFd = -1, outFd = -1, logFd = -1;
     pid_t pid = -1;
-    std::thread writer, reader, logReader;
+    std::thread writer, reader, logReader, watchdog;
 
     ~Service() { stop(); }
+
+    static uint64_t monotonicMs() noexcept {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+    }
 
     static bool writeBytes(int fd, const uint8_t* bytes, size_t length, std::atomic<bool>& stop) {
         size_t done = 0;
@@ -107,7 +119,14 @@ struct Service {
         return done == length;
     }
 
-    bool start(const Reader& config, uint32_t sid, std::string& error) {
+    bool spawnChild(const Reader& config, uint32_t sid, std::string& error) {
+        workerStop.store(false);
+        exited.store(false);
+        cwValidReported.store(false);
+        lastEncryptedInputMs.store(0);
+        lastChildOutputMs.store(0);
+        lastClearPesMs.store(0);
+        childStartedMs.store(0);
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
         csaAltUnverified = config.caid == "098D" || config.caid == "098d";
         const std::string tsdecryptBinary = locateTsdecrypt();
@@ -165,27 +184,28 @@ struct Service {
         logFd = logPipe[0];
         inFd = inputPipe[1];
         outFd = outputPipe[0];
+        childStartedMs.store(monotonicMs());
         ::fcntl(inFd, F_SETFL, ::fcntl(inFd, F_GETFL, 0) | O_NONBLOCK);
         ::fcntl(outFd, F_SETFL, ::fcntl(outFd, F_GETFL, 0) | O_NONBLOCK);
         writer = std::thread([this] {
             // Prevent SIGPIPE from terminating DVBStreamer5 on tsdecrypt exit.
             sigset_t mask; sigemptyset(&mask); sigaddset(&mask, SIGPIPE);
             (void)pthread_sigmask(SIG_BLOCK, &mask, nullptr);
-            while (!stopping.load()) {
+            while (!stopping.load() && !workerStop.load()) {
                 std::vector<uint8_t> chunk;
                 {
                     std::unique_lock<std::mutex> lock(mutex);
                     cv.wait_for(lock, std::chrono::milliseconds(100), [&] {
-                        return stopping.load() || !input.empty();
+                        return stopping.load() || workerStop.load() || !input.empty();
                     });
-                    if (stopping.load()) break;
+                    if (stopping.load() || workerStop.load()) break;
                     if (input.empty()) continue;
                     chunk = std::move(input.front()); input.pop_front();
                     inputBytes -= chunk.size();
                 }
-                if (!writeBytes(inFd, chunk.data(), chunk.size(), stopping)) break;
+                if (!writeBytes(inFd, chunk.data(), chunk.size(), workerStop)) break;
             }
-            exited.store(true);
+            if (!stopping.load() && !workerStop.load()) exited.store(true);
         });
         logReader = std::thread([this] {
             // Parse only fixed, numeric summaries. Never relay raw stderr:
@@ -193,7 +213,7 @@ struct Service {
             std::array<char, 4096> chunk{};
             std::string line;
             line.reserve(512);
-            while (!stopping.load()) {
+            while (!stopping.load() && !workerStop.load()) {
                 pollfd event{logFd, POLLIN, 0};
                 if (::poll(&event, 1, 100) <= 0) continue;
                 const ssize_t n = ::read(logFd, chunk.data(), chunk.size());
@@ -227,7 +247,7 @@ struct Service {
         reader = std::thread([this] {
             std::array<uint8_t, 32 * 1024> temp{};
             std::vector<uint8_t> unaligned;
-            while (!stopping.load()) {
+            while (!stopping.load() && !workerStop.load()) {
                 pollfd event{outFd, POLLIN, 0};
                 if (::poll(&event, 1, 100) <= 0) continue;
                 const ssize_t got = ::read(outFd, temp.data(), temp.size());
@@ -236,6 +256,7 @@ struct Service {
                     if (errno == EINTR || errno == EAGAIN) continue;
                     break;
                 }
+                lastChildOutputMs.store(monotonicMs());
                 unaligned.insert(unaligned.end(), temp.begin(), temp.begin() + got);
                 size_t position = 0;
                 std::lock_guard<std::mutex> lock(mutex);
@@ -259,13 +280,15 @@ struct Service {
                 if (position) unaligned.erase(unaligned.begin(), unaligned.begin() + position);
                 if (unaligned.size() > 2 * kPacket) unaligned.clear();
             }
-            exited.store(true);
+            if (!stopping.load() && !workerStop.load()) exited.store(true);
         });
         return true;
     }
 
-    void stop() {
-        if (stopping.exchange(true)) return;
+    // Only the supervisor owns the child lifecycle. Old child output must
+    // never be emitted after a CAMD/CW/PMT reconnect.
+    void stopChild() {
+        workerStop.store(true);
         cv.notify_all();
         if (pid > 0) ::kill(pid, SIGTERM);
         if (writer.joinable()) writer.join();
@@ -276,14 +299,97 @@ struct Service {
         if (logFd >= 0) { ::close(logFd); logFd = -1; }
         if (pid > 0) {
             int status = 0; bool done = false;
-            for (int i=0; i<20; ++i) {
-                pid_t r = ::waitpid(pid, &status, WNOHANG);
+            for (int i = 0; i < 20; ++i) {
+                const pid_t r = ::waitpid(pid, &status, WNOHANG);
                 if (r == pid || (r < 0 && errno == ECHILD)) { done = true; break; }
+                if (r < 0 && errno != EINTR) { done = true; break; }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
             if (!done) { ::kill(pid, SIGKILL); (void)::waitpid(pid, &status, 0); }
             pid = -1;
         }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            input.clear();
+            output.clear();
+            inputBytes = 0;
+            inputScrambledPids.fill(false);
+        }
+        lastClearPesMs.store(0);
+        lastEncryptedInputMs.store(0);
+        lastChildOutputMs.store(0);
+        childStartedMs.store(0);
+        cwValidReported.store(false);
+    }
+
+    void supervise(const Reader& config, uint32_t sid) {
+        uint64_t consecutiveRestarts = 0;
+        while (!stopping.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            if (stopping.load()) break;
+            const uint64_t now = monotonicMs();
+            const auto reason = dvbstreamer5::ca::tsdecrypt_detail::recoveryReason({
+                now, childStartedMs.load(), lastEncryptedInputMs.load(),
+                lastChildOutputMs.load(), lastClearPesMs.load(), exited.load()
+            });
+            if (reason == dvbstreamer5::ca::tsdecrypt_detail::RecoveryReason::None) {
+                // Successful decoding for one minute resets retry throttling.
+                const auto lastPes = lastClearPesMs.load();
+                const auto began = childStartedMs.load();
+                if (lastPes && began && now >= began + 60000 &&
+                    now >= lastPes && now - lastPes <= 5000)
+                    consecutiveRestarts = 0;
+                continue;
+            }
+
+            recovering.store(true);
+            const uint64_t n = restartCount.fetch_add(1) + 1;
+            std::fprintf(stderr,
+                "TSDECRYPT RECOVERY stream=%s reason=%s attempt=%llu "
+                "input_drops=%llu output_drops=%llu\n",
+                id.c_str(),
+                dvbstreamer5::ca::tsdecrypt_detail::recoveryReasonName(reason),
+                static_cast<unsigned long long>(n),
+                static_cast<unsigned long long>(inputDrops.load()),
+                static_cast<unsigned long long>(outputDrops.load()));
+            stopChild();
+            if (stopping.load()) break;
+
+            const uint64_t pauseMs =
+                dvbstreamer5::ca::tsdecrypt_detail::retryDelayMs(consecutiveRestarts);
+            consecutiveRestarts = std::min<uint64_t>(consecutiveRestarts + 1, 8);
+            const uint64_t until = monotonicMs() + pauseMs;
+            while (!stopping.load() && monotonicMs() < until)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (stopping.load()) break;
+
+            std::string detail;
+            if (!spawnChild(config, sid, detail)) {
+                // Do not log command lines, reader configuration or credentials.
+                exited.store(true);
+                std::fprintf(stderr,
+                    "TSDECRYPT RECOVERY stream=%s reason=spawn_failed attempt=%llu\n",
+                    id.c_str(), static_cast<unsigned long long>(n));
+                continue;
+            }
+            recovering.store(false);
+        }
+        stopChild();
+        recovering.store(false);
+    }
+
+    bool start(const Reader& config, uint32_t sid, std::string& error) {
+        if (!spawnChild(config, sid, error)) return false;
+        watchdog = std::thread([this, config, sid] { supervise(config, sid); });
+        return true;
+    }
+
+    void stop() {
+        if (stopping.exchange(true)) return;
+        workerStop.store(true);
+        cv.notify_all();
+        if (watchdog.joinable()) watchdog.join();
+        else stopChild();
     }
 };
 struct Backend {
@@ -407,14 +513,18 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
     std::vector<uint8_t> original(data, data+size);
     {
         std::lock_guard<std::mutex> lock(service->mutex);
-        if (!service->stopping.load()) {
+        if (!service->stopping.load() && !service->recovering.load() &&
+            !service->workerStop.load()) {
+            bool anyEncrypted = false;
             for (size_t i=0; i<size; i+=kPacket) {
                 const auto facts = dvbstreamer5::ca::tsdecrypt_detail::inspectTsPacket(data+i, kPacket);
                 if (facts.valid && facts.scrambled && facts.pid != 0x1fff) {
                     service->inputScrambledPids[facts.pid] = true;
                     service->inputScrambledPackets.fetch_add(1);
+                    anyEncrypted = true;
                 }
             }
+            if (anyEncrypted) service->lastEncryptedInputMs.store(Service::monotonicMs());
             if (service->inputBytes + size <= kMaxQueueBytes) {
                 service->input.push_back(std::move(original)); service->inputBytes += size;
                 service->cv.notify_one();
@@ -437,8 +547,10 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                             if (service->inputScrambledPids[pid]) {
                                 ++changed; // clear output on an encrypted input PID; not proof of CW
                                 service->outputClearOnScrambledPid.fetch_add(1);
-                                if (facts.clearMediaPesStart)
+                                if (facts.clearMediaPesStart) {
                                     service->outputClearMediaPesOnScrambledPid.fetch_add(1);
+                                    service->lastClearPesMs.store(Service::monotonicMs());
+                                }
                                 if (facts.clearVideoPesStart)
                                     service->outputClearVideoPesOnScrambledPid.fetch_add(1);
                                 if (facts.clearAudioPesStart)
@@ -468,7 +580,8 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "input_scrambled=%llu output_clear_encrypted_pid=%llu "
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
                 "video_pes_encrypted_pid=%llu audio_pes_encrypted_pid=%llu "
-                "output_null=%llu csa_alt_verified=no\n",
+                "output_null=%llu input_drops=%llu output_drops=%llu "
+                "restarts=%llu recovering=%u csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReportCount.load()),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
@@ -482,7 +595,11 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->outputClearMediaPesOnScrambledPid.load()),
                 static_cast<unsigned long long>(service->outputClearVideoPesOnScrambledPid.load()),
                 static_cast<unsigned long long>(service->outputClearAudioPesOnScrambledPid.load()),
-                static_cast<unsigned long long>(service->outputNullPackets.load()));
+                static_cast<unsigned long long>(service->outputNullPackets.load()),
+                static_cast<unsigned long long>(service->inputDrops.load()),
+                static_cast<unsigned long long>(service->outputDrops.load()),
+                static_cast<unsigned long long>(service->restartCount.load()),
+                service->recovering.load() ? 1U : 0U);
         }
     }
     if (result) {
@@ -493,8 +610,12 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
         // A CW event or a cleared scrambling bit is NOT proof that CSA-ALT
         // decoded usable video. A valid clear PES header is stronger evidence,
         // but is still not a full media decode verification.
-        const bool hasPesEvidence = service->outputClearMediaPesOnScrambledPid.load() > 0;
-        const char* state = service->exited.load() ? "TSDECRYPT_EXITED" :
+        const auto lastPes = service->lastClearPesMs.load();
+        const auto nowMs = Service::monotonicMs();
+        const bool hasPesEvidence = lastPes != 0 && nowMs >= lastPes &&
+            nowMs - lastPes <= 15000;
+        const char* state = service->recovering.load() ? "TSDECRYPT_RECOVERING" :
+            service->exited.load() ? "TSDECRYPT_EXITED" :
             hasPesEvidence ? "TSDECRYPT_PES_EVIDENCE" :
             service->cwValidReported.load() ? "TSDECRYPT_CW_SIGNAL_NO_PES" :
             service->ecmProcessed.load() ? "TSDECRYPT_ECM_NO_PES" :
@@ -522,9 +643,17 @@ const char* statusJson(void* self) {
     for (const auto& entry : b->services) {
         Json::Value item(Json::objectValue);
         item["stream_id"] = entry.first;
-        item["status"] = entry.second->exited.load() ? "EXITED" : "ACTIVE";
+        item["status"] = entry.second->recovering.load() ? "RECOVERING" :
+            (entry.second->exited.load() ? "EXITED" : "ACTIVE");
+        item["restart_count"] = Json::UInt64(entry.second->restartCount.load());
         item["input_drops"] = Json::UInt64(entry.second->inputDrops.load());
         item["output_drops"] = Json::UInt64(entry.second->outputDrops.load());
+        const uint64_t lastClearPes = entry.second->lastClearPesMs.load();
+        const uint64_t nowMs = Service::monotonicMs();
+        if (lastClearPes && nowMs >= lastClearPes)
+            item["last_clear_pes_age_ms"] = Json::UInt64(nowMs - lastClearPes);
+        else
+            item["last_clear_pes_age_ms"] = Json::nullValue;
         item["ecm_received_reported"] = Json::UInt64(entry.second->ecmReceived.load());
         item["ecm_processed_reported"] = Json::UInt64(entry.second->ecmProcessed.load());
         item["ecm_duplicates_reported"] = Json::UInt64(entry.second->ecmDuplicates.load());

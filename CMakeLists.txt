@@ -386,6 +386,12 @@ add_executable(dvbstreamer5_tsdecrypt_telemetry_test
 add_test(NAME tsdecrypt_safe_telemetry
     COMMAND dvbstreamer5_tsdecrypt_telemetry_test)
 
+# V10.8.463: deterministic recovery policy for opt-in external TSDecrypt.
+add_executable(dvbstreamer5_tsdecrypt_recovery_test
+    tests/test_tsdecrypt_recovery.cpp)
+add_test(NAME tsdecrypt_recovery
+    COMMAND dvbstreamer5_tsdecrypt_recovery_test)
+
 # V10.8.459: ensure forked TSDecrypt does not retain HTTP/server sockets.
 add_executable(dvbstreamer5_tsdecrypt_fd_isolation_test
     tests/test_tsdecrypt_fd_isolation.cpp)

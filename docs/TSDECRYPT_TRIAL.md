@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.462 — TSDecrypt per-tile CA backend (experimental)
+# DVBStreamer5 V10.8.463 — TSDecrypt per-tile CA backend (experimental)
 
 The plugin `ca-plugins/dvbstreamer5-ca-tsdecrypt.so` is opt-in per CAM client;
 Newcamd, OSCam-mini and DVB-CI remain unchanged. The external `bin/tsdecrypt`
@@ -141,3 +141,36 @@ sha256sum dist/DVBStreamer5-10.8.462-linux-x86_64.tar.gz \
 one authorized test SID and its video/audio PES, actual playback, and CW
 changes. A valid CW or cleared scrambling bit does not prove decryption.
 Keep the standard Newcamd backend as the per-tile rollback option.
+
+## V10.8.463 — TSDecrypt per-service supervision
+
+V462 showed working iCAM/CSA-ALT output on two test services, but the external
+TSDecrypt child could exit or stop producing valid media. The host plugin
+previously set `exited=true` and did not restart the child. V463 adds an
+opt-in-backend-only watchdog for each service:
+
+- Restart after unexpected child exit or a broken input/output pipe.
+- Restart after 20 seconds without child stdout while encrypted input is
+  active (after 30 seconds of process startup).
+- Restart after 45 seconds without recognizable clear media PES following
+  successful PES output, or 70 seconds after startup without any such output.
+- Do not restart when encrypted input is absent or idle.
+- Clear stale input/output TS queues and prior CW/PES health markers on restart.
+- Use increasing 1/2/4/8/16/30-second retry delays, resetting after one
+  minute of healthy output.
+- Keep detailed keys, raw ECM bytes, CAMD passwords and child stderr out of
+  application logs. Only `TSDECRYPT RECOVERY` with non-secret reason/counts
+  and `TSDECRYPT DIAG input_drops= output_drops= restarts= recovering=`
+  are emitted.
+
+The normal Newcamd and OSCam-mini backends are not modified. Restart is
+local to a single TSDecrypt service and does not restart the DVBStreamer5
+process or other tiles. Status evidence expires after 15 seconds instead
+of carrying a stale lifetime PES-success value. Recovery cannot resolve
+a continuously failing CAMD server, bad ECM source or unsupported channel;
+inspect the reason and per-tile error counters before further changes.
+
+The pure recovery policy is covered by `ctest --test-dir build -R
+tsdecrypt_recovery --output-on-failure`. Runtime supervision needs a real
+one-tile home2 test, including abrupt child failure, and has **not yet
+been verified on the server**.
