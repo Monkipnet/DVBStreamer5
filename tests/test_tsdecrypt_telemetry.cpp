@@ -56,5 +56,21 @@ int main() {
           "zero-length interval should be rejected");
     check(hasSafeLogEvent("2026 | CW  | OK: Valid code word was received.",
                            "CW  | OK: Valid code word was received."), "CW safe event");
+    check(classifyCamdEvent("CAM | Connecting to server private-user port 12121") ==
+              CamdEvent::Connecting, "CAMD connect attempt (no secrets retained)");
+    check(classifyCamdEvent("CAM | Connected to server 127.0.0.1 port 12121") ==
+              CamdEvent::Connected, "CAMD connected");
+    check(classifyCamdEvent("CAM | Error connecting to server x port y") ==
+              CamdEvent::ConnectionError, "CAMD connect failure");
+    check(classifyCamdEvent("ERR | Error sending ecm packet, reconnecting to camd.") ==
+              CamdEvent::ReconnectRequested, "CAMD ECM reconnect");
+    check(classifyCamdEvent("ERR | No code word has been received (ret = -1)") ==
+              CamdEvent::NoCodeWord, "CAMD no CW");
+    check(classifyCamdEvent("WRN | Too many items (12) in ECM queue, dropping the oldest.") ==
+              CamdEvent::EcmQueueOverflow, "CAMD ECM backlog");
+    check(classifyCamdEvent("ERR | [newcamd] Failed to read message.") ==
+              CamdEvent::ProtocolError, "Newcamd protocol error");
+    check(classifyCamdEvent("CW  | SID 0x01 Data: SENSITIVE_CW") ==
+              CamdEvent::None, "raw CW not classified");
     std::puts("TSDecrypt safe telemetry tests passed");
 }

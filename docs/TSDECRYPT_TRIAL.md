@@ -174,3 +174,26 @@ The pure recovery policy is covered by `ctest --test-dir build -R
 tsdecrypt_recovery --output-on-failure`. Runtime supervision needs a real
 one-tile home2 test, including abrupt child failure, and has **not yet
 been verified on the server**.
+
+## V10.8.467 — concurrent streams: CAMD attribution and reconnect staggering
+
+Each TSDecrypt service uses its own OS process and Newcamd connection.
+When more than two or three services are active, do not assume that a
+CW dropout is a CSA-ALT algorithm failure. Check the key-free counters
+`camd_connect_attempts`, `camd_connected`, `camd_connect_errors`,
+`camd_reconnects`, `camd_no_cw`, and `camd_ecm_queue_overflows`
+alongside `input_drops`, `output_drops`, and `restarts`.
+No secret, ECM payload, code word or raw CAMD log line is printed.
+
+The V463+ supervisor now gives the child's built-in CAMD reconnect logic
+up to 180 seconds to recover when recent CAMD errors are observed and the
+child is still writing TS. Unexpected child exits and stopped output retain
+the existing restart policy. Host retry delays are deterministically
+staggered by 0–1800 ms per stream so several channels do not reconnect
+at exactly the same instant.
+
+**This is mitigation and diagnostics, not proof of the failure cause.**
+If the installed binary is V462, host-side watchdog is not involved.
+Look for OSCam/reader ECM capacity, multiple Newcamd sessions per account,
+missing CW events, or input/output queue drops, and test on a non-production
+channel before activating four or more services.

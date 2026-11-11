@@ -91,4 +91,32 @@ inline bool hasSafeLogEvent(const char* line, const char* needle) noexcept {
     return false;
 }
 
+enum class CamdEvent : uint8_t {
+    None = 0, Connecting, Connected, ConnectionError,
+    ReconnectRequested, NoCodeWord, EcmQueueOverflow, ProtocolError
+};
+
+// Classify only fixed TSDecrypt log markers. The real line can include
+// credentials, endpoints, ECM bytes or CW; NEVER copy it into telemetry.
+inline CamdEvent classifyCamdEvent(const char* line) noexcept {
+    if (!line) return CamdEvent::None;
+    if (hasSafeLogEvent(line, "ERR | Error sending ecm packet, reconnecting to camd."))
+        return CamdEvent::ReconnectRequested;
+    if (hasSafeLogEvent(line, "ERR | No code word has been received (ret = -1)"))
+        return CamdEvent::NoCodeWord;
+    if (hasSafeLogEvent(line, "ERR | [newcamd]"))
+        return CamdEvent::ProtocolError;
+    if (hasSafeLogEvent(line, "in ECM queue, dropping the oldest."))
+        return CamdEvent::EcmQueueOverflow;
+    if (hasSafeLogEvent(line, "CAM | Error connecting to server ") ||
+        hasSafeLogEvent(line, "CAM | Could not create socket:") ||
+        hasSafeLogEvent(line, "CAM | ERROR: getaddrinfo("))
+        return CamdEvent::ConnectionError;
+    if (hasSafeLogEvent(line, "CAM | Connected to server "))
+        return CamdEvent::Connected;
+    if (hasSafeLogEvent(line, "CAM | Connecting to server "))
+        return CamdEvent::Connecting;
+    return CamdEvent::None;
+}
+
 } // namespace dvbstreamer5::ca::tsdecrypt_detail

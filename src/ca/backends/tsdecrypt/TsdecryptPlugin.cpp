@@ -80,6 +80,11 @@ struct Service {
     // All reported values are metadata only; never retain raw CW/ECM payloads.
     std::atomic<uint64_t> ecmReceived{0}, ecmDuplicates{0}, ecmProcessed{0};
     std::atomic<uint64_t> ecmReportCount{0}, cwValidSignalEvents{0}, cwWarningEvents{0};
+    std::atomic<uint64_t> camdConnectAttempts{0}, camdConnected{0};
+    std::atomic<uint64_t> camdConnectErrors{0}, camdReconnects{0};
+    std::atomic<uint64_t> camdNoCwErrors{0}, ecmQueueOverflows{0};
+    std::atomic<uint64_t> camdProtocolErrors{0};
+    std::atomic<uint64_t> lastCamdErrorMs{0};
     std::atomic<uint64_t> inputScrambledPackets{0}, outputNullPackets{0};
     std::atomic<uint64_t> outputClearMediaPes{0}, outputClearOnScrambledPid{0};
     std::atomic<uint64_t> outputClearMediaPesOnScrambledPid{0};
@@ -127,6 +132,7 @@ struct Service {
         lastChildOutputMs.store(0);
         lastClearPesMs.store(0);
         childStartedMs.store(0);
+        lastCamdErrorMs.store(0);
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
         csaAltUnverified = config.caid == "098D" || config.caid == "098d";
         const std::string tsdecryptBinary = locateTsdecrypt();
@@ -240,6 +246,34 @@ struct Service {
                         cwWarningEvents.fetch_add(1);
                         cwValidReported.store(false);
                     }
+                    // Never log the child message. It may contain credentials
+                    // or ECM/CW bytes; count only allowlisted event types.
+                    using Event = dvbstreamer5::ca::tsdecrypt_detail::CamdEvent;
+                    switch (dvbstreamer5::ca::tsdecrypt_detail::classifyCamdEvent(
+                                line.c_str())) {
+                        case Event::Connecting: camdConnectAttempts.fetch_add(1); break;
+                        case Event::Connected: camdConnected.fetch_add(1); break;
+                        case Event::ConnectionError:
+                            camdConnectErrors.fetch_add(1);
+                            lastCamdErrorMs.store(monotonicMs());
+                            break;
+                        case Event::ReconnectRequested:
+                            camdReconnects.fetch_add(1);
+                            lastCamdErrorMs.store(monotonicMs());
+                            break;
+                        case Event::NoCodeWord:
+                            camdNoCwErrors.fetch_add(1);
+                            lastCamdErrorMs.store(monotonicMs());
+                            break;
+                        case Event::EcmQueueOverflow:
+                            ecmQueueOverflows.fetch_add(1);
+                            break;
+                        case Event::ProtocolError:
+                            camdProtocolErrors.fetch_add(1);
+                            lastCamdErrorMs.store(monotonicMs());
+                            break;
+                        case Event::None: break;
+                    }
                     line.clear();
                 }
             }
@@ -330,7 +364,8 @@ struct Service {
             const uint64_t now = monotonicMs();
             const auto reason = dvbstreamer5::ca::tsdecrypt_detail::recoveryReason({
                 now, childStartedMs.load(), lastEncryptedInputMs.load(),
-                lastChildOutputMs.load(), lastClearPesMs.load(), exited.load()
+                lastChildOutputMs.load(), lastClearPesMs.load(), exited.load(),
+                lastCamdErrorMs.load()
             });
             if (reason == dvbstreamer5::ca::tsdecrypt_detail::RecoveryReason::None) {
                 // Successful decoding for one minute resets retry throttling.
@@ -356,7 +391,8 @@ struct Service {
             if (stopping.load()) break;
 
             const uint64_t pauseMs =
-                dvbstreamer5::ca::tsdecrypt_detail::retryDelayMs(consecutiveRestarts);
+                dvbstreamer5::ca::tsdecrypt_detail::retryDelayMs(consecutiveRestarts) +
+                dvbstreamer5::ca::tsdecrypt_detail::retryJitterMs(id.c_str());
             consecutiveRestarts = std::min<uint64_t>(consecutiveRestarts + 1, 8);
             const uint64_t until = monotonicMs() + pauseMs;
             while (!stopping.load() && monotonicMs() < until)
@@ -581,7 +617,11 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
                 "video_pes_encrypted_pid=%llu audio_pes_encrypted_pid=%llu "
                 "output_null=%llu input_drops=%llu output_drops=%llu "
-                "restarts=%llu recovering=%u csa_alt_verified=no\n",
+                "restarts=%llu recovering=%u "
+                "camd_connect_attempts=%llu camd_connected=%llu "
+                "camd_connect_errors=%llu camd_reconnects=%llu "
+                "camd_no_cw=%llu camd_ecm_queue_overflows=%llu "
+                "camd_protocol_errors=%llu csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReportCount.load()),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
@@ -599,7 +639,14 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->inputDrops.load()),
                 static_cast<unsigned long long>(service->outputDrops.load()),
                 static_cast<unsigned long long>(service->restartCount.load()),
-                service->recovering.load() ? 1U : 0U);
+                service->recovering.load() ? 1U : 0U,
+                static_cast<unsigned long long>(service->camdConnectAttempts.load()),
+                static_cast<unsigned long long>(service->camdConnected.load()),
+                static_cast<unsigned long long>(service->camdConnectErrors.load()),
+                static_cast<unsigned long long>(service->camdReconnects.load()),
+                static_cast<unsigned long long>(service->camdNoCwErrors.load()),
+                static_cast<unsigned long long>(service->ecmQueueOverflows.load()),
+                static_cast<unsigned long long>(service->camdProtocolErrors.load()));
         }
     }
     if (result) {
@@ -648,6 +695,13 @@ const char* statusJson(void* self) {
         item["restart_count"] = Json::UInt64(entry.second->restartCount.load());
         item["input_drops"] = Json::UInt64(entry.second->inputDrops.load());
         item["output_drops"] = Json::UInt64(entry.second->outputDrops.load());
+        item["camd_connect_attempts"] = Json::UInt64(entry.second->camdConnectAttempts.load());
+        item["camd_connected"] = Json::UInt64(entry.second->camdConnected.load());
+        item["camd_connect_errors"] = Json::UInt64(entry.second->camdConnectErrors.load());
+        item["camd_reconnect_requests"] = Json::UInt64(entry.second->camdReconnects.load());
+        item["camd_no_cw_errors"] = Json::UInt64(entry.second->camdNoCwErrors.load());
+        item["camd_ecm_queue_overflows"] = Json::UInt64(entry.second->ecmQueueOverflows.load());
+        item["camd_protocol_errors"] = Json::UInt64(entry.second->camdProtocolErrors.load());
         const uint64_t lastClearPes = entry.second->lastClearPesMs.load();
         const uint64_t nowMs = Service::monotonicMs();
         if (lastClearPes && nowMs >= lastClearPes)
