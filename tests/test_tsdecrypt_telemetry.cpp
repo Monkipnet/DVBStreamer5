@@ -69,7 +69,19 @@ int main() {
     check(classifyCamdEvent("WRN | Too many items (12) in ECM queue, dropping the oldest.") ==
               CamdEvent::EcmQueueOverflow, "CAMD ECM backlog");
     check(classifyCamdEvent("ERR | [newcamd] Failed to read message.") ==
-              CamdEvent::ProtocolError, "Newcamd protocol error");
+              CamdEvent::NewcamdReadError, "Newcamd read error");
+    check(classifyCamdEvent("ERR | [newcamd] Bad msg_id 000A != 0009") ==
+              CamdEvent::NewcamdBadMsgId, "Newcamd delayed reply");
+    check(classifyCamdEvent("ERR | [newcamd] Card was not able to decode the channel.") ==
+              CamdEvent::NewcamdCardDenied, "Newcamd card denied");
+    check(classifyCamdEvent("ERR | [newcamd] Checksum error.") ==
+              CamdEvent::NewcamdChecksumError, "Newcamd checksum");
+    check(classifyCamdEvent("ERR | [newcamd] Unexpected CAMD server response (code 0).") ==
+              CamdEvent::NewcamdUnexpectedResponse, "Newcamd unexpected reply");
+    check(classifyCamdEvent("ERR | [newcamd] Login failed. Check user/pass/des-key.") ==
+              CamdEvent::NewcamdLoginError, "Newcamd login");
+    check(classifyCamdEvent("ERR | [newcamd] protocol unknown") ==
+              CamdEvent::ProtocolError, "Newcamd fallback counter");
     check(classifyCamdEvent("CW  | SID 0x01 Data: SENSITIVE_CW") ==
               CamdEvent::None, "raw CW not classified");
     std::puts("TSDecrypt safe telemetry tests passed");

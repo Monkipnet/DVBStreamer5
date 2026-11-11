@@ -197,3 +197,36 @@ If the installed binary is V462, host-side watchdog is not involved.
 Look for OSCam/reader ECM capacity, multiple Newcamd sessions per account,
 missing CW events, or input/output queue drops, and test on a non-production
 channel before activating four or more services.
+
+## V10.8.468: nine-channel timeout incident and classified Newcamd errors
+
+The V467 home2 nine-channel trial showed OSCam-mini logging 1,887 ECM
+timeouts and 1,814 successful ("found") ECM results in thirty minutes,
+with repeated TSDecrypt `media_stalled` recoveries. A configured 5000 ms
+client timeout was observed. Host transport queues had no drops; CPU/memory
+OOM was not observed. These event counts are NOT percentages of unique ECMs.
+
+The single `camd_protocol_errors` counter from V467 conflated Newcamd
+read failures, late `msg_id` replies, card decode denials, checksum failures,
+unexpected responses and login errors. V468 adds these **key-free** subtypes:
+
+- `camd_read_errors`: failure to read a Newcamd reply
+- `camd_bad_msg_id`: delayed/unsynchronized reply identifier
+- `camd_card_denied`: server explicitly could not decode the channel
+- `camd_checksum_errors`: invalid Newcamd checksum
+- `camd_unexpected`: unexpected Newcamd return length/status
+- `camd_login_errors`: authentication error
+- `camd_protocol_errors`: unchanged aggregate across those and other errors
+
+Only allowlisted event markers are classified. Raw stderr, credentials,
+control words, and ECM payloads must never be forwarded to the journal.
+
+**Supervisor mitigation:** while an active child keeps reporting CAMD or
+ECM queue failures, the host no longer forces a `media_stalled` restart.
+This avoids creating more simultaneous Newcamd logins on an already failing
+reader. A genuine child exit or stalled stdout remains restartable. After
+60 seconds with no new CAMD errors, media-stall recovery is reenabled.
+
+This does not increase OSCam-mini capacity or repair remote ECM processing.
+Diagnose reader load and the new categories before attempting concurrent
+9-channel production decoding. Avoid raising `clienttimeout` blindly.

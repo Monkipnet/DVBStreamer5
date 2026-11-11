@@ -36,13 +36,12 @@ inline RecoveryReason recoveryReason(const RecoveryProbe& p) noexcept {
     const bool recentCamdError =
         p.lastCamdErrorMs != 0 && p.lastCamdErrorMs <= p.nowMs &&
         p.nowMs - p.lastCamdErrorMs <= 60000;
-    const uint64_t mediaReferenceMs = p.lastClearMediaPesMs
-        ? p.lastClearMediaPesMs : p.startedMs;
-    const bool prolongedMediaLoss = p.nowMs >= mediaReferenceMs &&
-        p.nowMs - mediaReferenceMs >= 180000;
-    // If the CAMD server is already reconnecting, do not generate a second
-    // simultaneous login storm. A prolonged failure still triggers recovery.
-    if (recentCamdError && !prolongedMediaLoss)
+    // When the upstream CAMD reader is still reporting protocol/ECM errors,
+    // killing our process cannot repair reader capacity or entitlements.
+    // Avoid repeatedly creating fresh Newcamd sessions for nine streams.
+    // Resume normal media-stall recovery once errors have been absent
+    // for 60 seconds. Child exit/output stall still recovers immediately.
+    if (recentCamdError)
         return RecoveryReason::None;
     if (p.lastClearMediaPesMs != 0) {
         if (p.lastClearMediaPesMs <= p.nowMs &&

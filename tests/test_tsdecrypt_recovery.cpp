@@ -42,8 +42,11 @@ int main() {
                 "Media stalled without CAMD errors");
     p.nowMs = 210000; p.lastEncryptedInputMs = 209000;
     p.lastChildOutputMs = 209000; p.lastCamdErrorMs = 209000;
+    ok &= check(recoveryReason(p) == RecoveryReason::None,
+                "Persistent CAMD errors must not trigger another login storm");
+    p.lastCamdErrorMs = 0;
     ok &= check(recoveryReason(p) == RecoveryReason::MediaStalled,
-                "Prolonged outage eventually escalates");
+                "When CAMD errors cease, normal media recovery resumes");
     ok &= check(retryJitterMs("stream-105") == retryJitterMs("stream-105") &&
                 retryJitterMs("stream-105") <= 1800,
                 "Per-stream retry jitter is deterministic and bounded");
