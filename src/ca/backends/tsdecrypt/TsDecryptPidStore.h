@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
+#include <cctype>
+#include <memory>
+#include <utility>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -143,11 +146,9 @@ private:
     }
 
     void save() {
-        if (filename_ != "/var/lib/dvbstreamer5/tsdecrypt-ecm-pids.json") {
-            // Unit tests can use a private, pre-existing temporary directory.
-        } else if (::mkdir("/var/lib/dvbstreamer5", 0750) != 0 && errno != EEXIST) {
+        if (filename_ == "/var/lib/dvbstreamer5/tsdecrypt-ecm-pids.json" &&
+            ::mkdir("/var/lib/dvbstreamer5", 0750) != 0 && errno != EEXIST)
             return;
-        }
         Json::Value root(Json::objectValue);
         root["version"] = 1;
         Json::Value items(Json::objectValue);
