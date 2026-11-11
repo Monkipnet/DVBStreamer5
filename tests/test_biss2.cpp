@@ -128,7 +128,7 @@ int main() {
     reader.backend_config_json=R"({"mode":"biss2-1","key":"00112233"})";
     ok &= expect(api->open_reader(p,&reader,error,sizeof(error))==
                  DVBSTREAMER5_CA_RESULT_ERROR,"reject short SW");
-    ok &= expect(std::string(api->status_json(p)).find("key_material_exposed\\\":false") != std::string::npos,
+    ok &= expect(std::string(api->status_json(p)).find(R"("key_material_exposed":false)") != std::string::npos,
                  "status excludes session key");
     api->destroy(p);
     if(ok)std::cout<<"PASS BISS2 Mode1/E EBU+ETSI vectors and packet roundtrips\n";
