@@ -5,15 +5,19 @@
 #include "NewcamdClient.h"
 #include "IrdetoCwBufferPolicy.h"
 #include "TsIntegrityMonitor.h"
+#include "SharedCwBroker.h"
 extern "C" {
 #include <dvbcsa/dvbcsa.h>
 }
 #include <jsoncpp/json/json.h>
+#include <openssl/sha.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
+#include <functional>
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
@@ -23,6 +27,7 @@ extern "C" {
 #include <set>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -53,6 +58,14 @@ bool irdetoCwBufferEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("DVBSTREAMER5_IRDETO_CW_BUFFER");
         return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+bool sharedCwBrokerEnabled() {
+    static const bool enabled = [] {
+        const char* p = std::getenv("DVBSTREAMER5_SHARED_CW_BROKER");
+        return p && std::strcmp(p, "1") == 0;
     }();
     return enabled;
 }
@@ -304,8 +317,15 @@ struct NewcamdSession {
     bool currentIsIrdeto = false;
     bool currentHasIrdetoChid = false;
     uint16_t currentIrdetoChid = 0;
+    dvbstreamer5::ca::newcamd::SharedCwBroker::Key brokerKey;
+    bool brokerReplay = false;
+    bool brokerHaveEven = false;
+    std::array<uint8_t, 8> brokerEven{};
+    std::function<void(uint16_t, uint8_t, uint8_t, const uint8_t*)> keyDispatch;
 
     ~NewcamdSession() {
+        volatile uint8_t* secret = brokerEven.data();
+        for (size_t i = 0; i < brokerEven.size(); ++i) secret[i] = 0;
         if (client) {
             client->set_key_update_callback({});
             client.reset();
@@ -350,12 +370,76 @@ struct NewcamdAuSession {
     }
 };
 
+struct CwReplayTask {
+    std::weak_ptr<NewcamdSession> session;
+    uint8_t table = 0;
+    dvbstreamer5::ca::newcamd::SharedCwBroker::Pair pair;
+};
+
 struct NewcamdInstance {
+    // Cached CWs are dispatched outside the TS-processing thread. Calling a
+    // service callback directly from pump_ecm_queue would deadlock on the
+    // already-held service mutex during packet processing.
+    std::mutex replayMutex;
+    std::condition_variable replayCv;
+    std::deque<CwReplayTask> replayQueue;
+    bool replayStopping = false;
+    std::thread replayWorker;
+
+    NewcamdInstance() {
+        if (!sharedCwBrokerEnabled()) return;
+        replayWorker = std::thread([this] {
+            while (true) {
+                CwReplayTask task;
+                {
+                    std::unique_lock<std::mutex> lock(replayMutex);
+                    replayCv.wait(lock, [this] {
+                        return replayStopping || !replayQueue.empty();
+                    });
+                    if (replayStopping) break;
+                    task = std::move(replayQueue.front());
+                    replayQueue.front().pair.wipe();
+                    replayQueue.pop_front();
+                }
+                if (auto session = task.session.lock()) {
+                    const auto callback = session->keyDispatch;
+                    if (callback) {
+                        callback(0xffff, task.table, 0, task.pair.even.data());
+                        callback(0xffff, task.table, 1, task.pair.odd.data());
+                    }
+                }
+                task.pair.wipe();
+            }
+        });
+    }
+    ~NewcamdInstance() {
+        {
+            std::lock_guard<std::mutex> lock(replayMutex);
+            replayStopping = true;
+            for (auto& task : replayQueue) task.pair.wipe();
+            replayQueue.clear();
+        }
+        replayCv.notify_all();
+        if (replayWorker.joinable()) replayWorker.join();
+    }
+    void postReplay(const std::shared_ptr<NewcamdSession>& session,
+                    uint8_t table,
+                    const dvbstreamer5::ca::newcamd::SharedCwBroker::Pair& pair) {
+        {
+            std::lock_guard<std::mutex> lock(replayMutex);
+            if (replayStopping) return;
+            replayQueue.push_back(CwReplayTask{session, table, pair});
+        }
+        replayCv.notify_one();
+    }
     std::mutex mutex;
     std::map<std::string, ReaderConfig> readersByClient;
     // One dedicated AU/EMM connection per reader.  Service ECM connections
     // remain independent (v166) and never wait behind entitlement updates.
     std::map<std::string, std::shared_ptr<NewcamdAuSession>> auSessionsByClient;
+    // Retained after service maps are destroyed: callbacks can still access
+    // this broker while their Newcamd sessions are winding down.
+    dvbstreamer5::ca::newcamd::SharedCwBroker cwBroker;
     // v166: one independent Newcamd TCP session per active service.  This
     // prevents message ids, receiver state and ECM latency from one service
     // affecting any other service that uses the same OSCam reader/account.
@@ -686,6 +770,27 @@ EcmDescriptor descriptor_for_emm_pid(const ServiceBinding& binding, uint16_t pid
     return fallback;
 }
 
+dvbstreamer5::ca::newcamd::SharedCwBroker::Key broker_key(
+    const std::string& reader, const EcmQueueItem& item) {
+    dvbstreamer5::ca::newcamd::SharedCwBroker::Key key;
+    key.reader = reader;
+    key.serviceId = item.serviceId;
+    key.caid = item.caid;
+    key.provid = item.provid;
+    key.ecmPid = item.ecmPid;
+    key.ecmMode = icam_ecm_mode(item.caid, item.section);
+    // A binary SHA-256 digest preserves exact ECM equality without retaining
+    // another copy of the ECM payload in the broker's map key.
+    uint8_t digest[SHA256_DIGEST_LENGTH]{};
+    SHA256(reinterpret_cast<const unsigned char*>(item.signature.data()),
+           item.signature.size(), digest);
+    key.ecmSignature.assign(reinterpret_cast<const char*>(digest),
+                            sizeof(digest));
+    volatile uint8_t* secret = digest;
+    for (size_t i = 0; i < sizeof(digest); ++i) secret[i] = 0;
+    return key;
+}
+
 void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
                     const std::shared_ptr<NewcamdSession>& session) {
     if (!inst || !session || !session->client || !session->connected.load()) return;
@@ -701,7 +806,16 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
 
     uint16_t messageId = 0;
     const uint64_t startedMs = monotonic_ms();
-    if (!session->client->send_ecm(item.serviceId, item.caid, item.provid, item.section, &messageId)) {
+    // Keep the unchanged production path free of digest/hash work while
+    // the experimental cache remains disabled.
+    const bool brokerOn = sharedCwBrokerEnabled();
+    using BrokerKey = dvbstreamer5::ca::newcamd::SharedCwBroker::Key;
+    const BrokerKey replayKey = brokerOn ? broker_key(clientKey, item) : BrokerKey{};
+    dvbstreamer5::ca::newcamd::SharedCwBroker::Pair replayPair;
+    const bool replay = brokerOn && session->keyDispatch &&
+        inst->cwBroker.lookup(replayKey, startedMs, replayPair);
+    if (!replay && !session->client->send_ecm(
+            item.serviceId, item.caid, item.provid, item.section, &messageId)) {
         session->lastError = session->client->last_error();
         std::cerr << "NEWCAMD ECM DROP: client=" << clientKey
                   << " stream=" << item.streamId
@@ -711,8 +825,13 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
         return;
     }
 
+    if (replay) messageId = 0xffff; // local-only synthetic transaction id
     session->ecmInFlight = true;
     session->currentMessageId = messageId;
+    session->brokerKey = replayKey;
+    session->brokerReplay = replay;
+    session->brokerHaveEven = false;
+    session->brokerEven.fill(0);
     session->currentStreamId = item.streamId;
     session->currentEcmPid = item.ecmPid;
     session->currentStartedMs = startedMs;
@@ -724,7 +843,7 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
     session->currentIrdetoChid = item.irdetoChid;
     const size_t queueDepth = session->ecmQueue.size();
 
-    if (caDiagnosticsEnabled()) {
+    if (!replay && caDiagnosticsEnabled()) {
         std::cerr << "NEWCAMD ECM SEND: client=" << clientKey
                   << " msg=" << messageId
                   << " stream=" << item.streamId
@@ -739,6 +858,14 @@ void pump_ecm_queue(NewcamdInstance* inst, const std::string& clientKey,
             std::cerr << " irdeto_chid=0x" << std::hex << item.irdetoChid << std::dec;
         }
         std::cerr << std::endl;
+    }
+    if (replay) {
+        // The TS thread may hold ServiceBinding::mutex at this point.
+        // Post to the dedicated per-backend delivery worker instead of
+        // recursively invoking the callback and deadlocking the tile.
+        const uint8_t table = session->currentEcmTableId;
+        inst->postReplay(session, table, replayPair);
+        replayPair.wipe();
     }
 }
 
@@ -939,7 +1066,7 @@ void configure_service_callback(NewcamdInstance* inst,
                                 const std::shared_ptr<ServiceBinding>& binding,
                                 const std::shared_ptr<NewcamdSession>& session) {
     if (!session || !session->client) return;
-    session->client->set_key_update_callback(
+    auto callback =
         [inst, clientKey, streamId,
          weakBinding = std::weak_ptr<ServiceBinding>(binding),
          weakSession = std::weak_ptr<NewcamdSession>(session)]
@@ -1004,6 +1131,10 @@ void configure_service_callback(NewcamdInstance* inst,
                     session->currentIsIrdeto = false;
                     session->currentHasIrdetoChid = false;
                     session->currentIrdetoChid = 0;
+                    session->brokerHaveEven = false;
+                    session->brokerEven.fill(0);
+                    session->brokerKey = {};
+                    session->brokerReplay = false;
                 }
             }
 
@@ -1233,6 +1364,38 @@ void configure_service_callback(NewcamdInstance* inst,
                     newlySelectedChid = true;
                 }
             }
+            // Keep an exact, short-lived CW pair for another *identical*
+            // authorized ECM request on this reader. Capture both halves of
+            // the same server transaction and never share partial/zero CWs.
+            if (sharedCwBrokerEnabled() && cw &&
+                responseCommand == currentEcmTableId &&
+                (parity == 0 || parity == 1)) {
+                dvbstreamer5::ca::newcamd::SharedCwBroker::Pair pair;
+                dvbstreamer5::ca::newcamd::SharedCwBroker::Key key;
+                bool publish = false;
+                {
+                    std::lock_guard<std::mutex> queueLock(session->ecmMutex);
+                    if (session->ecmInFlight &&
+                        session->currentMessageId == messageId &&
+                        !session->brokerReplay) {
+                        if (parity == 0 && !cw_is_zero(cw)) {
+                            std::memcpy(session->brokerEven.data(), cw, 8);
+                            session->brokerHaveEven = true;
+                        } else if (parity == 1) {
+                            if (session->brokerHaveEven && !cw_is_zero(cw)) {
+                                pair.even = session->brokerEven;
+                                std::memcpy(pair.odd.data(), cw, 8);
+                                key = session->brokerKey;
+                                publish = true;
+                            }
+                            session->brokerEven.fill(0);
+                            session->brokerHaveEven = false;
+                        }
+                    }
+                }
+                if (publish) inst->cwBroker.publish(key, monotonic_ms(), pair);
+                pair.wipe();
+            }
             const uint64_t now = monotonic_ms();
             if (newlySelectedChid) {
                 std::cerr << "NEWCAMD IRDETO CHID SELECT: client=" << clientKey
@@ -1271,11 +1434,17 @@ void configure_service_callback(NewcamdInstance* inst,
                     session->currentIsIrdeto = false;
                     session->currentHasIrdetoChid = false;
                     session->currentIrdetoChid = 0;
+                    session->brokerHaveEven = false;
+                    session->brokerEven.fill(0);
+                    session->brokerKey = {};
+                    session->brokerReplay = false;
                 }
             }
             pump_ecm_queue(inst, clientKey, session);
         }
-    });
+    };
+    session->keyDispatch = callback;
+    session->client->set_key_update_callback(std::move(callback));
 }
 
 } // namespace
@@ -1439,6 +1608,7 @@ static void newcamd_close_reader(void* instance, const char* reader_key) {
     }
     removedSessions.clear();
     removedAuSession.reset();
+    inst->cwBroker.invalidateReader(clientKey);
 }
 
 static int newcamd_start_service(void* instance, const char* reader_key,
@@ -2200,6 +2370,7 @@ static const char* newcamd_status_json(void* instance) {
         fastEcmStages += binding->fastEcmStages;
         fastEcmActivations += binding->fastEcmPendingActivations;
     }
+    const auto cwBrokerStats = inst->cwBroker.stats();
     const std::string state = connected ? "connected" : (readers ? "ready" : "disconnected");
     status = "{\"status\":\"" + state +
              "\",\"clients\":" + std::to_string(connected) +
@@ -2219,6 +2390,12 @@ static const char* newcamd_status_json(void* instance) {
              ",\"authenticated_clients\":" + std::to_string(authenticated) +
              ",\"streams\":" + std::to_string(services.size()) +
              ",\"pending_ecms\":" + std::to_string(pendingEcms) +
+             ",\"shared_cw_broker_enabled\":" + std::string(sharedCwBrokerEnabled() ? "true" : "false") +
+             ",\"shared_cw_cache_hits\":" + std::to_string(cwBrokerStats.hits) +
+             ",\"shared_cw_cache_misses\":" + std::to_string(cwBrokerStats.misses) +
+             ",\"shared_cw_cache_stores\":" + std::to_string(cwBrokerStats.stores) +
+             ",\"shared_cw_cache_expired\":" + std::to_string(cwBrokerStats.expired) +
+             ",\"shared_cw_cache_entries\":" + std::to_string(cwBrokerStats.entries) +
              ",\"fast_ecm_ignored_halves\":" + std::to_string(fastEcmIgnoredHalves) +
              ",\"fast_ecm_stages\":" + std::to_string(fastEcmStages) +
              ",\"fast_ecm_activations\":" + std::to_string(fastEcmActivations) +

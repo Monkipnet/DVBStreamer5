@@ -398,6 +398,12 @@ add_executable(dvbstreamer5_tsdecrypt_ecm_pid_policy_test
 add_test(NAME tsdecrypt_ecm_pid_policy
     COMMAND dvbstreamer5_tsdecrypt_ecm_pid_policy_test)
 
+# V10.8.472: bounded exact-ECM in-memory CW broker (no external key export).
+add_executable(dvbstreamer5_shared_cw_broker_test
+    tests/test_shared_cw_broker.cpp)
+add_test(NAME shared_cw_broker
+    COMMAND dvbstreamer5_shared_cw_broker_test)
+
 # V10.8.459: ensure forked TSDecrypt does not retain HTTP/server sockets.
 add_executable(dvbstreamer5_tsdecrypt_fd_isolation_test
     tests/test_tsdecrypt_fd_isolation.cpp)
