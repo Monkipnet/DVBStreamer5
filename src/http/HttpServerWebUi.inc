@@ -6931,7 +6931,8 @@ function camClientSummary(id) {
   const client = camClientsForUi().find(item => String(item.id || '') === wanted);
   if (!client) return '';
   const config = parseCamBackendConfig(client);
-  const endpoint = client.endpoint || ((client.host || config.host) ? `${client.host || config.host}:${client.port || config.port || 0}` : 'not configured');
+  const endpoint = client.backend_id==='biss1' ? 'BISS-1 / local key' :
+    (client.endpoint || ((client.host || config.host) ? `${client.host || config.host}:${client.port || config.port || 0}` : 'not configured'));
   const slots = `${Number(client.services_used||0)}/${Number(client.max_services||10)}`;
   return `${client.name || client.id} / ${endpoint} / ${client.backend_id || 'newcamd'} / ${slots}`;
 }
@@ -7031,15 +7032,16 @@ function newcamdRowHtml(client={}, index=0) {
   return `<div class="newcamd-row" data-index="${index}">
     <div class="form-row"><label>ID</label><input data-cam-field="id" value="${satEscape(client.id || '')}" /></div>
     <div class="form-row"><label>Name</label><input data-cam-field="name" value="${satEscape(client.name || client.id || '')}" /></div>
-    <div class="form-row"><label>OSCam host</label><input data-cam-field="host" value="${satEscape(cfg.host || client.host || '127.0.0.1')}" /></div>
-    <div class="form-row"><label>Port</label><input data-cam-field="port" type="number" min="1" max="65535" value="${Number(cfg.port || client.port || 15000)}" /></div>
-    <div class="form-row"><label>User</label><input data-cam-field="user" value="${satEscape(cfg.user || client.user || 'user')}" /></div>
-    <div class="form-row"><label>Password</label><input data-cam-field="pass" type="password" value="${satEscape(cfg.pass || client.pass || '')}" /></div>
-    <div class="form-row full"><label>DES key</label><input data-cam-field="des" value="${satEscape(cfg.des || client.des || '0102030405060708091011121314')}" /></div>
+    <div data-camd-field style="display:${client.backend_id==='biss1'?'none':''}" class="form-row"><label>OSCam host</label><input data-cam-field="host" value="${satEscape(cfg.host || client.host || '127.0.0.1')}" /></div>
+    <div data-camd-field style="display:${client.backend_id==='biss1'?'none':''}" class="form-row"><label>Port</label><input data-cam-field="port" type="number" min="1" max="65535" value="${Number(cfg.port || client.port || 15000)}" /></div>
+    <div data-camd-field style="display:${client.backend_id==='biss1'?'none':''}" class="form-row"><label>User</label><input data-cam-field="user" value="${satEscape(cfg.user || client.user || 'user')}" /></div>
+    <div data-camd-field style="display:${client.backend_id==='biss1'?'none':''}" class="form-row"><label>Password</label><input data-cam-field="pass" type="password" value="${satEscape(cfg.pass || client.pass || '')}" /></div>
+    <div data-camd-field style="display:${client.backend_id==='biss1'?'none':''}" class="form-row full"><label>DES key</label><input data-cam-field="des" value="${satEscape(cfg.des || client.des || '0102030405060708091011121314')}" /></div>
     <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>CAMD protocol (TSDecrypt)</label><select data-cam-field="protocol"><option value="NEWCAMD" ${(cfg.protocol || 'NEWCAMD').toUpperCase()==='NEWCAMD'?'selected':''}>Newcamd</option><option value="CS378X" ${String(cfg.protocol || '').toUpperCase()==='CS378X'?'selected':''}>CS378x</option></select></div>
     <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>CAID (TSDecrypt)</label><input data-cam-field="caid" maxlength="4" placeholder="098D" value="${satEscape(cfg.caid || '098D')}" /></div>
     <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>ECM PID (TSDecrypt, 0 = auto)</label><input data-cam-field="ecm_pid" type="number" min="0" max="8190" value="${Number(cfg.ecm_pid || 0)}" /></div>
     <div class="form-row full" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><small class="field-help">TSDecrypt: optional experimental CA engine. Select this backend on a dedicated CAM client, then select that client in a DVB tile. Default remains Newcamd. Dual ECM is not implemented.</small></div>
+    <div class="form-row full" data-biss-field style="display:${client.backend_id==='biss1'?'':'none'}"><label ${subtitleUiTriAttrs('Ключ BISS-1','BISS-1 key','BISS-1 ključ')}>${subtitleUiTriText('Ключ BISS-1','BISS-1 key','BISS-1 ključ')}</label><input data-cam-field="biss_key" type="password" maxlength="32" autocomplete="new-password" placeholder="12 or 16 hexadecimal characters" value="" /><small class="field-help" ${subtitleUiTriAttrs('BISS-1: разрешённый ключ 12/16 HEX. Пустое поле сохраняет прежний.','BISS-1: authorized 12/16-hex key. Leave blank to keep existing.','BISS-1: dopušteni ključ 12/16 HEX. Prazno zadržava postojeći.')}>${subtitleUiTriText('BISS-1: разрешённый ключ 12/16 HEX. Пустое поле сохраняет прежний.','BISS-1: authorized 12/16-hex key. Leave blank to keep existing.','BISS-1: dopušteni ključ 12/16 HEX. Prazno zadržava postojeći.')}</small></div>
     <div class="form-row"><label>Max channels</label><input data-cam-field="max_services" type="number" min="1" max="64" value="${Number(client.max_services || 10)}" /></div>
     <div class="form-row"><label>Backend</label><select data-cam-field="backend_id" onchange="updateCamRowBackend(this.closest('.newcamd-row'))">${caBackendOptions(client.backend_id || 'newcamd')}</select></div>
     <div class="form-row"><label>&nbsp;</label><button class="button-secondary" type="button" onclick="removeNewcamdRow(this)">Remove</button></div>
@@ -7047,9 +7049,15 @@ function newcamdRowHtml(client={}, index=0) {
 }
 function updateCamRowBackend(row) {
   if (!row) return;
-  const enabled = row.querySelector('[data-cam-field="backend_id"]')?.value === 'tsdecrypt';
+  const backend = row.querySelector('[data-cam-field="backend_id"]')?.value || 'newcamd';
   row.querySelectorAll('[data-tsdecrypt-field]').forEach(item => {
-    item.style.display = enabled ? '' : 'none';
+    item.style.display = backend === 'tsdecrypt' ? '' : 'none';
+  });
+  row.querySelectorAll('[data-camd-field]').forEach(item => {
+    item.style.display = backend === 'biss1' ? 'none' : '';
+  });
+  row.querySelectorAll('[data-biss-field]').forEach(item => {
+    item.style.display = backend === 'biss1' ? '' : 'none';
   });
 }
 function addNewcamdRow(client=null) {
@@ -7065,17 +7073,29 @@ function collectNewcamdClients() {
   return [...document.querySelectorAll('.newcamd-row')].map((row, index) => {
     const value = field => row.querySelector(`[data-cam-field="${field}"]`)?.value || '';
     const id = value('id') || `newcamd-${index+1}`;
+    const backendId = value('backend_id') || 'newcamd';
+    const previous = (Array.isArray(state.cam_clients) ? state.cam_clients : [])
+      .find(client => String(client.id) === id && client.backend_id === 'biss1');
+    const previousKey = previous ? parseCamBackendConfig(previous).key || '' : '';
+    const key = value('biss_key').trim() || previousKey;
     return {
       id,
       name: value('name') || id,
       max_services: Math.max(1, Math.min(64, Number(value('max_services') || 10))),
-      backend_id: value('backend_id') || 'newcamd',
-      backend_config: {host:value('host') || '127.0.0.1', port:Number(value('port') || 15000), user:value('user') || 'user', pass:value('pass'), des:value('des') || '0102030405060708091011121314', protocol:value('protocol') || 'NEWCAMD', caid:value('caid') || '098D', ecm_pid:Number(value('ecm_pid') || 0)}
+      backend_id: backendId,
+      backend_config: backendId === 'biss1'
+        ? {mode:'biss1', key}
+        : {host:value('host') || '127.0.0.1', port:Number(value('port') || 15000), user:value('user') || 'user', pass:value('pass'), des:value('des') || '0102030405060708091011121314', protocol:value('protocol') || 'NEWCAMD', caid:value('caid') || '098D', ecm_pid:Number(value('ecm_pid') || 0)}
     };
   }).filter(client => client.id);
 }
 async function saveNewcamdSettings() {
   const clients = collectNewcamdClients();
+  if (clients.some(client => client.backend_id === 'biss1' &&
+      !/^(?:[0-9a-fA-F]{12}|[0-9a-fA-F]{16})$/.test(client.backend_config.key))) {
+    uiError(subtitleUiTriText('BISS-1: введите корректный HEX-ключ (12 или 16 символов).','BISS-1: enter a valid 12- or 16-digit hexadecimal key.','BISS-1: unesite valjan HEX ključ (12 ili 16 znakova).'));
+    return;
+  }
   try {
     const data = await fetchJson('/api/cam-client-settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clients})}, 15000);
     if (data.result === 'error') throw new Error(data.error || 'Failed to save CAM clients');
@@ -7095,8 +7115,8 @@ function renderNewcamdRows(clients) {
 async function openNewcamdModal() {
   const clients = newcamdSettingsClients();
   openModal(`
-    <h2>Newcamd / OSCam CAM clients</h2>
-    <div class="cam-empty" id="newcamdSettingsStatus">Add one OSCam/Newcamd client per server or satellite package, then select the client when adding DVB channels.</div>
+    <h2>CAM clients / Newcamd / TSDecrypt / BISS-1</h2>
+    <div class="cam-empty" id="newcamdSettingsStatus">Create a CAM client for Newcamd, TSDecrypt, or an authorized BISS-1 key, then select it in a DVB tile.</div>
     <div id="newcamdRows" class="form-grid full">${clients.map((client,index)=>newcamdRowHtml(client,index)).join('')}</div>
     <div class="modal-actions">
       <button class="button-secondary" type="button" onclick="addNewcamdRow()">Add CAM client</button>
@@ -8718,9 +8738,9 @@ function openStreamForm(stream) {
           <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Режим доступа','Access mode')}>${uiBiText('Режим доступа','Access mode')}</div><small class="field-help" ${uiBiAttrs('FTA без CAM; iCAM использует native Newcamd; CI+ получает уже разрешённый TS через VDR.','FTA uses no CAM; iCAM uses native Newcamd; CI+ receives a descrambled TS from VDR.')}>${uiBiText('FTA без CAM; iCAM использует native Newcamd; CI+ получает уже разрешённый TS через VDR.','FTA uses no CAM; iCAM uses native Newcamd; CI+ receives a descrambled TS from VDR.')}</small><select id="streamCaMode" onchange="updateStreamCaMode()"><option value="fta" ${caMode==='fta'?'selected':''} ${uiBiAttrs('FTA / без CAM','FTA / no CAM')}>${uiBiText('FTA / без CAM','FTA / no CAM')}</option><option value="icam" ${caMode==='icam'?'selected':''}>iCAM / Newcamd — native DVB-S/S2</option><option value="ciplus" ${caMode==='ciplus'?'selected':''}>DVB-CI+ / VDR — external CAM</option></select></div>
         </div>
         <div class="form-row full edit-section" id="streamCamRow" style="display:${caMode==='icam'?'':'none'}">
-          <div class="edit-section-head">iCAM / Newcamd / TSDecrypt</div>
-          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CA-движок','CA engine')}>${uiBiText('CA-движок','CA engine')}</div><small class="field-help" ${uiBiAttrs('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}>${uiBiText('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}</small><select id="streamCaEngine" onchange="updateStreamCaEngine()"><option value="newcamd" ${(camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id || 'newcamd') !== 'tsdecrypt'?'selected':''}>Newcamd / OSCam-mini</option><option value="tsdecrypt" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'tsdecrypt'?'selected':''}>TSDecrypt (experimental)</option></select></div>
-          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CAM-клиент','CAM client')}>${uiBiText('CAM-клиент','CAM client')}</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select><small class="field-help">CA engine is selected by this CAM client: Newcamd (default) or TSDecrypt (experimental). Configure TSDecrypt under Menu → Newcamd / OSCam CAM clients. It affects only this DVB tile.</small></div>
+          <div class="edit-section-head">iCAM / Newcamd / TSDecrypt / BISS-1</div>
+          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CA-движок','CA engine')}>${uiBiText('CA-движок','CA engine')}</div><small class="field-help" ${uiBiAttrs('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}>${uiBiText('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}</small><select id="streamCaEngine" onchange="updateStreamCaEngine()"><option value="newcamd" ${(camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id || 'newcamd') === 'newcamd'?'selected':''}>Newcamd / OSCam-mini</option><option value="tsdecrypt" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'tsdecrypt'?'selected':''}>TSDecrypt (experimental)</option><option value="biss1" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'biss1'?'selected':''} ${subtitleUiTriAttrs('BISS-1 (фиксированный ключ)','BISS-1 (fixed key)','BISS-1 (fiksni ključ)')}>${subtitleUiTriText('BISS-1 (фиксированный ключ)','BISS-1 (fixed key)','BISS-1 (fiksni ključ)')}</option></select></div>
+          <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CAM-клиент','CAM client')}>${uiBiText('CAM-клиент','CAM client')}</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select><small class="field-help">CA engine is selected by the CAM client: Newcamd (default), TSDecrypt (experimental), or BISS-1. Configure it under Menu → CAM clients. It affects only this DVB tile.</small></div>
         </div>
         <div class="form-row full edit-section" id="streamCiPlusRow" style="display:${caMode==='ciplus'?'':'none'}">
           <div class="edit-section-head"><span>DVB-CI+ / VDR</span><small>VDR streamdev</small></div>

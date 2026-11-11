@@ -380,6 +380,34 @@ set_target_properties(dvbstreamer5_ca_tsdecrypt PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
 
+# V10.8.475: BISS-1 (Mode 1) fixed-CW CA backend for authorized feeds.
+add_library(dvbstreamer5_ca_biss SHARED
+    src/ca/backends/biss/BissPlugin.cpp
+)
+target_include_directories(dvbstreamer5_ca_biss PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(dvbstreamer5_ca_biss PRIVATE
+    dvbstreamer5_jsoncpp
+    dvbstreamer5_dvbcsa
+    Threads::Threads
+)
+set_target_properties(dvbstreamer5_ca_biss PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "dvbstreamer5-ca-biss1"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
+)
+add_dependencies(DVBStreamer5 dvbstreamer5_ca_biss)
+add_executable(dvbstreamer5_biss1_test tests/test_biss1.cpp)
+target_include_directories(dvbstreamer5_biss1_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/third_party/libdvbcsa/src
+)
+target_link_libraries(dvbstreamer5_biss1_test PRIVATE
+    dvbstreamer5_ca_biss dvbstreamer5_dvbcsa
+)
+add_test(NAME biss1_descrambling COMMAND dvbstreamer5_biss1_test)
+
 # V10.8.460: key-free TSDecrypt ECM report parsing and clear PES validation.
 add_executable(dvbstreamer5_tsdecrypt_telemetry_test
     tests/test_tsdecrypt_telemetry.cpp)
