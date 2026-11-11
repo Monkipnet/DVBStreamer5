@@ -218,14 +218,27 @@ Json::Value CardManager::clientStatusJson(const CamClientConfig& client) {
     item["backend_id"] = client.backendId.empty() ? "newcamd" : client.backendId;
     const Json::Value backendConfig = parseBackendConfig(client.backendConfig);
     item["configured"] = !client.id.empty();
-    const bool biss = client.backendId == "biss1";
-    const bool hasBissKey = biss && !backendConfig.get("key", "").asString().empty();
-    item["endpoint"] = biss ? "BISS-1 / local fixed key" : endpointText(backendConfig);
+    const bool biss1 = client.backendId == "biss1";
+    const bool biss2 = client.backendId == "biss2";
+    const bool biss = biss1 || biss2;
+    const std::string mode = backendConfig.get("mode", "").asString();
+    const bool hasBissKey = biss1
+        ? !backendConfig.get("key", "").asString().empty()
+        : (biss2 && ((mode == "biss2-1" &&
+                       !backendConfig.get("key", "").asString().empty()) ||
+                      (mode == "biss2-e" &&
+                       !backendConfig.get("esw", "").asString().empty() &&
+                       !backendConfig.get("injected_id", "").asString().empty())));
+    item["endpoint"] = biss
+        ? (biss2 ? (mode == "biss2-e" ? "BISS2-E / DVB-CISSA" :
+                    "BISS2-1 / DVB-CISSA") : "BISS-1 / local fixed key")
+        : endpointText(backendConfig);
     item["host"] = biss ? "" : backendConfig.get("host", "").asString();
     item["port"] = biss ? 0 : backendConfig.get("port", 0).asInt();
     item["user"] = biss ? "" : backendConfig.get("user", "").asString();
     item["des_configured"] = !biss && !backendConfig.get("des", "").asString().empty();
     item["biss_key_configured"] = hasBissKey;
+    item["biss2_mode"] = biss2 ? mode : "";
     item["status"] = biss ? (hasBissKey ? "CONFIGURED" : "NOT_CONFIGURED") :
         (item["endpoint"].asString().empty() ? "NOT_CONFIGURED" : "CONFIGURED");
     return item;
