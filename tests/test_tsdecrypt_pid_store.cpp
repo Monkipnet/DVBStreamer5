@@ -1,6 +1,7 @@
 #include "../src/ca/backends/tsdecrypt/TsDecryptPidStore.h"
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <sys/stat.h>
