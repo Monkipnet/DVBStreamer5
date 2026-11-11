@@ -134,7 +134,8 @@ change('data.h', [
     ('\tuint16_t\t\t\tecm_pids[MAX_ECM_PIDS];',
      '\tuint16_t\t\t\tecm_pids[MAX_ECM_PIDS];\n'
      '\tuint16_t\t\t\tlast_successful_ecm_pid;\n'
-     '\tunsigned int\t\tecm_pid_consecutive_denials;'),
+     '\tunsigned int\t\tecm_pid_consecutive_denials;\n'
+     '\ttime_t\t\t\tlast_ecm_pid_rotation_time;'),
 ])
 change('camd.c', [
     ('#include "camd.h"\n',
@@ -147,8 +148,9 @@ change('camd.c', [
      '\t\t\tts->forced_ecm_pid, ts->n_ecm_pids, ret,\n'
      '\t\t\tts->ecm_pid_consecutive_denials, ts->ecm_pid,\n'
      '\t\t\tts->last_successful_ecm_pid, c->key->is_valid_cw,\n'
-     '\t\t\tc->key->ts, time(NULL));\n'
+     '\t\t\tc->key->ts, ts->last_ecm_pid_rotation_time, time(NULL));\n'
      '\t\tif (should_rotate) {\n'
+     '\t\t\tts->last_ecm_pid_rotation_time = time(NULL);\n'
      '\t\t\tts->ecm_pid_consecutive_denials = 0;'),
     ('\t\t\tts_LOGf("ECM | Switching ECM pid to 0x%04x (%d) idx:%d\\n", ts->ecm_pid, ts->ecm_pid, ts->ecm_pid_idx);\n'
      '\t\t}\n'
