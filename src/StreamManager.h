@@ -348,6 +348,9 @@ public:
     bool restartStream(const StreamConfig& streamConfig, std::string* error = nullptr);
     bool stopStream(const std::string& id);
     bool stopStreamAsync(const std::string& id);
+    bool isStopPending(const std::string& id) const;
+    bool isOperatorStopped(const std::string& id) const;
+    void clearOperatorStop(const std::string& id);
     void stopAll();
     bool isStreamActive(const std::string& id);
     bool ensureOnDemandStream(const std::string& id, const std::string& source,
@@ -476,10 +479,14 @@ private:
         std::string id;
         std::chrono::steady_clock::time_point generation;
     };
-    std::mutex asyncStopMutex_;
+    mutable std::mutex asyncStopMutex_;
     std::condition_variable asyncStopCv_;
     std::deque<AsyncStopRequest> asyncStopQueue_;
     std::set<std::string> asyncStopPending_;
+    // Explicit panel Stop remains authoritative even when a viewer requests
+    // OnDemand playback or an automatic source-failover probe runs.
+    // Cleared only by a subsequent explicit panel Start.
+    std::set<std::string> operatorStoppedStreams_;
     bool asyncStopShutdown_ = false;
     std::thread asyncStopThread_;
     std::map<std::string, FailoverEntry> failoverEntries;

@@ -1385,6 +1385,9 @@ std::string HttpServer::currentState() {
                 toLower(configuredInput), toLower(cfg.inputMode), cfg.testPattern);
         item["ci_plus_input"] = configuredVdrCiPlus;
         item["ci_plus_backend"] = configuredVdrCiPlus ? "vdr-streamdev" : "";
+        // The stop request is asynchronous. Expose the real pending state
+        // instead of making the UI optimistically claim the stream stopped.
+        item["stop_pending"] = streamManager.isStopPending(cfg.id);
         if (snap.count(cfg.id)) {
             auto* streamState = snap.at(cfg.id);
             const bool tileRunning = streamState->active.load();

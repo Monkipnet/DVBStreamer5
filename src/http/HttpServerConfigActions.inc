@@ -662,6 +662,15 @@ std::string HttpServer::handleStartStream(const std::string& body) {
     }
 
     const StreamConfig cfg = *configuredStream;
+    if (streamManager.isStopPending(cfg.id)) {
+        response["result"] = "error";
+        response["error"] = "stream is still stopping; wait for stopped state before Start";
+        response["stream_id"] = cfg.id;
+        Json::StreamWriterBuilder writer;
+        return Json::writeString(writer, response);
+    }
+    // Only an explicit panel Start lifts the persistent operator-stop gate.
+    streamManager.clearOperatorStop(cfg.id);
     std::string startError;
     bool started = streamManager.startStream(cfg, &startError);
     if (!started && streamManager.isStreamActive(cfg.id)) started = true;

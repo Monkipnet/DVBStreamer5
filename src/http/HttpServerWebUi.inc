@@ -3651,6 +3651,7 @@ function markStreamStoppedInUi(id, message='stopped') {
   const stream = streamById(id);
   if (!stream) return;
   stream.active = false;
+  stream.stop_pending = false;
   stream.running_seconds = 0;
   stream.running_started_mono_ms = 0;
   stream.status = message;
@@ -3662,6 +3663,12 @@ function markStreamStoppedInUi(id, message='stopped') {
 }
 function restoreStreamButton(button, text) {
   if (!button) return;
+  const current = streamById(button.dataset.streamId);
+  if (current?.stop_pending) {
+    button.disabled = true;
+    button.textContent = streamStoppingLabel();
+    return;
+  }
   button.disabled = false;
   if (text) button.textContent = text;
 }
@@ -5664,14 +5671,20 @@ async function openEpgModal(id) {
   }
 }
 
+function streamStoppingLabel() {
+  return language === 'ru' ? 'Остановка...' :
+    language === 'hr' ? 'Zaustavljanje...' : 'Stopping...';
+}
 function updateStreamTile(tile, stream) {
   if (!tile || !stream) return;
   tile.classList.toggle('active', !!stream.active);
 
   const statusPill = tile.querySelector('[data-role="status-pill"]');
   if (statusPill) {
-    statusPill.className = `status-pill ${stream.active ? 'active' : 'stopped'}`;
-    statusPill.textContent = stream.active ? (stream.using_backup ? 'Backup' : 'Online') : ((stream.activation_mode || 'online') === 'ondemand' ? 'OnDemand' : 'Offline');
+    statusPill.className = `status-pill ${stream.stop_pending ? 'stopped' : (stream.active ? 'active' : 'stopped')}`;
+    statusPill.textContent = stream.stop_pending ? streamStoppingLabel() :
+      (stream.active ? (stream.using_backup ? 'Backup' : 'Online') :
+       ((stream.activation_mode || 'online') === 'ondemand' ? 'OnDemand' : 'Offline'));
   }
   const tileClock = tile.querySelector('[data-role="tile-uptime"]');
   if (tileClock) {
@@ -5707,8 +5720,8 @@ function updateStreamTile(tile, stream) {
   }
   const runtimeStatus = tile.querySelector('[data-role="runtime-status"]');
   if (runtimeStatus) {
-    const value = tileRuntimeStatus(stream.status);
-    const running = tileRuntimeStatusIsRunning(value);
+    const value = stream.stop_pending ? streamStoppingLabel() : tileRuntimeStatus(stream.status);
+    const running = !stream.stop_pending && tileRuntimeStatusIsRunning(value);
     runtimeStatus.className = `runtime-status${running ? ' running-dot' : ''}`;
     runtimeStatus.textContent = running ? '' : value;
     runtimeStatus.title = value;
@@ -5755,7 +5768,8 @@ function updateStreamTile(tile, stream) {
   const toggleButton = tile.querySelector('[data-role="stream-toggle"]');
   if (toggleButton) {
     toggleButton.className = stream.active ? 'stop-button' : 'start-button';
-    toggleButton.textContent = stream.active ? t('stop') : t('start');
+    toggleButton.textContent = stream.stop_pending ? streamStoppingLabel() : (stream.active ? t('stop') : t('start'));
+    toggleButton.disabled = !!stream.stop_pending;
     toggleButton.dataset.streamId = String(stream.id);
     toggleButton.dataset.streamActive = stream.active ? '1' : '0';
     toggleButton.onclick = null;
@@ -5946,8 +5960,20 @@ async function toggleStream(id, active, button=null) {
   try {
     const data = await fetchJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}, active ? 15000 : 45000);
     if (data.result === 'error') throw new Error(data.error || (active ? 'Stop failed' : 'Start failed'));
-    if (active) markStreamStoppedInUi(id, data.already_stopped ? 'stopped' : 'stopping');
-    setStreamStatusMessage(id, active ? 'Stop command accepted' : 'Start command accepted', 'ok');
+    if (active) {
+      if (data.already_stopped) {
+        markStreamStoppedInUi(id, 'stopped');
+      } else {
+        // A queued Stop is not a completed Stop: keep runtime uptime intact
+        // until the server reports that the underlying generation is gone.
+        const current = streamById(id);
+        if (current) current.stop_pending = true;
+        render(false);
+      }
+    }
+    setStreamStatusMessage(id, active ?
+      (data.already_stopped ? 'Stopped' : 'Stop queued; waiting for completion') :
+      'Start command accepted', active && !data.already_stopped ? 'pending' : 'ok');
   } catch (error) {
     const message = error?.message || String(error);
     if (active && message.includes('stream is not active')) {

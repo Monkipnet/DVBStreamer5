@@ -622,6 +622,16 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (error) *error = "stream id is empty";
         return false;
     }
+    // Do not resurrect a tile stopped by the operator. A queued async Stop
+    // must win over automatic failover, scheduled restart and OnDemand start.
+    {
+        std::lock_guard<std::mutex> lock(asyncStopMutex_);
+        if (asyncStopPending_.count(streamConfig.id) ||
+            operatorStoppedStreams_.count(streamConfig.id)) {
+            if (error) *error = "stream has an operator stop request";
+            return false;
+        }
+    }
     std::string reason;
     if (!isNativeInputSupported(streamConfig, reason)) {
         if (error) *error = reason;
@@ -2596,15 +2606,22 @@ bool StreamManager::stopStream(const std::string& id) {
 bool StreamManager::stopStreamAsync(const std::string& id) {
     if (id.empty()) return false;
     std::chrono::steady_clock::time_point generation;
+    bool activeGeneration = false;
     {
         std::lock_guard<std::mutex> lock(managerMutex);
         const auto it = streams.find(id);
-        if (it == streams.end() || !it->second) return false;
-        generation = it->second->startedAt;
+        if (it != streams.end() && it->second) {
+            generation = it->second->startedAt;
+            activeGeneration = true;
+        }
     }
     {
         std::lock_guard<std::mutex> lock(asyncStopMutex_);
         if (asyncStopShutdown_) return false;
+        // Record the operator's intent even if the stream is offline:
+        // otherwise an OnDemand viewer immediately restarts the tile.
+        operatorStoppedStreams_.insert(id);
+        if (!activeGeneration) return false;
         if (!asyncStopPending_.insert(id).second) return true;
         try {
             asyncStopQueue_.push_back({id, generation});
@@ -2615,6 +2632,19 @@ bool StreamManager::stopStreamAsync(const std::string& id) {
     }
     asyncStopCv_.notify_one();
     return true;
+}
+
+bool StreamManager::isStopPending(const std::string& id) const {
+    std::lock_guard<std::mutex> lock(asyncStopMutex_);
+    return asyncStopPending_.count(id) != 0;
+}
+bool StreamManager::isOperatorStopped(const std::string& id) const {
+    std::lock_guard<std::mutex> lock(asyncStopMutex_);
+    return operatorStoppedStreams_.count(id) != 0;
+}
+void StreamManager::clearOperatorStop(const std::string& id) {
+    std::lock_guard<std::mutex> lock(asyncStopMutex_);
+    operatorStoppedStreams_.erase(id);
 }
 
 void StreamManager::processAsyncStopRequests() {
@@ -2634,22 +2664,39 @@ void StreamManager::processAsyncStopRequests() {
             // background thread waits for potentially long source transitions.
             std::lock_guard<std::mutex> actionLock(failoverActionMutex);
             StreamConfig stoppedConfig;
-            bool sameGeneration = false;
+            bool currentGenerationPresent = false;
             {
                 std::lock_guard<std::mutex> lock(managerMutex);
                 const auto it = streams.find(request.id);
-                if (it != streams.end() && it->second &&
-                    it->second->startedAt == request.generation) {
+                if (it != streams.end() && it->second) {
                     stoppedConfig = it->second->config;
-                    sameGeneration = true;
+                    currentGenerationPresent = true;
+                    if (it->second->startedAt != request.generation) {
+                        // An automatic source transition may have completed
+                        // after Stop was queued. Stop the newest generation;
+                        // explicit Start is rejected while Stop is pending.
+                        std::cerr << "NATIVE ASYNC STOP NEW GENERATION stream_id="
+                                  << request.id << std::endl;
+                    }
                 }
             }
-            if (sameGeneration) {
+            if (currentGenerationPresent) {
+                const auto stopBegan = std::chrono::steady_clock::now();
+                std::cerr << "NATIVE ASYNC STOP BEGIN stream_id="
+                          << request.id << std::endl;
                 {
                     std::lock_guard<std::mutex> lock(failoverMutex);
                     failoverEntries.erase(request.id);
                 }
-                if (stopStream(request.id)) {
+                const bool completed = stopStream(request.id);
+                std::cerr << "NATIVE ASYNC STOP COMPLETE stream_id="
+                          << request.id
+                          << " stopped=" << (completed ? 1 : 0)
+                          << " elapsed_ms="
+                          << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - stopBegan).count()
+                          << std::endl;
+                if (completed) {
                     sendTelegramStreamState(
                         telegramNotifier, configManager, stoppedConfig, "🟡",
                         telegramText(configManager, "Поток остановлен", "Stream stopped"),
@@ -2715,6 +2762,12 @@ bool StreamManager::ensureOnDemandStream(const std::string& id, const std::strin
     if (toLower(cfg.activationMode) != "ondemand") return true;
 
     std::lock_guard<std::mutex> demandLock(onDemandMutex);
+    // An operator Stop overrides an existing HLS/HTTP/SRT subscriber.
+    // Playback requests cannot silently turn the tile back on.
+    if (isOperatorStopped(id)) {
+        if (error) *error = "stream manually stopped by operator";
+        return false;
+    }
     const auto now = std::chrono::steady_clock::now();
     onDemandLastActivity[id] = now;
     const bool activeAlready = isStreamActive(id);
