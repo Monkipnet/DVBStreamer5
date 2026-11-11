@@ -67,7 +67,7 @@ struct Reader {
 struct Service {
     std::string id, readerKey;
     std::shared_ptr<dvbstreamer5::ca::tsdecrypt_detail::PidStore> pidStore;
-    std::string pidStoreKey, pidStoreLegacyKey;
+    std::string pidStoreKey, pidStoreLegacyKey, cachedHintLegacyKey;
     std::atomic<uint32_t> learnedEcmPid{0}, cachedHintPid{0};
     std::atomic<uint64_t> pidSelectedSinceMs{0}, pidVideoPesBase{0};
     std::atomic<uint64_t> childDenialsBase{0}, cachedHintFallbacks{0};
@@ -448,6 +448,8 @@ struct Service {
                 if (pidStore) {
                     pidStore->forget(pidStoreKey, oldHint);
                     pidStore->forget(pidStoreLegacyKey, oldHint);
+                    if (!cachedHintLegacyKey.empty())
+                        pidStore->forget(cachedHintLegacyKey, oldHint);
                 }
                 learnedEcmPid.store(0);
                 cachedHintFallbacks.fetch_add(1);
@@ -526,8 +528,27 @@ struct Service {
         Reader first = config;
         if (config.ecmPid == 0 && pidStore) {
             uint32_t remembered = pidStore->lookup(pidStoreKey);
-            if (!remembered && pidStoreLegacyKey != pidStoreKey)
+            if (!remembered && pidStoreLegacyKey != pidStoreKey) {
                 remembered = pidStore->lookup(pidStoreLegacyKey);
+                if (remembered) cachedHintLegacyKey = pidStoreLegacyKey;
+            }
+            // Migrate V481 hints even when stream enumeration has changed
+            // its trailing "-index": bounded to the maximum 64 tile slots.
+            if (!remembered) {
+                const auto stable = dvbstreamer5::ca::tsdecrypt_detail::stablePidStreamId(id);
+                if (stable != id) {
+                    for (unsigned index = 0; index != 64 && !remembered; ++index) {
+                        const auto oldKey =
+                            dvbstreamer5::ca::tsdecrypt_detail::pidStoreLegacyKey(
+                                stable + "-" + std::to_string(index), sid, readerKey,
+                                config.host, config.caid, config.protocol);
+                        if ((remembered = pidStore->lookup(oldKey)) != 0) {
+                            cachedHintLegacyKey = oldKey;
+                            pidStore->remember(pidStoreKey, remembered);
+                        }
+                    }
+                }
+            }
             if (remembered) {
                 first.ecmPid = remembered;
                 cachedHintPid.store(remembered);
