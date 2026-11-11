@@ -84,5 +84,20 @@ int main() {
               CamdEvent::ProtocolError, "Newcamd fallback counter");
     check(classifyCamdEvent("CW  | SID 0x01 Data: SENSITIVE_CW") ==
               CamdEvent::None, "raw CW not classified");
+    const auto pidSelected = parseEcmPidReport("--- | ECM pid : 0x0D67 (3431)");
+    check(pidSelected.valid && !pidSelected.switched && pidSelected.pid == 0x0D67,
+          "Selected ECM PID should be parsed without payload bytes");
+    const auto pidSwitch = parseEcmPidReport(
+          "ECM | Switching ECM pid to 0x0123 (291) idx:1");
+    check(pidSwitch.valid && pidSwitch.switched && pidSwitch.pid == 0x0123,
+          "Switching ECM PID should be parsed");
+    check(!parseEcmPidReport("--- | ECM pid : 0x0D67 (3431) idx:0").valid,
+          "Alternative ECM PID list must not overwrite current selection");
+    check(!parseEcmPidReport("--- | ECM pid : 0x1FFF").valid,
+          "Null PID must never be accepted as ECM PID");
+    check(!parseEcmPidReport("--- | ECM pid : 0x01234").valid,
+          "Reject oversized ECM PID hexadecimal");
+    check(!parseEcmPidReport("CW | SID 0x0105 0x0123 Secret").valid,
+          "Never interpret code-word logs as ECM PID");
     std::puts("TSDecrypt safe telemetry tests passed");
 }

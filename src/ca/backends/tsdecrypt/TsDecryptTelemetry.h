@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 
 namespace dvbstreamer5::ca::tsdecrypt_detail {
 struct TsPacketFacts {
@@ -89,6 +90,49 @@ inline bool hasSafeLogEvent(const char* line, const char* needle) noexcept {
         if (!*b) return true;
     }
     return false;
+}
+
+struct EcmPidReport {
+    uint16_t pid = 0;
+    bool valid = false;
+    bool switched = false;
+};
+
+// Accept only the current ECM PID selection (not the list of alternative
+// PIDs printed with "idx:"). Parse hexadecimal digits; never log any
+// raw TSDecrypt stderr which might contain ECM/CW or credentials.
+inline EcmPidReport parseEcmPidReport(const char* line) noexcept {
+    EcmPidReport result;
+    if (!line) return result;
+    const char* start = std::strstr(line, "ECM | Switching ECM pid to 0x");
+    if (start) {
+        result.switched = true;
+        start += sizeof("ECM | Switching ECM pid to 0x") - 1;
+    } else {
+        start = std::strstr(line, "--- | ECM pid : 0x");
+        if (!start || std::strstr(line, "idx:")) return result;
+        start += sizeof("--- | ECM pid : 0x") - 1;
+    }
+    uint32_t pid = 0;
+    unsigned digits = 0;
+    while (digits < 4) {
+        const unsigned char ch = static_cast<unsigned char>(*start);
+        int value = -1;
+        if (ch >= '0' && ch <= '9') value = ch - '0';
+        else if (ch >= 'a' && ch <= 'f') value = ch - 'a' + 10;
+        else if (ch >= 'A' && ch <= 'F') value = ch - 'A' + 10;
+        if (value < 0) break;
+        pid = (pid << 4) | static_cast<unsigned>(value);
+        ++digits;
+        ++start;
+    }
+    const unsigned char next = static_cast<unsigned char>(*start);
+    const bool moreHex = (next >= '0' && next <= '9') ||
+        (next >= 'a' && next <= 'f') || (next >= 'A' && next <= 'F');
+    if (digits == 0 || moreHex || pid == 0 || pid >= 0x1fff) return result;
+    result.valid = true;
+    result.pid = static_cast<uint16_t>(pid);
+    return result;
 }
 
 enum class CamdEvent : uint8_t {

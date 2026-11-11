@@ -230,3 +230,31 @@ reader. A genuine child exit or stalled stdout remains restartable. After
 This does not increase OSCam-mini capacity or repair remote ECM processing.
 Diagnose reader load and the new categories before attempting concurrent
 9-channel production decoding. Avoid raising `clienttimeout` blindly.
+
+## V10.8.470 — safe ECM PID selection telemetry
+
+At home2, V469 successfully connected to Newcamd on port 33000 with
+CAID 098D but the two services received repeated
+`camd_card_denied` replies (SID 105 and 108). The reader was configured
+with `ecm_pid=0` (automatic selection) and a per-CAM-client
+`max_services=64`, which is only an application limit, not a guarantee
+of underlying reader entitlement or capacity.
+
+Stock TSDecrypt may rotate ECM PIDs from the PMT on any negative CW
+response if multiple PIDs exist. V470 **does not change this behavior**,
+the OSCam-mini settings, or CSA-ALT. It adds allowlisted, non-secret
+`ecm_pid` and cumulative `ecm_pid_switches` to `TSDECRYPT DIAG`
+and to the backend status JSON. The PID is derived from upstream's
+selected or switching ECM PID messages; listing alternative PIDs
+(`idx:...`) cannot overwrite the selection. A zero PID means the
+current selection was not yet observed.
+
+If `camd_card_denied` grows and `ecm_pid_switches` also grows,
+inspect the PMT's CA descriptors to identify the authorized ECM PID.
+If denials grow while PID stays stable, investigate OSCam-mini reader
+entitlements and source/CAID mapping. Do not print Newcamd credentials,
+CW or raw ECM; all telemetry counters remain key-free.
+
+Test on one or two authorized services only. More than two or three
+services on the same remote reader should not be enabled until
+upstream timeouts are resolved.
