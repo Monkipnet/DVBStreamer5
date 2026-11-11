@@ -4,6 +4,7 @@
 #include "../../CaBackendPluginApi.h"
 #include "SpawnFdIsolation.h"
 #include "TsDecryptTelemetry.h"
+#include "TsDecryptCwHealthPolicy.h"
 #include "TsDecryptRecoveryPolicy.h"
 #include <jsoncpp/json/json.h>
 #include <algorithm>
@@ -663,7 +664,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "camd_checksum_errors=%llu camd_unexpected=%llu "
                 "camd_login_errors=%llu ecm_pid=%u "
                 "ecm_pid_switches=%llu ecm_pid_holds=%llu "
-                "csa_alt_verified=no\n",
+                "cw_health=%s csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReportCount.load()),
                 static_cast<unsigned long long>(service->ecmReceived.load()),
@@ -697,7 +698,14 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->camdLoginErrors.load()),
                 static_cast<unsigned>(service->currentEcmPid.load()),
                 static_cast<unsigned long long>(service->ecmPidSwitches.load()),
-                static_cast<unsigned long long>(service->ecmPidHolds.load()));
+                static_cast<unsigned long long>(service->ecmPidHolds.load()),
+                dvbstreamer5::ca::tsdecrypt_detail::cwAcquisitionStateName(
+                    dvbstreamer5::ca::tsdecrypt_detail::cwAcquisitionState({
+                        Service::monotonicMs(), service->childStartedMs.load(),
+                        service->lastClearPesMs.load(),
+                        service->lastCamdErrorMs.load(),
+                        service->cwValidReported.load()
+                    })));
         }
     }
     if (result) {
@@ -777,6 +785,14 @@ const char* statusJson(void* self) {
         item["cw_valid_signal_events"] = Json::UInt64(entry.second->cwValidSignalEvents.load());
         item["cw_warning_events"] = Json::UInt64(entry.second->cwWarningEvents.load());
         item["cw_count_available"] = false;
+        item["cw_acquisition_state"] =
+            dvbstreamer5::ca::tsdecrypt_detail::cwAcquisitionStateName(
+                dvbstreamer5::ca::tsdecrypt_detail::cwAcquisitionState({
+                    nowMs, entry.second->childStartedMs.load(),
+                    entry.second->lastClearPesMs.load(),
+                    entry.second->lastCamdErrorMs.load(),
+                    entry.second->cwValidReported.load()
+                }));
         item["input_scrambled_packets"] = Json::UInt64(entry.second->inputScrambledPackets.load());
         item["output_clear_packets_on_input_scrambled_pid"] =
             Json::UInt64(entry.second->outputClearOnScrambledPid.load());

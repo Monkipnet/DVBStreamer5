@@ -86,6 +86,15 @@ jobs:
             dvbstreamer5_docx_import_test \
             dvbstreamer5_source_pcr_config_test
           cmake --build build-main-ci --parallel 2 --target dvbstreamer5_stream_auth_test dvbstreamer5_udp_vbr_pcr_test dvbstreamer5_shared_vbr_test dvbstreamer5_hls_cache_test dvbstreamer5_http_epoll_test dvbstreamer5_stream_api_key_test
+          # V474: CTest registers these targets; build before calling CTest.
+          cmake --build build-main-ci --parallel 2 --target \
+            dvbstreamer5_tsdecrypt_telemetry_test \
+            dvbstreamer5_tsdecrypt_recovery_test \
+            dvbstreamer5_tsdecrypt_ecm_pid_policy_test \
+            dvbstreamer5_tsdecrypt_cw_health_test \
+            dvbstreamer5_tsdecrypt_fd_isolation_test \
+            dvbstreamer5_shared_cw_broker_test
+          node tests/web/test_shared_cw_broker_policy.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums

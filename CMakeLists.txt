@@ -392,6 +392,12 @@ add_executable(dvbstreamer5_tsdecrypt_recovery_test
 add_test(NAME tsdecrypt_recovery
     COMMAND dvbstreamer5_tsdecrypt_recovery_test)
 
+# V10.8.474: CW acquisition grace/evidence health policy.
+add_executable(dvbstreamer5_tsdecrypt_cw_health_test
+    tests/test_tsdecrypt_cw_health.cpp)
+add_test(NAME tsdecrypt_cw_health
+    COMMAND dvbstreamer5_tsdecrypt_cw_health_test)
+
 # V10.8.471: experiment to keep the last valid ECM PID on transient errors.
 add_executable(dvbstreamer5_tsdecrypt_ecm_pid_policy_test
     tests/test_tsdecrypt_ecm_pid_policy.c)
