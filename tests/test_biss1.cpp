@@ -9,6 +9,10 @@ extern "C" {
 #include <iostream>
 #include <string>
 
+// Exported by the separately compiled BISS-1 plugin.
+extern "C" const dvbstreamer5_ca_backend_api_v1*
+dvbstreamer5_ca_backend_get_api_v1();
+
 using dvbstreamer5::ca::biss::parseBiss1Key;
 using dvbstreamer5::ca::biss::tsPayloadOffset;
 

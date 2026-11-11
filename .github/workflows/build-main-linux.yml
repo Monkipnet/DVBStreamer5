@@ -97,6 +97,7 @@ jobs:
             dvbstreamer5_shared_cw_broker_test \
             dvbstreamer5_biss1_test
           node tests/web/test_shared_cw_broker_policy.js
+          node tests/web/test_biss1_ui.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums
