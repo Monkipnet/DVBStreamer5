@@ -441,8 +441,9 @@ struct Service {
             // A remembered hint is provisional. If it does not recover video,
             // return this one child to AUTO; user-configured -X never changes.
             if (cachedHintPid.load() &&
-                dvbstreamer5::ca::tsdecrypt_detail::shouldAbandonCachedEcmPid(
-                    probe, true)) {
+                (exited.load() ||
+                 dvbstreamer5::ca::tsdecrypt_detail::shouldAbandonCachedEcmPid(
+                     probe, true))) {
                 const uint32_t oldHint = cachedHintPid.exchange(0);
                 if (pidStore) pidStore->forget(pidStoreKey, oldHint);
                 learnedEcmPid.store(0);
