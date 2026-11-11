@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.465 — authoritative tile Stop and uptime
+# DVBStreamer5 V10.8.466 — authoritative tile Stop and uptime
 
 ## Regression
 
@@ -39,3 +39,7 @@ From the repository root:
 On a TEST tile, Stop must first show Stopping... then Offline/Start.
 The timer should reset only when the backend actually stops; explicit
 Start must create a new StreamState with a new monotonic start generation.
+
+V466 also fixes repeated Stop requests during teardown: a stream already
+removed from the map is still reported as Stopping until its queued worker
+completes, rather than prematurely returning already_stopped=true.

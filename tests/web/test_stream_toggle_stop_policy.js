@@ -23,6 +23,8 @@ for (const x of [
   'streamManager.clearOperatorStop(cfg.id)',
   'stream is still stopping; wait for stopped state before Start'
 ]) assert.ok(a.includes(x), 'Start must not race Stop: '+x);
+assert.ok(a.includes('const bool stopPending = streamManager.isStopPending(id)'),
+  'Duplicate Stop must keep reporting pending');
 assert.ok(s.includes('item["stop_pending"] = streamManager.isStopPending(cfg.id)'),
   'State must reflect asynchronous Stop');
 for (const x of [

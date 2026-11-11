@@ -718,9 +718,13 @@ std::string HttpServer::handleStopStream(const std::string& body) {
                 configManager.config.streams.begin(), configManager.config.streams.end(),
                 [&id](const StreamConfig& stream) { return stream.id == id; });
             if (stopped || configured) {
+                // A second Stop request can arrive after the stream was
+                // removed from the map but before teardown finishes.
+                // Do not advertise "stopped" until the worker releases it.
+                const bool stopPending = streamManager.isStopPending(id);
                 response["result"] = "ok";
-                response["already_stopped"] = !stopped;
-                response["status"] = stopped ? "stopping" : "stopped";
+                response["already_stopped"] = !stopped && !stopPending;
+                response["status"] = stopPending ? "stopping" : "stopped";
             } else {
                 response["result"] = "error";
                 response["error"] = "stream is not configured: " + id;
