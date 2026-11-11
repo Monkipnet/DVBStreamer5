@@ -1,4 +1,7 @@
 #include "../src/ca/backends/tsdecrypt/TsDecryptEcmPidPolicy.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <stdio.h>
 int main(void) {
