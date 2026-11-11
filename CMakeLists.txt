@@ -431,6 +431,18 @@ add_executable(dvbstreamer5_tsdecrypt_ecm_pid_policy_test
 add_test(NAME tsdecrypt_ecm_pid_policy
     COMMAND dvbstreamer5_tsdecrypt_ecm_pid_policy_test)
 
+# V10.8.481: evidence-gated persistent ECM PID learning and safe AUTO fallback.
+add_executable(dvbstreamer5_tsdecrypt_pid_learning_test
+    tests/test_tsdecrypt_pid_learning.cpp)
+add_test(NAME tsdecrypt_pid_learning
+    COMMAND dvbstreamer5_tsdecrypt_pid_learning_test)
+add_executable(dvbstreamer5_tsdecrypt_pid_store_test
+    tests/test_tsdecrypt_pid_store.cpp)
+target_link_libraries(dvbstreamer5_tsdecrypt_pid_store_test PRIVATE
+    dvbstreamer5_jsoncpp)
+add_test(NAME tsdecrypt_pid_store
+    COMMAND dvbstreamer5_tsdecrypt_pid_store_test)
+
 # V10.8.472: bounded exact-ECM in-memory CW broker (no external key export).
 add_executable(dvbstreamer5_shared_cw_broker_test
     tests/test_shared_cw_broker.cpp)
