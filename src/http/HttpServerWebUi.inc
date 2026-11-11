@@ -3465,7 +3465,6 @@ function applyLanguage() {
   }
   applyExplicitBilingual(document.body);
   applyRuntimeLocalization(document.body);
-  updateDashboardThemeButton();
   const updateClose=document.getElementById('binaryUpdateClose');
   if(updateClose){
     const closeLabel=language==='ru'?'Закрыть уведомление':language==='hr'?'Zatvori obavijest':'Close notification';
@@ -3473,6 +3472,8 @@ function applyLanguage() {
     updateClose.title=closeLabel;
     updateClose.textContent=''; // The close glyph is CSS-only, never translated.
   }
+  // Apply the theme label last so new bilingual controls are localized too.
+  updateDashboardThemeButton();
 }
 function toggleLanguage() {
   language = language === 'en' ? 'ru' : language === 'ru' ? 'hr' : 'en';
