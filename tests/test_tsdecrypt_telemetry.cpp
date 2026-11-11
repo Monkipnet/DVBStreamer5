@@ -91,6 +91,19 @@ int main() {
           "ECM | Switching ECM pid to 0x0123 (291) idx:1");
     check(pidSwitch.valid && pidSwitch.switched && pidSwitch.pid == 0x0123,
           "Switching ECM PID should be parsed");
+    // Home2 SID 132: -X 7254 was active and PES progressed, but the
+    // startup PMT banner still said 6742. Do not replace forced metadata.
+    const auto startupPid = parseEcmPidReport("--- | ECM pid : 0x1A56 (6742)");
+    check(startupPid.valid && startupPid.pid == 6742,
+          "Parse informational PMT startup ECM PID");
+    check(!shouldApplyEcmPidReport(startupPid, 7254),
+          "Forced -X PID must survive informational startup banner");
+    check(shouldApplyEcmPidReport(startupPid, 0),
+          "Auto mode must still follow startup ECM PID");
+    check(shouldApplyEcmPidReport(pidSwitch, 7254),
+          "Unexpected real switch must remain visible in forced mode");
+    check(!shouldApplyEcmPidReport(EcmPidReport{}, 7254),
+          "Invalid child ECM PID event never updates telemetry");
     check(!parseEcmPidReport("--- | ECM pid : 0x0D67 (3431) idx:0").valid,
           "Alternative ECM PID list must not overwrite current selection");
     check(!parseEcmPidReport("--- | ECM pid : 0x1FFF").valid,
