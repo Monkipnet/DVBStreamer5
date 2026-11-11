@@ -397,7 +397,6 @@ set_target_properties(dvbstreamer5_ca_biss PROPERTIES
     OUTPUT_NAME "dvbstreamer5-ca-biss1"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/ca-plugins"
 )
-add_dependencies(DVBStreamer5 dvbstreamer5_ca_biss)
 add_executable(dvbstreamer5_biss1_test tests/test_biss1.cpp)
 target_include_directories(dvbstreamer5_biss1_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -505,6 +504,9 @@ add_executable(DVBStreamer5
     ${EMBEDDED_WEB_ASSET_SOURCE}
     src/OscamMiniManager.cpp
 )
+
+# Build BISS-1 plugin after declaring the main application target.
+add_dependencies(DVBStreamer5 dvbstreamer5_ca_biss)
 
 target_link_libraries(DVBStreamer5
     dvbstreamer5_boost_headers
