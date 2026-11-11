@@ -1,4 +1,7 @@
 #include "../src/ca/backends/tsdecrypt/TsDecryptPidStore.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
