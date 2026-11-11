@@ -92,6 +92,8 @@ jobs:
             dvbstreamer5_tsdecrypt_telemetry_test \
             dvbstreamer5_tsdecrypt_recovery_test \
             dvbstreamer5_tsdecrypt_ecm_pid_policy_test \
+            dvbstreamer5_tsdecrypt_pid_learning_test \
+            dvbstreamer5_tsdecrypt_pid_store_test \
             dvbstreamer5_tsdecrypt_cw_health_test \
             dvbstreamer5_tsdecrypt_fd_isolation_test \
             dvbstreamer5_shared_cw_broker_test \
