@@ -23,7 +23,27 @@
 
 namespace dvbstreamer5::ca::tsdecrypt_detail {
 
-inline std::string pidStoreKey(const std::string& streamId, uint32_t sid,
+// One stream can be re-enumerated with a different trailing tile index.
+// Keep the transponder/stream and SID, discard only the ephemeral ordinal.
+inline std::string stablePidStreamId(const std::string& id) {
+    if (id.compare(0, 4, "sat-") != 0) return id;
+    const auto lastDash = id.rfind('-');
+    if (lastDash == std::string::npos || lastDash + 1 >= id.size()) return id;
+    const auto prevDash = id.rfind('-', lastDash - 1);
+    if (prevDash == std::string::npos || prevDash + 1 == lastDash) return id;
+    const auto numeric = [](const std::string& value, std::size_t a,
+                            std::size_t b) {
+        for (std::size_t i = a; i < b; ++i)
+            if (value[i] < '0' || value[i] > '9') return false;
+        return a < b;
+    };
+    if (!numeric(id, prevDash + 1, lastDash) ||
+        !numeric(id, lastDash + 1, id.size())) return id;
+    return id.substr(0, lastDash);
+}
+
+inline std::string pidStoreKeyWithStreamId(const std::string& streamId,
+                               uint32_t sid,
                                const std::string& readerKey,
                                const std::string& server,
                                const std::string& caid,
@@ -50,6 +70,25 @@ inline std::string pidStoreKey(const std::string& streamId, uint32_t sid,
     std::ostringstream out;
     out << std::hex << std::setfill('0') << std::setw(16) << hash;
     return out.str();
+}
+
+inline std::string pidStoreKey(const std::string& streamId, uint32_t sid,
+                               const std::string& readerKey,
+                               const std::string& server,
+                               const std::string& caid,
+                               const std::string& protocol) {
+    return pidStoreKeyWithStreamId(stablePidStreamId(streamId),
+                                  sid, readerKey, server, caid, protocol);
+}
+
+// V481 compatibility: older entries were keyed by the entire stream ID.
+inline std::string pidStoreLegacyKey(const std::string& streamId, uint32_t sid,
+                                    const std::string& readerKey,
+                                    const std::string& server,
+                                    const std::string& caid,
+                                    const std::string& protocol) {
+    return pidStoreKeyWithStreamId(streamId, sid, readerKey,
+                                  server, caid, protocol);
 }
 
 class PidStore final {
