@@ -88,7 +88,7 @@ struct Service {
     std::atomic<uint64_t> camdReadErrors{0}, camdBadMsgIds{0};
     std::atomic<uint64_t> camdCardDenials{0}, camdChecksumErrors{0};
     std::atomic<uint64_t> camdUnexpectedResponses{0}, camdLoginErrors{0};
-    std::atomic<uint32_t> currentEcmPid{0};
+    std::atomic<uint32_t> currentEcmPid{0}, forcedEcmPid{0};
     std::atomic<uint64_t> ecmPidSwitches{0};
     std::atomic<uint64_t> ecmPidHolds{0};
     std::atomic<uint64_t> lastCamdErrorMs{0};
@@ -140,6 +140,7 @@ struct Service {
         lastClearPesMs.store(0);
         childStartedMs.store(0);
         lastCamdErrorMs.store(0);
+        forcedEcmPid.store(config.ecmPid);
         currentEcmPid.store(config.ecmPid);
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
         csaAltUnverified = config.caid == "098D" || config.caid == "098d";
@@ -305,7 +306,8 @@ struct Service {
                     const auto pidEvent =
                         dvbstreamer5::ca::tsdecrypt_detail::parseEcmPidReport(
                             line.c_str());
-                    if (pidEvent.valid) {
+                    if (dvbstreamer5::ca::tsdecrypt_detail::shouldApplyEcmPidReport(
+                            pidEvent, forcedEcmPid.load())) {
                         currentEcmPid.store(pidEvent.pid);
                         if (pidEvent.switched) ecmPidSwitches.fetch_add(1);
                     }
@@ -663,7 +665,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "camd_bad_msg_id=%llu camd_card_denied=%llu "
                 "camd_checksum_errors=%llu camd_unexpected=%llu "
                 "camd_login_errors=%llu ecm_pid=%u "
-                "ecm_pid_switches=%llu ecm_pid_holds=%llu "
+                "ecm_pid_forced=%u ecm_pid_switches=%llu ecm_pid_holds=%llu "
                 "cw_health=%s csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReportCount.load()),
@@ -697,6 +699,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->camdUnexpectedResponses.load()),
                 static_cast<unsigned long long>(service->camdLoginErrors.load()),
                 static_cast<unsigned>(service->currentEcmPid.load()),
+                static_cast<unsigned>(service->forcedEcmPid.load()),
                 static_cast<unsigned long long>(service->ecmPidSwitches.load()),
                 static_cast<unsigned long long>(service->ecmPidHolds.load()),
                 dvbstreamer5::ca::tsdecrypt_detail::cwAcquisitionStateName(
@@ -770,6 +773,7 @@ const char* statusJson(void* self) {
         const auto selectedPid = entry.second->currentEcmPid.load();
         if (selectedPid) item["ecm_pid"] = Json::UInt(selectedPid);
         else item["ecm_pid"] = Json::nullValue;
+        item["ecm_pid_forced"] = Json::UInt(entry.second->forcedEcmPid.load());
         item["ecm_pid_switches"] = Json::UInt64(entry.second->ecmPidSwitches.load());
         item["ecm_pid_holds"] = Json::UInt64(entry.second->ecmPidHolds.load());
         const uint64_t lastClearPes = entry.second->lastClearPesMs.load();
