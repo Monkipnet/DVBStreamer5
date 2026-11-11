@@ -6,6 +6,8 @@
 #include "TsDecryptTelemetry.h"
 #include "TsDecryptCwHealthPolicy.h"
 #include "TsDecryptRecoveryPolicy.h"
+#include "TsDecryptPidLearning.h"
+#include "TsDecryptPidStore.h"
 #include <jsoncpp/json/json.h>
 #include <algorithm>
 #include <array>
@@ -64,6 +66,11 @@ struct Reader {
 };
 struct Service {
     std::string id, readerKey;
+    std::shared_ptr<dvbstreamer5::ca::tsdecrypt_detail::PidStore> pidStore;
+    std::string pidStoreKey;
+    std::atomic<uint32_t> learnedEcmPid{0}, cachedHintPid{0};
+    std::atomic<uint64_t> pidSelectedSinceMs{0}, pidVideoPesBase{0};
+    std::atomic<uint64_t> childDenialsBase{0}, cachedHintFallbacks{0};
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<std::vector<uint8_t>> input;
@@ -142,6 +149,9 @@ struct Service {
         lastCamdErrorMs.store(0);
         forcedEcmPid.store(config.ecmPid);
         currentEcmPid.store(config.ecmPid);
+        pidSelectedSinceMs.store(config.ecmPid ? monotonicMs() : 0);
+        pidVideoPesBase.store(outputClearVideoPesOnScrambledPid.load());
+        childDenialsBase.store(camdCardDenials.load());
         if (!sid || sid > 65535) { error = "valid DVB service_id required"; return false; }
         csaAltUnverified = config.caid == "098D" || config.caid == "098d";
         const std::string tsdecryptBinary = locateTsdecrypt();
@@ -308,7 +318,12 @@ struct Service {
                             line.c_str());
                     if (dvbstreamer5::ca::tsdecrypt_detail::shouldApplyEcmPidReport(
                             pidEvent, forcedEcmPid.load())) {
-                        currentEcmPid.store(pidEvent.pid);
+                        const uint32_t previousPid = currentEcmPid.exchange(pidEvent.pid);
+                        if (previousPid != pidEvent.pid) {
+                            pidSelectedSinceMs.store(monotonicMs());
+                            pidVideoPesBase.store(
+                                outputClearVideoPesOnScrambledPid.load());
+                        }
                         if (pidEvent.switched) ecmPidSwitches.fetch_add(1);
                     }
                     if (dvbstreamer5::ca::tsdecrypt_detail::isEcmPidHoldEvent(
@@ -392,6 +407,7 @@ struct Service {
         lastClearPesMs.store(0);
         lastEncryptedInputMs.store(0);
         lastChildOutputMs.store(0);
+        pidSelectedSinceMs.store(0);
         childStartedMs.store(0);
         cwValidReported.store(false);
     }
@@ -402,6 +418,51 @@ struct Service {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             if (stopping.load()) break;
             const uint64_t now = monotonicMs();
+            const uint64_t video = outputClearVideoPesOnScrambledPid.load();
+            const uint64_t baseline = pidVideoPesBase.load();
+            const uint64_t denied = camdCardDenials.load();
+            const uint64_t deniedBaseline = childDenialsBase.load();
+            const dvbstreamer5::ca::tsdecrypt_detail::PidLearningProbe probe{
+                now, childStartedMs.load(), pidSelectedSinceMs.load(),
+                lastEncryptedInputMs.load(), lastClearPesMs.load(),
+                lastCamdErrorMs.load(), video >= baseline ? video - baseline : 0,
+                denied >= deniedBaseline ? denied - deniedBaseline : 0,
+                currentEcmPid.load(), forcedEcmPid.load(), cwValidReported.load()
+            };
+            if (pidStore &&
+                dvbstreamer5::ca::tsdecrypt_detail::canRememberEcmPid(probe) &&
+                learnedEcmPid.load() != probe.selectedPid) {
+                pidStore->remember(pidStoreKey, probe.selectedPid);
+                learnedEcmPid.store(probe.selectedPid);
+                std::fprintf(stderr,
+                    "TSDECRYPT PID VERIFIED stream=%s ecm_pid=%u evidence=video_pes\n",
+                    id.c_str(), static_cast<unsigned>(probe.selectedPid));
+            }
+            // A remembered hint is provisional. If it does not recover video,
+            // return this one child to AUTO; user-configured -X never changes.
+            if (cachedHintPid.load() &&
+                dvbstreamer5::ca::tsdecrypt_detail::shouldAbandonCachedEcmPid(
+                    probe, true)) {
+                const uint32_t oldHint = cachedHintPid.exchange(0);
+                if (pidStore) pidStore->forget(pidStoreKey, oldHint);
+                cachedHintFallbacks.fetch_add(1);
+                restartCount.fetch_add(1);
+                recovering.store(true);
+                std::fprintf(stderr,
+                    "TSDECRYPT PID CACHE FALLBACK stream=%s from_pid=%u to=auto\n",
+                    id.c_str(), static_cast<unsigned>(oldHint));
+                stopChild();
+                if (stopping.load()) break;
+                const uint64_t until = monotonicMs() + 1000 +
+                    dvbstreamer5::ca::tsdecrypt_detail::retryJitterMs(id.c_str());
+                while (!stopping.load() && monotonicMs() < until)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (stopping.load()) break;
+                std::string detail;
+                if (!spawnChild(config, sid, detail)) exited.store(true);
+                else recovering.store(false);
+                continue;
+            }
             const auto reason = dvbstreamer5::ca::tsdecrypt_detail::recoveryReason({
                 now, childStartedMs.load(), lastEncryptedInputMs.load(),
                 lastChildOutputMs.load(), lastClearPesMs.load(), exited.load(),
@@ -440,7 +501,9 @@ struct Service {
             if (stopping.load()) break;
 
             std::string detail;
-            if (!spawnChild(config, sid, detail)) {
+            Reader retryConfig = config;
+            if (cachedHintPid.load()) retryConfig.ecmPid = cachedHintPid.load();
+            if (!spawnChild(retryConfig, sid, detail)) {
                 // Do not log command lines, reader configuration or credentials.
                 exited.store(true);
                 std::fprintf(stderr,
@@ -455,7 +518,18 @@ struct Service {
     }
 
     bool start(const Reader& config, uint32_t sid, std::string& error) {
-        if (!spawnChild(config, sid, error)) return false;
+        Reader first = config;
+        if (config.ecmPid == 0 && pidStore) {
+            const uint32_t remembered = pidStore->lookup(pidStoreKey);
+            if (remembered) {
+                first.ecmPid = remembered;
+                cachedHintPid.store(remembered);
+                std::fprintf(stderr,
+                    "TSDECRYPT PID CACHE HINT stream=%s ecm_pid=%u\n",
+                    id.c_str(), static_cast<unsigned>(remembered));
+            }
+        }
+        if (!spawnChild(first, sid, error)) return false;
         watchdog = std::thread([this, config, sid] { supervise(config, sid); });
         return true;
     }
@@ -472,6 +546,8 @@ struct Backend {
     std::mutex mutex;
     std::map<std::string, Reader> readers;
     std::map<std::string, std::shared_ptr<Service>> services;
+    std::shared_ptr<dvbstreamer5::ca::tsdecrypt_detail::PidStore> pidStore =
+        std::make_shared<dvbstreamer5::ca::tsdecrypt_detail::PidStore>();
     std::string snapshot = "{}";
 };
 void err(char* dest, size_t length, const std::string& message) {
@@ -551,6 +627,10 @@ int startService(void* self, const char* readerKey, const dvbstreamer5_ca_servic
     }
     auto session = std::make_shared<Service>();
     session->id = info->stream_id; session->readerKey = readerKey;
+    session->pidStore = b->pidStore;
+    session->pidStoreKey = dvbstreamer5::ca::tsdecrypt_detail::pidStoreKey(
+        session->id, info->service_id, readerKey, config.host,
+        config.caid, config.protocol);
     std::string reason;
     if (!session->start(config, info->service_id, reason)) {
         err(error,errorLen,reason); return DVBSTREAMER5_CA_RESULT_ERROR;
@@ -665,7 +745,9 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "camd_bad_msg_id=%llu camd_card_denied=%llu "
                 "camd_checksum_errors=%llu camd_unexpected=%llu "
                 "camd_login_errors=%llu ecm_pid=%u "
-                "ecm_pid_forced=%u ecm_pid_switches=%llu ecm_pid_holds=%llu "
+                "ecm_pid_forced=%u ecm_pid_cached_hint=%u "
+                "ecm_pid_verified=%u ecm_pid_hint_fallbacks=%llu "
+                "ecm_pid_switches=%llu ecm_pid_holds=%llu "
                 "cw_health=%s csa_alt_verified=no\n",
                 service->id.c_str(),
                 static_cast<unsigned long long>(service->ecmReportCount.load()),
@@ -700,6 +782,9 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->camdLoginErrors.load()),
                 static_cast<unsigned>(service->currentEcmPid.load()),
                 static_cast<unsigned>(service->forcedEcmPid.load()),
+                static_cast<unsigned>(service->cachedHintPid.load()),
+                static_cast<unsigned>(service->learnedEcmPid.load()),
+                static_cast<unsigned long long>(service->cachedHintFallbacks.load()),
                 static_cast<unsigned long long>(service->ecmPidSwitches.load()),
                 static_cast<unsigned long long>(service->ecmPidHolds.load()),
                 dvbstreamer5::ca::tsdecrypt_detail::cwAcquisitionStateName(
@@ -774,6 +859,10 @@ const char* statusJson(void* self) {
         if (selectedPid) item["ecm_pid"] = Json::UInt(selectedPid);
         else item["ecm_pid"] = Json::nullValue;
         item["ecm_pid_forced"] = Json::UInt(entry.second->forcedEcmPid.load());
+        item["ecm_pid_cached_hint"] = Json::UInt(entry.second->cachedHintPid.load());
+        item["ecm_pid_verified"] = Json::UInt(entry.second->learnedEcmPid.load());
+        item["ecm_pid_hint_fallbacks"] =
+            Json::UInt64(entry.second->cachedHintFallbacks.load());
         item["ecm_pid_switches"] = Json::UInt64(entry.second->ecmPidSwitches.load());
         item["ecm_pid_holds"] = Json::UInt64(entry.second->ecmPidHolds.load());
         const uint64_t lastClearPes = entry.second->lastClearPesMs.load();
