@@ -1,4 +1,7 @@
 #include "../src/ca/backends/tsdecrypt/TsDecryptPidLearning.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdio>
 using namespace dvbstreamer5::ca::tsdecrypt_detail;
