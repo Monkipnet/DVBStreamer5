@@ -11,7 +11,7 @@ SID = re.compile(r'\([0-9a-fA-F]{4}@[0-9a-fA-F]+/[0-9a-fA-F]+/([0-9a-fA-F]{4})/'
 
 def journal(unit, since):
     r = subprocess.run(['journalctl', '-u', unit, '--since', since, '--no-pager', '-o', 'cat'],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     if r.returncode:
         raise RuntimeError('journalctl failed for %s (%d)' % (unit, r.returncode))
     return r.stdout.splitlines()
