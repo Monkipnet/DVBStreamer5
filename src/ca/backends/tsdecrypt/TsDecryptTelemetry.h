@@ -135,6 +135,14 @@ inline EcmPidReport parseEcmPidReport(const char* line) noexcept {
     return result;
 }
 
+// A forced -X PID is authoritative at startup: TSDecrypt may still print
+// the PMT's default ECM PID as informational metadata. A real subsequent
+// switch event remains observable so unexpected child behavior is not hidden.
+inline bool shouldApplyEcmPidReport(const EcmPidReport& event,
+                                    uint32_t forcedPid) noexcept {
+    return event.valid && (forcedPid == 0 || event.switched);
+}
+
 inline bool isEcmPidHoldEvent(const char* line) noexcept {
     return hasSafeLogEvent(line,
         "ECM | Holding recently valid ECM pid after transient card denial.");
