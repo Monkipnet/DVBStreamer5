@@ -41,6 +41,9 @@ jobs:
       - name: Verify iCAM multichannel CA logging policy
         run: node tests/web/test_icam_multichannel_policy.js
 
+      - name: Verify BISS2 Mode 1/E UI and plugin wiring
+        run: node tests/web/test_biss2_ui.js
+
       - name: Verify DVB transponder and IP subnet tile grouping
         run: node tests/web/test_tile_input_grouping.js
 
@@ -69,6 +72,7 @@ jobs:
         run: |
           cmake --build build-main-ci --parallel 2 --target DVBStreamer5 oscam-mini
           test -s build-main-ci/ca-plugins/dvbstreamer5-ca-biss1.so
+          test -s build-main-ci/ca-plugins/dvbstreamer5-ca-biss2.so
           test -x build-main-ci/DVBStreamer5
           test -s build-main-ci/ca-plugins/dvbstreamer5-ca-newcamd.so
           readelf -d build-main-ci/DVBStreamer5 | grep -q 'libavcodec.so' || {
@@ -97,9 +101,11 @@ jobs:
             dvbstreamer5_tsdecrypt_cw_health_test \
             dvbstreamer5_tsdecrypt_fd_isolation_test \
             dvbstreamer5_shared_cw_broker_test \
-            dvbstreamer5_biss1_test
+            dvbstreamer5_biss1_test \
+            dvbstreamer5_biss2_test
           node tests/web/test_shared_cw_broker_policy.js
           node tests/web/test_biss1_ui.js
+          node tests/web/test_biss2_ui.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums
