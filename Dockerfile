@@ -49,6 +49,7 @@ RUN mkdir -p \
 COPY --from=build /src/build/DVBStreamer5 /opt/DVBStreamer5/bin/DVBStreamer5
 COPY --from=build /src/build/ca-plugins/dvbstreamer5-ca-newcamd.so /opt/DVBStreamer5/ca-plugins/
 COPY --from=build /src/build/ca-plugins/dvbstreamer5-ca-biss1.so /opt/DVBStreamer5/ca-plugins/
+COPY --from=build /src/build/ca-plugins/dvbstreamer5-ca-biss2.so /opt/DVBStreamer5/ca-plugins/
 COPY --from=build /src/build/oscam-mini/oscam-mini /opt/DVBStreamer5/oscam-mini/oscam-mini
 COPY --from=build /src/scripts/install_oscam_mini.sh /opt/DVBStreamer5/oscam-mini/install_oscam_mini.sh
 COPY --from=build /src/packaging/oscam-mini/default-config/ /opt/DVBStreamer5/oscam-mini/default-config/
