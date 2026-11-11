@@ -291,3 +291,58 @@ installed TSDecrypt executable.
 Build/run the pure C policy test with:
 `ctest --test-dir build -R 'tsdecrypt_ecm_pid_policy|tsdecrypt_safe_telemetry' --output-on-failure`.
 This patch is experimental and has not yet been A/B-tested on home2.
+
+## V10.8.481 — learned ECM PID with bounded fallback and switch cooldown
+
+Home2 test (2026-11-11): SIDs 105, 108, 113, 122 and 132 delivered
+clear video PES and no new ECM timeouts for several minutes, but SID 142
+received repeated timeouts alone in AUTO. Manually forcing 7169 restored
+SID 142 in the user's test. Starting additional channels coincided with
+cascading reader timeouts. This is *not* proof of an upstream per-client
+limit, and the software cannot guarantee recovery of all 11 channels.
+
+In the TSDecrypt backend, the supervisor now learns **per stream and reader**
+only after at least 24 clear video PES starts on an input-scrambled PID,
+a valid CW signal, 15 seconds on the selected ECM PID, and no CAMD error
+in the last 12 seconds. It does not treat Newcamd Found or cleared TS
+scrambling bits alone as evidence. The last verified PID is cached in
+`/var/lib/dvbstreamer5/tsdecrypt-ecm-pids.json` (0600 permissions,
+only opaque fingerprints, PID and timestamp; no passwords, DES, CW or ECM).
+Entries expire after 14 days; the in-memory cache remains usable when
+the directory is not writable. User-configured nonzero `ecm_pid` is
+never overwritten.
+
+On a new start with AUTO (`ecm_pid=0`), a cached PID is tried via `-X`.
+If the child exits or fails to produce clear PES during a sustained
+CAMD failure, only that child drops the hint and retries in AUTO once;
+the stale cached PID is forgotten. A restart from another cause
+preserves the hint until fallback is indicated. An unsuccessful AUTO
+attempt does not create a cache entry. Repeated PID rotations in
+the **separately rebuilt** experimental TSDecrypt are rate-limited
+to one per 15 seconds, including transport errors; explicit `-X` is
+unchanged. The rate limit reduces retry storms but cannot repair a
+nonresponsive upstream reader.
+
+New key-free diagnostics: `ecm_pid_cached_hint`, `ecm_pid_verified`,
+`ecm_pid_hint_fallbacks`, plus the existing `ecm_pid_forced`,
+`ecm_pid_switches` and `cw_health`. These fields are metadata;
+clear PES is evidence, not complete AV decoding verification.
+
+From the source root:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+ctest --test-dir build -R 'tsdecrypt_(pid_learning|pid_store|ecm_pid_policy|safe_telemetry|recovery|cw_health)' --output-on-failure
+# The next command requires pre-existing upstream TSDecrypt sources:
+bash scripts/build_tsdecrypt_icam.sh /tmp/dvbstreamer5-tsdecrypt build
+bash scripts/make_portable_linux_bundle.sh --build-dir build \
+  --binary build/DVBStreamer5 \
+  --tsdecrypt-binary build/tsdecrypt-icam/tsdecrypt \
+  --with-oscam --archive
+```
+
+Roll back by reinstalling the previously working portable bundle.
+The cache is ignored by previous versions and can be moved aside if
+necessary. Test one channel first, then several channels, without
+restarting the production OSCam reader merely to apply a tile setting.
