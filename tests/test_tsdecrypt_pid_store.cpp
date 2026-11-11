@@ -19,6 +19,21 @@ int main() {
     const std::string key = pidStoreKey("sat-test-142", 142,
         "reader-one", "127.0.0.1:33000", "098d", "NEWCAMD");
     assert(key.size() == 16);
+    // Tile ordinal is not a stable program identity across enumerations.
+    const auto stableA = pidStoreKey("sat-1794213237299-142-0", 142,
+        "reader-one", "127.0.0.1:33000", "098D", "NEWCAMD");
+    const auto stableB = pidStoreKey("sat-1794213237299-142-7", 142,
+        "reader-one", "127.0.0.1:33000", "098D", "NEWCAMD");
+    const auto legacyA = pidStoreLegacyKey("sat-1794213237299-142-0", 142,
+        "reader-one", "127.0.0.1:33000", "098D", "NEWCAMD");
+    const auto legacyB = pidStoreLegacyKey("sat-1794213237299-142-7", 142,
+        "reader-one", "127.0.0.1:33000", "098D", "NEWCAMD");
+    assert(stableA == stableB && stableA != legacyA);
+    assert(legacyA != legacyB);
+    assert(stableA != pidStoreKey("sat-1794219999999-142-0", 142,
+        "reader-one", "127.0.0.1:33000", "098D", "NEWCAMD"));
+    assert(stableA != pidStoreKey("sat-1794213237299-142-0", 142,
+        "other-reader", "127.0.0.1:33000", "098D", "NEWCAMD"));
     assert(key == pidStoreKey("sat-test-142", 142,
         "reader-one", "127.0.0.1:33000", "098D", "NEWCAMD"));
     assert(key != pidStoreKey("sat-test-132", 132,
