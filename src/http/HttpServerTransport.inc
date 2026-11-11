@@ -1349,14 +1349,22 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.result(http::status::forbidden);
                     res.body() = R"({"result":"error","error":"Panel login and same-origin request required"})";
                 } else {
+                    // nohup does not escape the systemd service's process cgroup.
+                    // A separate transient service survives systemctl stop of
+                    // dvbstreamer5.service inside the bundle installer.
+                    const auto updateRunId =
+                        std::chrono::steady_clock::now().time_since_epoch().count();
                     const std::string command =
-                        "nohup /bin/bash /opt/DVBStreamer5/updater.sh install " +
+                        "/usr/bin/systemd-run --no-block --unit=dvbstreamer5-update-" +
+                        std::to_string(updateRunId) +
+                        " --description='DVBStreamer5 binary update' "
+                        "/bin/bash -c 'exec /bin/bash /opt/DVBStreamer5/updater.sh install " +
                         std::string(kProgramVersion) +
-                        " >>/var/log/dvbstreamer5-update.log 2>&1 </dev/null &";
+                        " >>/var/log/dvbstreamer5-update.log 2>&1'";
                     const int rc = std::system(command.c_str());
                     if (rc != 0) {
                         res.result(http::status::service_unavailable);
-                        res.body() = R"({"result":"error","error":"Unable to start update worker"})";
+                        res.body() = R"({"result":"error","error":"Unable to start independent systemd update worker"})";
                     } else {
                         res.body() = R"({"result":"started"})";
                     }

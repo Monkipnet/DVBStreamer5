@@ -39,3 +39,24 @@ systemctl status dvbstreamer5.service oscam-mini.service --no-pager
 The updater accepts only the built-in download URL, limits archive size, checks an optional SHA256 digest and the internal SHA256SUMS, inspects archive paths and types, backs up the runtime under `/var/lib/dvbstreamer5/update-backups`, installs with the bundle installer, and attempts to restore the runtime if installation fails.
 
 **Temporary security exception:** release signatures and public keys are *not* required. HTTPS and SHA256 values published by the same site cannot establish publisher authenticity if the website is compromised. For production deployments, prefer restoring signed release manifests when the publishing infrastructure is ready. Do not run unattended updates. Configuration in `/etc/dvbstreamer5` is not intentionally overwritten by the installer.
+
+## V10.8.464: fix service-killed web updater
+
+The former `nohup updater.sh install ... &` ran in the systemd cgroup of
+`dvbstreamer5.service`. The bundled installer stops that very service;
+systemd then kills the updater along with its parent. This exactly fits
+the incident where V454 stopped but its files were not updated to V463.
+
+The web launcher now uses `/usr/bin/systemd-run --no-block` to create a
+uniquely named independent transient system service. Update output
+continues in `/var/log/dvbstreamer5-update.log`. Failure to spawn the
+worker returns an explicit HTTP error without an unsafe `nohup` fallback.
+
+The Bash updater now restores the previous runtime and service unit files
+on errors after installation has started and restarts OSCam-mini plus
+DVBStreamer5. It checks both runtime version and service activity.
+
+**Already installed V454 cannot fix its broken web launcher through the
+same web route.** Do one manual, checksum-verified portable installation
+from a separate SSH/root session. The installer interrupts streams, so
+perform it during a planned maintenance window. Preserve a v454 backup.

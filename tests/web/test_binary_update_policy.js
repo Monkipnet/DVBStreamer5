@@ -43,7 +43,7 @@ for(const marker of [
   'ARCHIVE_ROOT',
   'if [[ ! -f "$archive" ]]; then download_archive "$archive"; fi',
   'update-backups',
-  'cp -a "$backup" /opt/DVBStreamer5'
+  'cp -a -- "$UPDATE_TXN_BACKUP" "$restored"'
 ]) assert.ok(updater.includes(marker),'Missing Bash updater protection: '+marker);
 for(const marker of [
   'id="binaryUpdateProgress"',
@@ -98,6 +98,23 @@ for(const marker of [
   'requestedWith->value() != "DVBStreamer5"'
 ]) assert.ok(transport.includes(marker),'Updater install must use panel Basic/session auth, deny API keys: '+marker);
 assert.ok(!transport.includes('" 2>/dev/null"'), 'Updater stderr must not be discarded');
+// Update launcher must escape dvbstreamer5.service's systemd cgroup.
+for (const marker of [
+  '/usr/bin/systemd-run --no-block --unit=dvbstreamer5-update-',
+  'exec /bin/bash /opt/DVBStreamer5/updater.sh install ',
+  '>>/var/log/dvbstreamer5-update.log 2>&1'
+]) assert.ok(transport.includes(marker), 'Missing independent update worker: '+marker);
+assert.ok(!transport.includes('nohup /bin/bash /opt/DVBStreamer5/updater.sh install'),
+  'nohup update worker is killed by service stop');
+for (const marker of [
+  'update_transaction_exit',
+  "trap 'update_transaction_exit' EXIT",
+  'UPDATE_TXN_DIRTY=1',
+  'systemctl start oscam-mini.service',
+  'systemctl start dvbstreamer5.service',
+  'Runtime version verification failed; rollback requested'
+]) assert.ok(updater.includes(marker), 'Missing updater rollback protection: '+marker);
+
 for(const marker of [
   'Unsafe non-HTTPS download redirect',
   'Unsafe credential-bearing redirect',

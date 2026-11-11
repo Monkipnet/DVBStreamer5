@@ -12,6 +12,50 @@ update_phase(){
   esac
   printf '%s\n' "$1" > "$UPDATE_STATUS"
 }
+UPDATE_TXN_TMP=''
+UPDATE_TXN_BACKUP=''
+UPDATE_TXN_DIRTY=0
+update_transaction_exit(){
+  local exit_status=$?
+  trap - EXIT ERR
+  if (( exit_status != 0 )) && [[ "${UPDATE_INSTALL_ACTIVE:-0}" == 1 ]]; then
+    update_phase error || true
+    if [[ "$UPDATE_TXN_DIRTY" == 1 && -d "$UPDATE_TXN_BACKUP" ]]; then
+      echo 'UPDATE: installation failed, restoring previous runtime and units' >&2
+      systemctl stop dvbstreamer5.service || true
+      systemctl stop oscam-mini.service || true
+      local restored="/opt/DVBStreamer5.rollback-$" unit
+      if [[ ! -e "$restored" ]] && cp -a -- "$UPDATE_TXN_BACKUP" "$restored"; then
+        rm -rf -- /opt/DVBStreamer5
+        if mv -T -- "$restored" /opt/DVBStreamer5; then
+          for unit in dvbstreamer5.service oscam-mini.service; do
+            if [[ -e "$UPDATE_TXN_TMP/units/$unit" ]]; then
+              cp -a -- "$UPDATE_TXN_TMP/units/$unit" "/etc/systemd/system/$unit" || true
+            else
+              rm -f -- "/etc/systemd/system/$unit" || true
+            fi
+          done
+          systemctl daemon-reload || true
+          if [[ -x /opt/DVBStreamer5/oscam-mini/oscam-mini ]]; then
+            systemctl start oscam-mini.service || true
+          fi
+          systemctl start dvbstreamer5.service || true
+          if systemctl is-active --quiet dvbstreamer5.service; then
+            echo 'UPDATE: rollback restored DVBStreamer5 service' >&2
+          else
+            echo 'UPDATE ERROR: rollback restored files but service failed to start' >&2
+          fi
+        else
+          echo 'UPDATE ERROR: rollback rename failed' >&2
+        fi
+      else
+        echo 'UPDATE ERROR: could not copy backup, current files kept' >&2
+      fi
+    fi
+  fi
+  if [[ -n "$UPDATE_TXN_TMP" ]]; then rm -rf -- "$UPDATE_TXN_TMP" || true; fi
+  exit "$exit_status"
+}
 die(){
   if [[ "${UPDATE_INSTALL_ACTIVE:-0}" == 1 ]]; then update_phase error || true; fi
   echo "UPDATE ERROR: $*" >&2; exit 1
@@ -161,12 +205,11 @@ install_release(){
   flock -n 9 || die 'Update already running'
   local tmp archive root bundle backup name line expected_version
   tmp="$(mktemp -d -p /var/tmp dvb5-update.XXXXXXXX)"
-  # Expand the temporary directory now: local variables are gone at shell EXIT.
-  trap "rm -rf -- '$tmp'" EXIT
+  UPDATE_TXN_TMP="$tmp"
+  trap 'update_transaction_exit' EXIT
   mkdir -p -m 0755 /var/lib/dvbstreamer5
-  # Preserve a visible error state even when a later command exits under -e.
+  # Preserve a visible error state even on explicit exit calls.
   UPDATE_INSTALL_ACTIVE=1
-  trap 'update_phase error || true' ERR
   update_phase downloading
   read_release "$tmp"
   newer "$RELEASE_VERSION" "$2" || die 'No newer release'
@@ -198,18 +241,31 @@ install_release(){
   backup="/var/lib/dvbstreamer5/update-backups/before-$RELEASE_VERSION-from-$2"
   [[ -d /opt/DVBStreamer5 && ! -e "$backup" ]] || die 'Missing runtime or backup collision'
   cp -a /opt/DVBStreamer5 "$backup"
+  mkdir -p -m 0700 "$tmp/units"
+  local unit
+  for unit in dvbstreamer5.service oscam-mini.service; do
+    if [[ -e "/etc/systemd/system/$unit" ]]; then
+      cp -a -- "/etc/systemd/system/$unit" "$tmp/units/$unit"
+    fi
+  done
+  UPDATE_TXN_BACKUP="$backup"
   update_phase installing
   echo "UPDATE: installing $RELEASE_VERSION; backup=$backup"
-  if ! (cd "$bundle" && /bin/bash ./install.sh) || ! systemctl is-active --quiet dvbstreamer5.service; then
-    systemctl stop dvbstreamer5.service || true
-    rm -rf -- /opt/DVBStreamer5
-    cp -a "$backup" /opt/DVBStreamer5
-    systemctl restart dvbstreamer5.service || true
-    update_phase error
-    die 'Installation failed; rolled back runtime'
+  UPDATE_TXN_DIRTY=1
+  # EXIT trap restores the runtime and units if any operation fails.
+  if ! (cd "$bundle" && /bin/bash ./install.sh) ||
+     ! systemctl is-active --quiet dvbstreamer5.service; then
+    die 'Installation failed; rollback requested'
   fi
-  UPDATE_INSTALL_ACTIVE=0
+  if [[ -x /opt/DVBStreamer5/oscam-mini/oscam-mini ]] &&
+     ! systemctl is-active --quiet oscam-mini.service; then
+    die 'OSCam-mini failed to start; rollback requested'
+  fi
+  [[ "$(cat /opt/DVBStreamer5/VERSION 2>/dev/null)" == "$RELEASE_VERSION" ]] ||
+    die 'Runtime version verification failed; rollback requested'
   update_phase done
+  UPDATE_TXN_DIRTY=0
+  UPDATE_INSTALL_ACTIVE=0
   echo "UPDATE: completed $RELEASE_VERSION"
 }
 (( $# == 2 )) || die 'Usage: dvbstreamer5_update.sh check|install VERSION'
