@@ -445,6 +445,7 @@ struct Service {
                     probe, true)) {
                 const uint32_t oldHint = cachedHintPid.exchange(0);
                 if (pidStore) pidStore->forget(pidStoreKey, oldHint);
+                learnedEcmPid.store(0);
                 cachedHintFallbacks.fetch_add(1);
                 restartCount.fetch_add(1);
                 recovering.store(true);
