@@ -160,6 +160,9 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .tile .decode-pill{display:inline-flex;align-items:center;justify-content:center;min-width:64px;padding:1px 5px;border-radius:999px;font-size:8px;font-weight:800;line-height:10px;letter-spacing:.035em;white-space:nowrap}
 .tile .info-row.decode-row strong{font-size:9px;line-height:10px}
 .tile .decode-pill.clear{background:rgba(23,194,97,.18);color:#bdf8cb;box-shadow:inset 0 0 0 1px rgba(23,194,97,.28)}
+/* V504: detected clear PES is positive evidence, but not verified playback.
+   Use a softer mint than green "DECODE: OK"; do not merge their semantics. */
+.tile .decode-pill.pes{background:rgba(74,222,128,.17);color:#dbffe5;box-shadow:inset 0 0 0 1px rgba(74,222,128,.30)}
 .tile .decode-pill.scrambled{background:rgba(255,95,95,.18);color:#ffc2c2;box-shadow:inset 0 0 0 1px rgba(255,95,95,.3)}
 .tile .decode-pill.waiting{background:rgba(255,184,77,.16);color:#ffe0a3;box-shadow:inset 0 0 0 1px rgba(255,184,77,.24)}
 .tile .decode-pill.offline{background:rgba(255,255,255,.07);color:#aeb7c8;box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
@@ -625,6 +628,7 @@ html[data-dashboard-theme="light"] .tile .status-pill{color:#35516d;background:#
 html[data-dashboard-theme="light"] .tile .status-pill.active{color:#146d3e;background:#dbf5e5}
 html[data-dashboard-theme="light"] .tile .status-pill.stopped{color:#a83d3d;background:#ffe5e5}
 html[data-dashboard-theme="light"] .tile .decode-pill.clear{color:#146d3e;background:#d9f4e5}
+html[data-dashboard-theme="light"] .tile .decode-pill.pes{color:#16734a;background:#edfff3;box-shadow:inset 0 0 0 1px #b6eccd}
 html[data-dashboard-theme="light"] .tile .decode-pill.scrambled{color:#a83d3d;background:#ffe5e5}
 html[data-dashboard-theme="light"] .tile .decode-pill.waiting{color:#805b17;background:#fff2d9}
 html[data-dashboard-theme="light"] .tile .decode-pill.offline{color:#50667e;background:#e7edf5}
@@ -5558,7 +5562,7 @@ function caDecodeInfo(stream) {
     return {cls:'clear', text:uiBiText('ДЕКОД: ОК', 'DECODE: OK'),
       detail:uiBiText('Видеокадры подтверждены превью', 'Video frames confirmed by preview')};
   }
-  if (mode === 'unverified') return {cls:'waiting', text:uiBiText('ДЕКОД: PES', 'DECODE: PES'),
+  if (mode === 'unverified') return {cls:'pes', text:uiBiText('ДЕКОД: PES', 'DECODE: PES'),
     detail:uiBiText('TSDecrypt: открытый PES, видеокадры не проверялись', 'TSDecrypt: clear PES, video frames not verified') + ` · PES ${clearPes}`};
   if (mode === 'partial') return {cls:'waiting', text:uiBiText('ДЕКОД: ЧАСТ.', 'DECODE: PARTIAL'),
     detail:uiBiText('Есть открытые PES и зашифрованные пакеты; проверьте видео', 'Clear PES and scrambled packets coexist; check video') + ` · PES ${clearPes} · ${percent.toFixed(1)}%`};
