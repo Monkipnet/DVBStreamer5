@@ -114,6 +114,8 @@ jobs:
           node tests/web/test_biss2_ui.js
           node tests/web/test_stream_toggle_stop_policy.js
           node tests/web/test_external_config_transfer_ui.js
+          node tests/web/test_pcr_cpu_optimization_ui.js
+          node tests/web/test_cbr_profile_ui.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums
