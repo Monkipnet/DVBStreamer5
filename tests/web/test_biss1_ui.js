@@ -18,5 +18,6 @@ assert.match(card,/item\["biss_key_configured"\]/);
 assert.match(card,/BISS-1 \/ local fixed key/);
 assert.match(cm,/add_library\(dvbstreamer5_ca_biss SHARED/);
 assert.match(cm,/NAME biss1_descrambling/);
-assert.match(cm,/add_dependencies\(DVBStreamer5 dvbstreamer5_ca_biss\)/);
+// Match the shared BISS-1+BISS-2 dependency registration as well as a standalone target.
+assert.match(cm,/add_dependencies\(DVBStreamer5[^\n)]*\bdvbstreamer5_ca_biss\b/);
 console.log('PASS: BISS-1 local backend UI/configuration integration');
