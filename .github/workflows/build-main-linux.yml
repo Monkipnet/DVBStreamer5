@@ -92,6 +92,7 @@ jobs:
           cmake --build build-main-ci --parallel 2 --target \
             dvbstreamer5_audio_track_test \
             dvbstreamer5_video_cadence_test \
+            dvbstreamer5_native_scaler_simd_test \
             dvbstreamer5_ticker_test \
             dvbstreamer5_docx_import_test \
             dvbstreamer5_source_pcr_config_test
