@@ -2617,7 +2617,52 @@ bool StreamManager::stopStream(const std::string& id) {
 // blocked codec teardown, or failoverActionMutex. The stream's launch time
 // identifies the exact generation to stop, so an old queued request cannot
 // destroy a newer instance after a manual restart.
-bool StreamManager::stopStreamAsync(const std::string& id) {
+void StreamManager::requestStopInputs(const StopAbortRefs& refs) noexcept {
+    // All objects are held alive while the atomic cancellation signal runs.
+    // Never join threads, free objects or release CA readers from this path.
+    if (auto relay = refs.relay.lock()) relay->requestStop();
+    if (auto hls = refs.hls.lock()) hls->requestStop();
+    if (auto srt = refs.srt.lock()) srt->requestStop();
+    if (auto rtsp = refs.rtsp.lock()) rtsp->requestStop();
+    if (auto rtmp = refs.rtmp.lock()) rtmp->requestStop();
+}
+
+void StreamManager::forceCancelStreamIo(const std::string& id) {
+    StopAbortRefs refs;
+    {
+        std::lock_guard<std::mutex> lock(managerMutex);
+        const auto it = streams.find(id);
+        if (it != streams.end() && it->second) {
+            const auto& state = it->second;
+            state->monitorStop.store(true);
+            state->testPatternStop.store(true);
+            refs = {state->nativeRelay, state->nativeHlsInput,
+                    state->nativeSrtInput, state->nativeRtspInput,
+                    state->nativeRtmpInput};
+        }
+        // Shutdown is a nonblocking wake-up; never close(fd) here because
+        // HTTP session owners still own their descriptors and may reuse them.
+        for (const auto& [fd, session] : httpClients) {
+            if (session.streamId != id) continue;
+            ::shutdown(fd, SHUT_RDWR);
+            if (session.upstreamFd >= 0)
+                ::shutdown(session.upstreamFd, SHUT_RDWR);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(asyncStopMutex_);
+        const auto it = stoppingAbortRefs_.find(id);
+        if (it != stoppingAbortRefs_.end()) refs = it->second;
+    }
+    requestStopInputs(refs);
+    std::cerr << "NATIVE FORCE STOP SIGNAL stream_id=" << id
+              << " action=abort_input_and_relay" << std::endl;
+}
+
+// Always nonblocking: explicit user Stop is authoritative even if the
+// source/codec shutdown is currently stuck. A forced repeat signals the
+// same generation (including one already moved into the teardown worker).
+bool StreamManager::stopStreamAsync(const std::string& id, bool force) {
     if (id.empty()) return false;
     std::chrono::steady_clock::time_point generation;
     bool activeGeneration = false;
@@ -2629,23 +2674,36 @@ bool StreamManager::stopStreamAsync(const std::string& id) {
             activeGeneration = true;
         }
     }
+    bool pending = false;
+    bool enqueue = false;
     {
         std::lock_guard<std::mutex> lock(asyncStopMutex_);
         if (asyncStopShutdown_) return false;
-        // Record the operator's intent even if the stream is offline:
-        // otherwise an OnDemand viewer immediately restarts the tile.
+        // Suppress automatic failover and OnDemand reactivation.
         operatorStoppedStreams_.insert(id);
-        if (!activeGeneration) return false;
-        if (!asyncStopPending_.insert(id).second) return true;
-        try {
-            asyncStopQueue_.push_back({id, generation});
-        } catch (...) {
-            asyncStopPending_.erase(id);
-            throw;
+        pending = asyncStopPending_.count(id) != 0;
+        if (!activeGeneration && !pending) return false;
+        if (force) forceStopRequested_.insert(id);
+        if (!pending && activeGeneration) {
+            asyncStopPending_.insert(id);
+            try {
+                asyncStopQueue_.push_back({id, generation, force});
+                enqueue = true;
+            } catch (...) {
+                asyncStopPending_.erase(id);
+                forceStopRequested_.erase(id);
+                throw;
+            }
         }
     }
-    asyncStopCv_.notify_one();
+    if (force) forceCancelStreamIo(id);
+    if (enqueue) asyncStopCv_.notify_one();
     return true;
+}
+
+bool StreamManager::isForceStopRequested(const std::string& id) const {
+    std::lock_guard<std::mutex> lock(asyncStopMutex_);
+    return forceStopRequested_.count(id) != 0;
 }
 
 bool StreamManager::isStopPending(const std::string& id) const {
@@ -2676,7 +2734,16 @@ void StreamManager::processAsyncStopRequests() {
         try {
             // Keep manual stop serialized with automatic failover; only this
             // background thread waits for potentially long source transitions.
-            std::lock_guard<std::mutex> actionLock(failoverActionMutex);
+            // Normal stop remains serialized with automatic input failover.
+            // An escalated force-stop bypasses a stuck failover transition,
+            // while the operator-stopped gate blocks its new start.
+            std::unique_lock<std::mutex> actionLock(
+                failoverActionMutex, std::defer_lock);
+            while (!actionLock.owns_lock() &&
+                   !request.force && !isForceStopRequested(request.id)) {
+                if (actionLock.try_lock()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
             StreamConfig stoppedConfig;
             bool currentGenerationPresent = false;
             {
@@ -2729,6 +2796,7 @@ void StreamManager::processAsyncStopRequests() {
         {
             std::lock_guard<std::mutex> lock(asyncStopMutex_);
             asyncStopPending_.erase(request.id);
+            forceStopRequested_.erase(request.id);
         }
     }
 }
