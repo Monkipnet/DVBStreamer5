@@ -1225,7 +1225,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 res.body() = Json::writeString(writer, result);
             } else if (target == "/api/config/export") {
                 res.set(http::field::content_type, "application/json");
-                res.body() = handleConfigExport();
+                res.body() = handleConfigExport(req.body());
             } else if (target == "/api/config/import") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleConfigImport(req.body());
