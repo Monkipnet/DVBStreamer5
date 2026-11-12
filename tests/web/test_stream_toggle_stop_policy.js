@@ -29,7 +29,9 @@ assert.ok(s.includes('item["stop_pending"] = streamManager.isStopPending(cfg.id)
   'State must reflect asynchronous Stop');
 for (const x of [
   'stream.stop_pending ? streamStoppingLabel()',
-  'toggleButton.disabled = !!stream.stop_pending',
+  'toggleButton.disabled = false;',
+  'stream.stop_force_requested',
+  "toggleStream(id, true, null, true)",
   'current?.stop_pending',
   'Zaustavljanje...',
   'if (data.already_stopped)',
