@@ -170,7 +170,8 @@ inline std::string strField(const Json::Value& v,const char* key) {
     return v[key].isString()?v[key].asString():std::string{};
 }
 inline bool isSafeUri(const std::string& uri) {
-    return uri.size()<8192 && uri.find_first_of("\r\n\0",0,2)==std::string::npos;
+    return uri.size()<8192 && uri.find_first_of("\r\n")==std::string::npos &&
+           uri.find('\0')==std::string::npos;
 }
 inline std::map<std::string,std::string> params(std::string p) {
     std::map<std::string,std::string> r;
@@ -518,6 +519,8 @@ inline std::string exportLegacy(const std::vector<StreamConfig>& streams,
             else if(s.serviceId)primary+="#pnr="+std::to_string(s.serviceId);
             warnings.push_back("Astra 4.4 export: verify DVB adapter/tuning and CAM assignment");
         }
+        if(s.outputType=="udp-cbr")
+            warnings.push_back("Astra 4.4: DVBStreamer5 CBR pacing parameters are not portable");
         script<<"make_channel({\n  name = "<<luaQuote(s.name)<<",\n  enable = "
               <<(s.autoStart?"true":"false")<<",\n  input = {\n    "
               <<luaQuote(primary)<<",\n";
