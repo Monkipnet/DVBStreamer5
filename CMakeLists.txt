@@ -507,6 +507,13 @@ target_include_directories(dvbstreamer5_video_cadence_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME video_source_cadence COMMAND dvbstreamer5_video_cadence_test)
 
+# V486: portable regression for pixel-exact CPU-SIMD I420 upscaling.
+add_executable(dvbstreamer5_native_scaler_simd_test
+    tests/test_native_scaler_simd.cpp)
+target_include_directories(dvbstreamer5_native_scaler_simd_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME native_scaler_simd COMMAND dvbstreamer5_native_scaler_simd_test)
+
 # Live ticker regression checks (no streams, sockets or devices required).
 add_executable(dvbstreamer5_ticker_test tests/ticker/test_ticker.cpp)
 target_link_libraries(dvbstreamer5_ticker_test PRIVATE
