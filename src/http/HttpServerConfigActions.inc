@@ -100,6 +100,64 @@ std::string HttpServer::handleConfigImport(const std::string& body) {
     const std::string filename = request.get("filename", "").asString();
     const std::string content = request.get("content", "").asString();
     if (content.empty()) return errorReply("configuration file is empty");
+    if (content.size() > 4U * 1024U * 1024U)
+        return errorReply("configuration file exceeds 4 MiB");
+
+    if (sourceKind == "astra" || sourceKind == "flussonic") {
+        dvbstreamer5::external_config::Conversion imported;
+        std::string conversionError;
+        const bool valid = sourceKind == "astra"
+            ? dvbstreamer5::external_config::parseAstra(
+                content, imported, conversionError)
+            : dvbstreamer5::external_config::parseFlussonic(
+                content, imported, conversionError);
+        if (!valid) return errorReply(conversionError);
+        if (imported.streams.size() > 512)
+            return errorReply("more than 512 streams: split into smaller imports");
+
+        // Append to a copy; never replace live streams, subscribers, CAM,
+        // panel login/port or server-wide settings from foreign files.
+        AppConfig candidate = configManager.config;
+        std::size_t duplicates = 0;
+        const std::size_t added = dvbstreamer5::external_config::mergeNewOnly(
+            imported, candidate.streams, sourceKind, duplicates);
+        Json::Value response(Json::objectValue);
+        response["result"] = "ok";
+        response["source"] = sourceKind == "astra" ? "Cesbo Astra" : "Flussonic";
+        response["preview"] = action == "preview";
+        response["streams"] = Json::UInt64(imported.streams.size());
+        response["new_streams"] = Json::UInt64(added);
+        response["duplicates"] = Json::UInt64(duplicates);
+        response["ignored"] = Json::UInt64(imported.ignored);
+        response["outputs"] = Json::UInt64(0);
+        response["cam_clients"] = Json::UInt64(0);
+        response["mpts_outputs"] = Json::UInt64(0);
+        response["subscribers_present"] = false;
+        response["access_preserved"] = true;
+        response["target_http_port"] = candidate.httpPort;
+        Json::Value warnings(Json::arrayValue);
+        for (const auto& warning : imported.warnings)
+            if (warnings.size() < 30) warnings.append(warning);
+        response["warnings"] = warnings;
+        response["warning_count"] = Json::UInt64(imported.warnings.size());
+        if (action == "preview") return jsonReply(response);
+        if (!added) return errorReply("No new streams to import");
+        // Imported streams are auto_start=false; unchanged running streams
+        // are compared by the normal config-save path and left alone.
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        const std::string saveResult = handleSaveConfig(
+            Json::writeString(writer, candidate.toJson()));
+        Json::Value saveReply;
+        std::string saveError;
+        if (!parseJsonText(saveResult, saveReply, saveError) ||
+            saveReply.get("result", "error").asString() != "ok")
+            return errorReply(saveReply.get("error",
+                "failed to save migrated streams").asString());
+        response["preview"] = false;
+        response["applied"] = true;
+        return jsonReply(response);
+    }
 
     Json::Value importedRoot;
     parseError.clear();
