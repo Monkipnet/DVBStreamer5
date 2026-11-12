@@ -1,4 +1,5 @@
 #include "ExternalConfigTransfer.h"
+#include "AstraLegacy44.h"
 
 std::string HttpServer::handleConfigExport(const std::string& body) {
     // Empty body preserves legacy full DVBStreamer5 backup semantics.
@@ -12,7 +13,7 @@ std::string HttpServer::handleConfigExport(const std::string& body) {
             !request.isObject() || !request["format"].isString())
             return R"({"result":"error","error":"invalid export request"})";
         const std::string format = request["format"].asString();
-        if (format != "astra" && format != "flussonic")
+        if (format != "astra" && format != "astra44" && format != "flussonic")
             return R"({"result":"error","error":"unsupported export format"})";
         std::vector<std::string> warnings;
         Json::Value reply(Json::objectValue);
@@ -25,6 +26,10 @@ std::string HttpServer::handleConfigExport(const std::string& body) {
                 dvbstreamer5::external_config::exportAstra(
                     configManager.config.streams,warnings));
             reply["filename"] = "dvbstreamer5-to-astra.json";
+        } else if (format == "astra44") {
+            reply["content"] = dvbstreamer5::external_config::astra44::exportLegacy(
+                configManager.config.streams,warnings);
+            reply["filename"] = "dvbstreamer5-to-astra-4.4.18x.conf";
         } else {
             reply["content"] = dvbstreamer5::external_config::exportFlussonic(
                 configManager.config.streams,warnings);
@@ -103,11 +108,14 @@ std::string HttpServer::handleConfigImport(const std::string& body) {
     if (content.size() > 4U * 1024U * 1024U)
         return errorReply("configuration file exceeds 4 MiB");
 
-    if (sourceKind == "astra" || sourceKind == "flussonic") {
+    if (sourceKind == "astra" || sourceKind == "astra44" || sourceKind == "flussonic") {
         dvbstreamer5::external_config::Conversion imported;
         std::string conversionError;
         const bool valid = sourceKind == "astra"
             ? dvbstreamer5::external_config::parseAstra(
+                content, imported, conversionError)
+            : sourceKind == "astra44"
+            ? dvbstreamer5::external_config::astra44::importLegacy(
                 content, imported, conversionError)
             : dvbstreamer5::external_config::parseFlussonic(
                 content, imported, conversionError);
@@ -123,7 +131,8 @@ std::string HttpServer::handleConfigImport(const std::string& body) {
             imported, candidate.streams, sourceKind, duplicates);
         Json::Value response(Json::objectValue);
         response["result"] = "ok";
-        response["source"] = sourceKind == "astra" ? "Cesbo Astra" : "Flussonic";
+        response["source"] = sourceKind == "astra" ? "Cesbo Astra JSON" :
+                             sourceKind == "astra44" ? "Cesbo Astra 4.4.18x Lua" : "Flussonic";
         response["preview"] = action == "preview";
         response["streams"] = Json::UInt64(imported.streams.size());
         response["new_streams"] = Json::UInt64(added);
