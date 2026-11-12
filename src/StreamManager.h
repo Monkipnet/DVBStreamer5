@@ -293,7 +293,7 @@ struct StreamState {
     std::shared_ptr<DvbSubtitlePassthrough> dvbSubtitleMonitor;
     std::shared_ptr<DvbSubtitlePassthrough> outputMediaMonitor;
     std::string epgCacheKey;
-    std::unique_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
+    std::shared_ptr<dvbstreamer5::media::network::NativeUdpRelay> nativeRelay;
     std::unique_ptr<dvbstreamer5::media::transcode::NativeTranscoderPipeline> nativeTranscoder;
     // Browser preview owns a lazy, preview-only transcoder. It is completely
     // separate from nativeTranscoder (the production path) and tears its worker
@@ -317,14 +317,14 @@ struct StreamState {
     bool hlsAbrSourceResolved = false;
     int hlsAbrPrimaryWidth = 0;
     int hlsAbrPrimaryHeight = 0;
-    std::unique_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
+    std::shared_ptr<dvbstreamer5::media::hls::NativeHlsInput> nativeHlsInput;
     std::shared_ptr<dvbstreamer5::media::hls::NativeHlsSegmenter> nativeHlsSegmenter;
     std::shared_ptr<dvbstreamer5::media::cmaf::NativeCmafSegmenter> nativeCmafSegmenter;
-    std::unique_ptr<dvbstreamer5::media::rtsp::NativeRtspInput> nativeRtspInput;
+    std::shared_ptr<dvbstreamer5::media::rtsp::NativeRtspInput> nativeRtspInput;
     std::vector<std::unique_ptr<dvbstreamer5::media::rtsp::NativeRtspOutput>> nativeRtspOutputs;
-    std::unique_ptr<dvbstreamer5::media::rtmp::NativeRtmpInput> nativeRtmpInput;
+    std::shared_ptr<dvbstreamer5::media::rtmp::NativeRtmpInput> nativeRtmpInput;
     std::vector<std::unique_ptr<dvbstreamer5::media::rtmp::NativeRtmpOutput>> nativeRtmpOutputs;
-    std::unique_ptr<dvbstreamer5::media::srt::NativeSrtInput> nativeSrtInput;
+    std::shared_ptr<dvbstreamer5::media::srt::NativeSrtInput> nativeSrtInput;
     std::vector<std::unique_ptr<dvbstreamer5::media::srt::NativeSrtOutput>> nativeSrtOutputs;
     // Production HTTP MPEG-TS and private browser preview are deliberately separate.
     // HTTP clients receive post-remap/post-CA/post-transcode TS without waking preview codecs.
@@ -347,7 +347,8 @@ public:
     bool startStream(const StreamConfig& streamConfig, std::string* error = nullptr);
     bool restartStream(const StreamConfig& streamConfig, std::string* error = nullptr);
     bool stopStream(const std::string& id);
-    bool stopStreamAsync(const std::string& id);
+    bool stopStreamAsync(const std::string& id, bool force = false);
+    bool isForceStopRequested(const std::string& id) const;
     bool isStopPending(const std::string& id) const;
     bool isOperatorStopped(const std::string& id) const;
     void clearOperatorStop(const std::string& id);
@@ -478,17 +479,29 @@ private:
     struct AsyncStopRequest {
         std::string id;
         std::chrono::steady_clock::time_point generation;
+        bool force = false;
     };
+    struct StopAbortRefs {
+        std::weak_ptr<dvbstreamer5::media::network::NativeUdpRelay> relay;
+        std::weak_ptr<dvbstreamer5::media::hls::NativeHlsInput> hls;
+        std::weak_ptr<dvbstreamer5::media::srt::NativeSrtInput> srt;
+        std::weak_ptr<dvbstreamer5::media::rtsp::NativeRtspInput> rtsp;
+        std::weak_ptr<dvbstreamer5::media::rtmp::NativeRtmpInput> rtmp;
+    };
+    void forceCancelStreamIo(const std::string& id);
+    static void requestStopInputs(const StopAbortRefs& refs) noexcept;
     mutable std::mutex asyncStopMutex_;
     std::condition_variable asyncStopCv_;
     std::deque<AsyncStopRequest> asyncStopQueue_;
     std::set<std::string> asyncStopPending_;
+    std::set<std::string> forceStopRequested_;
+    std::map<std::string, StopAbortRefs> stoppingAbortRefs_;
     // Explicit panel Stop remains authoritative even when a viewer requests
     // OnDemand playback or an automatic source-failover probe runs.
     // Cleared only by a subsequent explicit panel Start.
     std::set<std::string> operatorStoppedStreams_;
     bool asyncStopShutdown_ = false;
-    std::thread asyncStopThread_;
+    std::vector<std::thread> asyncStopThreads_;
     std::map<std::string, FailoverEntry> failoverEntries;
     std::atomic<bool> failoverMonitorStop{false};
     std::thread failoverMonitorThread;
