@@ -85,8 +85,35 @@ inline bool applyUdpOutput(const std::string& input, StreamConfig& cfg) {
     const auto colon = endpoint.rfind(':');
     if (colon == std::string::npos || colon == 0 ||
         colon + 1 >= endpoint.size()) return false;
-    const std::string host = endpoint.substr(0,colon);
+    std::string host = endpoint.substr(0,colon);
     const std::string port = endpoint.substr(colon+1);
+    std::string bindIp;
+    // Astra 4.4 supports udp://[interface@]multicast:port.
+    const auto at = host.find('@');
+    if (at != std::string::npos) {
+        bindIp = host.substr(0,at);
+        host = host.substr(at+1);
+        // A Linux device name is not a portable source-interface address.
+        // Never put it into an outgoing multicast host by accident.
+        const auto octets = std::count(bindIp.begin(),bindIp.end(),'.');
+        if (octets != 3 || bindIp.empty() || bindIp.size() > 15 ||
+            bindIp.find_first_not_of("0123456789.") != std::string::npos)
+            return false;
+        std::istringstream parts(bindIp);
+        std::string piece;
+        unsigned count = 0;
+        while (std::getline(parts,piece,'.')) {
+            int n = -1;
+            try {
+                std::size_t used=0;
+                n=std::stoi(piece,&used);
+                if(used!=piece.size())return false;
+            } catch(...) {return false;}
+            if(n<0 || n>255) return false;
+            ++count;
+        }
+        if(count!=4)return false;
+    }
     if (host.empty() || host.size() > 255 || port.empty() ||
         !std::all_of(port.begin(),port.end(),[](unsigned char c){return std::isdigit(c);}))
         return false;
@@ -96,6 +123,7 @@ inline bool applyUdpOutput(const std::string& input, StreamConfig& cfg) {
     cfg.outputType = begins(low,"rtp://") ? "rtp" : "udp-vbr";
     cfg.outputHost = host;
     cfg.outputPort = number;
+    if (!bindIp.empty()) cfg.interfaceAddress = bindIp;
     cfg.outputMode = "caller";
     cfg.cbr = false;
     return true;
@@ -128,6 +156,7 @@ inline void addOutputs(StreamConfig& cfg, const std::vector<std::string>& urls,
             cfg.outputType=copy.outputType;
             cfg.outputHost=copy.outputHost;
             cfg.outputPort=copy.outputPort;
+            cfg.interfaceAddress=copy.interfaceAddress;
             cfg.outputMode=copy.outputMode;
             cfg.cbr=copy.cbr;
             primary=true;
@@ -137,6 +166,7 @@ inline void addOutputs(StreamConfig& cfg, const std::vector<std::string>& urls,
             extra.outputMode=copy.outputMode;
             extra.outputHost=copy.outputHost;
             extra.outputPort=copy.outputPort;
+            extra.interfaceAddress=copy.interfaceAddress;
             cfg.additionalOutputs.push_back(std::move(extra));
         }
     }
