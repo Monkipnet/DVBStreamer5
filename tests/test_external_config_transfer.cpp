@@ -93,7 +93,7 @@ int main() {
           "http://backup.example.net/live.ts",
         },
         output = {
-          "udp://239.11.12.13:5000#ttl=8",
+          "udp://192.168.1.5@239.11.12.13:5000#ttl=8",
           "rtp://239.11.12.14:5002",
         },
       })
@@ -115,6 +115,7 @@ int main() {
     assert(legacy.streams[0].serviceProvider=="Test Broadcaster");
     assert(legacy.streams[0].outputType=="udp-vbr");
     assert(legacy.streams[0].outputHost=="239.11.12.13");
+    assert(legacy.streams[0].interfaceAddress=="192.168.1.5");
     assert(legacy.streams[0].outputPort==5000);
     assert(legacy.streams[0].additionalOutputs.size()==1);
     assert(!legacy.streams[0].autoStart);
@@ -128,11 +129,13 @@ int main() {
     assert(astra44Lua.find("dvb_tune({")!=std::string::npos);
     assert(astra44Lua.find("make_channel({")!=std::string::npos);
     assert(astra44Lua.find("dvb5_tune_1")!=std::string::npos);
+    assert(astra44Lua.find("udp://192.168.1.5@239.11.12.13:5000")!=std::string::npos);
     assert(astra44Lua.find("secret")==std::string::npos);
     Conversion loopback;
     assert(astra44::importLegacy(astra44Lua,loopback,err));
     assert(loopback.streams.size()==2);
     assert(loopback.streams[0].inputServiceId==142);
+    assert(loopback.streams[0].interfaceAddress=="192.168.1.5");
     assert(loopback.streams[0].backupInputUri=="http://backup.example.net/live.ts");
     assert(loopback.streams[1].inputUri=="udp://239.2.2.2:1234");
 
