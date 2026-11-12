@@ -1,6 +1,7 @@
-/* DVBStreamer5 browser preview: choose an existing HTTP MPEG-TS output,
- * or the private on-demand HTTP session backed by the same channel pipeline.
- * Production SRT/HLS/UDP output configurations are not modified by the UI.
+/* DVBStreamer5 browser preview: panel-authenticated MPEG-TS and HLS only.
+ * Server-provided private same-origin /api/streams/... URLs allow a logged-in
+ * admin to view independently from IPTV subscriber IP/middleware restrictions.
+ * Production stream URLs and their access control remain unchanged.
  */
 (function (global, factory) {
   var api = factory();

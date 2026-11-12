@@ -26,12 +26,12 @@ global.window={location:new URL('http://localhost:8880/'), crypto:webcrypto,
 global.fetch=(url,opts)=>{requests.push({url,opts});return Promise.resolve({ok:true,json:()=>Promise.resolve({})})};
 const ui=preview.install({resolve:()=>Promise.resolve({active:true, input_is_hls:true, sources:[
   {kind:'http',preview_kind:'mpegts',preview_url:'/api/streams/id/preview.ts'},
-  {kind:'hls',preview_kind:'hls',preview_url:'/channel/video.m3u8',label:'HLS'}
+  {kind:'hls',preview_kind:'hls',preview_url:'/api/streams/id/preview.hls/video.m3u8',label:'Admin HLS'}
 ]})});
 async function drain(){for(let i=0;i<8;i++)await Promise.resolve()}
 (async()=>{
   ui.open('id'); await drain();
-  assert.deepEqual(loaded,['http://localhost:8880/channel/video.m3u8']);
+  assert.deepEqual(loaded,['http://localhost:8880/api/streams/id/preview.hls/video.m3u8']);
   assert.equal(requests.length,0,'public HLS preview should not open private MPEG-TS session');
   ui.close();
   assert.equal(hlsDestroyed.length,1);

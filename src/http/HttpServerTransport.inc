@@ -589,6 +589,33 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             // Strict URL receivers (including NetUP Stream Processor) may probe
             // HTTP Progressive/HLS URLs with HEAD before opening the media GET.
             // Answer those probes without creating a playback session.
+            std::string privateHlsId, privateHlsName;
+            if (resolvePrivatePreviewHlsTarget(target, privateHlsId, privateHlsName)) {
+                // Panel authentication has already been required above.
+                const auto* cfg = findStreamConfigById(
+                    configManager.config.streams, privateHlsId);
+                if (!cfg || !hasOutputType(*cfg, "hls")) {
+                    res.result(http::status::not_found);
+                } else {
+                    const auto file = hlsStorageDirectory(*cfg) / privateHlsName;
+                    std::error_code ec;
+                    if (!std::filesystem::is_regular_file(file, ec) || ec) {
+                        res.result(http::status::not_found);
+                    } else {
+                        const auto ext = file.extension().string();
+                        res.set(http::field::content_type,
+                            ext == ".m3u8" ? "application/vnd.apple.mpegurl" :
+                            ext == ".m4s" ? "video/iso.segment" :
+                            ext == ".mp4" ? "video/mp4" :
+                            ext == ".bin" ? "application/octet-stream" :
+                            "video/MP2T");
+                        res.set(http::field::cache_control, "no-store");
+                    }
+                }
+                res.keep_alive(false);
+                http::write(socket, res);
+                return;
+            }
             std::string previewId;
             if (resolvePrivatePreviewTarget(target, previewId)) {
                 if (!findStreamConfigById(configManager.config.streams, previewId) ||
@@ -659,6 +686,37 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         }
 
         if (req.method() == http::verb::get) {
+          std::string privateHlsId, privateHlsFile;
+          if (resolvePrivatePreviewHlsTarget(target, privateHlsId, privateHlsFile)) {
+              // Never route this request through the subscriber/IP filter.
+              // Its /api/ URL already passed the panel-auth gate.
+              const auto* cfg = findStreamConfigById(
+                  configManager.config.streams, privateHlsId);
+              if (!cfg || !hasOutputType(*cfg, "hls")) {
+                  res.result(http::status::not_found);
+                  res.body() = "Private HLS preview not available";
+              } else {
+                  // Map by exact internal ID, not possibly colliding channel name.
+                  const std::string internalTarget =
+                      "/hls/" + privateHlsId + "/" + privateHlsFile;
+                  std::filesystem::path directFile;
+                  if (!serveHlsFile(socket, internalTarget, res, &directFile)) {
+                      res.result(http::status::not_found);
+                      res.body() = "Private HLS preview media not found";
+                  } else if (!directFile.empty()) {
+                      res.erase("Access-Control-Allow-Origin");
+                      (void)sendHlsFileZeroCopy(
+                          socket, directFile, res, req.version(), false);
+                      return;
+                  }
+                  res.erase("Access-Control-Allow-Origin");
+              }
+              res.keep_alive(false);
+              res.set(http::field::cache_control, "no-store");
+              res.content_length(res.body().size());
+              http::write(socket, res);
+              return;
+          }
           std::string previewId;
           if (resolvePrivatePreviewTarget(target, previewId)) {
             if (!findStreamConfigById(configManager.config.streams, previewId) ||
@@ -813,33 +871,31 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     manifest["input_is_hls"] = toLower(cfg->inputMode) == "hls" ||
                         toLower(cfg->inputUri).find(".m3u8") != std::string::npos;
                     Json::Value sources(Json::arrayValue);
-                    // A browser preview uses the existing HTTP relay when present,
-                    // otherwise an isolated private MPEG-TS relay sharing this
-                    // channel's already-running media chain. The configured outputs
-                    // are not altered and the private URL requires admin auth.
+                    // V507: Preview is not a public stream client. Always use
+                    // the panel-authenticated paths so admin viewing is not
+                    // restricted by subscriber IP or external stream middleware.
                     const std::string cleanId = cleanPathToken(cfg->id);
                     const bool safeId = !cleanId.empty() && cleanId == cfg->id;
                     if (safeId && active) {
-                        const bool configuredHttp = hasOutputType(*cfg, "http");
                         Json::Value source(Json::objectValue);
-                        source["id"] = configuredHttp ? "configured-http" : "temporary-http";
-                        source["label"] = configuredHttp ? "HTTP MPEG-TS" : "Временный HTTP MPEG-TS";
+                        source["id"] = "private-http";
+                        source["label"] = "Административный HTTP MPEG-TS";
                         source["kind"] = "http";
                         source["preview_kind"] = "mpegts";
-                        source["preview_url"] = configuredHttp
-                            ? "/stream/" + cleanId + ".ts"
-                            : "/api/streams/" + cleanId + "/preview.ts";
+                        source["preview_url"] =
+                            "/api/streams/" + cleanId + "/preview.ts";
                         sources.append(std::move(source));
                         // If this channel also publishes HLS, offer the already
                         // running playlist as an alternate browser transport.
                         // No upstream URL, access token or satellite URI leaks.
                         if (hasOutputType(*cfg, "hls")) {
                             Json::Value hls(Json::objectValue);
-                            hls["id"] = "configured-hls";
-                            hls["label"] = "HLS";
+                            hls["id"] = "private-hls";
+                            hls["label"] = "Административный HLS";
                             hls["kind"] = "hls";
                             hls["preview_kind"] = "hls";
-                            hls["preview_url"] = "/" + hlsPublicName(*cfg) + "/video.m3u8";
+                            hls["preview_url"] =
+                                "/api/streams/" + cleanId + "/preview.hls/video.m3u8";
                             sources.append(std::move(hls));
                         }
                     }

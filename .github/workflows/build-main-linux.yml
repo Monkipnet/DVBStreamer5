@@ -47,6 +47,12 @@ jobs:
       - name: Verify iCAM multichannel CA logging policy
         run: node tests/web/test_icam_multichannel_policy.js
 
+      - name: Verify remote authenticated admin preview isolation
+        run: |
+          node tests/test_admin_preview_any_ip.js
+          node tests/test_preview_hls_20372.js
+          node tests/test_preview_close_20368.js
+
       - name: Verify TSDecrypt honest decode UI policy
         run: |
           node tests/web/test_tsdecrypt_decode_ui_policy.js
