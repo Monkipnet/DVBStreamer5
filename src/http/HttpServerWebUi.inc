@@ -5526,6 +5526,21 @@ function dvbFrontendDetails(stream) {
   const mode = Number(stream?.dvb_driver_mode ?? -1);
   return `/dev/dvb/adapter${adapter}/frontend${frontend}${model ? ` · ${model}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}`;
 }
+// Client-only proof: the actual preview <video> reported decoded/presented
+// frames. Never publish this as server decryption verification; evidence
+// expires quickly and is tied to the current tile start generation.
+const previewVideoEvidence = new Map();
+window.addEventListener('dvbstreamer5:preview-video-frame', function (event) {
+  const id = String(event && event.detail && event.detail.streamId || '');
+  if (!id) return;
+  const stream = streamById(id);
+  if (!stream || !stream.active) return;
+  previewVideoEvidence.set(id, {
+    time: Date.now(), generation: Number(stream.running_started_mono_ms || 0)
+  });
+  // The browser has actually presented frames; update the tile immediately.
+  if (typeof updateLiveTiles === 'function') updateLiveTiles();
+});
 function caDecodeInfo(stream) {
   const ciPlus = stream?.ci_plus_input === true;
   if (!stream?.conditional_access_client && !ciPlus) return {cls:'offline', text:'FTA', detail:'Не требуется'};
@@ -5534,7 +5549,19 @@ function caDecodeInfo(stream) {
   const payload = Number(stream.ca_output_payload_packets || 0);
   const clearPes = Number(stream.ca_output_clear_pes_starts || 0);
   const percent = Number(stream.ca_output_scrambled_percent || 0);
-  if (mode === 'unverified') return {cls:'waiting', text:uiBiText('ДЕКОД: ?', 'DECODE: ?'), detail:uiBiText('TSDecrypt: найден PES, воспроизведение не подтверждено', 'TSDecrypt: PES detected, playback unverified') + ` · PES ${clearPes}`};
+  const clientId = String(stream.id || '');
+  const proof = previewVideoEvidence.get(clientId);
+  const previewConfirmed = proof && stream.active &&
+    Date.now() - proof.time <= 15000 &&
+    proof.generation === Number(stream.running_started_mono_ms || 0);
+  if (previewConfirmed && ['unverified', 'partial', 'scrambled', 'invalid'].includes(mode)) {
+    return {cls:'clear', text:uiBiText('ДЕКОД: ОК', 'DECODE: OK'),
+      detail:uiBiText('Видеокадры подтверждены превью', 'Video frames confirmed by preview')};
+  }
+  if (mode === 'unverified') return {cls:'waiting', text:uiBiText('ДЕКОД: PES', 'DECODE: PES'),
+    detail:uiBiText('TSDecrypt: открытый PES, видеокадры не проверялись', 'TSDecrypt: clear PES, video frames not verified') + ` · PES ${clearPes}`};
+  if (mode === 'partial') return {cls:'waiting', text:uiBiText('ДЕКОД: ЧАСТ.', 'DECODE: PARTIAL'),
+    detail:uiBiText('Есть открытые PES и зашифрованные пакеты; проверьте видео', 'Clear PES and scrambled packets coexist; check video') + ` · PES ${clearPes} · ${percent.toFixed(1)}%`};
   if (mode === 'clear') return {cls:'clear', text:'ДЕКОД: ОК', detail:`ОТКРЫТ A/V · PES ${clearPes} · scrambled 0/${payload}`};
   if (mode === 'scrambled') return {cls:'scrambled', text:'ДЕКОД: НЕТ', detail:`ЗАКОДИРОВАН A/V · ${percent.toFixed(1)}% (${scrambled}/${payload})`};
   if (mode === 'invalid') return {cls:'scrambled', text:'ДЕКОД: НЕТ', detail:`A/V пакеты идут, но валидный открытый PES не найден (${payload} пак.)`};

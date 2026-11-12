@@ -1462,6 +1462,12 @@ std::string HttpServer::currentState() {
                 rawCaDecodeState = "offline";
             } else if (streamState->outputBitrate.load() == 0 || caPayloadPackets < 50) {
                 rawCaDecodeState = "waiting";
+            } else if (tsdecryptClient && caScrambledPackets > 0 &&
+                       caClearPesStarts > 0) {
+                // Some encrypted TS packets may belong to non-playback PIDs.
+                // A/V PES evidence contradicts the blanket "no decode" label,
+                // but does not prove the complete programme is playable.
+                rawCaDecodeState = "partial";
             } else if (caScrambledPackets > 0) {
                 rawCaDecodeState = "scrambled";
             } else if (caClearPesStarts == 0) {
