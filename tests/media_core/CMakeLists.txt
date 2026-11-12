@@ -161,6 +161,14 @@ add_executable(native_video_frame_scratch_test
 target_include_directories(native_video_frame_scratch_test PRIVATE ../../src)
 add_test(NAME native_video_frame_scratch COMMAND native_video_frame_scratch_test)
 
+# V492: launcher allocator default and override policy.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME portable_malloc_arena_policy
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/test_portable_malloc_arena_policy.py")
+endif()
+
 # V487: no-GPU test for decode-order DTS pacing and bounded waits.
 add_executable(native_video_pes_pacer_test test_native_video_pes_pacer.cpp)
 target_include_directories(native_video_pes_pacer_test PRIVATE ../../src)

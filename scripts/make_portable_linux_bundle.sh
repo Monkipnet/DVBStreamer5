@@ -261,6 +261,9 @@ cat > "$STAGE/run.sh" <<EOF_RUN
 set -Eeuo pipefail
 ROOT="\$(cd -- "\$(dirname -- "\${BASH_SOURCE[0]}")" && pwd -P)"
 # Keep bundled libraries private to the explicit ELF loader below.\n# Do NOT export LD_LIBRARY_PATH: DVBStreamer5 launches host tools such as\n# systemctl/journalctl/ss, which must resolve against the target host ABI.
+# V492: low-RSS glibc malloc arena default for CPU/VAAPI/NVENC.
+# Keep explicit environment overrides (including systemd drop-ins).
+export MALLOC_ARENA_MAX="\${MALLOC_ARENA_MAX:-2}"
 export DVBSTREAMER5_CA_PLUGIN_DIR="\${DVBSTREAMER5_CA_PLUGIN_DIR:-\$ROOT/ca-plugins}"
 [[ ! -s "\$ROOT/etc/ssl/certs/ca-certificates.crt" ]] || export SSL_CERT_FILE="\$ROOT/etc/ssl/certs/ca-certificates.crt"
 [[ ! -d "\$ROOT/lib/ossl-modules" ]] || export OPENSSL_MODULES="\$ROOT/lib/ossl-modules"
@@ -527,6 +530,14 @@ Compatibility boundary:
   dynamically by the driver stack and intentionally remain host-provided.
 - DVB tuners require the target kernel's DVB drivers/firmware and /dev/dvb.
 - PC/SC readers require USB permissions and a running pcscd when oscam-mini uses PC/SC.
+
+Memory allocator:
+- run.sh defaults MALLOC_ARENA_MAX=2 to reduce per-thread allocator
+  arenas for the CPU, VAAPI, QSV and NVENC transcoding paths.
+- An explicit environment value is always preserved. For larger concurrent
+  workloads consider a systemd drop-in with Environment=MALLOC_ARENA_MAX=4
+  or a measured alternative; benchmark RSS, CPU, FPS and drop counters.
+- This setting changes no codecs, timestamps, input/output buffer limits.
 
 For the widest compatibility, create the bundle on the oldest Linux distribution
 that you intend to support, then run the resulting folder on equal/newer systems.
