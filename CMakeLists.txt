@@ -433,6 +433,16 @@ target_link_libraries(dvbstreamer5_biss2_test PRIVATE
 )
 add_test(NAME biss2_cissa_descrambling COMMAND dvbstreamer5_biss2_test)
 
+# V10.8.483: round-trip and append-only migration from Astra/Flussonic.
+add_executable(dvbstreamer5_external_config_transfer_test
+    tests/test_external_config_transfer.cpp)
+target_include_directories(dvbstreamer5_external_config_transfer_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(dvbstreamer5_external_config_transfer_test PRIVATE
+    dvbstreamer5_jsoncpp)
+add_test(NAME external_config_transfer
+    COMMAND dvbstreamer5_external_config_transfer_test)
+
 # V10.8.460: key-free TSDecrypt ECM report parsing and clear PES validation.
 add_executable(dvbstreamer5_tsdecrypt_telemetry_test
     tests/test_tsdecrypt_telemetry.cpp)
