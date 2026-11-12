@@ -6807,27 +6807,63 @@ function openConfigTransferModal() {
       <button id="configImportApply" class="button-primary" onclick="applyConfigImport()" disabled>${configTransferText('Применить импорт', 'Apply import')}</button>
     </div>`);
 }
+function configTransferFormatChanged(resetFile=true) {
+  pendingConfigImportPayload = null;
+  const kind = document.getElementById('configImportFormat')?.value || 'dvbstreamer5';
+  const external = kind === 'astra' || kind === 'flussonic';
+  const file = document.getElementById('configImportFile');
+  if (file) {
+    file.accept = kind === 'flussonic' ? '.conf,.txt,text/plain' : '.json,application/json';
+    if (resetFile) file.value = '';
+  }
+  const row = document.getElementById('configSubscribersRow');
+  if (row) row.style.display = external ? 'none' : '';
+  const preview = document.getElementById('configImportPreview');
+  if (preview) preview.textContent = '';
+  const apply = document.getElementById('configImportApply');
+  if (apply) apply.disabled = true;
+}
 async function exportDvbStreamerConfig() {
   try {
-    const response = await fetch('/api/config/export', {method:'POST'});
-    const text = await response.text();
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = new Blob([text], {type:'application/json;charset=utf-8'});
+    const kind = document.getElementById('configExportFormat')?.value || 'dvbstreamer5';
+    const response = await fetch('/api/config/export', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:kind === 'dvbstreamer5' ? '' : JSON.stringify({format:kind})
+    });
+    let text = await response.text();
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    let filename = 'dvbstreamer5-config-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    let type = 'application/json;charset=utf-8';
+    let warnings = [];
+    if (kind !== 'dvbstreamer5') {
+      const result = JSON.parse(text);
+      if (result.result !== 'ok') throw new Error(result.error || 'Export failed');
+      text = result.content;
+      filename = result.filename;
+      type = kind === 'flussonic' ? 'text/plain;charset=utf-8' : type;
+      warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    }
+    const note = document.getElementById('configExportWarnings');
+    if (note) note.textContent = warnings.length
+      ? configTransferText('Пропущены параметры: ', 'Unconverted settings: ') + warnings.slice(0,5).join('; ')
+      : '';
+    const blob = new Blob([text], {type});
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `dvbstreamer5-config-backup-${new Date().toISOString().slice(0,10)}.json`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url),1000);
   } catch (error) {
     uiError(error?.message || error);
   }
 }
 async function previewConfigImport(sourceKind) {
+  sourceKind = sourceKind || document.getElementById('configImportFormat')?.value || 'dvbstreamer5';
   const mainFile = document.getElementById('configImportFile')?.files?.[0];
-  const subscriberFile = document.getElementById('configSubscribersFile')?.files?.[0];
+  const subscriberFile = (sourceKind === 'astra' || sourceKind === 'flussonic') ? null : document.getElementById('configSubscribersFile')?.files?.[0];
   const preview = document.getElementById('configImportPreview');
   const applyButton = document.getElementById('configImportApply');
   pendingConfigImportPayload = null;
@@ -6861,6 +6897,8 @@ async function previewConfigImport(sourceKind) {
       <div><strong>${escapeHtmlValue(data.source || '')}</strong></div>
       <div>${configTransferText('Потоки', 'Streams')}: <b>${Number(data.streams||0)}</b> · OUT: <b>${Number(data.outputs||0)}</b> · CAM: <b>${Number(data.cam_clients||0)}</b> · MPTS: <b>${Number(data.mpts_outputs||0)}</b></div>
       <div>${configTransferText('Абоненты', 'Subscribers')}: <b>${escapeHtmlValue(subscribers)}</b></div>
+      ${(sourceKind === 'astra' || sourceKind === 'flussonic') ? `<div>${configTransferText('Новые плитки','New tiles')}: <b>${Number(data.new_streams || 0)}</b> · ${configTransferText('Дубликаты','Duplicates')}: <b>${Number(data.duplicates || 0)}</b> · ${configTransferText('Пропущены','Skipped')}: <b>${Number(data.ignored || 0)}</b></div>` : ''}
+      ${(Array.isArray(data.warnings) && data.warnings.length) ? `<div style="margin-top:5px;color:#e4b672">${data.warnings.slice(0,6).map(w => escapeHtmlValue(w)).join('; ')}</div>` : ''}
       <div style="margin-top:6px;color:#9fd3ff">${escapeHtmlValue(access)}</div>`;
     if (applyButton) applyButton.disabled = false;
   } catch (error) {
@@ -6870,8 +6908,12 @@ async function previewConfigImport(sourceKind) {
 async function applyConfigImport() {
   if (!pendingConfigImportPayload) return;
   const message = configTransferText(
-    'Применить импорт? Активные потоки с изменённой конфигурацией будут перезапущены.',
-    'Apply import? Active streams with changed configuration will be restarted.'
+    (pendingConfigImportPayload.source_kind === 'astra' || pendingConfigImportPayload.source_kind === 'flussonic')
+      ? 'Добавить новые плитки без запуска? Действующие потоки не будут заменены.'
+      : 'Применить импорт? Активные потоки с изменённой конфигурацией будут перезапущены.',
+    (pendingConfigImportPayload.source_kind === 'astra' || pendingConfigImportPayload.source_kind === 'flussonic')
+      ? 'Add new paused tiles? Active streams will not be replaced.'
+      : 'Apply import? Active streams with changed configuration will be restarted.'
   );
   if (!confirm(message)) return;
   const applyButton = document.getElementById('configImportApply');
