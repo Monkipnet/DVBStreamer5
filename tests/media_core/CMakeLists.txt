@@ -149,6 +149,18 @@ add_executable(shared_dvb_pid_admission_test test_shared_dvb_pid_admission.cpp)
 target_include_directories(shared_dvb_pid_admission_test PRIVATE ../../src)
 add_test(NAME shared_dvb_pid_admission COMMAND shared_dvb_pid_admission_test)
 
+# V491: byte-exact I420->NV12 SIMD upload for VAAPI, QSV and NVENC.
+add_executable(native_i420_nv12_test test_native_i420_nv12.cpp)
+target_include_directories(native_i420_nv12_test PRIVATE ../../src)
+add_test(NAME native_i420_nv12 COMMAND native_i420_nv12_test)
+
+# V491: repeated scaling must retain memory and reset frame metadata.
+add_executable(native_video_frame_scratch_test
+    test_native_video_frame_scratch.cpp
+    ../../src/media/NativeVideoProcessing.cpp)
+target_include_directories(native_video_frame_scratch_test PRIVATE ../../src)
+add_test(NAME native_video_frame_scratch COMMAND native_video_frame_scratch_test)
+
 # V487: no-GPU test for decode-order DTS pacing and bounded waits.
 add_executable(native_video_pes_pacer_test test_native_video_pes_pacer.cpp)
 target_include_directories(native_video_pes_pacer_test PRIVATE ../../src)

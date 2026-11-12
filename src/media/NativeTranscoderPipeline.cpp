@@ -2734,7 +2734,10 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrame(
     if (!ensureVideoEncoder(error)) return false;
 
     const auto scaleBegin = std::chrono::steady_clock::now();
-    codec::RawVideoFrame scaled;
+    // The encode worker owns this thread-local frame throughout the
+    // synchronous encoder call. Reuse its large I420 allocation instead
+    // of allocating/freeing 5+ MiB per scaled 1440p frame.
+    static thread_local codec::RawVideoFrame scaled;
     const codec::RawVideoFrame* source = &raw;
     if ((raw.width != config_.width || raw.height != config_.height) &&
         !videoEncoder_->supportsNativeScaling()) {

@@ -422,7 +422,10 @@ void scalePlane(const std::uint8_t* src, int sw, int sh, int sstride,
 
 void deinterlacePlane(std::uint8_t* data, int w, int h, int stride) {
     if (h < 3) return;
-    std::vector<std::uint8_t> row(static_cast<std::size_t>(w));
+    // Reuse the deinterlace scratch row in the decoder worker. Each plane
+    // overwrites every byte, so it is safe across different frame sizes.
+    thread_local std::vector<std::uint8_t> row;
+    row.resize(static_cast<std::size_t>(w));
     for (int y = 1; y + 1 < h; y += 2) {
         for (int x = 0; x < w; ++x) {
             row[static_cast<std::size_t>(x)] = static_cast<std::uint8_t>(
@@ -467,8 +470,12 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
     }();
     (void)scalerPolicyLogged;
 
-    output = {};
+    // Keep the caller's pixel allocation across frames. The original
+    // output = {} released multi-megabyte 1440p/4K scratch buffers on
+    // every encode cycle, even when geometry was unchanged.
     output.width = width; output.height = height;
+    output.interlaced = false;
+    output.topFieldFirst = true;
     output.pts90k = input.pts90k; output.dts90k = input.dts90k;
     output.hasPts = input.hasPts; output.hasDts = input.hasDts; output.keyFrame = input.keyFrame;
     output.i420.resize(static_cast<std::size_t>(width) * height * 3U / 2U);

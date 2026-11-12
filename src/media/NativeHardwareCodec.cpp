@@ -1,4 +1,5 @@
 #include "media/NativeHardwareCodec.h"
+#include "media/NativeI420Nv12.h"
 #include "media/NativeNvencQualityPolicy.h"
 #include "media/NativeScaleMode.h"
 #include "media/NativeVideoProcessing.h"
@@ -157,24 +158,14 @@ bool probeVaapiH264Encode() {
 }
 #endif
 
-void i420ToNv12(const RawVideoFrame& in, std::uint8_t* y, std::uint8_t* uv, int pitch) {
-    const int w = in.width;
-    const int h = in.height;
-    const std::uint8_t* srcY = in.i420.data();
-    const std::uint8_t* srcU = srcY + static_cast<std::size_t>(w) * h;
-    const std::uint8_t* srcV = srcU + static_cast<std::size_t>(w / 2) * (h / 2);
-    for (int row = 0; row < h; ++row)
-        std::memcpy(y + static_cast<std::size_t>(row) * pitch,
-                    srcY + static_cast<std::size_t>(row) * w, static_cast<std::size_t>(w));
-    for (int row = 0; row < h / 2; ++row) {
-        std::uint8_t* dst = uv + static_cast<std::size_t>(row) * pitch;
-        const std::uint8_t* u = srcU + static_cast<std::size_t>(row) * (w / 2);
-        const std::uint8_t* v = srcV + static_cast<std::size_t>(row) * (w / 2);
-        for (int x = 0; x < w / 2; ++x) {
-            dst[2 * x] = u[x];
-            dst[2 * x + 1] = v[x];
-        }
-    }
+void i420ToNv12(const RawVideoFrame& in, std::uint8_t* y,
+                  std::uint8_t* uv, int pitch) {
+    const auto* srcY = in.i420.data();
+    const auto* srcU = srcY + static_cast<std::size_t>(in.width) * in.height;
+    const auto* srcV = srcU + static_cast<std::size_t>(in.width / 2) *
+        (in.height / 2);
+    detail::copyI420ToNv12(srcY, srcU, srcV, in.width, in.height,
+                           y, pitch, uv, pitch);
 }
 
 #if defined(DVBSTREAMER5_HAVE_VAAPI)
@@ -849,46 +840,30 @@ private:
             return false;
         }
 
-        bool ok = image.format.fourcc == VA_FOURCC_NV12;
+        const bool ok = image.format.fourcc == VA_FOURCC_NV12 &&
+            image.pitches[0] >= static_cast<unsigned>(input.width) &&
+            image.pitches[1] >= static_cast<unsigned>(input.width);
         if (ok) {
-            const int srcWidth = input.width;
-            const int srcHeight = input.height;
-            auto* base = static_cast<std::uint8_t*>(mapped);
             const auto* srcY = input.i420.data();
             const auto* srcU =
-                srcY + static_cast<std::size_t>(srcWidth) * srcHeight;
+                srcY + static_cast<std::size_t>(input.width) * input.height;
             const auto* srcV =
-                srcU + static_cast<std::size_t>(srcWidth / 2) *
-                    (srcHeight / 2);
-
-            for (int row = 0; row < srcHeight; ++row) {
-                std::memcpy(
-                    base + image.offsets[0] +
-                        static_cast<std::size_t>(row) * image.pitches[0],
-                    srcY + static_cast<std::size_t>(row) * srcWidth,
-                    static_cast<std::size_t>(srcWidth));
-            }
-
-            for (int row = 0; row < srcHeight / 2; ++row) {
-                auto* dst =
-                    base + image.offsets[1] +
-                    static_cast<std::size_t>(row) * image.pitches[1];
-                const auto* u =
-                    srcU + static_cast<std::size_t>(row) * (srcWidth / 2);
-                const auto* v =
-                    srcV + static_cast<std::size_t>(row) * (srcWidth / 2);
-                for (int x = 0; x < srcWidth / 2; ++x) {
-                    dst[2 * x] = u[x];
-                    dst[2 * x + 1] = v[x];
-                }
-            }
+                srcU + static_cast<std::size_t>(input.width / 2) *
+                    (input.height / 2);
+            auto* base = static_cast<std::uint8_t*>(mapped);
+            // VAAPI can expose independent Y and UV surface pitches.
+            // Reuse the same byte-exact SIMD interleaver as NVENC / QSV.
+            detail::copyI420ToNv12(
+                srcY, srcU, srcV, input.width, input.height,
+                base + image.offsets[0], static_cast<int>(image.pitches[0]),
+                base + image.offsets[1], static_cast<int>(image.pitches[1]));
         }
 
         vaUnmapBuffer(display_, image.buf);
         vaDestroyImage(display_, image.image_id);
 
         if (!ok) {
-            error = "VAAPI surface is not NV12";
+            error = "VAAPI surface format or pitch is invalid for NV12";
             return false;
         }
         return true;
