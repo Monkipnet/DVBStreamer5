@@ -546,7 +546,10 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     failoverMonitorThread = std::thread(&StreamManager::monitorFailoverStreams, this);
     configureRestartSchedule();
     restartScheduleThread = std::thread(&StreamManager::monitorGlobalRestartSchedule, this);
-    asyncStopThread_ = std::thread(&StreamManager::processAsyncStopRequests, this);
+    // Independent stop workers: a hung codec/source on one tile must not
+    // indefinitely block Stop requests for all other tiles.
+    for (int i = 0; i < 3; ++i)
+        asyncStopThreads_.emplace_back(&StreamManager::processAsyncStopRequests, this);
 }
 
 StreamManager::~StreamManager() {
@@ -557,7 +560,7 @@ StreamManager::~StreamManager() {
         asyncStopShutdown_ = true;
     }
     asyncStopCv_.notify_all();
-    if (asyncStopThread_.joinable()) asyncStopThread_.join();
+    for (auto& worker : asyncStopThreads_) if (worker.joinable()) worker.join();
     restartScheduleStop.store(true, std::memory_order_release);
     restartScheduleCv.notify_all();
     if (restartScheduleThread.joinable()) restartScheduleThread.join();
@@ -768,7 +771,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             dvbstreamer5::media::network::NativePreviewHub>();
     }
     state->nativePreviewHub = std::make_shared<dvbstreamer5::media::network::NativePreviewHub>();
-    state->nativeRelay = std::make_unique<dvbstreamer5::media::network::NativeUdpRelay>();
+    state->nativeRelay = std::make_shared<dvbstreamer5::media::network::NativeUdpRelay>();
 
     // V10.8.83: browser preview is adaptive. Do not start decoder/encoder
     // worker threads for streams that mpegts.js can consume directly. The
@@ -1139,10 +1142,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     const bool testInput = streamConfig.testPattern || inputMode == "test" ||
         toLower(normalizedInput) == "test://bars" || toLower(normalizedInput) == "testsrc://bars" ||
         toLower(normalizedInput) == "bars://hd";
-    if (hlsInput) state->nativeHlsInput = std::make_unique<dvbstreamer5::media::hls::NativeHlsInput>();
-    if (srtInput) state->nativeSrtInput = std::make_unique<dvbstreamer5::media::srt::NativeSrtInput>();
-    if (rtspInput) state->nativeRtspInput = std::make_unique<dvbstreamer5::media::rtsp::NativeRtspInput>();
-    if (rtmpInput) state->nativeRtmpInput = std::make_unique<dvbstreamer5::media::rtmp::NativeRtmpInput>();
+    if (hlsInput) state->nativeHlsInput = std::make_shared<dvbstreamer5::media::hls::NativeHlsInput>();
+    if (srtInput) state->nativeSrtInput = std::make_shared<dvbstreamer5::media::srt::NativeSrtInput>();
+    if (rtspInput) state->nativeRtspInput = std::make_shared<dvbstreamer5::media::rtsp::NativeRtspInput>();
+    if (rtmpInput) state->nativeRtmpInput = std::make_shared<dvbstreamer5::media::rtmp::NativeRtmpInput>();
     // V346: on automatic primary/backup transitions, reuse the existing SRT
     // outputs and their connected peers. stopStream parked them after draining
     // the old relay; no new port bind or client reconnect is required.
@@ -2504,6 +2507,13 @@ bool StreamManager::stopStream(const std::string& id) {
             }
         }
     }
+    {
+        std::lock_guard<std::mutex> lock(asyncStopMutex_);
+        stoppingAbortRefs_[id] = {
+            state->nativeRelay, state->nativeHlsInput, state->nativeSrtInput,
+            state->nativeRtspInput, state->nativeRtmpInput
+        };
+    }
     state->monitorStop.store(true);
     state->testPatternStop.store(true);
     // Signal relay shutdown BEFORE joining SRT/HLS/RTSP/RTMP producers.
@@ -2596,6 +2606,10 @@ bool StreamManager::stopStream(const std::string& id) {
     state->running.store(false);
     state->active.store(false);
     CardManager::instance().releaseService(id);
+    {
+        std::lock_guard<std::mutex> lock(asyncStopMutex_);
+        stoppingAbortRefs_.erase(id);
+    }
     return true;
 }
 
