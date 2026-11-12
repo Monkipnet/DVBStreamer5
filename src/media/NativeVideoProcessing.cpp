@@ -457,6 +457,10 @@ bool scaleI420(const RawVideoFrame& input, int width, int height,
         std::cerr << "NATIVE VIDEO SCALE software-frame backend=cpu"
                   << " vaapi_vpp_opt_in="
                   << (enableVaapiSoftwareScaling() ? 1 : 0)
+                  << " ssse3_horizontal="
+                  << (detail::horizontalSimdAvailable() ? 1 : 0)
+                  << " avx2_vertical="
+                  << (detail::verticalSimdAvailable() ? 1 : 0)
                   << " env=DVBSTREAMER5_ENABLE_VAAPI_SOFTWARE_SCALE"
                   << std::endl;
         return true;
