@@ -5968,12 +5968,13 @@ async function toggleStream(id, active, button=null, force=false) {
     if (data.result === 'error') throw new Error(data.error || (active ? 'Stop failed' : 'Start failed'));
     if (active && !force && !data.already_stopped) {
       // Automatic escalation if this exact generation has not stopped.
-      const generation = Number(stream?.running_started_mono_ms || 0);
       setTimeout(() => {
         const latest = streamById(id);
+        // The runtime generation may already have been detached from the
+        // active map while its thread remains blocked in teardown. The
+        // server-side stop_pending flag is authoritative for escalation.
         if (!latest?.stop_pending || latest.stop_force_requested ||
             streamActionBusy.has(id)) return;
-        if (generation && Number(latest.running_started_mono_ms || 0) !== generation) return;
         toggleStream(id, true, null, true);
       }, 9000);
     }
