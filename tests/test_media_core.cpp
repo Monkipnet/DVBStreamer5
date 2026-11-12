@@ -298,7 +298,6 @@ void testNativeMpegTsMux() {
     const auto afterBackwardsPcr = outputVideoPcr(97200);
     assert(((afterBackwardsPcr - basePcr) & mask33) == 7200);
 }
-}
 
 
 void testSharedDvbRemapperBatchTick() {
