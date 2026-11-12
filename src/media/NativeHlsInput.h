@@ -27,6 +27,7 @@ public:
                DataCallback dataCallback,
                FinishCallback finishCallback,
                std::string& error);
+    void requestStop() noexcept { stopping_.store(true, std::memory_order_release); }
     void stop() noexcept;
 
     bool isRunning() const noexcept;
