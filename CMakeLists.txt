@@ -636,6 +636,30 @@ message(STATUS "XMLTV external download: libcurl, libxml2 and gzip enabled")
 add_dependencies(DVBStreamer5 dvbstreamer5_ca_newcamd)
 
 option(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS "Build standalone native MPEG-TS/RTP tests" OFF)
+
+# V494: the offline downscale benchmark must be buildable from a normal
+# production CMake configure (MEDIA_CORE_TESTS defaults to OFF). Do not
+# include it in normal production builds, unless tests were explicitly
+# enabled. It never gets installed or packed in the portable bundle.
+if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
+    add_executable(dvbstreamer5_downscale_benchmark
+        tests/native_transcoder/benchmark_downscale.cpp)
+else()
+    add_executable(dvbstreamer5_downscale_benchmark EXCLUDE_FROM_ALL
+        tests/native_transcoder/benchmark_downscale.cpp)
+endif()
+target_include_directories(dvbstreamer5_downscale_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(dvbstreamer5_downscale_benchmark PRIVATE
+    dvbstreamer5_media_core Threads::Threads dl)
+
+# Always check the standalone benchmark driver's Python syntax.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME downscale_benchmark_python_syntax
+        COMMAND "${Python3_EXECUTABLE}" -m py_compile
+                "${CMAKE_SOURCE_DIR}/scripts/benchmark_downscale.py")
+endif()
+
 if(DVBSTREAMER5_BUILD_MEDIA_CORE_TESTS)
     add_subdirectory(tests/media_core)
     add_subdirectory(tests/native_hls)
