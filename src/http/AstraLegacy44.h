@@ -440,11 +440,17 @@ inline std::string luaQuote(const std::string& text) {
     }
     return out+"\"";
 }
-inline std::string outputAddress(const std::string& type,const std::string& host,int port) {
+inline std::string outputAddress(const std::string& type,const std::string& host,
+                                 int port,const std::string& interfaceIp={}) {
     if((type!="udp-vbr" && type!="udp-cbr" && type!="rtp") ||
        host.empty() || port<1 || port>65535 ||
-       host.find_first_of(";\r\n")!=std::string::npos) return {};
-    return std::string(type=="rtp"?"rtp://":"udp://")+host+":"+std::to_string(port);
+       host.find_first_of(";\r\n@")!=std::string::npos) return {};
+    if(!interfaceIp.empty() &&
+       (interfaceIp.size()>15 || interfaceIp.find_first_not_of("0123456789.")!=std::string::npos))
+        return {};
+    return std::string(type=="rtp"?"rtp://":"udp://")+
+           (interfaceIp.empty()?std::string{}:interfaceIp+"@")+
+           host+":"+std::to_string(port);
 }
 
 inline std::string exportLegacy(const std::vector<StreamConfig>& streams,
@@ -531,11 +537,11 @@ inline std::string exportLegacy(const std::vector<StreamConfig>& streams,
             script<<"    "<<luaQuote(backup)<<",\n";
         }
         script<<"  },\n  output = {\n";
-        const std::string mainOut=outputAddress(s.outputType,s.outputHost,s.outputPort);
+        const std::string mainOut=outputAddress(s.outputType,s.outputHost,s.outputPort,s.interfaceAddress);
         if(!mainOut.empty())script<<"    "<<luaQuote(mainOut)<<",\n";
         else warnings.push_back("Astra 4.4 export: HTTP/HLS/SRT output needs manual setup");
         for(const auto& o:s.additionalOutputs) {
-            const auto uri=outputAddress(o.outputType,o.outputHost,o.outputPort);
+            const auto uri=outputAddress(o.outputType,o.outputHost,o.outputPort,o.interfaceAddress);
             if(!uri.empty())script<<"    "<<luaQuote(uri)<<",\n";
             else warnings.push_back("Astra 4.4 export: unsupported secondary output skipped");
         }
