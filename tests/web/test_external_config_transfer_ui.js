@@ -13,7 +13,7 @@ for(const text of [
  'value="astra"', 'value="astra44"', 'value="flussonic"', 'configTransferFormatChanged()',
  'new_streams', 'data.warnings',
  'sourceKind = sourceKind || document.getElementById',
- "kind === 'flussonic' ? 'text/plain",
+ "kind === 'flussonic' || kind === 'astra44'",
  "toggleStream(id, true, null, true)",'stream.stop_force_requested'
 ]) assert.ok(ui.includes(text),'Missing UI import/export or force-stop control: '+text);
 for(const text of [
