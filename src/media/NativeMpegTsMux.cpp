@@ -333,9 +333,14 @@ std::uint64_t NativeMpegTsMux::sampleClock(
         // clock on a legitimate wrap, not a forced +one-frame fallback at
         // every subsequent packet after the audio timeline wraps.
         const std::int64_t delta = ptsDelta90k(sourceClock, previous);
+        // A repeated/backward timestamp is not an extra video/audio frame
+        // interval. Advancing a full fallbackDuration on every malformed
+        // timestamp causes PCR to run faster than the original source.
+        // Keep output DTS/PCR strictly monotonic by one 90-kHz tick; the
+        // next real forward input timestamp restores the source cadence.
         value = delta > 0
             ? previous + static_cast<std::uint64_t>(delta)
-            : previous + fallbackDuration;
+            : previous + 1ULL;
     }
     previous = value;
     return value;
