@@ -42,7 +42,9 @@ jobs:
         run: node tests/web/test_icam_multichannel_policy.js
 
       - name: Verify TSDecrypt honest decode UI policy
-        run: node tests/web/test_tsdecrypt_decode_ui_policy.js
+        run: |
+          node tests/web/test_tsdecrypt_decode_ui_policy.js
+          node tests/test_preview_video_frame_evidence.js
 
       - name: Verify BISS2 Mode 1/E UI and plugin wiring
         run: node tests/web/test_biss2_ui.js

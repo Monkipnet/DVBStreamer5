@@ -10450,6 +10450,35 @@ window.addEventListener('beforeunload', () => {
       video.playsInline = true;
       video.preload = 'none';
       video.setAttribute('aria-label', 'HTTP-предпросмотр');
+      // Report only actual browser video presentation, never connection,
+      // CW, TS flags or a preliminary loadedmetadata event. Both HTTP
+      // and HLS players reuse this same video element.
+      var watchedVideo = video;
+      var lastEvidence = 0;
+      function reportPresentedFrame() {
+        if (serial !== requestSerial || !modal || video !== watchedVideo ||
+            watchedVideo.paused || watchedVideo.ended ||
+            watchedVideo.videoWidth <= 0 || watchedVideo.readyState < 2) return;
+        var now = Date.now();
+        if (now - lastEvidence < 5000) return;
+        lastEvidence = now;
+        window.dispatchEvent(new CustomEvent('dvbstreamer5:preview-video-frame', {
+          detail: {streamId: String(streamId)}
+        }));
+      }
+      if (typeof watchedVideo.requestVideoFrameCallback === 'function') {
+        function onPresentedFrame(_now, frame) {
+          if (serial !== requestSerial || video !== watchedVideo || !modal) return;
+          if (frame && frame.presentedFrames > 0) reportPresentedFrame();
+          watchedVideo.requestVideoFrameCallback(onPresentedFrame);
+        }
+        watchedVideo.requestVideoFrameCallback(onPresentedFrame);
+      } else {
+        // Older browsers: advancing playback time with decoded video size.
+        watchedVideo.addEventListener('timeupdate', function () {
+          if (watchedVideo.currentTime > 0) reportPresentedFrame();
+        });
+      }
       status = element('div', 'tvp-status', 'Подключение к HTTP-потоку…');
       dialog.append(header, video, status);
       modal.append(dialog);
