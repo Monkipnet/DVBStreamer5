@@ -10,7 +10,9 @@ const headAt=server.indexOf('if (req.method() == http::verb::head)');
 const getAt=server.indexOf('if (req.method() == http::verb::get)',headAt);
 assert.ok(authAt>0&&headAt>authAt&&getAt>headAt,'panel auth precedes preview');
 assert.match(server.slice(authAt,headAt),/isPanelSessionAuthorized\(req\)/);
-assert.match(common,/if \(target\.rfind\("\/api\/", 0\) == 0\) return true;/);
+// requiresAuthentication() is implemented in HttpServerTransport.inc,
+ // not the shared helper fragment. Verify the actual protection point.
+assert.match(server,/if \(target\.rfind\("\/api\/", 0\) == 0\) return true;/);
 assert.match(common,/bool resolvePrivatePreviewHlsTarget\(/);
 assert.match(common,/cleanHlsRelativePath\(name\) != name/);
 const marker=server.indexOf('if (safeId && active)');
