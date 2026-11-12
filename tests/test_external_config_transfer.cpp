@@ -72,6 +72,6 @@ int main() {
 
     assert(!parseAstra(R"({"make_stream":[{"name":"x","type":"mpts"}]})",out,err));
     assert(!parseFlussonic("stream broken { input udp://239.1.1.1:1234;",out,err));
-    assert(safeId("Channel #1")=="Channel__1");
+    assert(safeId("Channel #1")=="Channel_1");
     std::cout<<"PASS Cesbo Astra/Flussonic converters and safe append-only semantics\n";
 }
