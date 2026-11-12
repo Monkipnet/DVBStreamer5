@@ -44,6 +44,11 @@ jobs:
       - name: Verify BISS2 Mode 1/E UI and plugin wiring
         run: node tests/web/test_biss2_ui.js
 
+      - name: Verify force-stop and configuration migration UI/API
+        run: |
+          node tests/web/test_stream_toggle_stop_policy.js
+          node tests/web/test_external_config_transfer_ui.js
+
       - name: Verify DVB transponder and IP subnet tile grouping
         run: node tests/web/test_tile_input_grouping.js
 
@@ -102,10 +107,13 @@ jobs:
             dvbstreamer5_tsdecrypt_fd_isolation_test \
             dvbstreamer5_shared_cw_broker_test \
             dvbstreamer5_biss1_test \
-            dvbstreamer5_biss2_test
+            dvbstreamer5_biss2_test \
+            dvbstreamer5_external_config_transfer_test
           node tests/web/test_shared_cw_broker_policy.js
           node tests/web/test_biss1_ui.js
           node tests/web/test_biss2_ui.js
+          node tests/web/test_stream_toggle_stop_policy.js
+          node tests/web/test_external_config_transfer_ui.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Package portable Linux x86_64 and checksums
