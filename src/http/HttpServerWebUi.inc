@@ -6786,17 +6786,18 @@ function openConfigTransferModal() {
       <div style="padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:rgba(255,255,255,.025)">
         <strong>${configTransferText('Экспорт DVBStreamer5', 'Export DVBStreamer5')}</strong>
         <div style="margin:6px 0 10px;color:#9aa3b1;font-size:.78rem">${configTransferText('Один JSON содержит основной конфиг и абонентов. Файл содержит чувствительные параметры (Telegram/CAM/пароль панели) — храните его безопасно.', 'One JSON contains the main config and subscribers. The file contains sensitive settings (Telegram/CAM/panel password) — store it securely.')}</div>
+        <div class="form-row"><label>${configTransferText('Формат экспорта','Export format')}</label><select id="configExportFormat"><option value="dvbstreamer5">DVBStreamer5 (backup JSON)</option><option value="astra">Cesbo Astra (JSON)</option><option value="flussonic">Flussonic (.conf)</option></select></div>
         <button class="button-primary" onclick="exportDvbStreamerConfig()">${configTransferText('Экспортировать backup', 'Export backup')}</button>
       </div>
       <div style="padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:rgba(255,255,255,.025)">
         <strong>${configTransferText('Импорт / миграция', 'Import / migration')}</strong>
         <div class="form-grid full" style="margin-top:10px">
-          <div class="form-row"><label>${configTransferText('Основной JSON', 'Main JSON')}</label><input id="configImportFile" type="file" accept=".json,application/json" /></div>
-          <div class="form-row"><label>${configTransferText('Абоненты (необязательно для старого конфига)', 'Subscribers (optional for legacy config)')}</label><input id="configSubscribersFile" type="file" accept=".json,application/json" /></div>
+          <div class="form-row"><label>${configTransferText('Формат импорта','Import format')}</label><select id="configImportFormat" onchange="configTransferFormatChanged()"><option value="dvbstreamer5">DVBStreamer5 (JSON)</option><option value="tvstreammer5">TVStreammer5 (JSON)</option><option value="astra">Cesbo Astra (JSON)</option><option value="flussonic">Flussonic (.conf)</option></select></div>
+          <div class="form-row"><label>${configTransferText('Основной файл', 'Main file')}</label><input id="configImportFile" type="file" accept=".json,application/json" onchange="configTransferFormatChanged(false)" /></div>
+          <div class="form-row" id="configSubscribersRow"><label>${configTransferText('Абоненты (необязательно для старого конфига)', 'Subscribers (optional for legacy config)')}</label><input id="configSubscribersFile" type="file" accept=".json,application/json" /></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-          <button class="button-secondary" onclick="previewConfigImport('dvbstreamer5')">${configTransferText('Проверить DVBStreamer5', 'Preview DVBStreamer5')}</button>
-          <button class="button-secondary" onclick="previewConfigImport('tvstreammer5')">${configTransferText('Проверить TVStreammer5', 'Preview TVStreammer5')}</button>
+          <button class="button-secondary" onclick="previewConfigImport()">${configTransferText('Проверить импорт', 'Preview import')}</button>
         </div>
         <div id="configImportPreview" style="margin-top:12px;color:#cbd5e1;font-size:.8rem"></div>
       </div>
