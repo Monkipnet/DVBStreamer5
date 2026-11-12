@@ -5,6 +5,7 @@
 #include "StreamAuthSessions.h"
 #include "StreamAuthApiKey.h"
 #include "media/HlsFileCache.h"
+#include "media/LinuxDvbInput.h"
 #include "EmbeddedWebAssets.h"
 #include "StableUdpOutput.h"
 

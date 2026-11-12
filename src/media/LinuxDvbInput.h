@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,11 @@ namespace dvbstreamer5::media::network {
 struct LinuxDvbFrontendStats {
     bool available = false;
     bool locked = false;
+    // V509: actual transport activity is independent of FE_READ_STATUS.
+    // A working TS reader may continue receiving packets while some tuner
+    // drivers fail to report FE_HAS_LOCK or a status ioctl errors out.
+    bool transportRecent = false;
+    bool lockKnown = false;
     int signalPercent = 0;
     int qualityPercent = 0;
     double signalDb = 0.0;
@@ -82,6 +88,7 @@ private:
     std::uint64_t overflowCount_ = 0;
     std::uint64_t zeroReadCount_ = 0;
     std::uint64_t ioErrorCount_ = 0;
+    std::chrono::steady_clock::time_point lastTransportReport_{};
 };
 
 } // namespace dvbstreamer5::media::network

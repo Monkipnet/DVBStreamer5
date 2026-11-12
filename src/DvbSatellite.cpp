@@ -46,6 +46,9 @@ struct DvbService {
 struct FrontendStats {
     bool available = false;
     bool locked = false;
+    bool lockedByTransport = false;
+    bool frontendLockKnown = false;
+    bool transportRecent = false;
     int signalPercent = 0;
     int qualityPercent = 0;
     double signalDb = 0.0;
@@ -412,7 +415,12 @@ FrontendStats readFrontendStats(const DvbSatelliteParams& params) {
     if (dvbstreamer5::media::network::LinuxDvbInput::activeFrontendStats(
             params.adapter, params.frontend, live)) {
         result.available = live.available;
-        result.locked = live.locked;
+        result.frontendLockKnown = live.lockKnown;
+        result.transportRecent = live.transportRecent;
+        // Transport activity is evidence of a viable tuner even if the
+        // driver does not return FE_HAS_LOCK; mark inference separately.
+        result.locked = live.locked || live.transportRecent;
+        result.lockedByTransport = !live.locked && live.transportRecent;
         result.signalPercent = live.signalPercent;
         result.qualityPercent = live.qualityPercent;
         result.signalDb = live.signalDb;
@@ -427,7 +435,10 @@ FrontendStats readFrontendStats(const DvbSatelliteParams& params) {
     result.available = true;
 
     fe_status_t status{};
-    if (ioctl(fd, FE_READ_STATUS, &status) == 0) result.locked = (status & FE_HAS_LOCK) != 0;
+    if (ioctl(fd, FE_READ_STATUS, &status) == 0) {
+        result.frontendLockKnown = true;
+        result.locked = (status & FE_HAS_LOCK) != 0;
+    }
 
     int signalRelative = -1;
     int qualityRelative = -1;
@@ -465,6 +476,9 @@ Json::Value statsToJson(const FrontendStats& stats) {
     Json::Value root;
     root["available"] = stats.available;
     root["locked"] = stats.locked;
+    root["lock_inferred_from_ts"] = stats.lockedByTransport;
+    root["frontend_lock_known"] = stats.frontendLockKnown;
+    root["transport_recent"] = stats.transportRecent;
     root["signal"] = stats.signalPercent;
     root["quality"] = stats.qualityPercent;
     root["quality_estimated"] = stats.qualityEstimated;
@@ -961,7 +975,24 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
     }
     if (dvbstreamer5::media::network::LinuxDvbInput::hasActiveFrontend(
             params.adapter, params.frontend)) {
-        result["error"] = "DVB frontend already active in DVBStreamer5: " + device;
+        if (collectServices) {
+            result["error"] = "DVB frontend already active in DVBStreamer5: " + device;
+            return result;
+        }
+        // Signal-only observation: never retune or reopen the live frontend.
+        // Read the CURRENT tune; unsaved form changes do not apply.
+        const FrontendStats live = readFrontendStats(params);
+        result["frontend_in_use"] = true;
+        result["read_only"] = true;
+        result["signal_for_active_tune"] = true;
+        result["locked"] = live.locked;
+        result["lock_inferred_from_ts"] = live.lockedByTransport;
+        result["transport_recent"] = live.transportRecent;
+        result["frontend_lock_known"] = live.frontendLockKnown;
+        result["signal"] = live.signalPercent;
+        result["quality"] = live.qualityPercent;
+        if (live.hasSignalDb) result["signal_db"] = live.signalDb;
+        if (live.hasCnrDb) result["cnr_db"] = live.cnrDb;
         return result;
     }
 

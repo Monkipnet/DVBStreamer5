@@ -1,9 +1,7 @@
 #pragma once
-// V506: UI-only evidence gate for TSDecrypt MPEG-TS, not a codec/CW verifier.
-// A real output client plus sustained clear PES can promote the dashboard to
-// green. Subsequent healthy PES preserves it even after the client disconnects.
-// Reset on stream restart, output starvation, or sustained scrambled-only data.
-#include <algorithm>
+// V509: UI-only TSDecrypt evidence. Real HLS media requests (not playlists)
+// plus recent clear PES allow a stable green indicator. Independent codec
+// frame verification is not implied, and no CA/transport bits are changed.
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -11,12 +9,11 @@
 namespace dvbstreamer5::http {
 struct TsdecryptViewerDecodeGate {
     std::uint64_t generation = 0;
-    bool hasSample = false;
-    bool hasPes = false;
+    bool seenPes = false;
     bool promoted = false;
-    unsigned goodSamples = 0;
-    std::chrono::steady_clock::time_point lastSample{};
+    bool seenHealthyOutput = false;
     std::chrono::steady_clock::time_point lastPes{};
+    std::chrono::steady_clock::time_point lastHealthyOutput{};
 };
 
 inline std::string updateTsdecryptViewerDecode(
@@ -25,38 +22,45 @@ inline std::string updateTsdecryptViewerDecode(
     std::uint64_t clearPes, bool clientConnected,
     std::chrono::steady_clock::time_point now =
         std::chrono::steady_clock::now()) {
-    if (!active || generation == 0 || gate.generation != generation) {
+    if (!active) {
+        gate = {};
+        return "offline";
+    }
+    if (generation == 0) {
+        gate = {};
+        return raw;
+    }
+    if (gate.generation != generation) {
         gate = {};
         gate.generation = generation;
-        if (!active) return "offline";
     }
-    const bool goodPes = outputHealthy && clearPes > 0 &&
-        (raw == "unverified" || raw == "partial");
-    if (goodPes) {
-        if (!gate.hasPes || now - gate.lastPes > std::chrono::seconds(4))
-            gate.goodSamples = 0;
-        // The /api/state endpoint may be polled repeatedly within one
-        // second; never treat duplicate rapid polls as multiple good samples.
-        if (!gate.hasSample ||
-            now - gate.lastSample >= std::chrono::milliseconds(650)) {
-            gate.goodSamples = std::min(gate.goodSamples + 1u, 8u);
-            gate.lastSample = now;
-            gate.hasSample = true;
-        }
+    constexpr auto pesGrace = std::chrono::seconds(15);
+    constexpr auto outputGrace = std::chrono::seconds(6);
+    if (outputHealthy) {
+        gate.seenHealthyOutput = true;
+        gate.lastHealthyOutput = now;
+    }
+    // Do not require the moment of an HLS segment request to coincide with
+    // two consecutive /api/state snapshots. PES evidence can precede a
+    // legitimate client connection by up to 15 seconds.
+    if (outputHealthy && clearPes > 0 &&
+        (raw == "unverified" || raw == "partial" ||
+         raw == "viewer_pes_ok")) {
+        gate.seenPes = true;
         gate.lastPes = now;
-        gate.hasPes = true;
-        if (clientConnected && gate.goodSamples >= 2) gate.promoted = true;
     }
-    // Do not turn a stopped/erroring source green because the client remains
-    // connected. Short missing-PES windows must not undo a healthy state.
-    if (gate.promoted && gate.hasPes && outputHealthy &&
-        now - gate.lastPes <= std::chrono::seconds(6))
+    const bool recentPes = gate.seenPes &&
+        now >= gate.lastPes && now - gate.lastPes <= pesGrace;
+    const bool recentOutput = gate.seenHealthyOutput &&
+        now >= gate.lastHealthyOutput &&
+        now - gate.lastHealthyOutput <= outputGrace;
+    if (clientConnected && recentPes && recentOutput)
+        gate.promoted = true;
+    // A prior successful client session is sufficient. Its disconnect does
+    // not turn a still-healthy transport back into amber PES.
+    if (gate.promoted && recentPes && recentOutput)
         return "viewer_pes_ok";
-    if (!outputHealthy || (gate.hasPes &&
-                          now - gate.lastPes > std::chrono::seconds(6))) {
-        gate.promoted = false;
-        gate.goodSamples = 0;
-    }
+    gate.promoted = false;
     return raw;
 }
 } // namespace dvbstreamer5::http

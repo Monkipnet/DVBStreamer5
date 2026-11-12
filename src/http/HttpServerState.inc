@@ -1623,6 +1623,9 @@ std::string HttpServer::currentState() {
         }
         item["dvb_signal_available"] = false;
         item["dvb_locked"] = false;
+        item["dvb_lock_inferred_from_ts"] = false;
+        item["dvb_transport_recent"] = false;
+        item["dvb_frontend_lock_known"] = false;
         item["dvb_signal"] = 0;
         item["dvb_quality"] = 0;
         item["dvb_quality_estimated"] = false;
@@ -1638,6 +1641,12 @@ std::string HttpServer::currentState() {
                 const Json::Value& dvbStats = cached->second;
                 item["dvb_signal_available"] = dvbStats.get("available", false).asBool();
                 item["dvb_locked"] = dvbStats.get("locked", false).asBool();
+                item["dvb_lock_inferred_from_ts"] =
+                    dvbStats.get("lock_inferred_from_ts", false).asBool();
+                item["dvb_transport_recent"] =
+                    dvbStats.get("transport_recent", false).asBool();
+                item["dvb_frontend_lock_known"] =
+                    dvbStats.get("frontend_lock_known", false).asBool();
                 item["dvb_signal"] = dvbStats.get("signal", 0).asInt();
                 item["dvb_quality"] = dvbStats.get("quality", 0).asInt();
                 item["dvb_quality_estimated"] = dvbStats.get("quality_estimated", false).asBool();

@@ -1,6 +1,7 @@
 std::string HttpServer::dvbAdapters() {
     Json::Value root = DvbSatellite::adapters();
     std::map<std::pair<int, int>, Json::Value> usage;
+    std::map<std::pair<int, int>, std::set<std::string>> activeTps;
 
     // A DVB frontend is assigned as soon as a stream is configured for it.
     // OnDemand streams are intentionally included even while their runtime
@@ -52,13 +53,36 @@ std::string HttpServer::dvbAdapters() {
     // OnDemand assignments with currently tuned consumers.
     const auto snap = streamManager.snapshot();
     for (const auto& [id, state] : snap) {
-        if (!state || !state->running.load()) continue;
+        if (!state || !state->running.load() || !state->active.load() ||
+            state->usingBackup) continue;
         DvbSatelliteParams params;
         std::string parseError;
         if (!DvbSatellite::parseUri(state->config.inputUri, params, parseError)) continue;
         const auto key = std::make_pair(params.adapter, params.frontend);
         auto& item = usage[key];
         item["consumers"] = item.get("consumers", 0).asUInt() + 1;
+        // Track real tuned DVB transponders separately from configured
+        // (possibly idle OnDemand) service assignments. A frontend may host
+        // multiple services but only one tune at a time.
+        const std::string tpKey =
+            params.deliverySystem + "|" + std::to_string(params.frequencyKHz) +
+            "|" + std::to_string(params.symbolRateK) + "|" + params.polarity +
+            "|" + std::to_string(params.streamId) + "|" +
+            std::to_string(params.diseqcSource) + "|" + params.unicableMode +
+            "|" + std::to_string(params.unicableUserBand) + "|" +
+            std::to_string(params.unicableFrequencyKHz);
+        if (activeTps[key].insert(tpKey).second) {
+            if (!item.isMember("active_transponders"))
+                item["active_transponders"] = Json::Value(Json::arrayValue);
+            Json::Value tp;
+            tp["frequency_khz"] = params.frequencyKHz;
+            tp["symbol_rate"] = params.symbolRateK;
+            tp["polarity"] = params.polarity;
+            tp["delivery_system"] = params.deliverySystem;
+            tp["stream_id"] = params.streamId;
+            tp["diseqc_source"] = params.diseqcSource;
+            item["active_transponders"].append(tp);
+        }
         item["frequency_khz"] = params.frequencyKHz;
         item["symbol_rate"] = params.symbolRateK;
             item["bandwidth_hz"] = params.bandwidthHz;
@@ -83,21 +107,39 @@ std::string HttpServer::dvbAdapters() {
             auto& adapter = root["adapters"][i];
             const auto key = std::make_pair(adapter.get("adapter", 0).asInt(), adapter.get("frontend", 0).asInt());
             const auto found = usage.find(key);
+            // The source that actually owns the kernel frontend may be
+            // in warm standby, with zero service consumers. This is still a
+            // frontend in use by DVBStreamer5, not merely "assigned".
+            const bool ownFrontend =
+                dvbstreamer5::media::network::LinuxDvbInput::hasActiveFrontend(
+                    key.first, key.second);
+            adapter["frontend_active"] = ownFrontend;
             if (found == usage.end()) {
                 const bool externallyBusy = adapter.get("external_in_use", false).asBool();
-                adapter["in_use"] = externallyBusy;
-                adapter["usage_state"] = externallyBusy ? "external" : "free";
+                adapter["in_use"] = externallyBusy || ownFrontend;
+                adapter["usage_state"] = externallyBusy
+                    ? (ownFrontend ? "conflict" : "external")
+                    : (ownFrontend ? "active" : "free");
                 adapter["consumers"] = 0;
                 adapter["configured_streams"] = 0;
                 adapter["ondemand_streams"] = 0;
+                adapter["active_transponder_count"] = 0;
+                adapter["active_transponders"] = Json::Value(Json::arrayValue);
             } else {
                 const unsigned configured = found->second.get("configured_streams", 0).asUInt();
                 const unsigned consumers = found->second.get("consumers", 0).asUInt();
                 const bool externallyBusy = adapter.get("external_in_use", false).asBool();
-                adapter["in_use"] = externallyBusy || configured > 0 || consumers > 0;
+                adapter["in_use"] = externallyBusy || ownFrontend ||
+                    configured > 0 || consumers > 0;
                 adapter["usage_state"] = externallyBusy
-                    ? ((configured > 0 || consumers > 0) ? "conflict" : "external")
-                    : (consumers > 0 ? "active" : (configured > 0 ? "assigned" : "free"));
+                    ? ((configured > 0 || consumers > 0 || ownFrontend)
+                        ? "conflict" : "external")
+                    : ((ownFrontend || consumers > 0) ? "active"
+                        : (configured > 0 ? "assigned" : "free"));
+                adapter["active_transponders"] = found->second.get(
+                    "active_transponders", Json::Value(Json::arrayValue));
+                adapter["active_transponder_count"] =
+                    static_cast<unsigned>(adapter["active_transponders"].size());
                 adapter["consumers"] = consumers;
                 adapter["configured_streams"] = configured;
                 adapter["ondemand_streams"] = found->second.get("ondemand_streams", 0);
@@ -693,7 +735,14 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
     }
     boost::system::error_code endpointError;
     const std::string clientIp = socket.remote_endpoint(endpointError).address().to_string();
-    if (!endpointError && !clientIp.empty()) {
+    // V509: HLS playlist activity is not playback. Record one logical
+    // viewer only once a real media segment has been successfully served.
+    // Covers transport stream, CMAF fragments, and init segments.
+    const std::string segmentExt = filePath.extension().string();
+    const bool mediaDelivered = res.result() == http::status::ok &&
+        (segmentExt == ".ts" || segmentExt == ".m4s" ||
+         segmentExt == ".mp4" || segmentExt == ".aac");
+    if (!endpointError && !clientIp.empty() && mediaDelivered) {
         streamManager.addStreamSession(id, clientIp, "hls");
     }
     // V340: a successful media response (not merely a startup playlist)

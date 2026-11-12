@@ -46,6 +46,11 @@ std::map<FrontendRegistryKey, int>& activeFrontendRegistry() {
     static std::map<FrontendRegistryKey, int> registry;
     return registry;
 }
+std::map<FrontendRegistryKey, std::chrono::steady_clock::time_point>&
+frontendTransportActivity() {
+    static std::map<FrontendRegistryKey, std::chrono::steady_clock::time_point> activity;
+    return activity;
+}
 
 std::mutex& unicableCommandMutex() {
     static std::mutex mutex;
@@ -59,6 +64,7 @@ bool registerActiveFrontend(int adapter, int frontend, int fd) {
     if (existing != activeFrontendRegistry().end() && existing->second != fd)
         return false;
     activeFrontendRegistry()[key] = fd;
+    frontendTransportActivity()[key] = {};
     return true;
 }
 
@@ -66,8 +72,10 @@ void releaseActiveFrontend(int adapter, int frontend, int fd) noexcept {
     std::lock_guard<std::mutex> lock(activeFrontendRegistryMutex());
     const FrontendRegistryKey key{adapter, frontend};
     const auto existing = activeFrontendRegistry().find(key);
-    if (existing != activeFrontendRegistry().end() && existing->second == fd)
+    if (existing != activeFrontendRegistry().end() && existing->second == fd) {
         activeFrontendRegistry().erase(existing);
+        frontendTransportActivity().erase(key);
+    }
     if (fd >= 0) ::close(fd);
 }
 
@@ -102,8 +110,10 @@ void readFrontendStatsFromFd(int fd, LinuxDvbFrontendStats& result) {
     result.available = fd >= 0;
     if (fd < 0) return;
     fe_status_t status{};
-    if (::ioctl(fd, FE_READ_STATUS, &status) == 0)
+    if (::ioctl(fd, FE_READ_STATUS, &status) == 0) {
+        result.lockKnown = true;
         result.locked = (status & FE_HAS_LOCK) != 0;
+    }
     int signalRelative = -1;
     int qualityRelative = -1;
     readFrontendPropertyStat(fd, DTV_STAT_SIGNAL_STRENGTH, signalRelative, result.signalDb, result.hasSignalDb);
@@ -1037,6 +1047,13 @@ bool LinuxDvbInput::activeFrontendStats(
     const auto found = activeFrontendRegistry().find({adapter, frontend});
     if (found == activeFrontendRegistry().end()) return false;
     readFrontendStatsFromFd(found->second, stats);
+    const auto latest = frontendTransportActivity().find({adapter, frontend});
+    if (latest != frontendTransportActivity().end() &&
+        latest->second != std::chrono::steady_clock::time_point{}) {
+        const auto elapsed = std::chrono::steady_clock::now() - latest->second;
+        stats.transportRecent = elapsed >= std::chrono::steady_clock::duration::zero() &&
+            elapsed <= std::chrono::seconds(4);
+    }
     return true;
 #else
     (void)adapter;
@@ -1267,6 +1284,21 @@ bool LinuxDvbInput::read(
     zeroReadCount_ = 0;
     ioErrorCount_ = 0;
     received = static_cast<std::size_t>(bytes);
+    // Report transport activity at most twice per second. Protect the
+    // shared snapshot with the existing frontend registry mutex, without
+    // reading a frontend or changing any tune/transport data.
+    const auto now = std::chrono::steady_clock::now();
+    if (frontendFd_ >= 0 &&
+        (lastTransportReport_ == std::chrono::steady_clock::time_point{} ||
+         now - lastTransportReport_ >= std::chrono::milliseconds(500))) {
+        std::lock_guard<std::mutex> lock(activeFrontendRegistryMutex());
+        const FrontendRegistryKey key{frontendAdapter_, frontendIndex_};
+        const auto found = activeFrontendRegistry().find(key);
+        if (found != activeFrontendRegistry().end() && found->second == frontendFd_) {
+            frontendTransportActivity()[key] = now;
+        }
+        lastTransportReport_ = now;
+    }
     error.clear();
     return true;
 #else
@@ -1299,6 +1331,7 @@ void LinuxDvbInput::close() noexcept {
 #endif
     demuxFds_.clear();
     overflowCount_ = 0;
+    lastTransportReport_ = {};
 }
 
 } // namespace dvbstreamer5::media::network

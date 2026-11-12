@@ -44,6 +44,10 @@ jobs:
           /tmp/dvb-owner-test
           node tests/web/test_dvb_external_owners.js
 
+      - name: Verify active DVB transponder/LOCK and HLS media evidence
+        run: |
+          node tests/web/test_dvb_live_transponder_v509.js
+
       - name: Verify iCAM multichannel CA logging policy
         run: node tests/web/test_icam_multichannel_policy.js
 

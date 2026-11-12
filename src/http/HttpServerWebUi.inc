@@ -5417,15 +5417,24 @@ function renderDvbFrontendMeters(container,group,title) {
       // Prefer a currently active DVB consumer that returned a real frontend
       // measurement. A missing reading is never interpreted as zero.
       const sorted=[...entry.streams].sort((a,b)=>{
-        const rank=s=>Number(s.active===true && !s.using_backup && s.dvb_signal_available===true)*4+
+        // A transponder group may have many services on one frontend. Prefer
+        // the live, currently tuned service with a confirmed lock or active
+        // transport rather than the first configured (idle) service.
+        const rank=s=>Number(s.active===true && !s.using_backup && s.dvb_locked===true)*16+
+          Number(s.active===true && !s.using_backup && s.dvb_transport_recent===true)*8+
+          Number(s.active===true && !s.using_backup && s.dvb_signal_available===true)*4+
           Number(s.active===true && !s.using_backup)*2+Number(s.dvb_signal_available===true);
         return rank(b)-rank(a);
       });
       const stream=sorted[0] || {};
       const available=stream.active===true && !stream.using_backup && stream.dvb_signal_available===true;
       const locked=available && stream.dvb_locked===true;
+      const lockInferred=locked && stream.dvb_lock_inferred_from_ts===true;
       const meter=document.createElement('span');
       meter.className='dvb-card-fe';
+      if (lockInferred) meter.title=uiBiText(
+        'Приём TS активен; FE_READ_STATUS не подтвердил LOCK',
+        'TS packets flowing; FE_READ_STATUS did not confirm LOCK');
       if (multi) {
         const fe=document.createElement('span');
         fe.className='dvb-card-fe-name';
@@ -7310,10 +7319,15 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
     const freq = Number(item.frequency_khz || 0);
     const external = item.external_in_use === true;
     const externalText = external ? ' · ' + satEscape(externalDvbOwnerLabel(item)) : '';
+    const liveFrontend = item.frontend_active === true ||
+      item.usage_state === 'active';
     const tune = consumers > 0
       ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}${externalText}`
       : (external ? externalText :
-        (configured > 0 ? ` · назначен${ondemand ? ` · OnDemand ${ondemand}` : ''}` : ' · свободен'));
+        (liveFrontend ? ` · ${uiBiText('используется DVBStreamer5','used by DVBStreamer5')}`
+        : (configured > 0
+          ? ` · ${uiBiText('назначен','assigned')}${ondemand ? ` · OnDemand ${ondemand}` : ''}`
+          : ` · ${uiBiText('свободен','free')}`)));
     const mode = Number(item.driver_mode ?? -1);
     return `<option value="${f}">Frontend ${f}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
   }).join('');
@@ -7485,13 +7499,23 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
   adapterSelect.innerHTML = adapters.map(adapter => {
     const adapterItems = dvbAdapters.filter(item => Number(item.adapter) === adapter);
     const count = adapterItems.length;
-    const used = adapterItems.reduce((sum,item)=>sum + ((item.in_use === true || Number(item.configured_streams||0)>0 || Number(item.consumers||0)>0) ? 1 : 0), 0);
+    const activeCount = adapterItems.filter(item =>
+      item.frontend_active === true || Number(item.consumers||0) > 0 ||
+      item.usage_state === 'active').length;
+    const assignedCount = adapterItems.filter(item =>
+      Number(item.configured_streams||0) > 0).length;
+    const activeTpCount = adapterItems.reduce((sum,item) =>
+      sum + Number(item.active_transponder_count||0),0);
     const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];
     const model = models.join(' / ');
     const externalCount = adapterItems.filter(item => item.external_in_use === true).length;
     const usage = externalCount
-      ? ` · занято другими программами ${externalCount}/${count}`
-      : (used ? ` · назначено ${used}/${count}` : ' · свободен');
+      ? ` · ${uiBiText('занято другими программами','external busy')} ${externalCount}/${count}`
+      : (activeCount
+        ? ` · ${uiBiText('используется','active')} ${activeCount}/${count}${activeTpCount ? ` · TP ${activeTpCount}` : ''}`
+        : (assignedCount
+          ? ` · ${uiBiText('назначено','assigned')} ${assignedCount}/${count}`
+          : ` · ${uiBiText('свободен','free')}`));
     return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${usage}</option>`;
   }).join('');
   const selected = adapters.includes(previous) ? previous : adapters[0];
@@ -7669,9 +7693,16 @@ async function updateSatelliteSignal() {
       const device = data.device || `/dev/dvb/adapter${actualAdapter}/frontend${actualFrontend}`;
       const model = String(data.frontend_model || data.frontend_name || '').trim();
       const mode = Number(data.driver_mode ?? -1);
+      const currentTune = data.signal_for_active_tune === true;
+      const status = data.locked
+        ? (data.lock_inferred_from_ts === true ? ' · TS ACTIVE' : ' · LOCK')
+        : (data.frontend_lock_known === false
+          ? ' · LOCK ?' : ' · NO LOCK');
       info.textContent = data.error && !data.locked
         ? `${device}: ${data.error}`
-        : `${device}${model ? ` · ${model}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''} · ISI ${payload.stream_id >= 0 ? payload.stream_id : 'Auto'} · DiSEqC ${diseqcSourceLabel(payload.diseqc_source)}${data.locked ? ' · LOCK' : ''}`;
+        : `${device}${model ? ` · ${model}` : ''}${mode >= 0 ? ` · Mode ${mode}` : ''}${currentTune
+            ? ' · ' + uiBiText('текущий TP (без перенастройки)', 'current TP (read-only)')
+            : ` · ISI ${payload.stream_id >= 0 ? payload.stream_id : 'Auto'} · DiSEqC ${diseqcSourceLabel(payload.diseqc_source)}`}${status}`;
     }
   } catch (error) {
     if (error?.name === 'AbortError') return;
