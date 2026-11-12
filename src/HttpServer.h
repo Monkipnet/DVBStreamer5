@@ -82,7 +82,7 @@ private:
     bool serveHlsFile(const tcp::socket& socket, const std::string& target,
                       http::response<http::string_body>& res,
                       std::filesystem::path* directFile = nullptr);
-    std::string handleConfigExport();
+    std::string handleConfigExport(const std::string& body = {});
     std::string handleConfigImport(const std::string& body);
     std::string handleSaveConfig(const std::string& body);
     std::string handleMptsSave(const std::string& body);
