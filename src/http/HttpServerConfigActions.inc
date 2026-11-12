@@ -811,7 +811,8 @@ std::string HttpServer::handleStopStream(const std::string& body) {
             response["result"] = "error";
             response["error"] = "missing stream id";
         } else {
-            const bool stopped = streamManager.stopStreamAsync(id);
+            const bool force = root.get("force", false).asBool();
+            const bool stopped = streamManager.stopStreamAsync(id, force);
             const bool configured = std::any_of(
                 configManager.config.streams.begin(), configManager.config.streams.end(),
                 [&id](const StreamConfig& stream) { return stream.id == id; });
@@ -822,7 +823,10 @@ std::string HttpServer::handleStopStream(const std::string& body) {
                 const bool stopPending = streamManager.isStopPending(id);
                 response["result"] = "ok";
                 response["already_stopped"] = !stopped && !stopPending;
-                response["status"] = stopPending ? "stopping" : "stopped";
+                response["force_requested"] = force && stopped;
+                response["status"] = stopPending ?
+                    (streamManager.isForceStopRequested(id) ?
+                        "force_stopping" : "stopping") : "stopped";
             } else {
                 response["result"] = "error";
                 response["error"] = "stream is not configured: " + id;
