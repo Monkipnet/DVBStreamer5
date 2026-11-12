@@ -8915,7 +8915,7 @@ function openStreamForm(stream) {
         <div class="form-row full edit-section">
           <div class="edit-field">
             <div class="edit-field-title" ${uiBiAttrs('CBR: стартовый буфер','CBR: startup buffer')}>${uiBiText('CBR: стартовый буфер','CBR: startup buffer')}</div>
-            <small class="field-help" ${uiBiAttrs('Настройка начального запаса MPEG-TS; внутренний выбор PCR выполняется автоматически.','Initial MPEG-TS reserve; PCR timing is managed internally.') }>${uiBiText('Настройка начального запаса MPEG-TS; внутренний выбор PCR выполняется автоматически.','Initial MPEG-TS reserve; PCR timing is managed internally.')}</small>
+            <small class="field-help" ${uiBiAttrs('Настройка начального запаса MPEG-TS. Текущие параметры временной шкалы сохраняются.','Initial MPEG-TS reserve. Existing transport clock settings are preserved.') }>${uiBiText('Настройка начального запаса MPEG-TS. Текущие параметры временной шкалы сохраняются.','Initial MPEG-TS reserve. Existing transport clock settings are preserved.')}</small>
             <select id="streamCbrStartupMs" aria-label="CBR startup buffer">${cbrStartupOptions}</select>
           </div>
         </div>
