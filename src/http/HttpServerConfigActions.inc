@@ -129,7 +129,10 @@ std::string HttpServer::handleConfigImport(const std::string& body) {
         response["new_streams"] = Json::UInt64(added);
         response["duplicates"] = Json::UInt64(duplicates);
         response["ignored"] = Json::UInt64(imported.ignored);
-        response["outputs"] = Json::UInt64(0);
+        std::size_t outputCount = 0;
+        for (const auto& stream : imported.streams)
+            outputCount += 1 + stream.additionalOutputs.size();
+        response["outputs"] = Json::UInt64(outputCount);
         response["cam_clients"] = Json::UInt64(0);
         response["mpts_outputs"] = Json::UInt64(0);
         response["subscribers_present"] = false;
