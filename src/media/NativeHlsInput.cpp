@@ -779,7 +779,7 @@ void NativeHlsInput::run() {
             const auto waitStart = Clock::now();
             {
                 std::unique_lock<std::mutex> lock(bufferMutex);
-                bufferCv.wait(lock, [&] {
+                bufferCv.wait_for(lock, std::chrono::milliseconds(100), [&] {
                     return stopping_.load() || !buffer.empty() || producerDone || !producerFailure.empty();
                 });
                 if (stopping_.load()) break;
