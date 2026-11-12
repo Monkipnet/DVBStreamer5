@@ -738,10 +738,11 @@ public:
             SEncParamExt param{};
             extStatus = encoder_->GetDefaultParams(&param);
             if (extStatus == cmResultSuccess) {
-                const bool sd = static_cast<std::uint64_t>(w) *
-                        static_cast<std::uint64_t>(h) <= 1280ULL * 720ULL &&
-                    fps_ <= 30.0;
-                highComplexity = sd || options_.preset == "quality" ||
+                // A real-time "fast"/"balanced" preset must not silently
+                // turn into HIGH_COMPLEXITY merely because resolution is SD
+                // or 720p. That defeated the CPU budget for live 25-fps TV.
+                // Keep the original quality mode explicitly available.
+                highComplexity = options_.preset == "quality" ||
                     options_.preset == "best";
                 param.iUsageType = CAMERA_VIDEO_REAL_TIME;
                 param.iPicWidth = w;
