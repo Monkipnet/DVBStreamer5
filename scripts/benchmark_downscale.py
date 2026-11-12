@@ -252,12 +252,43 @@ def main():
                 native_variants.append('qsv')
             for backend in native_variants:
                 name = f'Native {backend} {raster}'
+                diagnostic_ts = tmp / ('native_' + raster + '_' + backend + '.ts')
                 cmd = [str(native),str(sample),f'{duration:.3f}',
-                       str(width),str(height),backend,str(bitrate)]
+                       str(width),str(height),backend,str(bitrate),
+                       str(diagnostic_ts)]
                 log = '/tmp/dvb_downscale_' + raster + '_native_' + backend + '.log'
                 result = trial(cmd,name,duration+18,log,env)
                 result.update(resolution=raster,backend=backend,implementation='Native',
                               source_decoded_frames=source_frames)
+                # NativeTsDemux may group adjacent H264 access units.
+                # Cross-check by decoding the actual resulting TS with FFprobe.
+                if result['valid'] and diagnostic_ts.is_file():
+                    try:
+                        checked = subprocess.run([
+                            'ffprobe', '-v', 'warning', '-count_frames',
+                            '-select_streams', 'v:0',
+                            '-show_entries', 'stream=codec_name,nb_read_frames',
+                            '-of', 'json', str(diagnostic_ts)],
+                            check=True, capture_output=True, text=True,
+                            timeout=45)
+                        detected = json.loads(checked.stdout).get('streams', [])
+                        if detected:
+                            count = detected[0].get('nb_read_frames', 'N/A')
+                            result['output_ffprobe_decoded_frames'] = (
+                                int(count) if count != 'N/A' else None)
+                            result['output_ffprobe_codec'] = detected[0].get('codec_name')
+                        result['output_ffprobe_warnings'] = checked.stderr.strip()[:600]
+                        print('Native output TS FFprobe decoded frames:',
+                              result.get('output_ffprobe_decoded_frames'),
+                              '| Native TS demux access units:',
+                              result.get('output_video_samples'),
+                              '| Muxed samples:', result.get('muxed_video_samples'),
+                              '| decode warnings:',
+                              result.get('output_ffprobe_warnings') or 'none')
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                            ValueError, OSError) as exc:
+                        result['output_ffprobe_error'] = str(exc)
+                        print('WARNING: native output TS FFprobe failed:', str(exc))
                 results.append(result)
 
             vf = [
@@ -311,6 +342,8 @@ def main():
             print('  NOTE: Native FPS gate dropped %d frames before cadence detection'
                   % r['fps_gate_drop'])
     print('Result JSON:',dest)
+    print('Native: compare mux samples, internal TS access units, and FFprobe decoded output frames.')
+    print('All diagnostic MPEG-TS files are removed after checks; logs remain in /tmp.')
     print('Native output counts are MPEG-TS access units; FFmpeg frame= is POST fps=25 filter.')
     print('Compare source decoded frames and Native decoded_video_frames to determine true losses.')
     print('These are encode+software decode+scale pipeline tests, not identical quality/filters.')

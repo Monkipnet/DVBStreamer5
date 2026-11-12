@@ -22,10 +22,10 @@ bool evenSize(int value) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 7) {
+    if (argc != 7 && argc != 8) {
         std::cerr << "Usage: dvbstreamer5_downscale_benchmark"
                   << " input.ts duration_seconds width height"
-                  << " cpu|auto|vaapi|qsv|nvenc video_bitrate_bps\n";
+                  << " cpu|auto|vaapi|qsv|nvenc video_bitrate_bps [output.ts]\n";
         return 2;
     }
     try {
@@ -35,6 +35,16 @@ int main(int argc, char** argv) {
         const int height = std::stoi(argv[4]);
         const std::string backend = argv[5];
         const std::uint64_t videoBitrate = std::stoull(argv[6]);
+        // Optional diagnostic output is a local file; it is not used by
+        // the production streaming process or network output.
+        std::ofstream outputFile;
+        if (argc == 8) {
+            outputFile.open(argv[7], std::ios::binary | std::ios::trunc);
+            if (!outputFile) {
+                std::cerr << "ERROR: cannot open diagnostic output TS\n";
+                return 3;
+            }
+        }
         if (sourceDuration < 5.0 || sourceDuration > 180.0 ||
             !evenSize(width) || !evenSize(height) ||
             videoBitrate < 250000 || videoBitrate > 80000000 ||
@@ -95,6 +105,14 @@ int main(int argc, char** argv) {
         });
         const auto countOutput = [&](const std::vector<std::uint8_t>& ts) {
             if (ts.empty()) return true;
+            if (outputFile.is_open()) {
+                outputFile.write(reinterpret_cast<const char*>(ts.data()),
+                                 static_cast<std::streamsize>(ts.size()));
+                if (!outputFile) {
+                    std::cerr << "ERROR: diagnostic TS write failed\n";
+                    return false;
+                }
+            }
             std::string countError;
             if (outputDemux.push(ts.data(), ts.size(), countError)) return true;
             std::cerr << "ERROR: output TS counting failed: " << countError << '\n';
@@ -135,6 +153,13 @@ int main(int argc, char** argv) {
         emittedBytes += output.size();
         if (!countOutput(output)) return 8;
         outputDemux.flush();
+        if (outputFile.is_open()) {
+            outputFile.close();
+            if (!outputFile) {
+                std::cerr << "ERROR: failed closing diagnostic TS\n";
+                return 8;
+            }
+        }
         const double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started).count();
         if (emittedBytes < 100000 || outputVideoFrames == 0) {
