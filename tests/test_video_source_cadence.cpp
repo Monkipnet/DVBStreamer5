@@ -25,6 +25,54 @@ int main() {
     }
     require(source.matches25(),"125 decoded PAL pictures must pass the gate");
 
+    // V497: early lock by the fifth compressed PES, not the 33rd.
+    // A locked 25-fps source must avoid the first second of spurious FPS
+    // gate drops caused by FFmpeg field/reorder PTS.
+    source.reset();
+    for(int i=0;i<5;++i) {
+        auto result=source.observe(kBase+static_cast<std::uint64_t>(i)*3600ULL,true);
+        if(i<4)require(!result.matches25,"early PAL lock needs five samples");
+        else require(result.matches25,"PAL must lock by five PES");
+    }
+
+    // An H.264 B-frame decode-order PES sequence still has 25-fps
+    // presentation timestamps, despite 0,3,1,2,4 picture ordering.
+    source.reset();
+    const int decodeOrder[] = {0,3,1,2,4};
+    for(int x : decodeOrder)
+        source.observe(kBase+static_cast<std::uint64_t>(x)*3600ULL,true);
+    require(source.matches25(),"reordered PAL PES must fast-lock");
+
+    // 29.97/30 and 50fps must NEVER fast-lock and bypass 25fps gate.
+    for(std::uint64_t step : {3003ULL,3000ULL,1800ULL}) {
+        source.reset();
+        for(int i=0;i<5;++i) {
+            auto result=source.observe(kBase+static_cast<std::uint64_t>(i)*step,true);
+            require(!result.matches25,"fast 30/50fps must use FPS gate");
+        }
+        source.reset();
+        for(int x : decodeOrder) {
+            auto result=source.observe(kBase+static_cast<std::uint64_t>(x)*step,true);
+            require(!result.matches25,"reordered 30/50fps must use FPS gate");
+        }
+    }
+
+    // Duplicate/invalid source PTS cannot prove PAL cadence.
+    source.reset();
+    for(int i=0;i<5;++i)
+        source.observe(kBase,true);
+    require(!source.matches25(),"duplicate PES timestamps must not fast-lock");
+
+    // Early classifier handles 33-bit wrap and resets on missing PTS.
+    source.reset();
+    for(int i=0;i<5;++i)
+        source.observe(wrap(static_cast<std::int64_t>(NativeVideoSourceCadence::kMask)
+                            -7200LL+static_cast<std::int64_t>(i)*3600LL),true);
+    require(source.matches25(),"PAL fast-lock survives PTS wrap");
+    source.observe(0,false);
+    require(!source.matches25(),"missing PTS clears PAL fast-lock");
+
+
     // Recreate old behavior: a 1/3 field-PTS offset makes a generic 25fps
     // next-PTS gate reject ~1/3 of correctly decoded real pictures.
     std::uint64_t next=0;

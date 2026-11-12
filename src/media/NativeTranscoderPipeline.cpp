@@ -2584,7 +2584,8 @@ bool NativeTranscoderPipeline::handleDecodedVideoFrames(
         // Decoder field/reorder PTS can run backward/duplicate transiently
         // even when 125 compressed pictures represent 125 real PAL frames.
         // V324 telemetry: decoded=125, gate_dropped=40, published=85.
-        // Preserve those frames ONLY after 33 source PES PTS prove <=26.5 fps.
+        // V497: a strict five-PES prelock detects stable PAL timestamps and
+        // avoids most startup gate drops. The 33-PES check remains authoritative.
         // A true 29.97/30/50-fps source continues using the original gate.
         const bool sourceMatches25Fps =
             sourceCodec == mpegts::ElementaryCodec::H264 &&

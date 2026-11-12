@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -16,6 +17,9 @@ namespace dvbstreamer5::media::codec {
 class NativeVideoSourceCadence {
 public:
     static constexpr std::size_t kWindow = 33;
+    // Use a short *strict* PES PTS check to avoid startup drops on PAL
+    // without bypassing the downsampler for 29.97/30/50-fps sources.
+    static constexpr std::size_t kFastWindow = 5;
     static constexpr std::uint64_t kMask = (1ULL << 33U) - 1ULL;
     static constexpr std::uint64_t kHalf = 1ULL << 32U;
 
@@ -41,7 +45,19 @@ public:
         ring_[next_] = pts90k & kMask;
         next_ = (next_ + 1) % kWindow;
         if (count_ < kWindow) ++count_;
-        if (count_ < kWindow) return {false, previous, 0.0};
+        if (count_ < kWindow) {
+            // The long-window detector stays authoritative once it has 33
+            // pictures. Before then, a strict median of five source PTS in
+            // presentation order can verify the common 25-fps case.
+            // H.264 input PES may arrive in decode order, hence sort first.
+            if (count_ >= kFastWindow) {
+                matches25_ = fastMatches25();
+            } else {
+                matches25_ = false;
+                measuredFps_ = 0.0;
+            }
+            return {matches25_, matches25_ != previous, measuredFps_};
+        }
 
         // At full capacity, next_ is the oldest PTS, and the preceding slot
         // is the latest. 33 pictures represent 32 presentation intervals.
@@ -66,6 +82,40 @@ public:
     double measuredFps() const noexcept { return measuredFps_; }
 
 private:
+    bool fastMatches25() noexcept {
+        std::array<std::int64_t, kFastWindow> points{};
+        const auto start = (next_ + kWindow - kFastWindow) % kWindow;
+        const auto base = ring_[start];
+        for (std::size_t i = 0; i < kFastWindow; ++i) {
+            const auto current = ring_[(start + i) % kWindow];
+            const auto delta = (current - base) & kMask;
+            points[i] = delta < kHalf
+                ? static_cast<std::int64_t>(delta)
+                : static_cast<std::int64_t>(delta) -
+                    static_cast<std::int64_t>(kMask + 1ULL);
+        }
+        std::sort(points.begin(), points.end());
+
+        std::array<std::int64_t, kFastWindow - 1> gaps{};
+        std::size_t palIntervals = 0;
+        for (std::size_t i = 0; i < gaps.size(); ++i) {
+            gaps[i] = points[i + 1] - points[i];
+            // ±150 PTS ticks (~1.7 ms) is intentionally tighter than the
+            // established long-window 23.5..26.5 fps tolerance. If the
+            // fast classifier is uncertain, use the original FPS gate.
+            if (gaps[i] >= 3450 && gaps[i] <= 3750)
+                ++palIntervals;
+        }
+        std::sort(gaps.begin(), gaps.end());
+        const double medianGap = 0.5 * static_cast<double>(
+            gaps[1] + gaps[2]);
+        measuredFps_ = medianGap > 0.0
+            ? 90000.0 / medianGap : 0.0;
+        // Allow at most one missing/reordered PES in a five-frame window.
+        return palIntervals >= 3 && medianGap >= 3450.0 &&
+               medianGap <= 3750.0;
+    }
+
     std::array<std::uint64_t, kWindow> ring_{};
     std::size_t count_ = 0;
     std::size_t next_ = 0;
