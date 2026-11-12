@@ -1388,6 +1388,8 @@ std::string HttpServer::currentState() {
         // The stop request is asynchronous. Expose the real pending state
         // instead of making the UI optimistically claim the stream stopped.
         item["stop_pending"] = streamManager.isStopPending(cfg.id);
+        item["stop_force_requested"] =
+            streamManager.isForceStopRequested(cfg.id);
         if (snap.count(cfg.id)) {
             auto* streamState = snap.at(cfg.id);
             const bool tileRunning = streamState->active.load();
