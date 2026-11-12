@@ -50,6 +50,7 @@ public:
     NativeSrtInput& operator=(const NativeSrtInput&) = delete;
 
     bool start(const EndpointConfig& config, DataCallback onData, StateCallback onState, std::string& error);
+    void requestStop() noexcept { stopRequested_.store(true, std::memory_order_release); }
     void stop() noexcept;
     bool running() const noexcept { return running_.load(std::memory_order_acquire); }
     std::uint64_t receivedBytes() const noexcept { return receivedBytes_.load(std::memory_order_relaxed); }
