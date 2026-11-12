@@ -5000,7 +5000,7 @@ function outputBadgeText(stream) {
   const outputs = outputConfigsForStream(stream);
   return outputs.length > 1 ? `${outputs.length} OUT` : normalizedOutputType(outputs[0] || stream).toUpperCase();
 }
-// V367: the last 3 bits of target_bitrate store PCR/startup preferences.
+// Legacy sub-kbps transport markers are preserved for backward compatibility.
 // Preserve this legacy carrier exactly unless the operator changes controls.
 function decodeWisiCbrProfile(rawRate) {
   const raw=Math.trunc(Number(rawRate)||2000000);
@@ -8909,30 +8909,14 @@ function openStreamForm(stream) {
         <div class="form-row full"><label>Имя Канала и Провайдер</label><div class="row-inline compact-row"><input class="compact" id="streamServiceName" value="${stream.service_name||''}" placeholder="Belarus 5" /><input class="compact" id="streamProvider" value="${stream.service_provider||''}" placeholder="BTRC" /></div></div>
         <div class="form-row full">
           <label>Target bitrate (кбит/с, для CBR)</label>
-          <small class="field-help" ${uiBiAttrs('Реальный выходной CBR без скрытых PCR-маркеров.','Physical output CBR excluding internal PCR markers.')}>${uiBiText('Реальный выходной CBR без скрытых PCR-маркеров.','Physical output CBR excluding internal PCR markers.')}</small>
+          <small class="field-help" ${uiBiAttrs('Реальный выходной битрейт MPEG-TS.','Physical MPEG-TS output bitrate.')}>${uiBiText('Реальный выходной битрейт MPEG-TS.','Physical MPEG-TS output bitrate.')}</small>
           <input id="streamBitrate" type="number" min="100" max="100000" step="1" value="${cbrProfile.bitrateKbps}" placeholder="2000" oninput="updateIpSourcePcrVisibility()" />
         </div>
         <div class="form-row full edit-section">
           <div class="edit-field">
-            <div class="edit-field-title" ${uiBiAttrs('CBR: режим PCR и стартовый буфер','CBR: PCR mode and startup buffer')}>${uiBiText('CBR: режим PCR и стартовый буфер','CBR: PCR mode and startup buffer')}</div>
-            <small class="field-help" ${uiBiAttrs('Для данной плитки; сохранение без перезапуска, применить вручную. HTTP/SRT Source PCR выше — отдельная опция.','Per-tile only; save without restart, apply manually. The HTTP/SRT Source PCR option above is separate.')}>${uiBiText('Для данной плитки; сохранение без перезапуска, применить вручную. HTTP/SRT Source PCR выше — отдельная опция.','Per-tile only; save without restart, apply manually. The HTTP/SRT Source PCR option above is separate.')}</small>
-            <div class="row-inline compact-row">
-              <select id="streamCbrPcrMode" aria-label="CBR PCR mode" onchange="updateIpSourcePcrVisibility()">
-                <option value="fixed" ${cbrProfile.mode==='fixed'?'selected':''}>Fixed PCR</option>
-                <option value="source" ${cbrProfile.mode==='source'?'selected':''}>Source PCR</option>
-              </select>
-              <select id="streamCbrStartupMs" aria-label="CBR startup buffer" onchange="updateIpSourcePcrVisibility()">${cbrStartupOptions}</select>
-            </div>
-            <label class="checkbox-inline"><input id="streamDvbSourcePcrPacing" type="checkbox" ${stream.dvb_source_pcr_pacing===true?'checked':''}/><span ${uiBiAttrs('Точный пейсинг DVB Source PCR (экспериментальный)','Precise DVB Source PCR pacing (experimental)')}>${uiBiText('Точный пейсинг DVB Source PCR (экспериментальный)','Precise DVB Source PCR pacing (experimental)')}</span></label>
-            <small class="field-help" ${uiBiAttrs('Только DVB → UDP-CBR, Source PCR, с ненулевым стартовым буфером и без транскодирования. После сохранения перезапустите эту плитку.','DVB → UDP-CBR, Source PCR, with startup buffering and without transcoding only. Restart this tile after saving.')}>${uiBiText('Только DVB → UDP-CBR, Source PCR, с ненулевым стартовым буфером и без транскодирования. После сохранения перезапустите эту плитку.','DVB → UDP-CBR, Source PCR, with startup buffering and without transcoding only. Restart this tile after saving.')}</small>
-          </div>
-        </div>
-        <div class="form-row full edit-section" id="streamIpSourcePcrRow">
-          <div class="edit-toggle">
-            <div class="edit-field-title" ${subtitleUiTriAttrs('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}>${subtitleUiTriText('Исходный PCR для HTTP/SRT → UDP-CBR','Source PCR for HTTP/SRT → UDP-CBR','Izvorni PCR za HTTP/SRT → UDP-CBR')}</div>
-            <small class="field-help" ${subtitleUiTriAttrs('Для A/B отключите общий Source-PCR в CBR. Сохраните и вручную перезапустите только эту плитку.','For a valid A/B test, disable the general CBR Source-PCR switch. Save and manually restart only this tile.','Za valjani A/B test isključite opći CBR Source-PCR. Spremite i ručno ponovno pokrenite samo ovu karticu.')}>${subtitleUiTriText('Для A/B отключите общий Source-PCR в CBR. Сохраните и вручную перезапустите только эту плитку.','For a valid A/B test, disable the general CBR Source-PCR switch. Save and manually restart only this tile.','Za valjani A/B test isključite opći CBR Source-PCR. Spremite i ručno ponovno pokrenite samo ovu karticu.')}</small>
-            <label class="checkbox-inline"><input id="streamIpSourcePcrEnabled" type="checkbox" ${stream.ip_source_pcr_passthrough===true?'checked':''}/><span ${subtitleUiTriAttrs('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}>${subtitleUiTriText('Включить экспериментальный режим','Enable experimental mode','Uključi eksperimentalni način')}</span></label>
-            <small id="streamIpSourcePcrStatus" class="field-help" aria-live="polite"></small>
+            <div class="edit-field-title" ${uiBiAttrs('CBR: стартовый буфер','CBR: startup buffer')}>${uiBiText('CBR: стартовый буфер','CBR: startup buffer')}</div>
+            <small class="field-help" ${uiBiAttrs('Настройка начального запаса MPEG-TS; внутренний выбор PCR выполняется автоматически.','Initial MPEG-TS reserve; PCR timing is managed internally.') }>${uiBiText('Настройка начального запаса MPEG-TS; внутренний выбор PCR выполняется автоматически.','Initial MPEG-TS reserve; PCR timing is managed internally.')}</small>
+            <select id="streamCbrStartupMs" aria-label="CBR startup buffer">${cbrStartupOptions}</select>
           </div>
         </div>
         <div class="form-row full edit-section">
@@ -9273,45 +9257,9 @@ function syncUdpCbrModeFromCheckbox() {
   updateOutputHints();
 }
 
-// V335: always show the per-stream PCR option beside the CBR bitrate and
-// startup buffer. When it cannot apply, disable it and explain the exact
-// reason rather than silently hiding the preference from the operator.
-// Disabled inputs retain their saved value; the runtime also guards eligibility.
-function updateIpSourcePcrVisibility() {
-  const row=document.getElementById('streamIpSourcePcrRow');
-  if(!row)return;
-  const toggle=document.getElementById('streamIpSourcePcrEnabled');
-  const status=document.getElementById('streamIpSourcePcrStatus');
-  const uri=String(document.getElementById('streamInput')?.value||'').trim().toLowerCase();
-  const mode=document.getElementById('streamInputMode')?.value||'auto';
-  const isHls=mode==='hls'||uri.includes('.m3u8')||uri.startsWith('hls://');
-  const ipTs=uri.startsWith('http://')||uri.startsWith('https://')||uri.startsWith('srt://');
-  const hasUdpCbr=[...document.querySelectorAll('.output-row')]
-    .some(output=>output.querySelector('[data-output-field="output_type"]')?.value==='udp-cbr');
-  const transcode=document.getElementById('streamTranscodeEnabled')?.checked===true;
-  const testPattern=document.getElementById('streamTestPattern')?.checked===true;
-  const cbr=document.getElementById('streamCbr')?.checked===true;
-  const bitrate=Number(document.getElementById('streamBitrate')?.value||0);
-  const dvbPacing=document.getElementById('streamDvbSourcePcrPacing');
-  if(dvbPacing) dvbPacing.disabled=!(uri.startsWith('dvb://') && hasUdpCbr && cbr &&
-    !transcode && !testPattern && document.getElementById('streamCbrPcrMode')?.value==='source' &&
-    Number(document.getElementById('streamCbrStartupMs')?.value)>0);
-  const reason = !ipTs || isHls
-    ? subtitleUiTriText('Требуется HTTP MPEG-TS или SRT вход.','Requires HTTP MPEG-TS or SRT input.','Potreban je HTTP MPEG-TS ili SRT ulaz.')
-    : !hasUdpCbr || !cbr
-    ? subtitleUiTriText('Требуется выход UDP-CBR с включённым CBR.','Requires UDP-CBR output with CBR enabled.','Potreban je UDP-CBR izlaz s uključenim CBR.')
-    : transcode
-    ? subtitleUiTriText('Отключите транскодирование для проверки PCR.','Disable transcoding to test PCR.','Isključite transkodiranje za PCR test.')
-    : testPattern
-    ? subtitleUiTriText('Отключите тестовую таблицу.','Disable the test pattern.','Isključite testni uzorak.')
-    : !Number.isFinite(bitrate) || !Number.isInteger(bitrate) || bitrate<100
-    ? subtitleUiTriText('Укажите CBR bitrate, кбит/с (от 100).','Set CBR bitrate, kbps (100 or more).','Postavite CBR bitrate, kb/s (najmanje 100).')
-    : '';
-  row.style.display='';
-  if(toggle) toggle.disabled=Boolean(reason);
-  if(status) status.textContent=reason ||
-    subtitleUiTriText('Доступно. После сохранения перезапустите только эту плитку.','Available. After saving, restart only this tile.','Dostupno. Nakon spremanja ponovno pokrenite samo ovu karticu.');
-}
+// Legacy editor hooks are retained for callers, but PCR policy is internal
+// and requires no expensive DOM traversal on each edit-keypress.
+function updateIpSourcePcrVisibility() {}
 
 function updateOutputHints() {
   const rows = [...document.querySelectorAll('.output-row')];
@@ -9540,13 +9488,13 @@ function saveStream(id) {
     encodedCbrBitrate=encodeWisiCbrTargetBitrate(
       document.getElementById('streamBitrate').value,
       existingCbrStream?.target_bitrate,
-      document.getElementById('streamCbrPcrMode').value,
+      decodeWisiCbrProfile(existingCbrStream?.target_bitrate).mode,
       document.getElementById('streamCbrStartupMs').value);
   } catch(error) {
     uiError(subtitleUiTriText(
-      'CBR: проверьте битрейт, PCR и стартовый буфер.',
-      'CBR: check bitrate, PCR mode and startup buffer.',
-      'CBR: provjerite bitrate, PCR i početni međuspremnik.'));
+      'CBR: проверьте битрейт и стартовый буфер.',
+      'CBR: check bitrate and startup buffer.',
+      'CBR: provjerite bitrate i početni međuspremnik.'));
     return;
   }
   const payload = {
@@ -9611,8 +9559,10 @@ function saveStream(id) {
     video_pid: Number(document.getElementById('streamVideoPid').value),
     input_service_id: Number(document.getElementById('streamInputServiceId').value),
     http_ts_input_jitter_enabled: document.getElementById('streamHttpTsJitterEnabled')?.checked === true,
-    ip_source_pcr_passthrough: document.getElementById('streamIpSourcePcrEnabled')?.checked === true,
-    dvb_source_pcr_pacing: document.getElementById('streamDvbSourcePcrPacing')?.checked === true,
+    // Preserve old per-stream transport policies on unrelated saves. Hidden
+    // legacy flags are not reset merely because the UI no longer exposes them.
+    ip_source_pcr_passthrough: existingCbrStream?.ip_source_pcr_passthrough === true,
+    dvb_source_pcr_pacing: existingCbrStream?.dvb_source_pcr_pacing === true,
     service_id: Number(document.getElementById('streamServiceId').value),
     service_name: document.getElementById('streamServiceName').value,
     service_provider: document.getElementById('streamProvider').value,
