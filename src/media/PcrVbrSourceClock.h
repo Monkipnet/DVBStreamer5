@@ -60,11 +60,17 @@ public:
     bool ready()const noexcept{return anchors_.size()>=2;}
     bool timeNs(std::uint64_t index,std::int64_t& out)const noexcept{
         if(!ready())return false;
-        const Anchor* left=&anchors_[0];
-        const Anchor* right=&anchors_[1];
-        for(std::size_t i=1;i+1<anchors_.size()&&index>right->index;++i){
-            left=&anchors_[i];right=&anchors_[i+1];
-        }
+        // PCR lookups run for every UDP packet. Search only O(log N)
+        // anchor positions instead of scanning up to 512 timestamps.
+        // Preserve the two-anchor interpolation/extrapolation semantics.
+        auto upper=std::upper_bound(
+            anchors_.begin()+1,anchors_.end(),index,
+            [](std::uint64_t packetIndex,const Anchor& anchor) {
+                return packetIndex<anchor.index;
+            });
+        const Anchor* right = upper==anchors_.end()
+            ? &anchors_.back() : &*upper;
+        const Anchor* left = right-1;
         const auto deltaIndex=right->index-left->index;
         if(!deltaIndex)return false;
         const auto diffIndex=static_cast<__int128>(index)-
