@@ -1,6 +1,7 @@
 // Offline, side-effect-free DVBStreamer5 transcoder benchmark.
 // Reads a local MPEG-TS sample; never contacts the running service.
 #include "media/NativeTranscoderPipeline.h"
+#include "media/NativeTsDemux.h"
 
 #include <algorithm>
 #include <array>
@@ -83,6 +84,22 @@ int main(int argc, char** argv) {
         std::array<std::uint8_t, kChunk> input{};
         std::vector<std::uint8_t> output;
         std::uint64_t readBytes = 0, emittedBytes = 0;
+        std::uint64_t outputVideoFrames = 0;
+        // Count the actual H.264 access units that reached the output TS,
+        // not just 125-frame PERF windows. This is a measurement helper,
+        // not part of DVBStreamer5's production encoder.
+        dvbstreamer5::media::mpegts::NativeTsDemux outputDemux;
+        outputDemux.setSampleCallback([&](dvbstreamer5::media::mpegts::DemuxSample&& sample) {
+            if (sample.stream.kind == dvbstreamer5::media::mpegts::ElementaryKind::Video)
+                ++outputVideoFrames;
+        });
+        const auto countOutput = [&](const std::vector<std::uint8_t>& ts) {
+            if (ts.empty()) return true;
+            std::string countError;
+            if (outputDemux.push(ts.data(), ts.size(), countError)) return true;
+            std::cerr << "ERROR: output TS counting failed: " << countError << '\n';
+            return false;
+        };
         const auto started = std::chrono::steady_clock::now();
         while (file) {
             file.read(reinterpret_cast<char*>(input.data()), input.size());
@@ -108,6 +125,7 @@ int main(int argc, char** argv) {
                 return 6;
             }
             emittedBytes += output.size();
+            if (!countOutput(output)) return 8;
         }
         if (!transcoder.flush(output, error)) {
             std::cerr << "ERROR: native flush: " << error
@@ -115,9 +133,11 @@ int main(int argc, char** argv) {
             return 7;
         }
         emittedBytes += output.size();
+        if (!countOutput(output)) return 8;
+        outputDemux.flush();
         const double elapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started).count();
-        if (emittedBytes < 100000) {
+        if (emittedBytes < 100000 || outputVideoFrames == 0) {
             std::cerr << "ERROR: no usable transcoded output\n";
             return 8;
         }
@@ -125,6 +145,7 @@ int main(int argc, char** argv) {
                   << " output=" << width << 'x' << height
                   << " input_bytes=" << readBytes
                   << " output_bytes=" << emittedBytes
+                  << " output_video_samples=" << outputVideoFrames
                   << " elapsed_s=" << elapsed << " status=" << transcoder.status() << '\n';
         return 0;
     } catch (const std::exception& ex) {

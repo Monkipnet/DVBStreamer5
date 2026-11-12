@@ -84,6 +84,12 @@ def trial(cmd, name, timeout, log, environment=None):
     status = re.search(r'NATIVE_BENCH_RESULT (.*)', logtext)
     if status:
         result['native_status'] = status.group(1)
+        match = re.search(r'\boutput_video_samples=(\d+)', status.group(1))
+        if match:
+            result['output_video_samples'] = int(match.group(1))
+        dropped = re.search(r'\bfps_gate_drop=(\d+)', status.group(1))
+        if dropped:
+            result['fps_gate_drop'] = int(dropped.group(1))
     progress = re.findall(r'(?m)^frame=(\d+)$', logtext)
     if progress:
         result['ffmpeg_frames'] = int(progress[-1])
@@ -99,6 +105,8 @@ def trial(cmd, name, timeout, log, environment=None):
            fmt(result['rss_avg_mib']), fmt(result['rss_peak_mib'])))
     if perf:
         print('Native encode FPS windows:', result['native_reported_fps'],
+              '| output video samples:', result.get('output_video_samples', '?'),
+              '| FPS gate drops:', result.get('fps_gate_drop', '?'),
               '| status:', result.get('native_status', 'missing'))
     elif progress:
         print('FFmpeg frames:', result['ffmpeg_frames'],
@@ -196,6 +204,16 @@ def main():
         print('Source: %dx%d %s, %.1fs, %.1f MiB' %
               (source_width, source_height, codec, duration,
                sample.stat().st_size / 1048576))
+        source_video_samples = subprocess.run([
+            'ffprobe', '-v', 'error', '-count_packets', '-select_streams', 'v:0',
+            '-show_entries', 'stream=nb_read_packets',
+            '-of', 'default=noprint_wrappers=1:nokey=1', str(sample)],
+            check=True, capture_output=True, text=True)
+        try:
+            source_packets = int(source_video_samples.stdout.strip())
+        except ValueError:
+            source_packets = None
+        print('Source H264 video packets (ffprobe):', source_packets)
         print('Video decode: CPU FFmpeg (native and FFmpeg); audio: copy')
         print('Output: discarded, nothing is published to network')
         print('Allocator: MALLOC_ARENA_MAX=2 for BOTH processes')
@@ -219,7 +237,8 @@ def main():
                        str(width),str(height),backend,str(bitrate)]
                 log = '/tmp/dvb_downscale_' + raster + '_native_' + backend + '.log'
                 result = trial(cmd,name,duration+18,log,env)
-                result.update(resolution=raster,backend=backend,implementation='Native')
+                result.update(resolution=raster,backend=backend,implementation='Native',
+                              source_video_packets=source_packets)
                 results.append(result)
 
             vf = [
@@ -253,20 +272,25 @@ def main():
                      '-bufsize',str(bitrate*2),'-g','50','-bf','0',
                      '-c:a','copy','-f','mpegts','-y','/dev/null']
                 result=trial(cmd,name,duration+18,ff_log,env)
-                result.update(resolution=raster,backend=backend,implementation='FFmpeg')
+                result.update(resolution=raster,backend=backend,implementation='FFmpeg',
+                              source_video_packets=source_packets)
                 results.append(result)
 
     dest=Path('/tmp/dvb_downscale_results.json')
     dest.write_text(json.dumps(results,ensure_ascii=False,indent=2))
     print('\n===== RESULTS (child process only, same sample) =====')
-    print('%-9s %-8s %-12s %8s %9s %8s %6s' %
-          ('Output','Engine','Backend','CPU avg','RSS avg','Wall s','Valid'))
+    print('%-9s %-8s %-12s %8s %9s %8s %9s %6s' %
+          ('Output','Engine','Backend','CPU avg','RSS avg','Wall s','Frames','Valid'))
     for r in results:
-        print('%-9s %-8s %-12s %8s %9s %8.1f %6s' %
+        frames = r.get('output_video_samples', r.get('ffmpeg_frames', '?'))
+        print('%-9s %-8s %-12s %8s %9s %8.1f %9s %6s' %
               (r['resolution'],r['implementation'],r['backend'],
                str(r['cpu_avg'])+'%' if r['cpu_avg'] is not None else 'n/a',
                str(r['rss_avg_mib'])+' MiB' if r['rss_avg_mib'] is not None else 'n/a',
-               r['elapsed_s'],'YES' if r['valid'] else 'NO'))
+               r['elapsed_s'],frames,'YES' if r['valid'] else 'NO'))
+        if r.get('fps_gate_drop', 0):
+            print('  NOTE: Native FPS gate dropped %d frames before cadence detection'
+                  % r['fps_gate_drop'])
     print('Result JSON:',dest)
     print('These are encode+software decode+scale pipeline tests, not identical quality/filters.')
     print('Source TS is deleted after test; logs and summary remain in /tmp.')
