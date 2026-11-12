@@ -1,4 +1,44 @@
-std::string HttpServer::handleConfigExport() {
+#include "ExternalConfigTransfer.h"
+
+std::string HttpServer::handleConfigExport(const std::string& body) {
+    // Empty body preserves legacy full DVBStreamer5 backup semantics.
+    if (!body.empty()) {
+        if (body.size() > 8192) return R"({"result":"error","error":"oversized export request"})";
+        Json::Value request;
+        Json::CharReaderBuilder reader;
+        std::string error;
+        std::istringstream input(body);
+        if (!Json::parseFromStream(reader,input,&request,&error) ||
+            !request.isObject() || !request["format"].isString())
+            return R"({"result":"error","error":"invalid export request"})";
+        const std::string format = request["format"].asString();
+        if (format != "astra" && format != "flussonic")
+            return R"({"result":"error","error":"unsupported export format"})";
+        std::vector<std::string> warnings;
+        Json::Value reply(Json::objectValue);
+        reply["result"] = "ok";
+        reply["format"] = format;
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "  ";
+        if (format == "astra") {
+            reply["content"] = Json::writeString(writer,
+                dvbstreamer5::external_config::exportAstra(
+                    configManager.config.streams,warnings));
+            reply["filename"] = "dvbstreamer5-to-astra.json";
+        } else {
+            reply["content"] = dvbstreamer5::external_config::exportFlussonic(
+                configManager.config.streams,warnings);
+            reply["filename"] = "dvbstreamer5-to-flussonic.conf";
+        }
+        Json::Value warningList(Json::arrayValue);
+        for(const auto& warning:warnings)
+            if(warningList.size()<30) warningList.append(warning);
+        reply["warnings"] = warningList;
+        reply["warning_count"] = Json::UInt64(warnings.size());
+        reply["partial"] = !warnings.empty();
+        writer["indentation"] = "";
+        return Json::writeString(writer,reply);
+    }
     Json::Value backup;
     backup["format"] = "dvbstreamer5-config-backup";
     backup["format_version"] = 1;
