@@ -1,10 +1,10 @@
 # DVBStreamer5
 
-**Версия сервера: 10.8.377** · **Android Remote: 1.3** · **Linux x86_64** · **Русский / English**
+**Версия сервера:** [актуальная в AppVersion.h](src/AppVersion.h) · **Android Remote: 1.4** · **Linux x86_64** · **Русский / English**
 
 **DVBStreamer5** — сервер приёма, обработки, маршрутизации и трансляции DVB-S/S2 и IPTV-потоков со встроенной веб-панелью, мониторингом, резервированием источников и нативным медиадвижком на C++.
 
-[Сайт проекта](https://tvstreammersat5.tech/) · [Исходный код](https://github.com/Monkipnet/DVBStreamer5) · [Android APK](android-client/release/DVBStreamer5-Remote-1.3.apk) · [Инструкция Android](android-client/release/Инструкция.md)
+[Сайт проекта](https://tvstreammersat5.tech/) · [Исходный код](https://github.com/Monkipnet/DVBStreamer5) · [Android APK](android-client/release/DVBStreamer5-Remote-1.4.apk) · [Инструкция Android](android-client/release/Инструкция.md)
 
 > **Архитектура:** DVBStreamer5 не использует FFmpeg/libav или GStreamer как обязательный media framework. MPEG-TS, EPG, ремаппинг, выходные протоколы, CBR и ключевые этапы обработки реализованы в native media engine. Доступность аппаратного транскодирования зависит от оборудования, драйверов и параметров сборки.
 
@@ -148,12 +148,12 @@ ctest --test-dir build-tests --output-on-failure
 
 ## Android Remote
 
-Официальное приложение **DVBStreamer5 Remote 1.3** позволяет управлять DVBStreamer5 с телефона или планшета Android 8.0+. Интерфейс приложения поддерживает русский, английский и немецкий языки.
+Официальное приложение **DVBStreamer5 Remote 1.4** позволяет управлять DVBStreamer5 с телефона или планшета Android 8.0+. Интерфейс приложения поддерживает русский, английский и немецкий языки.
 
-- [Скачать APK 1.3](android-client/release/DVBStreamer5-Remote-1.3.apk)
-- [Каталог APK — новые версии в ветке main](android-client/release/)
+- [Скачать APK 1.4](android-client/release/DVBStreamer5-Remote-1.4.apk)
+- [Каталог APK — архив предыдущих выпусков и новые версии в main](android-client/release/)
 - [Инструкция](android-client/release/Инструкция.md)
-- [Исходники Android-приложения](android-client/release/DVBStreamer5-Remote-1.3-source.zip)
+- [Исходники Android-приложения](android-client/release/DVBStreamer5-Remote-1.4-source.zip)
 - [SHA256SUMS](android-client/release/SHA256SUMS.txt)
 
 Для получения самой новой версии проверяйте каталог `android-client/release` — номер APK может измениться независимо от версии сервера.

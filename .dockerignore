@@ -10,3 +10,15 @@ backup-files/
 dvbstreamer5-config.json
 dvbstreamer5-subscribers.json
 dvbstreamer5-ui.key
+
+# Never copy developer build outputs or Python caches into Docker context.
+build-*/
+build-wsl*/
+.reference/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+third_party/native-codecs-prefix/

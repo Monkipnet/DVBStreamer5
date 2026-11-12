@@ -16,3 +16,17 @@ backup-files/
 /DVBStreamer5
 third_party/native-codecs-prefix/
 *STAGE*.md
+
+# Transient build/test products; do not commit local benchmarks or caches.
+/dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+Testing/
+compile_commands.json
+*.gcda
+*.gcno
+*.profraw
+.DS_Store
