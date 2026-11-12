@@ -1,5 +1,7 @@
 #include "media/NativeVideoProcessing.h"
 #include "media/NativeScaleMode.h"
+#include "media/NativeScalerHorizontal.h"
+#include "media/NativeScalerVertical.h"
 
 #include <algorithm>
 #include <array>
@@ -297,6 +299,7 @@ struct BilinearMap {
     std::vector<int> y0;
     std::vector<int> y1;
     std::vector<std::uint16_t> wy;
+    std::vector<detail::HorizontalShuffleBlock> horizontalBlocks;
 
     void prepare(int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
         if (sw == srcWidth && sh == srcHeight &&
@@ -343,6 +346,13 @@ struct BilinearMap {
             wy[static_cast<std::size_t>(y)] =
                 static_cast<std::uint16_t>(fp & 0xffU);
         }
+        // Build SSSE3 shuffle masks once per input/output geometry.
+        // The scalar path remains active for unsupported spans/CPUs.
+        horizontalBlocks.clear();
+        horizontalBlocks.reserve(static_cast<std::size_t>(dw / 16));
+        for (int x = 0; x + 16 <= dw; x += 16)
+            horizontalBlocks.push_back(detail::prepareHorizontalShuffleBlock(
+                x0.data(), x1.data(), wx.data(), sw, x));
     }
 };
 
@@ -390,15 +400,9 @@ void scalePlane(const std::uint8_t* src, int sw, int sh, int sstride,
         const auto* inputRow = src + static_cast<std::size_t>(sourceY) *
                                     static_cast<std::size_t>(sstride);
         auto* out = horizontal[slot].data();
-        for (int x = 0; x < dw; ++x) {
-            const auto ix = static_cast<std::size_t>(x);
-            const unsigned fx = map.wx[ix];
-            const unsigned ifx = 256U - fx;
-            const unsigned top =
-                static_cast<unsigned>(inputRow[map.x0[ix]]) * ifx +
-                static_cast<unsigned>(inputRow[map.x1[ix]]) * fx;
-            out[ix] = static_cast<std::uint16_t>(top);
-        }
+        detail::blendHorizontalRow(inputRow, map.x0.data(),
+                                   map.x1.data(), map.wx.data(),
+                                   map.horizontalBlocks, out, dw);
         cachedSrcRows[slot] = sourceY;
         return out;
     };
@@ -408,17 +412,11 @@ void scalePlane(const std::uint8_t* src, int sw, int sh, int sstride,
         const int srcY0 = map.y0[iy];
         const int srcY1 = map.y1[iy];
         const unsigned fy = map.wy[iy];
-        const unsigned ify = 256U - fy;
         const auto* top = getHorizontal(srcY0, srcY1);
         const auto* bottom = getHorizontal(srcY1, srcY0);
         auto* dstRow = dst + static_cast<std::size_t>(y) *
                                  static_cast<std::size_t>(dstride);
-        for (int x = 0; x < dw; ++x) {
-            const auto ix = static_cast<std::size_t>(x);
-            dstRow[x] = static_cast<std::uint8_t>(
-                (static_cast<unsigned>(top[ix]) * ify +
-                 static_cast<unsigned>(bottom[ix]) * fy + 32768U) >> 16U);
-        }
+        detail::blendVerticalRow(top, bottom, dstRow, dw, fy);
     }
 }
 
