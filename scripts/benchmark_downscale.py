@@ -142,6 +142,40 @@ def probe(path):
             video.get('codec_name', 'unknown'))
 
 
+def video_dts_probe(ts_path, limit=16):
+    """Inspect presentation/decode timing without changing the TS.
+
+    DTS time stamps use the stream's time base. A jump here is a timing
+    anomaly, not evidence that a frame disappeared from the decoder.
+    """
+    p = subprocess.run([
+        'ffprobe', '-v', 'error', '-select_streams', 'v:0',
+        '-show_packets', '-show_entries', 'packet=pts_time,dts_time',
+        '-of', 'json', str(ts_path)],
+        capture_output=True, text=True, check=True, timeout=45)
+    packets = json.loads(p.stdout).get('packets', [])
+    times = []
+    for item in packets:
+        try:
+            times.append(float(item['dts_time']))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not times:
+        return dict(count=0, first_dts_seconds=[], first_deltas_ms=[],
+                    anomalous_deltas_ms=[])
+    deltas = [(i, round((times[i] - times[i-1]) * 1000, 2))
+              for i in range(1, len(times))]
+    # 25 fps implies a nominal 40 ms step. Retain the first anomalous
+    # steps but do not label 80ms gaps as lost frames automatically.
+    return dict(count=len(times),
+                first_dts_seconds=[round(t, 4) for t in times[:limit]],
+                first_deltas_ms=[gap for _, gap in deltas[:limit-1]],
+                anomalous_deltas_ms=[
+                    dict(packet=i, delta_ms=gap)
+                    for i, gap in deltas if gap <= 0 or gap > 60
+                ][:16])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir', default='build-v491',
@@ -233,6 +267,10 @@ def main():
         except (KeyError, ValueError, IndexError):
             source_frames = None
         print('Source decoded H264 frames (ffprobe):', source_frames)
+        source_dts = video_dts_probe(sample)
+        print('Source first video DTS steps (ms):', source_dts['first_deltas_ms'])
+        print('Source DTS nonmonotonic/>60ms intervals:',
+              source_dts['anomalous_deltas_ms'])
         print('Video decode: CPU FFmpeg (native and FFmpeg); audio: copy')
         print('Output: discarded, nothing is published to network')
         print('Allocator: MALLOC_ARENA_MAX=2 for BOTH processes')
@@ -285,6 +323,14 @@ def main():
                               '| Muxed samples:', result.get('muxed_video_samples'),
                               '| decode warnings:',
                               result.get('output_ffprobe_warnings') or 'none')
+                        result['source_video_dts'] = source_dts
+                        result['output_video_dts'] = video_dts_probe(diagnostic_ts)
+                        print('Native', backend, raster,
+                              'first video DTS steps (ms):',
+                              result['output_video_dts']['first_deltas_ms'])
+                        print('Native', backend, raster,
+                              'DTS nonmonotonic/>60ms intervals:',
+                              result['output_video_dts']['anomalous_deltas_ms'])
                     except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
                             ValueError, OSError) as exc:
                         result['output_ffprobe_error'] = str(exc)
@@ -332,7 +378,11 @@ def main():
     print('%-9s %-8s %-12s %8s %9s %8s %9s %6s' %
           ('Output','Engine','Backend','CPU avg','RSS avg','Wall s','Frames','Valid'))
     for r in results:
-        frames = r.get('output_video_samples', r.get('ffmpeg_frames', '?'))
+        # NativeTsDemux is an AU assembler; for exact output frames rely
+        # on the independent decoded frame count from FFprobe.
+        frames = r.get('output_ffprobe_decoded_frames',
+                       r.get('output_video_samples',
+                             r.get('ffmpeg_frames', '?')))
         print('%-9s %-8s %-12s %8s %9s %8.1f %9s %6s' %
               (r['resolution'],r['implementation'],r['backend'],
                str(r['cpu_avg'])+'%' if r['cpu_avg'] is not None else 'n/a',
@@ -342,6 +392,8 @@ def main():
             print('  NOTE: Native FPS gate dropped %d frames before cadence detection'
                   % r['fps_gate_drop'])
     print('Result JSON:',dest)
+    print('Native Frames column uses FFprobe DECODED TS frames (not the internal AU count).')
+    print('DTS step anomalies do not imply frame loss; compare source and output.')
     print('Native: compare mux samples, internal TS access units, and FFprobe decoded output frames.')
     print('All diagnostic MPEG-TS files are removed after checks; logs remain in /tmp.')
     print('Native output counts are MPEG-TS access units; FFmpeg frame= is POST fps=25 filter.')
