@@ -6802,10 +6802,10 @@ function openConfigTransferModal() {
     <h2>${configTransferText('Конфигурация', 'Configuration')}</h2>
     <div style="display:grid;gap:12px">
       <div style="padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:rgba(255,255,255,.025)">
-        <strong>${configTransferText('Экспорт DVBStreamer5', 'Export DVBStreamer5')}</strong>
-        <div style="margin:6px 0 10px;color:#9aa3b1;font-size:.78rem">${configTransferText('Один JSON содержит основной конфиг и абонентов. Файл содержит чувствительные параметры (Telegram/CAM/пароль панели) — храните его безопасно.', 'One JSON contains the main config and subscribers. The file contains sensitive settings (Telegram/CAM/panel password) — store it securely.')}</div>
+        <strong>${configTransferText('Экспорт настроек', 'Export configuration')}</strong>
+        <div style="margin:6px 0 10px;color:#9aa3b1;font-size:.78rem">${configTransferText('DVBStreamer5: полный backup с секретами. Astra/Flussonic: переносимые потоки без глобальных настроек. URL входа тоже может содержать пароли.', 'DVBStreamer5: full backup with secrets. Astra/Flussonic: portable streams without global settings. Input URLs may also contain credentials.')}</div>
         <div class="form-row"><label>${configTransferText('Формат экспорта','Export format')}</label><select id="configExportFormat"><option value="dvbstreamer5">DVBStreamer5 (backup JSON)</option><option value="astra">Cesbo Astra (JSON)</option><option value="flussonic">Flussonic (.conf)</option></select></div>
-        <button class="button-primary" onclick="exportDvbStreamerConfig()">${configTransferText('Экспортировать backup', 'Export backup')}</button>
+        <button class="button-primary" onclick="exportDvbStreamerConfig()">${configTransferText('Экспортировать файл', 'Export file')}</button><div id="configExportWarnings" style="margin-top:7px;font-size:.78rem;color:#d8b46c"></div>
       </div>
       <div style="padding:12px;border:1px solid rgba(255,255,255,.10);border-radius:10px;background:rgba(255,255,255,.025)">
         <strong>${configTransferText('Импорт / миграция', 'Import / migration')}</strong>
