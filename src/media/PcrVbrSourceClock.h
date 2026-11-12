@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <iterator>
 
 namespace dvbstreamer5::media::mpegts {
 
@@ -68,9 +69,11 @@ public:
             [](std::uint64_t packetIndex,const Anchor& anchor) {
                 return packetIndex<anchor.index;
             });
-        const Anchor* right = upper==anchors_.end()
-            ? &anchors_.back() : &*upper;
-        const Anchor* left = right-1;
+        const auto rightIt = upper==anchors_.end()
+            ? std::prev(anchors_.end()) : upper;
+        const auto leftIt = std::prev(rightIt);
+        const Anchor* right = &*rightIt;
+        const Anchor* left = &*leftIt;
         const auto deltaIndex=right->index-left->index;
         if(!deltaIndex)return false;
         const auto diffIndex=static_cast<__int128>(index)-
