@@ -61,5 +61,22 @@ int main(){
     check(!clock.ready(),"PCR reset should discard stale clock anchors");
     clock.observe(pkt(28350000),500);
     check(clock.ready(),"PCR recovery failed");
+    // Dense DVB PCR schedule exceeds the 512-anchor retention limit.
+    // O(log N) lookups must interpolate exactly at anchors and between
+    // them, with both forward and backward extrapolation unchanged.
+    PcrVbrSourceClock dense;
+    for (std::uint64_t i=0; i<1024; ++i)
+        check(!dense.observe(pkt(i*270000ULL), i*100ULL),
+              "unexpected reset during dense PCR sequence");
+    check(dense.ready(),"dense PCR schedule not ready");
+    for (const std::uint64_t index :
+         {0ULL,51100ULL,51200ULL,51250ULL,70000ULL,70050ULL,
+          102200ULL,102300ULL,103000ULL}) {
+        std::int64_t ns=0;
+        check(dense.timeNs(index,ns),"binary-PCR search failed");
+        const std::int64_t expected=
+            static_cast<std::int64_t>(index) * 100000LL;
+        check(ns==expected,"binary-PCR lookup changed source schedule");
+    }
     std::cout<<"UDP-VBR PCR source clock: OK\n";
 }
