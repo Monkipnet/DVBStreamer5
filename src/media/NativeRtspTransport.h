@@ -35,6 +35,7 @@ public:
     NativeRtspInput& operator=(const NativeRtspInput&) = delete;
 
     bool start(const InputConfig& config, DataCallback data, StatusCallback status, std::string& error);
+    void requestStop() noexcept { stopping_.store(true, std::memory_order_release); }
     void stop() noexcept;
     bool isRunning() const noexcept { return running_.load(); }
     std::uint64_t receivedBytes() const noexcept { return receivedBytes_.load(); }
