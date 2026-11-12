@@ -1,7 +1,0 @@
-#include "protocols/stream/outputs/StreamHlsOutputProtocol.h"
-
-namespace dvbstreamer5::stream_protocols::outputs {
-bool isHlsOutput(const std::string& type) {
-    return type == "hls";
-}
-}

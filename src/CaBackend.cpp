@@ -18,13 +18,6 @@ std::string lowerAscii(std::string value) {
     });
     return value;
 }
-void writeError(char* buffer, size_t size, const std::string& text) {
-    if (!buffer || size == 0) return;
-    const size_t count = std::min(size - 1, text.size());
-    std::memcpy(buffer, text.data(), count);
-    buffer[count] = '\0';
-}
-
 bool validPluginApi(const dvbstreamer5_ca_backend_api_v1* api, std::string& error) {
     if (!api) {
         error = "entry point returned null API";

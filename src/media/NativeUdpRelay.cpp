@@ -191,26 +191,6 @@ bool flushPackets(
     return true;
 }
 
-bool sendCbrDatagram(
-    const dvbstreamer5::media::mpegts::CbrDatagram& packets,
-    UdpSocket& output,
-    std::atomic<std::uint64_t>& outputBytes,
-    std::string& error) {
-    constexpr std::size_t kCbrDatagramBytes =
-        dvbstreamer5::media::mpegts::kPacketsPerCbrDatagram *
-        dvbstreamer5::media::mpegts::kPacketSize;
-    static_assert(
-        sizeof(dvbstreamer5::media::mpegts::CbrDatagram) == kCbrDatagramBytes,
-        "CBR datagram storage must be contiguous");
-    // V10.8.140: CbrDatagram is already seven contiguous 188-byte packets.
-    // Send that storage directly instead of zeroing and copying a second
-    // 1316-byte scratch array for every paced UDP datagram.
-    const auto* bytes = reinterpret_cast<const std::uint8_t*>(packets.data());
-    if (!output.send(bytes, kCbrDatagramBytes, error)) return false;
-    outputBytes.fetch_add(kCbrDatagramBytes, std::memory_order_relaxed);
-    return true;
-}
-
 std::string inputInterfaceFor(const NativeUdpRelayConfig& config, bool multicastOrWildcard) {
     if (config.inputInterfaceAddressConfigured) {
         return config.inputInterfaceAddress;

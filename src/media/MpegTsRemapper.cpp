@@ -31,11 +31,6 @@ std::size_t payloadOffset(const Packet& packet) noexcept {
     return offset < kPacketSize ? offset : kPacketSize;
 }
 
-std::uint16_t packetPid(const Packet& packet) noexcept {
-    return static_cast<std::uint16_t>(
-        (static_cast<std::uint16_t>(packet[1] & 0x1fU) << 8) | packet[2]);
-}
-
 std::uint16_t readPid(const std::uint8_t* bytes) noexcept {
     return static_cast<std::uint16_t>(
         (static_cast<std::uint16_t>(bytes[0] & 0x1fU) << 8) | bytes[1]);
@@ -52,29 +47,6 @@ void writeCrc(std::uint8_t* section, std::size_t sectionSize) noexcept {
     section[sectionSize - 3] = static_cast<std::uint8_t>(crc >> 16);
     section[sectionSize - 2] = static_cast<std::uint8_t>(crc >> 8);
     section[sectionSize - 1] = static_cast<std::uint8_t>(crc);
-}
-
-bool sectionView(Packet& packet, std::uint8_t expectedTableId,
-                 std::uint8_t*& section, std::size_t& sectionSize,
-                 std::string& error) {
-    section = nullptr;
-    sectionSize = 0;
-    if (packet[0] != kSyncByte || (packet[1] & 0x40U) == 0) return true;
-    const std::size_t payload = payloadOffset(packet);
-    if (payload >= kPacketSize || payload + 1 >= kPacketSize) return true;
-    const std::size_t start = payload + 1 + packet[payload];
-    if (start + 3 > kPacketSize) return true;
-    section = packet.data() + start;
-    if (section[0] != expectedTableId) return true;
-    sectionSize = 3 + static_cast<std::size_t>(
-        ((section[1] & 0x0fU) << 8) | section[2]);
-    if (sectionSize > kPacketSize - start) {
-        error = "native remap requires PAT, PMT, and SDT sections to fit in one TS packet";
-        section = nullptr;
-        sectionSize = 0;
-        return false;
-    }
-    return true;
 }
 
 bool isVideo(std::uint8_t type) noexcept {

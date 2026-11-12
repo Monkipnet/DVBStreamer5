@@ -28,11 +28,6 @@ std::uint32_t mpegCrc32(const std::uint8_t* data, std::size_t size) {
     return crc;
 }
 
-std::string trimmedServiceString(const std::string& value, std::size_t maximum) {
-    if (value.size() <= maximum) return value;
-    return value.substr(0, maximum);
-}
-
 } // namespace
 
 bool NativeMpegTsMux::validElementaryPid(std::uint16_t pid) noexcept {

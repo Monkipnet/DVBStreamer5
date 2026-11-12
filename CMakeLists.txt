@@ -536,25 +536,7 @@ add_executable(DVBStreamer5
     src/mpts/MptsOutputManager.cpp
     src/StreamManager.cpp
     src/TranscoderModule.cpp
-    src/protocols/stream/StreamInputProtocol.cpp
-    src/protocols/stream/StreamOutputProtocol.cpp
-    src/protocols/stream/inputs/StreamTestInputProtocol.cpp
-    src/protocols/stream/inputs/StreamHttpInputProtocol.cpp
     src/protocols/stream/inputs/StreamVdrInputProtocol.cpp
-    src/protocols/stream/inputs/StreamHlsInputProtocol.cpp
-    src/protocols/stream/inputs/StreamUdpInputProtocol.cpp
-    src/protocols/stream/inputs/StreamRtpInputProtocol.cpp
-    src/protocols/stream/inputs/StreamSrtInputProtocol.cpp
-    src/protocols/stream/inputs/StreamRtspInputProtocol.cpp
-    src/protocols/stream/inputs/StreamRtmpInputProtocol.cpp
-    src/protocols/stream/inputs/StreamFileInputProtocol.cpp
-    src/protocols/stream/outputs/StreamUdpOutputProtocol.cpp
-    src/protocols/stream/outputs/StreamRtpOutputProtocol.cpp
-    src/protocols/stream/outputs/StreamHttpOutputProtocol.cpp
-    src/protocols/stream/outputs/StreamHlsOutputProtocol.cpp
-    src/protocols/stream/outputs/StreamSrtOutputProtocol.cpp
-    src/protocols/stream/outputs/StreamRtspOutputProtocol.cpp
-    src/protocols/stream/outputs/StreamRtmpOutputProtocol.cpp
     src/HttpServer.cpp
     ${EMBEDDED_WEB_ASSET_SOURCE}
     src/OscamMiniManager.cpp

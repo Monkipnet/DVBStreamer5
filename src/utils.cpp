@@ -13,21 +13,6 @@ std::string toLower(const std::string& value) {
     return lower;
 }
 
-std::string gstQuote(const std::string& value) {
-    std::string result = "'";
-    for (char c : value) {
-        if (c == '\'') {
-            result += "\\'";
-        } else if (c == '\\') {
-            result += "\\\\";
-        } else {
-            result += c;
-        }
-    }
-    result += "'";
-    return result;
-}
-
 std::string normalizeIpAddress(const std::string& value) {
     std::string normalized = value;
     boost::algorithm::trim(normalized);

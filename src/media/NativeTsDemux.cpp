@@ -119,43 +119,6 @@ bool h264FirstMbInSliceZero(const std::uint8_t* nal, std::size_t size) {
     return bits.readUe(firstMb) && firstMb == 0;
 }
 
-bool isVideoAuBoundary(ElementaryCodec codec,
-                       const std::uint8_t* nal, std::size_t size,
-                       bool seenVcl) {
-    if (!nal || size == 0) return false;
-    if (codec == ElementaryCodec::H264) {
-        const std::uint8_t type = nal[0] & 0x1fU;
-        if (type == 9) return seenVcl;
-        if (type >= 1 && type <= 5 && seenVcl)
-            return h264FirstMbInSliceZero(nal, size);
-        return false;
-    }
-    if (codec == ElementaryCodec::H265) {
-        if (size < 3) return false;
-        const std::uint8_t type = static_cast<std::uint8_t>((nal[0] >> 1) & 0x3fU);
-        if (type == 35) return seenVcl;
-        if (type <= 31 && seenVcl) {
-            // first_slice_segment_in_pic_flag is the first bit after the
-            // two-byte HEVC NAL header.
-            return (nal[2] & 0x80U) != 0;
-        }
-    }
-    return false;
-}
-
-bool isVideoVcl(ElementaryCodec codec, const std::uint8_t* nal, std::size_t size) {
-    if (!nal || size == 0) return false;
-    if (codec == ElementaryCodec::H264) {
-        const std::uint8_t type = nal[0] & 0x1fU;
-        return type >= 1 && type <= 5;
-    }
-    if (codec == ElementaryCodec::H265) {
-        const std::uint8_t type = static_cast<std::uint8_t>((nal[0] >> 1) & 0x3fU);
-        return type <= 31;
-    }
-    return false;
-}
-
 } // namespace
 
 void NativeTsDemux::setSampleCallback(SampleCallback callback) {

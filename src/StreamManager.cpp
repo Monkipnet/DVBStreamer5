@@ -58,20 +58,6 @@ namespace {
 
 constexpr auto kAdHocSessionTtl = std::chrono::minutes(2);
 
-bool writeAll(int fd, const char* data, std::size_t size) {
-    std::size_t offset = 0;
-    while (offset < size) {
-        const ssize_t written = ::send(fd, data + offset, size - offset, MSG_NOSIGNAL);
-        if (written > 0) {
-            offset += static_cast<std::size_t>(written);
-            continue;
-        }
-        if (written < 0 && errno == EINTR) continue;
-        return false;
-    }
-    return true;
-}
-
 std::string cleanInterface(std::string value) {
     if (value == "auto" || value == "Auto" || value == "0.0.0.0") return {};
     return value;
