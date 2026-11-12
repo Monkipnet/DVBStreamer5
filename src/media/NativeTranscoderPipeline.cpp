@@ -712,14 +712,40 @@ void NativeTranscoderPipeline::onSample(mpegts::DemuxSample&& sample) {
             videoResetRequested_.store(true, std::memory_order_release);
         }
         if (videoQueue_.size() >= kMaxVideoQueue) {
-            droppedVideoSamples_ += videoQueue_.size();
-            videoQueue_.clear();
-            videoDropUntilRandomAccess_ = true;
+            // Resume from the newest complete queued random-access GOP
+            // rather than flushing up to 128 PES and waiting for another IDR.
+            // A compressed H.264/H.265 P/B frame without its reference GOP
+            // must never be passed to a freshly reset decoder.
+            const auto latestIdr = std::find_if(
+                videoQueue_.rbegin(), videoQueue_.rend(),
+                [](const mpegts::DemuxSample& queued) {
+                    return queued.randomAccess;
+                });
+            const std::size_t recoverFrom = latestIdr == videoQueue_.rend()
+                ? 0 : static_cast<std::size_t>(std::distance(
+                    videoQueue_.begin(), std::prev(latestIdr.base())));
+            const bool canKeepRecentGop = latestIdr != videoQueue_.rend() &&
+                recoverFrom > 0;
+            const std::size_t purged = canKeepRecentGop
+                ? recoverFrom : videoQueue_.size();
+            if (canKeepRecentGop) {
+                videoQueue_.erase(videoQueue_.begin(),
+                                  videoQueue_.begin() +
+                                      static_cast<std::ptrdiff_t>(recoverFrom));
+                videoDropUntilRandomAccess_ = false;
+            } else {
+                videoQueue_.clear();
+                videoDropUntilRandomAccess_ = !sample.randomAccess;
+            }
+            droppedVideoSamples_ += purged;
             videoResetRequested_.store(true, std::memory_order_release);
             std::cerr << "NATIVE ASYNC VIDEO RESYNC dropped=" << droppedVideoSamples_
-                      << " reason=queue_full wait_random_access=1" << std::endl;
-            if (!sample.randomAccess) return;
-            videoDropUntilRandomAccess_ = false;
+                      << " purged=" << purged
+                      << " retained_gop=" << (canKeepRecentGop ? 1 : 0)
+                      << " wait_random_access="
+                      << (videoDropUntilRandomAccess_ ? 1 : 0)
+                      << " reason=queue_full" << std::endl;
+            if (videoDropUntilRandomAccess_) return;
         }
         if (sample.hasPts)
             lastInputVideoPts90k_.store(sample.pts90k & ((1ULL << 33U) - 1ULL),
