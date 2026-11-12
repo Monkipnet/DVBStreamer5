@@ -123,7 +123,7 @@ inline bool applyUdpOutput(const std::string& input, StreamConfig& cfg) {
     cfg.outputType = begins(low,"rtp://") ? "rtp" : "udp-vbr";
     cfg.outputHost = host;
     cfg.outputPort = number;
-    if (!bindIp.empty()) cfg.interfaceAddress = bindIp;
+    cfg.interfaceAddress = bindIp;
     cfg.outputMode = "caller";
     cfg.cbr = false;
     return true;
