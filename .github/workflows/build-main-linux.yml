@@ -51,6 +51,8 @@ jobs:
         run: |
           node tests/web/test_tsdecrypt_decode_ui_policy.js
           node tests/test_preview_video_frame_evidence.js
+          c++ -std=c++17 -Wall -Wextra -I. tests/test_tsdecrypt_viewer_decode_gate.cpp -o /tmp/tsdecrypt-viewer-gate-test
+          /tmp/tsdecrypt-viewer-gate-test
 
       - name: Verify BISS2 Mode 1/E UI and plugin wiring
         run: node tests/web/test_biss2_ui.js

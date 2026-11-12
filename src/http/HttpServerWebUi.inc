@@ -5558,10 +5558,15 @@ function caDecodeInfo(stream) {
   const previewConfirmed = proof && stream.active &&
     Date.now() - proof.time <= 15000 &&
     proof.generation === Number(stream.running_started_mono_ms || 0);
-  if (previewConfirmed && ['unverified', 'partial', 'scrambled', 'invalid'].includes(mode)) {
+  if (previewConfirmed && ['unverified', 'partial', 'viewer_pes_ok'].includes(mode) &&
+      Number(stream.bitrate_out_kbps || 0) > 0) {
     return {cls:'clear', text:uiBiText('ДЕКОД: ОК', 'DECODE: OK'),
       detail:uiBiText('Видеокадры подтверждены превью', 'Video frames confirmed by preview')};
   }
+  if (mode === 'viewer_pes_ok') return {cls:'clear',
+    text:uiBiText('ДЕКОД: ОК', 'DECODE: OK'),
+    detail:uiBiText('Открытые PES поступают, была активная клиентская сессия; проверка видеодекодера не выполнялась',
+                    'Clear PES output and active client session observed; codec decode not verified')};
   if (mode === 'unverified') return {cls:'pes', text:uiBiText('ДЕКОД: PES', 'DECODE: PES'),
     detail:uiBiText('TSDecrypt: открытый PES, видеокадры не проверялись', 'TSDecrypt: clear PES, video frames not verified') + ` · PES ${clearPes}`};
   if (mode === 'partial') return {cls:'waiting', text:uiBiText('ДЕКОД: ЧАСТ.', 'DECODE: PARTIAL'),

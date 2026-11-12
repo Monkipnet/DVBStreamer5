@@ -1,5 +1,6 @@
 #include "HttpServer.h"
 #include "AppVersion.h"
+#include "http/TsdecryptViewerDecodeGate.h"
 #include "StreamAuthBackend.h"
 #include "StreamAuthSessions.h"
 #include "StreamAuthApiKey.h"
@@ -88,6 +89,7 @@ constexpr uint32_t kMaxQueuedHttpSessions = 256;
 struct CaDecodeUiMemory {
     std::string state;
     std::chrono::steady_clock::time_point holdUntil{};
+    dvbstreamer5::http::TsdecryptViewerDecodeGate viewerEvidence;
 };
 
 std::mutex& caDecodeUiMutex() {
@@ -98,6 +100,17 @@ std::mutex& caDecodeUiMutex() {
 std::map<std::string, CaDecodeUiMemory>& caDecodeUiMemory() {
     static std::map<std::string, CaDecodeUiMemory> memory;
     return memory;
+}
+
+std::string tsdecryptClientDecodeState(
+    const std::string& id, std::uint64_t generation,
+    const std::string& rawState, bool streamActive, bool outputHealthy,
+    std::uint64_t clearPes, bool streamViewerConnected) {
+    std::lock_guard<std::mutex> lock(caDecodeUiMutex());
+    auto& mem = caDecodeUiMemory()[id];
+    return dvbstreamer5::http::updateTsdecryptViewerDecode(
+        mem.viewerEvidence, generation, rawState, streamActive, outputHealthy,
+        clearPes, streamViewerConnected);
 }
 
 std::string smoothCaDecodeState(const std::string& id, const std::string& rawState,

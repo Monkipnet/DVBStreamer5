@@ -1193,6 +1193,15 @@ std::string HttpServer::currentState() {
     transcoder["missing_elements"] = missing;
     root["transcoder"] = transcoder;
     const auto activeStreamSessions = streamManager.activeStreamSessions();
+    // Viewer presence is already tracked by the streaming session registry
+    // (HTTP MPEG-TS, HLS logical sessions and other registered protocols).
+    // Count only connected sessions; neither a configured output nor a port
+    // listener is evidence of a real client.
+    std::map<std::string, std::uint64_t> streamViewerConnections;
+    for (const auto& session : activeStreamSessions) {
+        if (!session.streamId.empty() && session.connections > 0)
+            streamViewerConnections[session.streamId] += session.connections;
+    }
     std::map<std::string, size_t> streamNumbers;
     std::map<std::string, std::string> streamNames;
     std::set<std::string> configuredStreamIds;
@@ -1476,9 +1485,21 @@ std::string HttpServer::currentState() {
                 rawCaDecodeState = "clear";
             }
             if (tsdecryptClient && rawCaDecodeState == "clear") {
-                // Keep production transport unchanged. No unverified TSDecrypt
-                // PES is allowed to turn the tile green, even if a CW arrived.
+                // No CW, flag, or PES alone confirms playback.
                 rawCaDecodeState = "unverified";
+            }
+            item["ca_stream_viewer_connections"] = Json::UInt64(
+                streamViewerConnections[cfg.id]);
+            if (tsdecryptClient) {
+                // V506: a real client plus repeated positive clear PES output
+                // promotes "PES" to "OK" in the dashboard; it persists after
+                // disconnect as long as new PES keeps arriving. Fail closed
+                // after output loss or a stream generation change.
+                rawCaDecodeState = tsdecryptClientDecodeState(
+                    cfg.id, item["running_started_mono_ms"].asUInt64(),
+                    rawCaDecodeState, streamActive,
+                    streamState->outputBitrate.load() > 0 && caPayloadPackets >= 50,
+                    caClearPesStarts, streamViewerConnections[cfg.id] > 0);
             }
             item["ca_decode_state"] = smoothCaDecodeState(
                 cfg.id, rawCaDecodeState, streamActive, !tsdecryptClient);
