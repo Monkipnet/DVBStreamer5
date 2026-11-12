@@ -3193,6 +3193,17 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
         return false;
     }
     drainPendingOutput(output);
+    // Finite-input benchmark diagnostics only. The live process does not call
+    // this EOF summary on ordinary MPEG-TS packets.
+    std::cerr << "NATIVE VIDEO EOF SUMMARY stream_id=" << config_.streamId
+              << " input_video_samples=" << inputVideoSamples_
+              << " decoded_video_frames=" << decodedVideoFrames_
+              << " raw_published_frames=" << videoRawPublishedTotal_
+              << " muxed_video_samples=" << muxedVideoSamples_.load(std::memory_order_acquire)
+              << " startup_video_dropped=" << videoStartupDropped_
+              << " fps_gate_dropped=" << videoRateDroppedFrames_
+              << " mux_video_dropped=" << muxDroppedVideo_.load(std::memory_order_acquire)
+              << std::endl;
     return true;
 }
 

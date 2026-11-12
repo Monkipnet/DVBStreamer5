@@ -82,6 +82,14 @@ def trial(cmd, name, timeout, log, environment=None):
         result['native_perf_windows'] = len(perf)
         result['native_reported_fps'] = [int(x[1]) for x in perf]
     status = re.search(r'NATIVE_BENCH_RESULT (.*)', logtext)
+    eof_summary = re.search(r'NATIVE VIDEO EOF SUMMARY stream_id=offline-benchmark (.*)', logtext)
+    if eof_summary:
+        for key in ('input_video_samples', 'decoded_video_frames', 
+                    'raw_published_frames', 'muxed_video_samples',
+                    'startup_video_dropped', 'fps_gate_dropped', 'mux_video_dropped'):
+            match = re.search(r'\b' + re.escape(key) + r'=(\d+)', eof_summary.group(1))
+            if match:
+                result[key] = int(match.group(1))
     if status:
         result['native_status'] = status.group(1)
         match = re.search(r'\boutput_video_samples=(\d+)', status.group(1))
@@ -105,6 +113,11 @@ def trial(cmd, name, timeout, log, environment=None):
            fmt(result['rss_avg_mib']), fmt(result['rss_peak_mib'])))
     if perf:
         print('Native encode FPS windows:', result['native_reported_fps'],
+              '| input PES:', result.get('input_video_samples', '?'),
+              '| decoded:', result.get('decoded_video_frames', '?'),
+              '| RAW published:', result.get('raw_published_frames', '?'),
+              '| muxed video:', result.get('muxed_video_samples', '?'),
+              '| startup drops:', result.get('startup_video_dropped', '?'),
               '| output video samples:', result.get('output_video_samples', '?'),
               '| FPS gate drops:', result.get('fps_gate_drop', '?'),
               '| status:', result.get('native_status', 'missing'))
@@ -204,16 +217,22 @@ def main():
         print('Source: %dx%d %s, %.1fs, %.1f MiB' %
               (source_width, source_height, codec, duration,
                sample.stat().st_size / 1048576))
-        source_video_samples = subprocess.run([
-            'ffprobe', '-v', 'error', '-count_packets', '-select_streams', 'v:0',
-            '-show_entries', 'stream=nb_read_packets',
-            '-of', 'default=noprint_wrappers=1:nokey=1', str(sample)],
+        # Count *decoded source frames*, rather than relying on MPEG-TS
+        # packet counts (which may be unavailable as nb_read_packets).
+        # FFmpeg's fps=25 filter can duplicate or drop frames, so this is
+        # essential to separate its CFR conversion from actual decoder loss.
+        source_frames_probe = subprocess.run([
+            'ffprobe', '-v', 'error', '-count_frames',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=nb_read_frames',
+            '-of', 'json', str(sample)],
             check=True, capture_output=True, text=True)
+        source_frame_streams = json.loads(source_frames_probe.stdout).get('streams', [])
         try:
-            source_packets = int(source_video_samples.stdout.strip())
-        except ValueError:
-            source_packets = None
-        print('Source H264 video packets (ffprobe):', source_packets)
+            source_frames = int(source_frame_streams[0]['nb_read_frames'])
+        except (KeyError, ValueError, IndexError):
+            source_frames = None
+        print('Source decoded H264 frames (ffprobe):', source_frames)
         print('Video decode: CPU FFmpeg (native and FFmpeg); audio: copy')
         print('Output: discarded, nothing is published to network')
         print('Allocator: MALLOC_ARENA_MAX=2 for BOTH processes')
@@ -238,7 +257,7 @@ def main():
                 log = '/tmp/dvb_downscale_' + raster + '_native_' + backend + '.log'
                 result = trial(cmd,name,duration+18,log,env)
                 result.update(resolution=raster,backend=backend,implementation='Native',
-                              source_video_packets=source_packets)
+                              source_decoded_frames=source_frames)
                 results.append(result)
 
             vf = [
@@ -273,7 +292,7 @@ def main():
                      '-c:a','copy','-f','mpegts','-y','/dev/null']
                 result=trial(cmd,name,duration+18,ff_log,env)
                 result.update(resolution=raster,backend=backend,implementation='FFmpeg',
-                              source_video_packets=source_packets)
+                              source_decoded_frames=source_frames)
                 results.append(result)
 
     dest=Path('/tmp/dvb_downscale_results.json')
@@ -292,6 +311,8 @@ def main():
             print('  NOTE: Native FPS gate dropped %d frames before cadence detection'
                   % r['fps_gate_drop'])
     print('Result JSON:',dest)
+    print('Native output counts are MPEG-TS access units; FFmpeg frame= is POST fps=25 filter.')
+    print('Compare source decoded frames and Native decoded_video_frames to determine true losses.')
     print('These are encode+software decode+scale pipeline tests, not identical quality/filters.')
     print('Source TS is deleted after test; logs and summary remain in /tmp.')
 
