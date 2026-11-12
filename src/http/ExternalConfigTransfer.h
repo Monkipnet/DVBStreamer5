@@ -172,9 +172,12 @@ inline bool parseAstra(const std::string& data, Conversion& result,
         StreamConfig stream = baseStream(name);
         std::vector<std::string> sources;
         for (const auto& v: inputs) {
-            const auto uri = sourceUrl(firstStringUrl(v), stream);
-            if (!uri.empty()) sources.push_back(uri);
-            else result.warnings.push_back("Unsupported Astra input skipped");
+            StreamConfig inputProbe=stream;
+            const auto uri=sourceUrl(firstStringUrl(v),inputProbe);
+            if (!uri.empty()) {
+                if (sources.empty()) stream.inputMode=inputProbe.inputMode;
+                sources.push_back(uri);
+            } else result.warnings.push_back("Unsupported Astra input skipped");
         }
         if (sources.empty()) {++result.ignored;continue;}
         stream.inputUri=sources[0];
@@ -229,12 +232,16 @@ inline bool parseFlussonic(const std::string& data, Conversion& result,
         const std::string key=lower(text.substr(0,blank));
         const std::string value=unquote(trim(text.substr(blank+1)));
         if (key=="input") {
-            const auto url=sourceUrl(value,current);
-            if (!url.empty()) inputs.push_back(url);
-            else result.warnings.push_back("Unsupported Flussonic input skipped");
+            StreamConfig inputProbe=current;
+            const auto url=sourceUrl(value,inputProbe);
+            if (!url.empty()) {
+                if(inputs.empty()) current.inputMode=inputProbe.inputMode;
+                inputs.push_back(url);
+            } else result.warnings.push_back("Unsupported Flussonic input skipped");
         } else if (key=="push") {
             if (begins(lower(value),"udp://") || begins(lower(value),"rtp://"))
                 outputs.push_back(value);
+            else result.warnings.push_back("Non-UDP/RTP Flussonic push skipped");
         }
     };
     for (int lineNo=0;std::getline(file,line);++lineNo) {
@@ -344,9 +351,17 @@ inline std::string exportFlussonic(const std::vector<StreamConfig>& streams,
         names.insert(name);
         out<<"stream "<<name<<" {\n";
         auto writeInput=[&](std::string uri) {
-            // TS HTTP syntax in Flussonic. HLS source types need manual review.
-            if(begins(lower(uri),"http://")) uri="tshttp://"+uri.substr(7);
-            else if(begins(lower(uri),"https://")) uri="tshttps://"+uri.substr(8);
+            // Refuse to introduce extra Flussonic directives through a URL.
+            if (uri.empty() || uri.find_first_of(";{}\r\n")!=std::string::npos) {
+                warnings.push_back("Unsafe or empty input URI skipped in Flussonic export");
+                return;
+            }
+            const bool hls=s.inputMode=="hls" ||
+                           uri.find(".m3u8")!=std::string::npos;
+            if(begins(lower(uri),"http://"))
+                uri=std::string(hls?"hls://":"tshttp://")+uri.substr(7);
+            else if(begins(lower(uri),"https://"))
+                uri=std::string(hls?"hlss://":"tshttps://")+uri.substr(8);
             out<<"  input "<<uri<<";\n";
         };
         writeInput(s.inputUri);
