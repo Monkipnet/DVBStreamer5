@@ -7,21 +7,29 @@ const transport=fs.readFileSync('src/http/HttpServerTransport.inc','utf8');
 const manager=fs.readFileSync('src/StreamManager.cpp','utf8');
 const header=fs.readFileSync('src/StreamManager.h','utf8');
 const conversion=fs.readFileSync('src/http/ExternalConfigTransfer.h','utf8');
+const legacy=fs.readFileSync('src/http/AstraLegacy44.h','utf8');
 for(const text of [
  'id="configImportFormat"', 'id="configExportFormat"',
- 'value="astra"', 'value="flussonic"', 'configTransferFormatChanged()',
+ 'value="astra"', 'value="astra44"', 'value="flussonic"', 'configTransferFormatChanged()',
  'new_streams', 'data.warnings',
  'sourceKind = sourceKind || document.getElementById',
  "kind === 'flussonic' ? 'text/plain",
  "toggleStream(id, true, null, true)",'stream.stop_force_requested'
 ]) assert.ok(ui.includes(text),'Missing UI import/export or force-stop control: '+text);
 for(const text of [
- 'external_config::parseAstra', 'external_config::parseFlussonic',
- 'external_config::exportAstra', 'external_config::exportFlussonic',
+ 'external_config::parseAstra', 'external_config::astra44::importLegacy', 'external_config::parseFlussonic',
+ 'external_config::exportAstra', 'external_config::astra44::exportLegacy', 'external_config::exportFlussonic',
  'external_config::mergeNewOnly', 'candidate = configManager.config',
  'copy.autoStart=false', 'action == "preview"'
 ]) assert.ok(api.includes(text) || conversion.includes(text),
              'Missing backend converter safety gate: '+text);
+for(const text of [
+ 'Literals','tokenize(', 'dvb_tune', 'make_channel',
+ 'importLegacy(', 'exportLegacy(', 'Unicable requires manual review',
+ 'autoStart', 'Never evaluate/execute Lua'
+]) assert.ok(legacy.includes(text),'Missing Astra 4.4 literal-only converter: '+text);
+assert.ok(!legacy.includes('luaL_dostring') && !legacy.includes('lua_pcall'),
+          'Never execute Lua from an uploaded configuration');
 assert.ok(transport.includes('handleConfigExport(req.body())'),
           'Export format must be forwarded from control API');
 for(const text of [
