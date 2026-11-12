@@ -37,6 +37,11 @@ endif()
 
 enable_testing()
 add_test(NAME media_core_tests COMMAND media_core_tests)
+
+# Byte-exact SIMD/scalar upscaling, no GPU or external media libraries.
+add_executable(native_scaler_simd_test ../test_native_scaler_simd.cpp)
+target_include_directories(native_scaler_simd_test PRIVATE ../../src)
+add_test(NAME native_scaler_simd COMMAND native_scaler_simd_test)
 # V367: validate exact embedded-browser PCR and CBR marker persistence.
 find_program(DVBSTREAMER5_NODE_EXECUTABLE NAMES node nodejs)
 if(DVBSTREAMER5_NODE_EXECUTABLE)
