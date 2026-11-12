@@ -3512,7 +3512,8 @@ document.addEventListener('click', event => {
     const action = button.dataset.streamAction;
     if (action === 'toggle') {
       const stream = streamById(id);
-      toggleStream(id, stream ? !!stream.active : button.dataset.streamActive === '1', button);
+      toggleStream(id, stream ? (!!stream.active || !!stream.stop_pending) :
+        button.dataset.streamActive === '1', button, !!stream?.stop_pending);
     } else if (action === 'edit') {
       editStream(id);
     } else if (action === 'delete') {
@@ -5769,8 +5770,12 @@ function updateStreamTile(tile, stream) {
   const toggleButton = tile.querySelector('[data-role="stream-toggle"]');
   if (toggleButton) {
     toggleButton.className = stream.active ? 'stop-button' : 'start-button';
-    toggleButton.textContent = stream.stop_pending ? streamStoppingLabel() : (stream.active ? t('stop') : t('start'));
-    toggleButton.disabled = !!stream.stop_pending;
+    toggleButton.textContent = stream.stop_pending
+      ? (stream.stop_force_requested
+          ? (language==='ru' ? 'Повторить отмену I/O' : language==='hr' ? 'Ponovi prekid I/O' : 'Repeat I/O abort')
+          : (language==='ru' ? 'Принудительно остановить' : language==='hr' ? 'Prisilno zaustavi' : 'Force stop'))
+      : (stream.active ? t('stop') : t('start'));
+    toggleButton.disabled = false;
     toggleButton.dataset.streamId = String(stream.id);
     toggleButton.dataset.streamActive = stream.active ? '1' : '0';
     toggleButton.onclick = null;
@@ -5936,9 +5941,9 @@ function render(force=false) {
   lastTileStructureSignature = signature;
   updateLiveTiles();
 }
-async function toggleStream(id, active, button=null) {
+async function toggleStream(id, active, button=null, force=false) {
   const stream = streamById(id);
-  const body = active ? {id} : stream;
+  const body = active ? {id,force} : stream;
   if (!body) {
     uiError(`Stream not found in UI state: ${id}`);
     fetchState();
@@ -5961,6 +5966,17 @@ async function toggleStream(id, active, button=null) {
   try {
     const data = await fetchJson(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}, active ? 15000 : 45000);
     if (data.result === 'error') throw new Error(data.error || (active ? 'Stop failed' : 'Start failed'));
+    if (active && !force && !data.already_stopped) {
+      // Automatic escalation if this exact generation has not stopped.
+      const generation = Number(stream?.running_started_mono_ms || 0);
+      setTimeout(() => {
+        const latest = streamById(id);
+        if (!latest?.stop_pending || latest.stop_force_requested ||
+            streamActionBusy.has(id)) return;
+        if (generation && Number(latest.running_started_mono_ms || 0) !== generation) return;
+        toggleStream(id, true, null, true);
+      }, 9000);
+    }
     if (active) {
       if (data.already_stopped) {
         markStreamStoppedInUi(id, 'stopped');
@@ -5973,7 +5989,9 @@ async function toggleStream(id, active, button=null) {
       }
     }
     setStreamStatusMessage(id, active ?
-      (data.already_stopped ? 'Stopped' : 'Stop queued; waiting for completion') :
+      (data.already_stopped ? 'Stopped' : (force
+        ? 'Force cancel signalled; waiting for safe teardown'
+        : 'Stop queued; waiting for completion')) :
       'Start command accepted', active && !data.already_stopped ? 'pending' : 'ok');
   } catch (error) {
     const message = error?.message || String(error);
