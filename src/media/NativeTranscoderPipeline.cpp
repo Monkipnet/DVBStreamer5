@@ -2512,6 +2512,13 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
     }
     if (!decodedOk) return false;
 
+    return handleDecodedVideoFrames(
+        std::move(decoded), sample.stream.codec, error);
+}
+
+bool NativeTranscoderPipeline::handleDecodedVideoFrames(
+    std::vector<codec::RawVideoFrame>&& decoded,
+    mpegts::ElementaryCodec sourceCodec, std::string& error) {
     decodedVideoFrames_ += decoded.size();
     for (auto& raw : decoded) {
         if (!sourceGeometryResolved_ && raw.width > 0 && raw.height > 0) {
@@ -2580,7 +2587,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
         // Preserve those frames ONLY after 33 source PES PTS prove <=26.5 fps.
         // A true 29.97/30/50-fps source continues using the original gate.
         const bool sourceMatches25Fps =
-            sample.stream.codec == mpegts::ElementaryCodec::H264 &&
+            sourceCodec == mpegts::ElementaryCodec::H264 &&
             decoded.size() == 1U && // never bypass if decoder emits two fields
             config_.fps >= 24.99 && config_.fps <= 25.01 &&
             videoSourceCadence_.matches25();
@@ -3088,6 +3095,38 @@ bool NativeTranscoderPipeline::flush(std::vector<std::uint8_t>& output, std::str
         if (failed_.load(std::memory_order_acquire)) {
             std::lock_guard<std::mutex> failLock(failureMutex_); error = failure_;
         } else error = "native transcoder async queues did not drain";
+        return false;
+    }
+    // The FFmpeg H.264 decoder can retain B-pictures for presentation-order
+    // reordering even after the demux/decode queue is empty. At a *real* EOF
+    // flush these into the normal deinterlace/FPS/encoder path before flushing
+    // the encoders. Live transcoding never calls flush() between TS packets.
+    {
+        std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
+        if (videoDecoder_) {
+            std::vector<codec::RawVideoFrame> tailFrames;
+            if (!videoDecoder_->drain(tailFrames, error)) return false;
+            if (!tailFrames.empty()) {
+                std::cerr << "NATIVE VIDEO EOS DECODER FRAMES stream_id="
+                          << config_.streamId << " count=" << tailFrames.size()
+                          << std::endl;
+            }
+            for (auto& tail : tailFrames) {
+                std::vector<codec::RawVideoFrame> one;
+                one.push_back(std::move(tail));
+                if (!handleDecodedVideoFrames(
+                        std::move(one), inputVideoCodec_, error))
+                    return false;
+            }
+        }
+    }
+    if (!waitForIdle()) {
+        if (failed_.load(std::memory_order_acquire)) {
+            std::lock_guard<std::mutex> failLock(failureMutex_);
+            error = failure_;
+        } else {
+            error = "native transcoder EOF decoder queue did not drain";
+        }
         return false;
     }
     {

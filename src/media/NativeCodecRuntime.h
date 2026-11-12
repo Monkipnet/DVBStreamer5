@@ -80,6 +80,15 @@ public:
                         std::uint64_t pts90k, bool hasPts,
                         std::vector<RawVideoFrame>& output,
                         std::string& error) = 0;
+    // Finite-input end-of-stream drain. Decoder implementations that do not
+    // buffer reorder frames safely keep the default empty result. Never call
+    // this from the normal live input path or for a temporary network gap.
+    virtual bool drain(std::vector<RawVideoFrame>& output,
+                       std::string& error) {
+        output.clear();
+        error.clear();
+        return true;
+    }
     virtual void reset() = 0;
 };
 

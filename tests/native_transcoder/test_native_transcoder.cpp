@@ -197,6 +197,24 @@ int main(){
         return 7;
     }
     demux.flush();
+    if (ffmpeg) {
+        // Calling EOS drain twice must not duplicate frames or fail. This
+        // verifies the finite-input API; native packet-order reordering is
+        // exercised by the offline benchmark on a real broadcast sample.
+        std::vector<codec::RawVideoFrame> tail;
+        if (!ffmpeg->drain(tail, ffmpegDecodeError)) {
+            std::cerr << "FFmpeg finite input drain failed: "
+                      << ffmpegDecodeError << "\n";
+            return 12;
+        }
+        ffmpegFrames += static_cast<int>(tail.size());
+        tail.clear();
+        if (!ffmpeg->drain(tail, ffmpegDecodeError) || !tail.empty()) {
+            std::cerr << "FFmpeg repeated decoder drain is not idempotent\n";
+            return 13;
+        }
+    }
+
     if (samples <= 0 || width != 160 || height != 120) {
         std::cerr << "bad output samples=" << samples
                   << " size=" << width << "x" << height

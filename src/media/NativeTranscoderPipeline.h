@@ -399,6 +399,10 @@ private:
     bool ensureAudioDecoder(mpegts::ElementaryCodec codec, std::string& error);
     bool ensureAudioEncoder(const codec::PcmAudioFrame& input, std::string& error);
     bool handleVideo(mpegts::DemuxSample&& sample, std::string& error);
+    // Common post-decode path, including EOF-drained H.264 B-frames.
+    bool handleDecodedVideoFrames(std::vector<codec::RawVideoFrame>&& decoded,
+                                  mpegts::ElementaryCodec sourceCodec,
+                                  std::string& error);
     bool handleDecodedVideoFrame(const codec::RawVideoFrame& raw, std::string& error,
                                  std::uint64_t* scaleTimeUs = nullptr,
                                  std::uint64_t* encodeTimeUs = nullptr);

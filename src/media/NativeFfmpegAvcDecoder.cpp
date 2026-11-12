@@ -128,6 +128,34 @@ public:
         return receiveFrames(output, pts90k, hasPts, error);
     }
 
+    bool drain(std::vector<RawVideoFrame>& output,
+               std::string& error) override {
+        error.clear();
+        output.clear();
+        if (!context_ || !frame_) {
+            error = "FFmpeg H.264 decoder not initialized";
+            return false;
+        }
+        // A null packet drains delayed B-frames only when the finite source
+        // has ended. On live rebuffering/reset, do not perform this drain.
+        int status = avcodec_send_packet(context_, nullptr);
+        if (status == AVERROR(EAGAIN)) {
+            if (!receiveFrames(output, 0, false, error))
+                return false;
+            status = avcodec_send_packet(context_, nullptr);
+        }
+        if (status != 0 && status != AVERROR_EOF) {
+            error = "FFmpeg H.264 decoder EOF send failed: " + avcError(status);
+            return false;
+        }
+        if (!receiveFrames(output, 0, false, error))
+            return false;
+        if (!output.empty())
+            std::cerr << "NATIVE AVC FFMPEG EOS DRAIN frames="
+                      << output.size() << std::endl;
+        return true;
+    }
+
     void reset() override {
         if (context_) avcodec_flush_buffers(context_);
         frames_ = 0;
