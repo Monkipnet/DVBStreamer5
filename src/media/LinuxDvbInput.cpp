@@ -1,4 +1,5 @@
 #include "media/LinuxDvbInput.h"
+#include "media/DvbFrontendOwners.h"
 #include "media/DvbUnicableTunePolicy.h"
 
 #include <algorithm>
@@ -1054,6 +1055,14 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
         return false;
     }
     const std::string frontend = devicePath(config, "frontend");
+    // Drivers can allow concurrent write-open yet disrupt an existing tune.
+    // Check external writers before any O_RDWR frontend and tuning ioctl.
+    for (const auto& owner : externalDvbFrontendOwners(config.adapter, config.frontend)) {
+        if (!owner.writer) continue;
+        error = "DVB frontend busy: " + frontend + " owned by " +
+                owner.name + " (PID " + std::to_string(owner.pid) + ")";
+        return false;
+    }
 
     // Cold-start retries are deliberately limited to Unicable.  Keep the
     // existing successful first-tune path identical for all drivers, and do

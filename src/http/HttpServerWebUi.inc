@@ -7272,6 +7272,15 @@ async function openNewcamdModal() {
     if (status) status.textContent = error?.message || 'CAM manager refresh failed';
   });
 }
+function externalDvbOwnerLabel(item) {
+  if (!item || item.external_in_use !== true) return '';
+  const holders = Array.isArray(item.external_processes) ?
+    item.external_processes.filter(owner => owner && owner.writer === true) : [];
+  const names = holders.slice(0, 2).map(owner =>
+    String(owner.name || 'process') + ' (PID ' + Number(owner.pid || 0) + ')');
+  return uiBiText('занят другой программой', 'used by external program') +
+    (names.length ? ': ' + names.join(', ') : '');
+}
 function refreshSatelliteFrontendOptions(preferredFrontend=null) {
   const adapterSelect = document.getElementById('satAdapter');
   const frontendSelect = document.getElementById('satFrontend');
@@ -7294,9 +7303,12 @@ function refreshSatelliteFrontendOptions(preferredFrontend=null) {
     const ondemand = Number(item.ondemand_streams || 0);
     const inUse = item.in_use === true || configured > 0 || consumers > 0;
     const freq = Number(item.frequency_khz || 0);
+    const external = item.external_in_use === true;
+    const externalText = external ? ' · ' + satEscape(externalDvbOwnerLabel(item)) : '';
     const tune = consumers > 0
-      ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}`
-      : (inUse ? ` · используется${ondemand ? ` · OnDemand ${ondemand}` : ''}` : ' · свободен');
+      ? ` · SHARED ${consumers}${freq ? ` · ${(freq/1000).toFixed(0)} MHz ${satEscape(String(item.polarity||''))}` : ''}${externalText}`
+      : (external ? externalText :
+        (configured > 0 ? ` · назначен${ondemand ? ` · OnDemand ${ondemand}` : ''}` : ' · свободен'));
     const mode = Number(item.driver_mode ?? -1);
     return `<option value="${f}">Frontend ${f}${mode >= 0 ? ` · Mode ${mode}` : ''}${tune} · ${satEscape(device)}</option>`;
   }).join('');
@@ -7315,7 +7327,8 @@ function applySelectedDvbFrontendTuneToForm() {
   const item = selectedDvbFrontend();
   const configured = Number(item?.configured_streams || 0);
   const consumers = Number(item?.consumers || 0);
-  if (!item || (!(item.in_use === true) && configured <= 0 && consumers <= 0)) return false;
+  // External owners provide no DVBStreamer5-owned tune to copy into the form.
+  if (!item || (configured <= 0 && consumers <= 0)) return false;
   if (item.delivery_system && (item.delivery_system.startsWith('dvb-t') !== dvbReceptionIsTerrestrial())) return false;
   const setValue = (id, value) => {
     const input = document.getElementById(id);
@@ -7361,7 +7374,8 @@ function updateSatelliteDeviceInfo(prefix=null) {
       ['multiswitch', 'direct / DiSEqC', 'Unicable']);
   const modeText = mode >= 0 && mode <= 2 ? ` · Mode ${mode}: ${modeNames[mode]}` : '';
   const shownPrefix = prefix || uiBiText('Выбран','Selected');
-  info.textContent = `${shownPrefix} ${device}${model ? ` · ${model}` : ''}${modeText}`;
+  const externalText = item?.external_in_use ? ' · ' + externalDvbOwnerLabel(item) : '';
+  info.textContent = `${shownPrefix} ${device}${model ? ` · ${model}` : ''}${modeText}${externalText}`;
 }
 function updateSatelliteCapabilityInfo() {
   const info = document.getElementById('satDvbInfo');
@@ -7469,7 +7483,10 @@ function refreshSatelliteAdapterOptions(preferredAdapter=null, preferredFrontend
     const used = adapterItems.reduce((sum,item)=>sum + ((item.in_use === true || Number(item.configured_streams||0)>0 || Number(item.consumers||0)>0) ? 1 : 0), 0);
     const models = [...new Set(adapterItems.map(item => String(item.model || item.frontend_name || '').trim()).filter(Boolean))];
     const model = models.join(' / ');
-    const usage = used ? ` · используется ${used}/${count}` : ' · свободен';
+    const externalCount = adapterItems.filter(item => item.external_in_use === true).length;
+    const usage = externalCount
+      ? ` · занято другими программами ${externalCount}/${count}`
+      : (used ? ` · назначено ${used}/${count}` : ' · свободен');
     return `<option value="${adapter}">${model ? `${satEscape(model)} · ` : ''}Adapter ${adapter}${count > 1 ? ` · ${count} frontend` : ''}${usage}</option>`;
   }).join('');
   const selected = adapters.includes(previous) ? previous : adapters[0];
@@ -7624,6 +7641,10 @@ function satelliteFrontendChanged() {
 }
 async function updateSatelliteSignal() {
   if (document.hidden || satelliteScanning || satelliteSignalPending || !document.getElementById('satFrequency')) return;
+  if (selectedDvbFrontend()?.external_in_use === true) {
+    updateSatelliteDeviceInfo();
+    return;
+  }
   const generation = satelliteTuneGeneration;
   const payload = satelliteTunePayload();
   const controller = new AbortController();
@@ -7885,6 +7906,10 @@ async function startSatelliteScan() {
   if (satelliteDiscoverRunning) return;
   const button = document.getElementById('satScanButton');
   const status = document.getElementById('satScanStatus');
+  if (selectedDvbFrontend()?.external_in_use === true) {
+    if (status) status.textContent = externalDvbOwnerLabel(selectedDvbFrontend());
+    return;
+  }
   satelliteScanning = true;
   clearInterval(satelliteSignalTimer);
   satelliteSignalTimer = null;

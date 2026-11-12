@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const ui=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
+const a=ui.indexOf('<script>'),b=ui.indexOf('</script>',a);
+assert.ok(a>=0&&b>a);
+assert.doesNotThrow(()=>new vm.Script(ui.slice(a+8,b)));
+const api=fs.readFileSync('src/http/HttpServerDvbMedia.inc','utf8');
+const dvb=fs.readFileSync('src/DvbSatellite.cpp','utf8');
+const input=fs.readFileSync('src/media/LinuxDvbInput.cpp','utf8');
+for(const s of ['usage_state','external_in_use'])assert.ok(api.includes(s));
+for(const s of ['external_processes','externalDvbFrontendOwners'])assert.ok(dvb.includes(s));
+assert.ok(input.includes('externalDvbFrontendOwners'));
+assert.ok(ui.includes('externalDvbOwnerLabel')&&ui.includes('занято другими программами'));
+console.log('V505 external tuner status and safe scan checks pass');

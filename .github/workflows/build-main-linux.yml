@@ -38,6 +38,12 @@ jobs:
       - name: Validate DVB-T/T2 UI, terrestrial API and JavaScript syntax
         run: node tests/web/test_dvb_terrestrial_ui.js
 
+      - name: Verify external DVB frontend ownership and safe scanning
+        run: |
+          c++ -std=c++17 -Wall -Wextra -I. tests/test_dvb_frontend_owners.cpp -o /tmp/dvb-owner-test
+          /tmp/dvb-owner-test
+          node tests/web/test_dvb_external_owners.js
+
       - name: Verify iCAM multichannel CA logging policy
         run: node tests/web/test_icam_multichannel_policy.js
 

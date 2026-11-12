@@ -84,14 +84,20 @@ std::string HttpServer::dvbAdapters() {
             const auto key = std::make_pair(adapter.get("adapter", 0).asInt(), adapter.get("frontend", 0).asInt());
             const auto found = usage.find(key);
             if (found == usage.end()) {
-                adapter["in_use"] = false;
+                const bool externallyBusy = adapter.get("external_in_use", false).asBool();
+                adapter["in_use"] = externallyBusy;
+                adapter["usage_state"] = externallyBusy ? "external" : "free";
                 adapter["consumers"] = 0;
                 adapter["configured_streams"] = 0;
                 adapter["ondemand_streams"] = 0;
             } else {
                 const unsigned configured = found->second.get("configured_streams", 0).asUInt();
                 const unsigned consumers = found->second.get("consumers", 0).asUInt();
-                adapter["in_use"] = configured > 0 || consumers > 0;
+                const bool externallyBusy = adapter.get("external_in_use", false).asBool();
+                adapter["in_use"] = externallyBusy || configured > 0 || consumers > 0;
+                adapter["usage_state"] = externallyBusy
+                    ? ((configured > 0 || consumers > 0) ? "conflict" : "external")
+                    : (consumers > 0 ? "active" : (configured > 0 ? "assigned" : "free"));
                 adapter["consumers"] = consumers;
                 adapter["configured_streams"] = configured;
                 adapter["ondemand_streams"] = found->second.get("ondemand_streams", 0);

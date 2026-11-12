@@ -1,5 +1,6 @@
 #include "DvbSatellite.h"
 #include "media/LinuxDvbInput.h"
+#include "media/DvbFrontendOwners.h"
 #include "media/DvbText.h"
 
 #include <linux/dvb/frontend.h>
@@ -948,6 +949,21 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
     }
 
     std::unique_lock<std::mutex> frontendLock(frontendTuneMutex(params));
+    // Read-only ownership check: never retune another programme's frontend.
+    for (const auto& owner :
+         dvbstreamer5::media::network::externalDvbFrontendOwners(
+             params.adapter, params.frontend)) {
+        if (!owner.writer) continue;
+        result["external_in_use"] = true;
+        result["error"] = "DVB frontend busy: " + device + " owned by " +
+                          owner.name + " (PID " + std::to_string(owner.pid) + ")";
+        return result;
+    }
+    if (dvbstreamer5::media::network::LinuxDvbInput::hasActiveFrontend(
+            params.adapter, params.frontend)) {
+        result["error"] = "DVB frontend already active in DVBStreamer5: " + device;
+        return result;
+    }
 
     PsiScanner scanner;
     FrontendStats stats;
@@ -1255,6 +1271,20 @@ Json::Value adapters() {
                 item["adapter"] = adapter;
                 item["frontend"] = frontend;
                 item["device"] = frontendEntry.path().string();
+                Json::Value holders(Json::arrayValue);
+                bool externalBusy = false;
+                for (const auto& owner :
+                     dvbstreamer5::media::network::externalDvbFrontendOwners(
+                         adapter, frontend)) {
+                    Json::Value process;
+                    process["pid"] = owner.pid;
+                    process["name"] = owner.name;
+                    process["writer"] = owner.writer;
+                    holders.append(process);
+                    externalBusy = externalBusy || owner.writer;
+                }
+                item["external_processes"] = holders;
+                item["external_in_use"] = externalBusy;
                 const FrontendMetadata metadata = readFrontendMetadata(adapter, frontend);
                 item["frontend_name"] = metadata.name;
                 item["model"] = metadata.model;
