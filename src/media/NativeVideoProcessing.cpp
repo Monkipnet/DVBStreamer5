@@ -536,6 +536,13 @@ bool resamplePcm16(const PcmAudioFrame& input, int sampleRate, int channels,
         input.samples.size() % static_cast<std::size_t>(input.channels) != 0) {
         error = "invalid native PCM resample parameters"; return false;
     }
+    // Already 48 kHz/stereo for the common broadcast AAC path:
+    // bypass floating-point interpolation and per-sample arithmetic.
+    // Still copy the data because the caller supplies a const source frame.
+    if (input.sampleRate == sampleRate && input.channels == channels) {
+        output = input;
+        return true;
+    }
     const std::size_t inFrames = input.samples.size() / static_cast<std::size_t>(input.channels);
     const std::size_t outFrames = inFrames == 0 ? 0 : static_cast<std::size_t>(
         std::llround(static_cast<double>(inFrames) * sampleRate / input.sampleRate));
