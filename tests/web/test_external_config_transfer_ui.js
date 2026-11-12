@@ -19,7 +19,7 @@ for(const text of [
  'external_config::parseAstra', 'external_config::parseFlussonic',
  'external_config::exportAstra', 'external_config::exportFlussonic',
  'external_config::mergeNewOnly', 'candidate = configManager.config',
- 'auto_start=false', 'action == "preview"'
+ 'copy.autoStart=false', 'action == "preview"'
 ]) assert.ok(api.includes(text) || conversion.includes(text),
              'Missing backend converter safety gate: '+text);
 assert.ok(transport.includes('handleConfigExport(req.body())'),
