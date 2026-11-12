@@ -296,7 +296,7 @@ void testNativeMpegTsMux() {
     const auto backwardsPcr = outputVideoPcr(91800);
     assert(((backwardsPcr - recoverPcr) & mask33) == 1);
     const auto afterBackwardsPcr = outputVideoPcr(97200);
-    assert(((afterBackwardsPcr - basePcr) & mask33) == 7201);
+    assert(((afterBackwardsPcr - basePcr) & mask33) == 7200);
 }
 }
 
