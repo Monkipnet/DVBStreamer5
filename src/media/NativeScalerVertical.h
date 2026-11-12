@@ -61,13 +61,21 @@ inline void blendVerticalRowAvx2(const std::uint16_t* top,
 }
 #endif
 
+inline bool verticalSimdAvailable() {
+#if defined(DVBSTREAMER5_VERTICAL_AVX2_RUNTIME)
+    static const bool hasAvx2 = __builtin_cpu_supports("avx2");
+    return hasAvx2;
+#else
+    return false;
+#endif
+}
+
 inline void blendVerticalRow(const std::uint16_t* top,
                              const std::uint16_t* bottom,
                              std::uint8_t* output,
                              int width, unsigned fy) {
 #if defined(DVBSTREAMER5_VERTICAL_AVX2_RUNTIME)
-    static const bool avx2Available = __builtin_cpu_supports("avx2");
-    if (avx2Available) {
+    if (verticalSimdAvailable()) {
         blendVerticalRowAvx2(top, bottom, output, width, fy);
         return;
     }
