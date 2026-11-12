@@ -264,6 +264,40 @@ void testNativeMpegTsMux() {
         }
     }
     assert(sawWrapPcr);
+
+    // V485 regression: a duplicated or backwards DTS must not synthesize
+    // 40 ms of additional PCR progression. When normal source DTS resumes,
+    // the clock must return to the original 25-fps source timeline.
+    NativeMpegTsMux repeatMux;
+    NativeMuxConfig repeatConfig = config;
+    repeatConfig.targetBitrate = 0;
+    assert(repeatMux.initialize(repeatConfig, error));
+    assert(repeatMux.setCodec(ElementaryKind::Video, ElementaryCodec::H264, error));
+    videoSample.pts90k = videoSample.dts90k = 90000;
+    const auto outputVideoPcr = [&](std::uint64_t dts) {
+        videoSample.pts90k = videoSample.dts90k = dts;
+        output.clear();
+        assert(repeatMux.write(ElementaryKind::Video, videoSample, output, error));
+        for (const auto& packet : output) {
+            PacketInfo info;
+            assert(inspectPacket(packet.data(), packet.size(), info));
+            if (info.pid == repeatConfig.videoPid && info.hasPcr)
+                return info.pcrBase90k;
+        }
+        assert(false && "video PCR not found");
+        return std::uint64_t{0};
+    };
+    constexpr std::uint64_t mask33 = (1ULL << 33U) - 1ULL;
+    const auto basePcr = outputVideoPcr(90000);
+    const auto repeatPcr = outputVideoPcr(90000);
+    const auto recoverPcr = outputVideoPcr(93600);
+    assert(((repeatPcr - basePcr) & mask33) == 1);
+    assert(((recoverPcr - basePcr) & mask33) == 3600);
+    const auto backwardsPcr = outputVideoPcr(91800);
+    assert(((backwardsPcr - recoverPcr) & mask33) == 1);
+    const auto afterBackwardsPcr = outputVideoPcr(97200);
+    assert(((afterBackwardsPcr - basePcr) & mask33) == 7201);
+}
 }
 
 
