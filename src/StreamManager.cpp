@@ -823,6 +823,23 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         tc.audioBitrate = streamConfig.transcodeAudioBitrate;
         tc.videoBitrate = streamConfig.transcodeVideoBitrate;
         tc.fps = streamConfig.transcodeFps;
+        // V487: the per-tile HTTP TS Jitter Buffer opts 25-fps transcode
+        // into bounded PES pacing. DVB/SRT/copy/other FPS remain unchanged.
+        const std::string pesPacerSource = toLower(resolvedInputUri);
+        tc.videoPesPacerEnabled =
+            streamConfig.httpTsInputJitterEnabled &&
+            (startsWith(pesPacerSource, "http://") ||
+             startsWith(pesPacerSource, "https://")) &&
+            tc.videoCodec != "copy" &&
+            tc.fps >= 24.99 && tc.fps <= 25.01;
+        if (tc.videoPesPacerEnabled) {
+            std::cerr << "NATIVE VIDEO PES PACER enabled stream_id="
+                      << streamConfig.id
+                      << " opt_in=http_ts_jitter"
+                      << " step_ms=40 wait_budget_ms=200"
+                      << " raw_high_watermark=8 raw_low_watermark=5"
+                      << std::endl;
+        }
         tc.deinterlace = streamConfig.transcodeDeinterlace;
         tc.deinterlaceMode = streamConfig.transcodeDeinterlaceMode;
         // The requested transcoding video bitrate (NOT MPEG-TS transport

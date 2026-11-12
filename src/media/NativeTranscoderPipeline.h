@@ -6,6 +6,7 @@
 #include "media/NativeCodecRuntime.h"
 #include "media/FfmpegPalPtsClock.h"
 #include "media/NativeVideoSourceCadence.h"
+#include "media/NativeVideoPesPacer.h"
 #include "media/NativeIntelZeroCopy.h"
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeMpegTsMux.h"
@@ -38,6 +39,8 @@ struct NativeTranscoderConfig {
     int width = 0;
     int height = 0;
     double fps = 25.0;
+    // Per-tile HTTP TS Jitter Buffer opt-in; disabled by default.
+    bool videoPesPacerEnabled = false;
     std::uint64_t videoBitrate = 6000000;
     std::uint64_t audioBitrate = 192000;
     bool deinterlace = true;

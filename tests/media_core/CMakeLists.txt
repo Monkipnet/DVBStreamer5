@@ -148,3 +148,8 @@ add_test(NAME source_pcr_packet_pacing COMMAND source_pcr_packet_pacing_test)
 add_executable(shared_dvb_pid_admission_test test_shared_dvb_pid_admission.cpp)
 target_include_directories(shared_dvb_pid_admission_test PRIVATE ../../src)
 add_test(NAME shared_dvb_pid_admission COMMAND shared_dvb_pid_admission_test)
+
+# V487: no-GPU test for decode-order DTS pacing and bounded waits.
+add_executable(native_video_pes_pacer_test test_native_video_pes_pacer.cpp)
+target_include_directories(native_video_pes_pacer_test PRIVATE ../../src)
+add_test(NAME native_video_pes_pacer COMMAND native_video_pes_pacer_test)

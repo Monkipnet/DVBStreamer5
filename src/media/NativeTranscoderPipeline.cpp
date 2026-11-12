@@ -853,6 +853,15 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
     std::uint64_t lastPublishedFrames = 0;
     std::uint64_t lastFpsGateDrops = 0;
     auto windowBegin = std::chrono::steady_clock::now();
+    // The pacer is owned by this decode worker, with no cross-thread state.
+    NativeVideoPesPacer pesPacer;
+    std::uint64_t pacerWaitTotalUs = 0;
+    std::uint64_t pacerWaitMaxUs = 0;
+    std::uint64_t pacerDtsSamples = 0;
+    std::uint64_t pacerResyncs = 0;
+    std::uint64_t pacerDeadlineCaps = 0;
+    std::uint64_t pacerRawPressure = 0;
+    std::uint64_t pacerRawBudgetHits = 0;
     for (;;) {
         mpegts::DemuxSample sample;
         const auto beforeDequeue = std::chrono::steady_clock::now();
@@ -874,16 +883,62 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                                           videoQueue_.size());
             videoWorkerActive_.store(true, std::memory_order_release);
         }
-        const auto processBegin = std::chrono::steady_clock::now();
+        const auto dequeuedAt = std::chrono::steady_clock::now();
         if (queueWasEmpty) {
             const auto idleUs = static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::microseconds>(
-                    processBegin - beforeDequeue).count());
+                    dequeuedAt - beforeDequeue).count());
             windowIdleWaitTotalUs += idleUs;
             windowIdleWaitMaxUs = std::max(windowIdleWaitMaxUs, idleUs);
             ++windowIdleWaitEvents;
         }
 
+        if (config_.videoPesPacerEnabled) {
+            const auto paceBegin = NativeVideoPesPacer::Clock::now();
+            if (videoResetRequested_.load(std::memory_order_acquire))
+                pesPacer.reset();
+            // Pace decode order using DTS, never reordered presentation PTS.
+            const auto plan = pesPacer.plan(
+                paceBegin, sample.hasDts, sample.dts90k);
+            const auto budgetEnd = paceBegin + std::chrono::milliseconds(200);
+            bool rawPressure = false;
+            bool rawBudgetHit = false;
+            {
+                std::unique_lock<std::mutex> lock(videoQueueMutex_);
+                videoQueueCv_.wait_until(lock, plan.deadline, [this] {
+                    return workersStop_.load(std::memory_order_acquire);
+                });
+                // Stop waits immediately; RAW backpressure stays before decode.
+                // Do not drop any compressed P/B PES or increase RAW capacity.
+                if (!workersStop_.load(std::memory_order_acquire) &&
+                    externalVideoQueue_.size() >= 8) {
+                    rawPressure = true;
+                    videoQueueCv_.wait_until(lock, budgetEnd, [this] {
+                        return workersStop_.load(std::memory_order_acquire) ||
+                               externalVideoQueue_.size() <= 5;
+                    });
+                    rawBudgetHit = !workersStop_.load(std::memory_order_acquire) &&
+                                   externalVideoQueue_.size() >= 8;
+                }
+            }
+            if (workersStop_.load(std::memory_order_acquire)) {
+                videoWorkerActive_.store(false, std::memory_order_release);
+                idleCv_.notify_all();
+                break;
+            }
+            const auto waitedUs = static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    NativeVideoPesPacer::Clock::now() - paceBegin).count());
+            pacerWaitTotalUs += waitedUs;
+            pacerWaitMaxUs = std::max(pacerWaitMaxUs, waitedUs);
+            if (plan.usedDts) ++pacerDtsSamples;
+            if (plan.resynced) ++pacerResyncs;
+            if (plan.budgetCapped) ++pacerDeadlineCaps;
+            if (rawPressure) ++pacerRawPressure;
+            if (rawBudgetHit) ++pacerRawBudgetHits;
+        }
+
+        const auto processBegin = std::chrono::steady_clock::now();
         std::string error;
         {
             std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
@@ -959,6 +1014,28 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                       << " pes_queue_peak=" << windowPeakPesQueue
                       << " pes_queue_drop_total=" << sourceQueueDrops
                       << std::endl;
+            if (config_.videoPesPacerEnabled) {
+                std::cerr << "NATIVE VIDEO PES PACER"
+                          << " stream_id=" << config_.streamId
+                          << " samples=" << windowPesProcessed
+                          << " avg_wait_ms=" << (pacerWaitTotalUs / windowPesProcessed / 1000ULL)
+                          << " max_wait_ms=" << (pacerWaitMaxUs / 1000ULL)
+                          << " dts_samples=" << pacerDtsSamples
+                          << " resyncs=" << pacerResyncs
+                          << " deadline_caps=" << pacerDeadlineCaps
+                          << " raw_pressure_waits=" << pacerRawPressure
+                          << " raw_pressure_budget_hits=" << pacerRawBudgetHits
+                          << " pes_queue_now=" << pesQueueNow
+                          << " pes_queue_peak=" << windowPeakPesQueue
+                          << std::endl;
+                pacerWaitTotalUs = 0;
+                pacerWaitMaxUs = 0;
+                pacerDtsSamples = 0;
+                pacerResyncs = 0;
+                pacerDeadlineCaps = 0;
+                pacerRawPressure = 0;
+                pacerRawBudgetHits = 0;
+            }
             lastPesQueuedTotal = pesQueuedTotal;
             lastDecodedFrames = decodedVideoFrames_;
             lastPublishedFrames = videoRawPublishedTotal_;
@@ -1019,6 +1096,8 @@ void NativeTranscoderPipeline::videoEncodeWorkerLoop() {
                 videoEncodeDiagPeakRawQueue, externalVideoQueue_.size());
             videoEncodeWorkerActive_.store(true, std::memory_order_release);
         }
+        // Wake a PES worker backpressured on the now-drained RAW queue.
+        if (config_.videoPesPacerEnabled) videoQueueCv_.notify_one();
 
         const auto encodeBegin = std::chrono::steady_clock::now();
         if (queueWasEmpty) {
