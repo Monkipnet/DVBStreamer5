@@ -15,6 +15,27 @@ OUT="$BUILD/tsdecrypt-icam/tsdecrypt"
 for cmd in cmake make cc python3 nm readelf; do
     command -v "$cmd" >/dev/null || { echo "Missing command: $cmd" >&2; exit 2; }
 done
+# Upstream TSDecrypt still records retired georgi.unixsol.org submodule URLs.
+# Restore its exact pinned commits from the author's GitHub mirrors without
+# editing the user's .gitmodules, switching to unpinned heads, or modifying
+# installed TSDecrypt on test/production hosts.
+if [[ ! -f "$SRC/libfuncs/libfuncs.h" || ! -f "$SRC/libtsfuncs/tsfuncs.h" ]]; then
+    command -v git >/dev/null || { echo "Missing git for pinned TSDecrypt submodules" >&2; exit 2; }
+    git -C "$SRC" rev-parse --is-inside-work-tree >/dev/null || {
+        echo "TSDecrypt submodules are missing and source is not a Git checkout" >&2; exit 2;
+    }
+    echo "Restoring pinned TSDecrypt submodules from gfto GitHub mirrors"
+    git -C "$SRC" \
+      -c submodule.libfuncs.url=https://github.com/gfto/libfuncs.git \
+      -c submodule.libtsfuncs.url=https://github.com/gfto/libtsfuncs.git \
+      submodule update --init --recursive || {
+        echo "Cannot restore pinned TSDecrypt submodule commits" >&2; exit 2;
+    }
+fi
+[[ -f "$SRC/libfuncs/libfuncs.h" && -f "$SRC/libtsfuncs/tsfuncs.h" ]] || {
+    echo "Pinned TSDecrypt libfuncs/libtsfuncs headers are still missing" >&2; exit 2;
+}
+
 for name in Makefile csa.c csa.h camd.c data.h; do
     [[ -f "$SRC/$name" ]] || { echo "Missing source: $SRC/$name" >&2; exit 2; }
 done

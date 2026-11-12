@@ -100,7 +100,8 @@ std::map<std::string, CaDecodeUiMemory>& caDecodeUiMemory() {
     return memory;
 }
 
-std::string smoothCaDecodeState(const std::string& id, const std::string& rawState, bool active) {
+std::string smoothCaDecodeState(const std::string& id, const std::string& rawState,
+                                bool active, bool allowClearHold = true) {
     if (id.empty() || rawState == "not_applicable" || !active) {
         std::lock_guard<std::mutex> lock(caDecodeUiMutex());
         caDecodeUiMemory().erase(id);
@@ -110,6 +111,13 @@ std::string smoothCaDecodeState(const std::string& id, const std::string& rawSta
     const auto now = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lock(caDecodeUiMutex());
     auto& item = caDecodeUiMemory()[id];
+    // TSDecrypt lacks verified media decoding. Never preserve a previous green
+    // state across CW loss, PID switches, or changes of the selected backend.
+    if (!allowClearHold) {
+        item.state = rawState;
+        item.holdUntil = now;
+        return rawState;
+    }
     if (rawState == "clear") {
         item.state = "clear";
         item.holdUntil = now + std::chrono::seconds(6);

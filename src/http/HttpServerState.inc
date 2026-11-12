@@ -1442,6 +1442,18 @@ std::string HttpServer::currentState() {
             item["ca_output_scrambled_percent"] = caPayloadPackets > 0
                 ? (100.0 * static_cast<double>(caScrambledPackets) / static_cast<double>(caPayloadPackets))
                 : 0.0;
+            // V10.8.501: distinguish TSDecrypt from proven native CA.
+            // A cleared scrambling_control bit and a plausible PES prefix
+            // are evidence of TS parsing, NOT proof of playable video.
+            // Read configured client type, not a try_lock backend snapshot:
+            // CA processing must never block the HTTP /api/state poll.
+            const bool tsdecryptClient = !cfg.conditionalAccessClient.empty() &&
+                std::any_of(configManager.config.camClients.begin(),
+                            configManager.config.camClients.end(),
+                    [&](const CamClientConfig& cam) {
+                        return cam.id == cfg.conditionalAccessClient &&
+                               cam.backendId == "tsdecrypt";
+                    });
             std::string rawCaDecodeState;
             const bool streamActive = streamState->active.load();
             if (cfg.conditionalAccessClient.empty() && !configuredVdrCiPlus) {
@@ -1457,7 +1469,13 @@ std::string HttpServer::currentState() {
             } else {
                 rawCaDecodeState = "clear";
             }
-            item["ca_decode_state"] = smoothCaDecodeState(cfg.id, rawCaDecodeState, streamActive);
+            if (tsdecryptClient && rawCaDecodeState == "clear") {
+                // Keep production transport unchanged. No unverified TSDecrypt
+                // PES is allowed to turn the tile green, even if a CW arrived.
+                rawCaDecodeState = "unverified";
+            }
+            item["ca_decode_state"] = smoothCaDecodeState(
+                cfg.id, rawCaDecodeState, streamActive, !tsdecryptClient);
             item["cc_errors"] = item["input_cc_errors"];
             item["cc_errors_total"] = item["input_cc_errors_total"];
         } else {

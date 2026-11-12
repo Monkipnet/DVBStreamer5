@@ -41,6 +41,9 @@ jobs:
       - name: Verify iCAM multichannel CA logging policy
         run: node tests/web/test_icam_multichannel_policy.js
 
+      - name: Verify TSDecrypt honest decode UI policy
+        run: node tests/web/test_tsdecrypt_decode_ui_policy.js
+
       - name: Verify BISS2 Mode 1/E UI and plugin wiring
         run: node tests/web/test_biss2_ui.js
 
@@ -75,7 +78,7 @@ jobs:
 
       - name: Compile DVBStreamer5 and mandatory Newcamd plugin
         run: |
-          cmake --build build-main-ci --parallel 2 --target DVBStreamer5 oscam-mini
+          cmake --build build-main-ci --parallel 2 --target DVBStreamer5 oscam-mini dvbstreamer5_ca_tsdecrypt dvbstreamer5_ca_biss dvbstreamer5_ca_biss2
           test -s build-main-ci/ca-plugins/dvbstreamer5-ca-biss1.so
           test -s build-main-ci/ca-plugins/dvbstreamer5-ca-biss2.so
           test -x build-main-ci/DVBStreamer5
@@ -119,6 +122,14 @@ jobs:
           node tests/web/test_cbr_profile_ui.js
           ctest --test-dir build-main-ci --output-on-failure
 
+      - name: Build pinned iCAM TSDecrypt with restored GitHub submodules
+        run: |
+          git clone https://github.com/gfto/tsdecrypt.git /tmp/dvbstreamer5-tsdecrypt
+          git -C /tmp/dvbstreamer5-tsdecrypt checkout --detach f4876e84cf1866645f84b93f830af67193c85f69
+          bash scripts/build_tsdecrypt_icam.sh /tmp/dvbstreamer5-tsdecrypt build-main-ci
+          test -x build-main-ci/tsdecrypt-icam/tsdecrypt
+          strings build-main-ci/tsdecrypt-icam/tsdecrypt | grep -F "Holding recently valid ECM pid"
+
       - name: Package portable Linux x86_64 and checksums
         run: |
           version="$(sed -n 's/.*kProgramVersion = "\([^"]*\)";.*/\1/p' src/AppVersion.h)"
@@ -129,7 +140,10 @@ jobs:
             --binary build-main-ci/DVBStreamer5 \
             --output-dir "dist/DVBStreamer5-${version}-linux-x86_64" \
             --with-oscam \
+            --with-tsdecrypt \
             --archive
+          test -x "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt"
+          test -s "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt.bin"
           sha256sum "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz" > dist/SHA256SUMS.txt
           cat dist/SHA256SUMS.txt
 

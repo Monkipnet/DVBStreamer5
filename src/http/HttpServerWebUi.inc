@@ -5534,6 +5534,7 @@ function caDecodeInfo(stream) {
   const payload = Number(stream.ca_output_payload_packets || 0);
   const clearPes = Number(stream.ca_output_clear_pes_starts || 0);
   const percent = Number(stream.ca_output_scrambled_percent || 0);
+  if (mode === 'unverified') return {cls:'waiting', text:uiBiText('ДЕКОД: ?', 'DECODE: ?'), detail:uiBiText('TSDecrypt: найден PES, воспроизведение не подтверждено', 'TSDecrypt: PES detected, playback unverified') + ` · PES ${clearPes}`};
   if (mode === 'clear') return {cls:'clear', text:'ДЕКОД: ОК', detail:`ОТКРЫТ A/V · PES ${clearPes} · scrambled 0/${payload}`};
   if (mode === 'scrambled') return {cls:'scrambled', text:'ДЕКОД: НЕТ', detail:`ЗАКОДИРОВАН A/V · ${percent.toFixed(1)}% (${scrambled}/${payload})`};
   if (mode === 'invalid') return {cls:'scrambled', text:'ДЕКОД: НЕТ', detail:`A/V пакеты идут, но валидный открытый PES не найден (${payload} пак.)`};

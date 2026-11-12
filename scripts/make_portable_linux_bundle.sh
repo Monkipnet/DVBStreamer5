@@ -11,6 +11,7 @@ BINARY=""
 DO_BUILD=0
 DO_ARCHIVE=0
 INCLUDE_OSCAM=auto
+INCLUDE_TSDECRYPT=auto
 TSDECRYPT_BINARY=""
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 2)"
 
@@ -29,6 +30,8 @@ Options:
   --jobs N              Parallel build jobs used with --build
   --with-oscam          Require and include build/oscam-mini/oscam-mini
   --without-oscam       Do not include oscam-mini
+  --with-tsdecrypt      Require an iCAM TSDecrypt executable in the bundle
+  --without-tsdecrypt   Do not include external TSDecrypt
   --tsdecrypt-binary FILE   Bundle a supplied executable as bin/tsdecrypt
   --archive             Also create <bundle>.tar.gz
   -h, --help            Show this help
@@ -60,6 +63,8 @@ while (($#)); do
         --archive) DO_ARCHIVE=1; shift ;;
         --with-oscam) INCLUDE_OSCAM=yes; shift ;;
         --without-oscam) INCLUDE_OSCAM=no; shift ;;
+        --with-tsdecrypt) INCLUDE_TSDECRYPT=yes; shift ;;
+        --without-tsdecrypt) INCLUDE_TSDECRYPT=no; shift ;;
         -h|--help) usage; exit 0 ;;
         *) fail "unknown option: $1" ;;
     esac
@@ -112,13 +117,19 @@ mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/web" "$STAGE/ca-plugins" \
          "$STAGE/oscam-mini" "$STAGE/etc/ssl/certs" "$STAGE/data"
 
 install -m 0755 "$BINARY" "$STAGE/bin/$APP"
-if [[ -z "$TSDECRYPT_BINARY" ]]; then
-    for candidate in "$BUILD_DIR/tsdecrypt" "$PROJECT_ROOT/tsdecrypt" "$PROJECT_ROOT/third_party/tsdecrypt/tsdecrypt"; do
+if [[ "$INCLUDE_TSDECRYPT" == no && -n "$TSDECRYPT_BINARY" ]]; then
+    fail "--without-tsdecrypt conflicts with --tsdecrypt-binary"
+fi
+if [[ "$INCLUDE_TSDECRYPT" != no && -z "$TSDECRYPT_BINARY" ]]; then
+    for candidate in "$BUILD_DIR/tsdecrypt-icam/tsdecrypt" "$BUILD_DIR/tsdecrypt" "$PROJECT_ROOT/tsdecrypt" "$PROJECT_ROOT/third_party/tsdecrypt/tsdecrypt"; do
         if [[ -f "$candidate" && -x "$candidate" ]]; then
             TSDECRYPT_BINARY="$candidate"
             break
         fi
     done
+fi
+if [[ "$INCLUDE_TSDECRYPT" == yes && -z "$TSDECRYPT_BINARY" ]]; then
+    fail "--with-tsdecrypt requested but no TSDecrypt binary was built; run scripts/build_tsdecrypt_icam.sh"
 fi
 if [[ -n "$TSDECRYPT_BINARY" ]]; then
     [[ "$TSDECRYPT_BINARY" == /* ]] || TSDECRYPT_BINARY="$PROJECT_ROOT/$TSDECRYPT_BINARY"
