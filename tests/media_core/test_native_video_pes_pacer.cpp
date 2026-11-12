@@ -46,5 +46,27 @@ int main() {
         capped = capped || p.budgetCapped;
     }
     assert(capped);
+
+    // V489: accumulated compressed PES use at most 5% catch-up when
+    // encoder RAW queue is empty; default and RAW-pressure paths stay 40ms.
+    NativeVideoPesPacer feedback;
+    (void)feedback.plan(t, true, 90000, 70, 0);
+    const auto hi = feedback.plan(t + 1ms, true, 93600, 72, 0);
+    assert(hi.catchup && hi.intervalMs == 38);
+    assert(hi.deadline == t + 78ms);
+    const auto rawBusy = feedback.plan(t + 2ms, true, 97200, 72, 6);
+    assert(!rawBusy.catchup && rawBusy.intervalMs == 40);
+    assert(rawBusy.deadline == t + 118ms);
+    const auto mid = feedback.plan(t + 3ms, true, 100800, 25, 3);
+    assert(mid.catchup && mid.intervalMs == 39);
+    assert(mid.deadline == t + 157ms);
+    const auto low = feedback.plan(t + 4ms, true, 104400, 12, 0);
+    assert(!low.catchup && low.intervalMs == 40);
+    assert(low.deadline == t + 197ms);
+    // If enough time has passed, the catch-up schedule must not create
+    // an unbounded backlog or exceed the existing 200-ms wait budget.
+    const auto late = feedback.plan(t + 5000ms, true, 108000, 72, 0);
+    assert(late.deadline <= t + 5200ms);
+    assert(late.deadline >= t + 5000ms);
     std::cout << "NativeVideoPesPacer PASS\n";
 }

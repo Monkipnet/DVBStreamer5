@@ -862,10 +862,14 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
     std::uint64_t pacerDeadlineCaps = 0;
     std::uint64_t pacerRawPressure = 0;
     std::uint64_t pacerRawBudgetHits = 0;
+    std::uint64_t pacerCatchupSamples = 0;
+    std::uint64_t pacerCatchupMinStepMs = 40;
     for (;;) {
         mpegts::DemuxSample sample;
         const auto beforeDequeue = std::chrono::steady_clock::now();
         bool queueWasEmpty = false;
+        std::size_t pacerPesDepth = 0;
+        std::size_t pacerRawDepth = 0;
         {
             std::unique_lock<std::mutex> lock(videoQueueMutex_);
             queueWasEmpty = videoQueue_.empty();
@@ -879,6 +883,10 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
 
             sample = std::move(videoQueue_.front());
             videoQueue_.pop_front();
+            if (config_.videoPesPacerEnabled) {
+                pacerPesDepth = videoQueue_.size();
+                pacerRawDepth = externalVideoQueue_.size();
+            }
             windowPeakPesQueue = std::max(windowPeakPesQueue,
                                           videoQueue_.size());
             videoWorkerActive_.store(true, std::memory_order_release);
@@ -899,7 +907,8 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                 pesPacer.reset();
             // Pace decode order using DTS, never reordered presentation PTS.
             const auto plan = pesPacer.plan(
-                paceBegin, sample.hasDts, sample.dts90k);
+                paceBegin, sample.hasDts, sample.dts90k,
+                pacerPesDepth, pacerRawDepth);
             const auto budgetEnd = paceBegin + std::chrono::milliseconds(200);
             bool rawPressure = false;
             bool rawBudgetHit = false;
@@ -934,6 +943,11 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
             if (plan.usedDts) ++pacerDtsSamples;
             if (plan.resynced) ++pacerResyncs;
             if (plan.budgetCapped) ++pacerDeadlineCaps;
+            if (plan.catchup) {
+                ++pacerCatchupSamples;
+                pacerCatchupMinStepMs = std::min<std::uint64_t>(
+                    pacerCatchupMinStepMs, plan.intervalMs);
+            }
             if (rawPressure) ++pacerRawPressure;
             if (rawBudgetHit) ++pacerRawBudgetHits;
         }
@@ -1023,6 +1037,8 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                           << " dts_samples=" << pacerDtsSamples
                           << " resyncs=" << pacerResyncs
                           << " deadline_caps=" << pacerDeadlineCaps
+                          << " catchup_samples=" << pacerCatchupSamples
+                          << " catchup_min_step_ms=" << pacerCatchupMinStepMs
                           << " raw_pressure_waits=" << pacerRawPressure
                           << " raw_pressure_budget_hits=" << pacerRawBudgetHits
                           << " pes_queue_now=" << pesQueueNow
@@ -1033,6 +1049,8 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                 pacerDtsSamples = 0;
                 pacerResyncs = 0;
                 pacerDeadlineCaps = 0;
+                pacerCatchupSamples = 0;
+                pacerCatchupMinStepMs = 40;
                 pacerRawPressure = 0;
                 pacerRawBudgetHits = 0;
             }

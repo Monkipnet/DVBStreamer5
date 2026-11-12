@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 
 namespace dvbstreamer5::media::transcode {
@@ -17,6 +18,8 @@ public:
         bool usedDts = false;
         bool resynced = false;
         bool budgetCapped = false;
+        bool catchup = false;
+        std::uint32_t intervalMs = 0;
     };
 
     explicit NativeVideoPesPacer(
@@ -31,7 +34,12 @@ public:
         lastDeadline_ = {};
     }
 
-    Plan plan(Clock::time_point now, bool hasDts, std::uint64_t dts90k) noexcept {
+    // Feedback is a snapshot of *pending* PES/RAW depth after dequeue.
+    // Pacing slightly faster than the source is allowed only when the
+    // compressed queue is significantly delayed AND the encoder has slack.
+    // Default arguments preserve the legacy, fixed-cadence behavior.
+    Plan plan(Clock::time_point now, bool hasDts, std::uint64_t dts90k,
+              std::size_t pesDepth = 0, std::size_t rawDepth = 0) noexcept {
         constexpr std::uint64_t kMask = (1ULL << 33U) - 1ULL;
         Plan result;
         auto step = nominalStep_;
@@ -47,6 +55,22 @@ public:
                 result.resynced = true;
             }
         }
+        if (initialized_ && !result.resynced &&
+            nominalStep_ == std::chrono::milliseconds(40)) {
+            // Keep catch-up <=5% and stop immediately if RAW builds up.
+            // Never skip compressed H.264/H.265 reference pictures.
+            const auto desired = pesDepth >= 48 && rawDepth <= 2
+                ? std::chrono::milliseconds(38)
+                : pesDepth >= 20 && rawDepth <= 3
+                    ? std::chrono::milliseconds(39)
+                    : nominalStep_;
+            if (step > desired) {
+                step = desired;
+                result.catchup = true;
+            }
+        }
+        result.intervalMs = static_cast<std::uint32_t>(
+            std::max<std::int64_t>(0, step.count()));
         if (!initialized_ || result.resynced) {
             result.deadline = now + nominalStep_;
         } else {
