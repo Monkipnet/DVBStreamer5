@@ -72,6 +72,9 @@ jobs:
           node tests/web/test_stream_toggle_stop_policy.js
           node tests/web/test_external_config_transfer_ui.js
 
+      - name: Verify persistent UDP input filters and metrics-poll checkbox state
+        run: node tests/web/test_udp_filter_persistence_v511.js
+
       - name: Verify DVB transponder and IP subnet tile grouping
         run: node tests/web/test_tile_input_grouping.js
 

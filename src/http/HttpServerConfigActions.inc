@@ -411,6 +411,14 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     if (!root.isMember("srt_vps_vds_optimization")) {
         nextConfig.srtVpsVdsOptimization = configManager.config.srtVpsVdsOptimization;
     }
+    // The network-monitor modal is the owner of this setting. Saving a tile,
+    // language, or global settings does not send this array; an omitted or
+    // malformed field must NEVER turn off active UDP/RTP interface filters.
+    // An explicitly supplied [] is still an intentional full-config disable.
+    if (!root.isMember("udp_input_filter_interfaces") ||
+        !root["udp_input_filter_interfaces"].isArray()) {
+        nextConfig.udpInputFilterInterfaces = previousConfig.udpInputFilterInterfaces;
+    }
     if (!root.isMember("cam_clients")) {
         nextConfig.camClients = configManager.config.camClients;
     }

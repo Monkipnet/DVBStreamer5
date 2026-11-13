@@ -1,0 +1,30 @@
+// V511 regression: partial saves must not erase UDP/RTP network filter checkboxes.
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root = path.resolve(__dirname, '../..');
+const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+const config = read('src/http/HttpServerConfigActions.inc');
+const web = read('src/http/HttpServerWebUi.inc');
+const state = read('src/http/HttpServerState.inc');
+const storage = read('src/ConfigManager.cpp');
+const firewall = read('src/UdpInputFirewall.h');
+const save = config.split('std::string HttpServer::handleSaveConfig(')[1]
+  .split('std::string HttpServer::handleMptsSave(')[0];
+assert.ok(save, 'Config save handler is missing');
+assert.match(save, /!root\.isMember\("udp_input_filter_interfaces"\)/);
+assert.match(save, /!root\["udp_input_filter_interfaces"\]\.isArray\(\)/);
+assert.match(save, /nextConfig\.udpInputFilterInterfaces\s*=\s*previousConfig\.udpInputFilterInterfaces/);
+assert.match(storage, /root\["udp_input_filter_interfaces"\]\s*=\s*udpFilterInterfaces/);
+assert.match(storage, /config\.udpInputFilterInterfaces\.push_back\(address\)/);
+assert.match(state, /item\["udp_input_filter"\]/);
+assert.match(web, /const udpInputFilterPending = new Map\(\)/);
+assert.match(web, /udpInputFilterPending\.set\(address, desired\)/);
+assert.match(web, /const checked = pending \? udpInputFilterPending\.get\(address\)/);
+assert.match(web, /pending \|\| !address \|\| iface\.name === 'lo'/);
+assert.match(web, /if \(metricsFetchPromise\) await metricsFetchPromise/);
+assert.match(web, /udpInputFilterPending\.delete\(address\)/);
+assert.match(firewall, /ct state established,related accept/);
+assert.match(firewall, /preserve SRT/);
+assert.match(firewall, /reject unconfigured multicast/);
+console.log('V511: persistent network UDP filters and checkbox poll guard PASS');

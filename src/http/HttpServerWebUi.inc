@@ -3538,6 +3538,9 @@ let elapsedDisplayTimer = null;
 let uptimeSampleAtMs = 0;
 let stateFetchPromise = null;
 let metricsFetchPromise = null;
+// A poll can arrive while the UDP filter POST is in flight. Hold the requested
+// checkbox state across network-table redraws until the server confirms it.
+const udpInputFilterPending = new Map();
 const systemLoadChartStorageKey = 'dvbstreamer5-system-load-charts-v1';
 let systemLoadChartPrefs = {enabled:true, items:{}};
 const systemLoadChartHistory = new Map();
@@ -4144,17 +4147,21 @@ function updateSystemLoad(metrics) {
   const table = document.getElementById('networkTableBody');
   if (!table) return;
   const interfaces = metrics.interfaces || [];
-  table.innerHTML = interfaces.length ? interfaces.map(iface => `
+  table.innerHTML = interfaces.length ? interfaces.map(iface => {
+    const address = String(iface.address || '');
+    const pending = udpInputFilterPending.has(address);
+    const checked = pending ? udpInputFilterPending.get(address) : !!iface.udp_input_filter;
+    return `
     <tr>
       <td>${iface.name}${iface.address ? ` (${iface.address})` : ''}</td>
       <td>${Number(iface.rx_mbps || 0).toFixed(2)} Mbps</td>
       <td>${Number(iface.tx_mbps || 0).toFixed(2)} Mbps</td>
-      <td><label><input type="checkbox" data-address="${iface.address || ''}"
-        ${iface.udp_input_filter ? 'checked' : ''}
-        ${!iface.address || iface.name === 'lo' ? 'disabled' : ''}
+      <td><label><input type="checkbox" data-address="${address}"
+        ${checked ? 'checked' : ''}
+        ${pending || !address || iface.name === 'lo' ? 'disabled' : ''}
         onchange="setUdpInputFilter(this)"> ${t('udpInputFilter')}</label></td>
     </tr>
-  `).join('') : `<tr><td colspan="4" class="network-empty">${t('interfacesNotFound')}</td></tr>`;
+  `; }).join('') : `<tr><td colspan="4" class="network-empty">${t('interfacesNotFound')}</td></tr>`;
 }
 function refreshSystemLoadPanel(metrics) {
   const root = document.getElementById('systemLoadContent');
@@ -4455,7 +4462,9 @@ async function logoutPanel() {
 }
 async function setUdpInputFilter(control) {
   const address = control.dataset.address || '';
+  if (!address || udpInputFilterPending.has(address)) return;
   const desired = control.checked;
+  udpInputFilterPending.set(address, desired);
   control.disabled = true;
   try {
     const response = await fetch('/api/network/udp-input-filter', {
@@ -4467,12 +4476,24 @@ async function setUdpInputFilter(control) {
     if (!response.ok || result.result !== 'ok') {
       throw new Error(result.error || `HTTP ${response.status}`);
     }
-    await fetchSystemMetrics();
+    // A metrics poll started before the POST might still be returning the old
+    // checkbox value. Wait for it, then request a fresh authoritative sample.
+    if (metricsFetchPromise) await metricsFetchPromise;
+    const metrics = await fetchSystemMetrics();
+    if (!metrics) throw new Error('Network filter saved, but metrics could not be refreshed');
+    const selected = (metrics.interfaces || []).find(iface => iface.address === address);
+    if (!selected || !!selected.udp_input_filter !== desired) {
+      throw new Error('UDP filter state was not confirmed by server metrics');
+    }
   } catch (error) {
-    control.checked = !desired;
     uiError(error?.message || error);
   } finally {
-    control.disabled = false;
+    udpInputFilterPending.delete(address);
+    // The original checkbox may already have been replaced by a 3s poll.
+    // Render from the confirmed server state, not from a detached DOM node.
+    if (document.getElementById('networkTableBody')) {
+      updateSystemLoad(state.system_metrics || {});
+    }
   }
 }
 function fetchSystemMetrics() {
