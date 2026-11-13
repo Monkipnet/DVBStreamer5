@@ -19,6 +19,7 @@
 #include "DvbEitOutput.h"
 #include "DvbSubtitlePassthrough.h"
 #include "RestartScheduleClock.h"
+#include "AutoStartRecoveryPolicy.h"
 #include "media/NativeTsDemux.h"
 #include "media/HlsSegmentSettings.h"
 #include "media/HlsOnlyCbrRoutingPolicy.h"
@@ -40,6 +41,7 @@
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <functional>
 #include <sstream>
 #include <poll.h>
 #include <arpa/inet.h>
@@ -536,9 +538,15 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     // indefinitely block Stop requests for all other tiles.
     for (int i = 0; i < 3; ++i)
         asyncStopThreads_.emplace_back(&StreamManager::processAsyncStopRequests, this);
+    configureAutoStartRecovery();
+    // Independent lanes: a stalled input teardown cannot block other tiles.
+    for (unsigned i = 0; i < 3; ++i)
+        autoRecoveryThreads_.emplace_back(&StreamManager::monitorAutoStartRecovery, this, i);
 }
 
 StreamManager::~StreamManager() {
+    autoRecoveryStop_.store(true, std::memory_order_release);
+    for (auto& worker : autoRecoveryThreads_) if (worker.joinable()) worker.join();
     failoverMonitorStop.store(true, std::memory_order_release);
     if (failoverMonitorThread.joinable()) failoverMonitorThread.join();
     {
@@ -611,6 +619,22 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         if (error) *error = "stream id is empty";
         return false;
     }
+    {
+        std::lock_guard<std::mutex> lock(startingStreamsMutex_);
+        if (!startingStreamIds_.insert(streamConfig.id).second) {
+            if (error) *error = "stream start already in progress";
+            return false;
+        }
+    }
+    struct LaunchGuard {
+        std::mutex& mutex;
+        std::set<std::string>& ids;
+        const std::string& id;
+        ~LaunchGuard() {
+            std::lock_guard<std::mutex> lock(mutex);
+            ids.erase(id);
+        }
+    } launchGuard{startingStreamsMutex_, startingStreamIds_, streamConfig.id};
     // Do not resurrect a tile stopped by the operator. A queued async Stop
     // must win over automatic failover, scheduled restart and OnDemand start.
     {
@@ -2242,6 +2266,135 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         telegramText(configManager, "Поток запущен", "Stream started"),
         telegramText(configManager, "Native media engine работает", "Native media engine is running"));
     return true;
+}
+
+void StreamManager::configureAutoStartRecovery() {
+    std::map<std::string, StreamConfig> configured;
+    for (const auto& cfg : configManager.config.streams) {
+        if (dvbstreamer5::stream_recovery::eligible(
+                cfg.autoStart, toLower(cfg.activationMode))) {
+            configured.emplace(cfg.id, cfg);
+        }
+    }
+    std::lock_guard<std::mutex> lock(autoRecoveryMutex_);
+    for (auto it = autoRecoveryAttempts_.begin(); it != autoRecoveryAttempts_.end();) {
+        const auto next = configured.find(it->first);
+        const auto previous = autoRecoveryConfigs_.find(it->first);
+        if (next == configured.end() || previous == autoRecoveryConfigs_.end() ||
+            previous->second.toJson() != next->second.toJson())
+            it = autoRecoveryAttempts_.erase(it);
+        else
+            ++it;
+    }
+    autoRecoveryConfigs_.swap(configured);
+}
+
+void StreamManager::forgetAutoStartRecovery(const std::string& id) {
+    std::lock_guard<std::mutex> lock(autoRecoveryMutex_);
+    autoRecoveryConfigs_.erase(id);
+    autoRecoveryAttempts_.erase(id);
+}
+
+void StreamManager::monitorAutoStartRecovery(unsigned workerIndex) {
+    const auto waitFor = [this](unsigned seconds) {
+        for (unsigned i = 0; i < seconds * 4U; ++i) {
+            if (autoRecoveryStop_.load(std::memory_order_acquire)) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        return !autoRecoveryStop_.load(std::memory_order_acquire);
+    };
+    // Give the normal parallel startup workers time to initialize DVB/CA/codecs.
+    if (!waitFor(30)) return;
+    while (waitFor(5)) {
+        const auto now = std::chrono::steady_clock::now();
+        std::vector<StreamConfig> candidates;
+        {
+            std::lock_guard<std::mutex> lock(autoRecoveryMutex_);
+            for (const auto& [id, cfg] : autoRecoveryConfigs_) {
+                if (std::hash<std::string>{}(id) % 3U != workerIndex) continue;
+                const auto attempt = autoRecoveryAttempts_.find(id);
+                if (attempt != autoRecoveryAttempts_.end() &&
+                    now < attempt->second.retryAt) continue;
+                candidates.push_back(cfg);
+            }
+        }
+        for (const auto& candidate : candidates) {
+            if (autoRecoveryStop_.load(std::memory_order_acquire)) return;
+            const std::string& id = candidate.id;
+            if (isOperatorStopped(id) || isStopPending(id)) continue;
+            bool active = false;
+            bool stable = false;
+            std::string previousFailure;
+            {
+                std::lock_guard<std::mutex> lock(managerMutex);
+                const auto it = streams.find(id);
+                if (it != streams.end() && it->second) {
+                    const auto& state = *it->second;
+                    active = state.active.load(std::memory_order_acquire);
+                    stable = active && state.running.load(std::memory_order_acquire) &&
+                        now - state.startedAt >= std::chrono::minutes(2);
+                    if (!active && state.nativeRelay)
+                        previousFailure = state.nativeRelay->lastError();
+                }
+            }
+            if (active) {
+                if (stable) {
+                    std::lock_guard<std::mutex> lock(autoRecoveryMutex_);
+                    autoRecoveryAttempts_.erase(id);
+                }
+                continue;
+            }
+            // Existing source failover already owns its primary/backup state.
+            {
+                std::lock_guard<std::mutex> lock(failoverMutex);
+                if (failoverEntries.count(id)) continue;
+            }
+            // Do not wait behind an operator stop or an ongoing failover.
+            std::unique_lock<std::mutex> actionLock(failoverActionMutex, std::try_to_lock);
+            if (!actionLock.owns_lock()) continue;
+            if (isOperatorStopped(id) || isStopPending(id) || isStreamActive(id))
+                continue;
+            {
+                std::lock_guard<std::mutex> lock(failoverMutex);
+                if (failoverEntries.count(id)) continue;
+            }
+            StreamConfig cfg;
+            unsigned attemptNumber = 0;
+            {
+                std::lock_guard<std::mutex> lock(autoRecoveryMutex_);
+                const auto desired = autoRecoveryConfigs_.find(id);
+                if (desired == autoRecoveryConfigs_.end()) continue;
+                auto& attempt = autoRecoveryAttempts_[id];
+                const auto checkNow = std::chrono::steady_clock::now();
+                if (checkNow < attempt.retryAt) continue;
+                cfg = desired->second;
+                attemptNumber = ++attempt.attempts;
+                attempt.retryAt = checkNow +
+                    dvbstreamer5::stream_recovery::retryDelay(attemptNumber);
+            }
+            std::cerr << "AUTO START RECOVERY BEGIN stream_id=" << id
+                      << " attempt=" << attemptNumber
+                      << " previous_error=" << (previousFailure.empty() ? "unknown" : previousFailure)
+                      << std::endl;
+            std::string error;
+            bool started = false;
+            try {
+                started = startStream(cfg, &error);
+                if (!started && isStreamActive(id)) started = true;
+            } catch (const std::exception& ex) {
+                error = ex.what();
+            } catch (...) {
+                error = "unknown exception";
+            }
+            std::cerr << "AUTO START RECOVERY RESULT stream_id=" << id
+                      << " attempt=" << attemptNumber
+                      << " result=" << (started ? "running" : "failed")
+                      << " retry_delay_s=" <<
+                          dvbstreamer5::stream_recovery::retryDelay(attemptNumber).count()
+                      << (error.empty() ? "" : " error=" + error)
+                      << std::endl;
+        }
+    }
 }
 
 void StreamManager::monitorNativeStream(StreamState* state) {

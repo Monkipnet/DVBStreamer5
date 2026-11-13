@@ -173,3 +173,8 @@ endif()
 add_executable(native_video_pes_pacer_test test_native_video_pes_pacer.cpp)
 target_include_directories(native_video_pes_pacer_test PRIVATE ../../src)
 add_test(NAME native_video_pes_pacer COMMAND native_video_pes_pacer_test)
+
+# V510: pure policy test for online-only auto-recovery and bounded retry delays.
+add_executable(auto_start_recovery_policy_test ../test_auto_start_recovery_policy.cpp)
+target_include_directories(auto_start_recovery_policy_test PRIVATE ../../src)
+add_test(NAME auto_start_recovery_policy COMMAND auto_start_recovery_policy_test)

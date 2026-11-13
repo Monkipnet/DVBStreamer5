@@ -1,0 +1,20 @@
+// Runtime wiring regression: manual Stop, OnDemand and failover stay authoritative.
+const fs = require('node:fs');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const root = path.resolve(__dirname, '../..');
+const read = p => fs.readFileSync(path.join(root, p), 'utf8');
+const manager = read('src/StreamManager.cpp');
+const actions = read('src/http/HttpServerConfigActions.inc');
+const policy = read('src/AutoStartRecoveryPolicy.h');
+assert.match(manager, /monitorAutoStartRecovery\(unsigned workerIndex\)/);
+assert.match(manager, /if \(isOperatorStopped\(id\) \|\| isStopPending\(id\)\)/);
+assert.match(manager, /if \(failoverEntries\.count\(id\)\) continue;/);
+assert.match(manager, /std::try_to_lock/);
+assert.match(manager, /previous_error=/);
+assert.match(manager, /startingStreamIds_\.insert/);
+assert.match(actions, /streamManager\.configureAutoStartRecovery\(\)/);
+assert.match(actions, /streamManager\.forgetAutoStartRecovery\(id\)/);
+assert.match(policy, /activationMode == "online"/);
+assert.match(manager, /autoRecoveryStop_\.store\(true/);
+console.log('V510 auto-start recovery and operator/failover guards: PASS');

@@ -491,6 +491,7 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     }
 
     configManager.config = nextConfig;
+    streamManager.configureAutoStartRecovery();
     configManager.save();
     dvbstreamer5::media::ticker::TickerOverlay::instance().configure(configManager.config.tickerOverlays);
     // A changed XMLTV URL or daily schedule is metadata-only. It must not
@@ -883,6 +884,7 @@ void HttpServer::handleRestartProgram() {
     }
     const std::string id = root.get("id", "").asString();
     if (id.empty()) return;
+    streamManager.forgetAutoStartRecovery(id);
     streamManager.stopStream(id);
     {
       std::lock_guard<std::mutex> lock(qualityMutex);

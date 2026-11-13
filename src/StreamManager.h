@@ -352,6 +352,9 @@ public:
     bool isStopPending(const std::string& id) const;
     bool isOperatorStopped(const std::string& id) const;
     void clearOperatorStop(const std::string& id);
+    // Refresh the checked Auto Start policy after every configuration save.
+    void configureAutoStartRecovery();
+    void forgetAutoStartRecovery(const std::string& id);
     void stopAll();
     bool isStreamActive(const std::string& id);
     bool ensureOnDemandStream(const std::string& id, const std::string& source,
@@ -410,6 +413,7 @@ public:
 
 private:
     void monitorNativeStream(StreamState* state);
+    void monitorAutoStartRecovery(unsigned workerIndex);
     void processAsyncStopRequests();
     void monitorFailoverStreams();
     bool primaryStreamHealthy(const StreamConfig& primary);
@@ -505,6 +509,18 @@ private:
     std::map<std::string, FailoverEntry> failoverEntries;
     std::atomic<bool> failoverMonitorStop{false};
     std::thread failoverMonitorThread;
+    struct AutoRecoveryAttempt {
+        unsigned attempts = 0;
+        std::chrono::steady_clock::time_point retryAt{};
+    };
+    std::mutex autoRecoveryMutex_;
+    std::map<std::string, StreamConfig> autoRecoveryConfigs_;
+    std::map<std::string, AutoRecoveryAttempt> autoRecoveryAttempts_;
+    std::atomic<bool> autoRecoveryStop_{false};
+    std::vector<std::thread> autoRecoveryThreads_;
+    // Prevent the initial startup and supervisor from launching the same ID twice.
+    std::mutex startingStreamsMutex_;
+    std::set<std::string> startingStreamIds_;
     struct HttpClientSession {
         HttpClientSession() = default;
         HttpClientSession(std::string streamIdValue,
