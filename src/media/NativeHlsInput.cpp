@@ -784,6 +784,10 @@ void NativeHlsInput::run() {
                 });
                 if (stopping_.load()) break;
                 if (buffer.empty()) {
+                    // A 100-ms wait timeout is not an end-of-stream condition.
+                    // Live HLS segments may arrive seconds apart while the
+                    // producer is still fetching or refreshing the playlist.
+                    if (producerFailure.empty() && !producerDone) continue;
                     if (!producerFailure.empty()) consumerFailure = producerFailure;
                     else if (producerDone && finishCallback_) finishCallback_({});
                     break;
