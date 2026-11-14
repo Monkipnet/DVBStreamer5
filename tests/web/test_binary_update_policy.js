@@ -136,6 +136,22 @@ assert.equal(parsed.status,0,'Portable VERSION extraction command failed');
 assert.match(parsed.stdout.trim(),/^\d+\.\d+\.\d+$/,
   'Portable VERSION extraction must return a semantic version');
 
+const buildWorkflow=fs.readFileSync('.github/workflows/build-main-linux.yml','utf8');
+for(const token of [
+  "OUTPUT_DIR=\"${OUTPUT_DIR:-$PROJECT_ROOT/dist/${APP}-${VERSION}-linux-x86_64}\"",
+  "ARCHIVE_NAME=\"$(basename -- \"${OUTPUT_DIR%/}\")\"",
+  "ARCHIVE_NAME=\"${ARCHIVE_NAME%-linux-x86_64}-${VERSION}-linux-x86_64\"",
+  "sha256sum \"$ARCHIVE\" > \"${ARCHIVE}.sha256\"",
+  "fail \"--output-dir has a different release version from kProgramVersion: $ARCHIVE_NAME\""
+]) assert.ok(packageScript.includes(token),'Archive must always be versioned: '+token);
+for(const token of [
+  "id: package",
+  "version=$version\" >> \"$GITHUB_OUTPUT\"",
+  "name: DVBStreamer5-${{ steps.package.outputs.version }}-linux-x86_64",
+  "dist/*.tar.gz.sha256"
+]) assert.ok(buildWorkflow.includes(token),'Actions artifact must be versioned: '+token);
+
+
 // Exercise the successful check path with a fake HTTP header (no network).
 // A scoped tmp cleanup trap must not reference an unset local at shell exit.
 const os=require('node:os');
