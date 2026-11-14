@@ -1,5 +1,8 @@
 #include "media/H264PesPtsRecovery.h"
 
+#ifdef NDEBUG
+#undef NDEBUG // Keep the regression assertions active in Release builds.
+#endif
 #include <cassert>
 #include <cstdint>
 #include <iostream>
