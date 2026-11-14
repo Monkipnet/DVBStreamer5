@@ -35,7 +35,7 @@ To verify the checksum from the repository root:
 
 ```bash
 VERSION="$(sed -n 's/.*kProgramVersion = "\([^"]*\)";.*/\1/p' src/AppVersion.h)"
-sha256sum -c "dist/DVBStreamer5-${VERSION}-linux-x86_64.tar.gz.sha256"
+( cd dist && sha256sum -c "DVBStreamer5-${VERSION}-linux-x86_64.tar.gz.sha256" )
 ```
 
 ## Install on another Linux host
