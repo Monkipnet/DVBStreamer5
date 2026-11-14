@@ -1529,6 +1529,7 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
             static thread_local std::uint64_t burstPeak1000Kbps = 0;
             static thread_local std::uint64_t burstLargestAuBytes = 0;
             static thread_local std::uint64_t burstLargestIdrBytes = 0;
+            static thread_local std::uint64_t burstLargestNonRandomAuBytes = 0;
             static thread_local std::uint64_t burstAuCount = 0;
             static thread_local std::chrono::steady_clock::time_point burstSince{};
             const auto burstNow = std::chrono::steady_clock::now();
@@ -1537,7 +1538,8 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
                 burstSamples.clear();
                 burstBytes100 = burstBytes1000 = 0;
                 burstPeak100Kbps = burstPeak1000Kbps = 0;
-                burstLargestAuBytes = burstLargestIdrBytes = burstAuCount = 0;
+                burstLargestAuBytes = burstLargestIdrBytes = 0;
+                burstLargestNonRandomAuBytes = burstAuCount = 0;
                 burstSince = burstNow;
             }
             // Rolling 100-ms peak from the last 100 ms of video PTS.
@@ -1575,6 +1577,10 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
             if (queued.randomAccess)
                 burstLargestIdrBytes = (std::max)(burstLargestIdrBytes,
                     static_cast<std::uint64_t>(queued.data.size()));
+            else
+                burstLargestNonRandomAuBytes = (std::max)(
+                    burstLargestNonRandomAuBytes,
+                    static_cast<std::uint64_t>(queued.data.size()));
             ++burstAuCount;
             if (burstNow - burstSince >= std::chrono::seconds(5)) {
                 std::cerr << "NATIVE VIDEO BURST DIAG stream_id=" << config_.streamId
@@ -1584,11 +1590,16 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
                           << " peak_1s_kbps=" << burstPeak1000Kbps
                           << " max_au_bytes=" << burstLargestAuBytes
                           << " max_idr_au_bytes=" << burstLargestIdrBytes
+                          << " max_non_random_au_bytes=" << burstLargestNonRandomAuBytes
+                          << " max_au_payload_tx_ms_at_8mbps="
+                          << (burstLargestAuBytes / 1000ULL)
+                          << " encoder_requested=" << config_.videoEncoder
                           << " encoder_target_kbps=" << (config_.videoBitrate / 1000ULL)
                           << std::endl;
                 burstSince = burstNow;
                 burstPeak100Kbps = burstPeak1000Kbps = 0;
-                burstLargestAuBytes = burstLargestIdrBytes = burstAuCount = 0;
+                burstLargestAuBytes = burstLargestIdrBytes = 0;
+                burstLargestNonRandomAuBytes = burstAuCount = 0;
             }
         }
     }
