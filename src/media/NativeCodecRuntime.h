@@ -101,6 +101,9 @@ struct VideoEncoderOptions {
     std::uint32_t refFrames = 0;
     bool openGop = false;
     std::uint32_t aqStrength = 8;
+    // V514: experimental, per-stream opt-in for the direct VAAPI H.264 encoder.
+    // Other encoders ignore this field; default remains bit-for-bit unchanged.
+    bool vaapiStrictHrd = false;
 };
 
 class VideoEncoder {
