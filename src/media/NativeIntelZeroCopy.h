@@ -26,6 +26,7 @@ struct IntelZeroCopyConfig {
     std::uint32_t refFrames = 0;
     bool openGop = false;
     std::uint32_t aqStrength = 8;
+    bool wisiChameleonProfile = false;
     // Preserve an explicitly requested output raster even when it is larger
     // than the decoded raster. Browser preview uses 1280x720 square pixels
     // for anamorphic SD television sources.
