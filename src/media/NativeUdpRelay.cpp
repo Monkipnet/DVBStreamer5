@@ -1022,9 +1022,10 @@ void NativeUdpRelay::run() {
                 // unrelated tiles are never changed.
                 const bool outputPcrSmooth =
                     transcodeSourcePcrPacketPacing &&
-                    mpegts::CbrOutputPcrSmoothingPolicy::selected(
+                    (config_.wisiChameleonProfile ||
+                     mpegts::CbrOutputPcrSmoothingPolicy::selected(
                         config_.streamId,
-                        std::getenv("DVBSTREAMER5_CBR_PCR_SMOOTH_STREAM_ID"));
+                        std::getenv("DVBSTREAMER5_CBR_PCR_SMOOTH_STREAM_ID")));
                 if (outputPcrSmooth) {
                     std::cerr << "NATIVE CBR OUTPUT PCR SMOOTH stream_id="
                               << config_.streamId
