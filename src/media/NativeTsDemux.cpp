@@ -921,6 +921,9 @@ void NativeTsDemux::reportRawAvClock() {
         return;
     }
     rawAvClockReportAt_ = now;
+    const auto videoAuIt = videoAu_.find(rawClockVideoPid_);
+    const std::uint64_t interiorPesCarried = videoAuIt == videoAu_.end()
+        ? 0ULL : videoAuIt->second.ptsRecovery.carriedInteriorAnchors();
     // 33-bit MPEG PTS differences must remain signed across wraparound.
     const auto ptsDeltaMs = [](std::uint64_t a, std::uint64_t b) -> std::int64_t {
         constexpr std::uint64_t kMask = (1ULL << 33U) - 1ULL;
@@ -948,6 +951,7 @@ void NativeTsDemux::reportRawAvClock() {
                   ptsDeltaMs(rawVideoPesPts90k_, assembledVideoAuPts90k_)
               << " raw_audio_vs_assembled_ms=" <<
                   ptsDeltaMs(rawAudioPesPts90k_, assembledVideoAuPts90k_)
+              << " h264_interior_pes_carried_total=" << interiorPesCarried
               << " raw_video_age_ms=" << ageMs(rawVideoPesAt_)
               << " raw_audio_age_ms=" << ageMs(rawAudioPesAt_)
               << " assembled_video_age_ms=" << ageMs(assembledVideoAuAt_)
