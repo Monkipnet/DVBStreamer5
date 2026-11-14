@@ -159,6 +159,9 @@ struct NativeUdpRelayConfig {
     // Existing opt-in for transcoded WISI output; also enabled by the exact
     // V333 HTTP/SRT passthrough test stream ID when requested.
     bool wisiPreserveSourcePcr = false;
+    // V516: explicit per-channel profile; triggers the V515 smoother only
+    // on eligible transcoded Source-PCR UDP-CBR output.
+    bool wisiChameleonProfile = false;
     // V333: +777 source-PCR profile with no legacy reservoir-rate correction,
     // and the existing 3-s startup buffer. Never enabled automatically.
     bool wisiSourcePcrStrict = false;
