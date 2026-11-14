@@ -31,6 +31,13 @@ int main() {
            a.dts90k == base + 86400 && a.hasDts &&
            a.drift90k == 82800);
 
+    // After lock, small phase errors are corrected continuously instead of
+    // accumulating into recurring 500-ms A/V steps.
+    pts.appendPes(0, base + 93000, base + 89400, true, true);
+    a = pts.completeAu(100, base + 93600, base + 90000, true, true);
+    assert(a.corrected && a.pts90k == base + 93000 &&
+           a.drift90k == -600);
+
     // A PES beginning in the middle of the preceding NAL may carry the
     // *next* picture PTS: do not attach it to the preceding picture.
     pts.appendPes(50, base + 150000, base + 146400, true, true);
