@@ -97,6 +97,8 @@ struct StreamConfig {
     bool cbr = true;
     uint64_t targetBitrate = 2000000;
     bool transcodeEnabled = false;
+    // V516: per-channel WISI Chameleon CBR encoder profile, off by default.
+    bool wisiChameleonProfile = false;
     std::string transcodeResolution = "1920x1080";
     std::string transcodeVideoCodec = "h264"; // h264 | hevc | copy
     std::string transcodeVideoEncoder = "auto"; // auto | cpu | nvenc | qsv | vaapi
