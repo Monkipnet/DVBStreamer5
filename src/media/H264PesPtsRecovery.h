@@ -45,7 +45,10 @@ public:
             if (!result.hasPts || drift > kResyncThreshold90k ||
                 drift < -kResyncThreshold90k)
                 sourceClockLocked_ = true;
-            if (sourceClockLocked_ && (!result.hasPts || drift != 0)) {
+            if (sourceClockLocked_ &&
+                (!result.hasPts || drift != 0 ||
+                 result.hasDts != source.hasDts ||
+                 (source.hasDts && result.dts90k != source.dts90k))) {
                 result.pts90k = source.pts90k;
                 result.dts90k = source.dts90k;
                 result.hasPts = true;
