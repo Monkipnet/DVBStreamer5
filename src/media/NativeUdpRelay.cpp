@@ -1016,6 +1016,25 @@ void NativeUdpRelay::run() {
                               << " pcr=preserved packets=source_timeline"
                               << " fixed_cbr=unchanged" << std::endl;
                 }
+                // V515: experiment on exactly one transcoded, buffered
+                // Source-PCR UDP-CBR tile. Other encoder backends share this
+                // mux/pacer path, but Copy, VBR, Fixed-PCR, zero-buffer and
+                // unrelated tiles are never changed.
+                const bool outputPcrSmooth =
+                    transcodeSourcePcrPacketPacing &&
+                    mpegts::CbrOutputPcrSmoothingPolicy::selected(
+                        config_.streamId,
+                        std::getenv("DVBSTREAMER5_CBR_PCR_SMOOTH_STREAM_ID"));
+                if (outputPcrSmooth) {
+                    std::cerr << "NATIVE CBR OUTPUT PCR SMOOTH stream_id="
+                              << config_.streamId
+                              << " output_index=" << index
+                              << " pcr=physical-cbr-slot"
+                              << " pcr_only_interval_ms=20"
+                              << " source_schedule=preserved"
+                              << " pts_dts=preserved"
+                              << " experimental=1" << std::endl;
+                }
                 output.cbrWorker =
                     std::make_unique<dvbstreamer5::media::network::WisiCbrOutputWorker>(
                         output.socket,
@@ -1034,7 +1053,8 @@ void NativeUdpRelay::run() {
                         },
                         output.sentTsBytes ? output.sentTsBytes.get() : nullptr,
                         config_.streamId,
-                        config_.sourcePcrPacketPacing || transcodeSourcePcrPacketPacing);
+                        config_.sourcePcrPacketPacing || transcodeSourcePcrPacketPacing,
+                        outputPcrSmooth);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();
