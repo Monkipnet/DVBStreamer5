@@ -52,11 +52,24 @@ jobs:
       # These pinned dependencies do not change when application C++ files
       # change. Cache their validated static libraries by the build recipes;
       # the codec build script checks its own compiler/source fingerprint.
+      - name: Restore pinned SRT source cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/srt
+          key: dvbstreamer5-srt-ubuntu2404-${{ hashFiles('scripts/vendor_srt_source.sh') }}
+
       - name: Restore pinned native codec library cache
         uses: actions/cache@v4
         with:
           path: |
             third_party/native-codecs-prefix
+            third_party/openh264
+            third_party/ittiam-libavc
+            third_party/libde265
+            third_party/kvazaar
+            third_party/fdk-aac
+            third_party/ittiam-libmpeg2
+            third_party/pl_mpeg
           key: dvbstreamer5-native-codecs-ubuntu2404-${{ hashFiles('scripts/build_native_codecs.sh', 'scripts/vendor_native_codecs.sh') }}
 
       - name: Validate DVB-T/T2 UI, terrestrial API and JavaScript syntax
