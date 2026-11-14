@@ -2,6 +2,7 @@
 #include "media/NativeTickerOverlay.h"
 
 #include "media/NativeVideoProcessing.h"
+#include "media/VaapiHrdPolicy.h"
 #include "media/DiagnosticI420Frame.h"
 #include "media/DiagnosticColorI420.h"
 #include "media/AvcDecoderSelection.h"
@@ -2011,6 +2012,11 @@ bool NativeTranscoderPipeline::ensureVideoEncoder(std::string& error) {
         options.refFrames = config_.refFrames;
         options.openGop = config_.openGop;
         options.aqStrength = config_.aqStrength;
+        // V514: only an exact stream ID matches. No process-wide rate-control
+        // changes for other VAAPI, GPU, Copy or CPU output tiles.
+        options.vaapiStrictHrd = (backend == "vaapi") &&
+            codec::vaapiStrictHrdForStream(config_.streamId,
+                std::getenv("DVBSTREAMER5_VAAPI_HRD_STREAM_ID"));
         candidate->setOptions(options);
         if (!candidate->configure(
                 config_.width, config_.height, config_.fps,
