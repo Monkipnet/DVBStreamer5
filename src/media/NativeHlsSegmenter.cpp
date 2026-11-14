@@ -1126,6 +1126,9 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     const std::size_t minimumReadySegments = std::max<std::size_t>(
         passthroughH26x ? 2U : 1U, config_.startupPrefillSegments);
     if (completedSegments_ < minimumReadySegments) return true;
+    if (!writePlaylist(false)) return false;
+    // Report readiness only AFTER the coherent manifest was atomically
+    // published, never merely after the third segment closed.
     if (config_.startupPrefillSegments > 0 &&
         completedSegments_ == minimumReadySegments) {
         std::cerr << "NATIVE HLS STARTUP PREFILL READY"
@@ -1135,8 +1138,6 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
                   << " target_duration_s=" << config_.targetDurationSeconds
                   << std::endl;
     }
-
-    if (!writePlaylist(false)) return false;
     return true;
 }
 
