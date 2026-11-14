@@ -1,8 +1,7 @@
 #pragma once
 
-// V516: per-stream WISI Chameleon encoder/UDP-CBR compatibility profile.
-// Configuration is off by default. This policy contains no GPU SDK calls,
-// packet mutations, dynamic allocation, or environment dependence.
+// V518: automatic WISI-compatible transport/encoder policy for transcoded
+// UDP CBR/VBR. Copy and non-UDP outputs are unaffected. No GPU SDK calls.
 
 #include <algorithm>
 #include <cmath>
@@ -17,12 +16,34 @@ struct WisiChameleonProfilePolicy {
     static constexpr std::uint32_t kCpbWindowMs = 400U;
     static constexpr std::uint32_t kReferencePcrIntervalMs = 20U;
 
-    static bool eligible(bool requested, bool transcoded, bool cbr,
-                         bool udpCbrOutput, const std::string& videoCodec) noexcept {
-        return requested && transcoded && cbr && udpCbrOutput &&
-               videoCodec != "copy" &&
-               (videoCodec == "h264" || videoCodec == "hevc" ||
-                videoCodec == "h265");
+    static bool encodedVideo(bool transcoded,
+                             const std::string& videoCodec) noexcept {
+        return transcoded && (videoCodec == "h264" ||
+               videoCodec == "hevc" || videoCodec == "h265");
+    }
+
+    static bool cbrEligible(bool transcoded, bool cbr, bool udpCbrOutput,
+                            const std::string& videoCodec) noexcept {
+        return encodedVideo(transcoded, videoCodec) && cbr && udpCbrOutput;
+    }
+
+    static bool vbrEligible(bool transcoded, bool udpVbrOutput,
+                            const std::string& videoCodec) noexcept {
+        return encodedVideo(transcoded, videoCodec) && udpVbrOutput;
+    }
+
+    // A transcoded VBR program remains genuinely variable-bit-rate. A
+    // 2x video+audio/PSI allowance guards physical UDP bursts without
+    // forcing NULL stuffing or changing its PCR, PES or PTS/DTS.
+    // The output worker must bypass this cap to protect timestamp
+    // delivery if it would accumulate more than 80ms extra delay.
+    static std::uint64_t vbrPeakBitsPerSecond(
+        std::uint64_t video, std::uint64_t audio) noexcept {
+        constexpr std::uint64_t kMax = 100000000ULL;
+        if (video > kMax || audio > kMax) return 0ULL;
+        const auto total = video + audio + 500000ULL;
+        return (std::clamp<std::uint64_t>)(total * 2ULL,
+                                            4000000ULL, kMax);
     }
 
     // Preserve the existing transcoder's audio+PSI/TS reserve: at least
