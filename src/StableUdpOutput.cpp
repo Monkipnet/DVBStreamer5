@@ -98,18 +98,26 @@ bool StreamManager::ensureOnDemandStreamParallel(
     std::shared_ptr<std::mutex> streamStartMutex;
     {
         std::lock_guard<std::mutex> demandLock(onDemandMutex);
-        onDemandLastActivity[id] = std::chrono::steady_clock::now();
         auto& slot = onDemandStartMutexes[id];
         if (!slot) slot = std::make_shared<std::mutex>();
         streamStartMutex = slot;
     }
 
     std::lock_guard<std::mutex> streamStartLock(*streamStartMutex);
+    const bool activeAlready = isStreamActive(id);
     {
         std::lock_guard<std::mutex> demandLock(onDemandMutex);
-        onDemandLastActivity[id] = std::chrono::steady_clock::now();
+        // V531: playlist / HLS-startup polling is not evidence of playback.
+        // Previously every .m3u8 GET refreshed the 30s idle timer and could
+        // hold a satellite OnDemand service forever if a receiver or UI
+        // continued probing the manifest after the viewer disconnected.
+        // Successful media GETs are independently registered as short-lived
+        // HLS sessions; HTTP/preview retains its real TCP-session accounting.
+        const bool hlsProbe = source == "hls" || source == "hls-startup-wait";
+        if (!activeAlready || !hlsProbe)
+            onDemandLastActivity[id] = std::chrono::steady_clock::now();
     }
-    if (isStreamActive(id)) return true;
+    if (activeAlready) return true;
 
     const auto begin = std::chrono::steady_clock::now();
     long long warmMs = -1;
