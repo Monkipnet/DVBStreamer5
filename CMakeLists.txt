@@ -582,6 +582,24 @@ add_executable(dvbstreamer5_vaapi_hrd_policy_test tests/media_core/test_vaapi_hr
 target_include_directories(dvbstreamer5_vaapi_hrd_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME vaapi_hrd_policy COMMAND dvbstreamer5_vaapi_hrd_policy_test)
 
+# V516: WISI encoder profile is off by default and isolated per tile.
+# Validate backend-independent buffer arithmetic without GPU hardware.
+add_executable(dvbstreamer5_wisi_profile_policy_test
+    tests/media_core/test_wisi_chameleon_profile_policy.cpp)
+target_include_directories(dvbstreamer5_wisi_profile_policy_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME wisi_profile_policy COMMAND dvbstreamer5_wisi_profile_policy_test)
+
+# Saved per-stream JSON flag must round-trip and never change legacy streams.
+add_executable(dvbstreamer5_wisi_profile_config_test
+    tests/test_wisi_chameleon_profile_config.cpp
+    src/ConfigManager.cpp src/utils.cpp)
+target_link_libraries(dvbstreamer5_wisi_profile_config_test PRIVATE
+    dvbstreamer5_boost_headers dvbstreamer5_media_core
+    dvbstreamer5_jsoncpp OpenSSL::Crypto)
+add_test(NAME wisi_profile_config COMMAND dvbstreamer5_wisi_profile_config_test)
+
+
 # V384: fail-closed Cesbo middleware auth, HLS token propagation and SRT token
 # parsing. The test uses no network, decoders, tuners or live service.
 add_executable(dvbstreamer5_stream_auth_test tests/test_stream_auth_backend.cpp)
