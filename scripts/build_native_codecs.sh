@@ -10,6 +10,52 @@ need_dir() { [[ -d "$1" ]] || { echo "Missing vendored codec source: $1" >&2; ec
 need_file() { [[ -f "$1" ]] || { echo "Native codec artifact missing: $1" >&2; exit 1; }; }
 for d in openh264 ittiam-libavc libde265 kvazaar fdk-aac ittiam-libmpeg2 pl_mpeg; do need_dir "$ROOT/third_party/$d"; done
 
+# A complete pinned codec toolchain is independent of ordinary DVBStreamer5
+# source edits. Reuse the already validated static libraries, preserving object
+# timestamps and avoiding seven expensive native dependency rebuilds.
+# The fingerprint changes on a codec build recipe, vendor revision, compiler
+# or target architecture change. A failed/incomplete build has no valid stamp.
+CODEC_STAMP="$PREFIX/.dvbstreamer5-codecs-build-stamp"
+CODEC_FINGERPRINT="$(
+    {
+        printf 'arch=%s\ncc=%s\ncxx=%s\n' "$(uname -m)" "${CC:-cc}" "${CXX:-c++}"
+        command -v "${CC:-cc}" || true
+        command -v "${CXX:-c++}" || true
+        "${CC:-cc}" --version | sed -n '1p'
+        "${CXX:-c++}" --version | sed -n '1p'
+        cmake --version | sed -n '1p'
+        sha256sum "$ROOT/scripts/build_native_codecs.sh"
+        for d in openh264 ittiam-libavc libde265 kvazaar fdk-aac ittiam-libmpeg2 pl_mpeg; do
+            sha256sum "$ROOT/third_party/$d/DVBSTREAMER5_VENDOR_INFO.txt"
+        done
+    } | sha256sum | awk '{print $1}'
+)"
+CODEC_CACHE_COMPLETE=1
+for artifact in \
+    "$PREFIX/include/wels/codec_api.h" \
+    "$PREFIX/include/ittiam-avc/ih264d.h" \
+    "$PREFIX/include/libde265/de265.h" \
+    "$PREFIX/include/kvazaar.h" \
+    "$PREFIX/include/fdk-aac/aacdecoder_lib.h" \
+    "$PREFIX/include/fdk-aac/aacenc_lib.h" \
+    "$PREFIX/include/ittiam-mpeg2/impeg2d.h" \
+    "$PREFIX/include/pl_mpeg/pl_mpeg.h" \
+    "$PREFIX/lib/libopenh264.a" \
+    "$PREFIX/lib/libavcdec.a" \
+    "$PREFIX/lib/libde265.a" \
+    "$PREFIX/lib/libkvazaar.a" \
+    "$PREFIX/lib/libfdk-aac.a" \
+    "$PREFIX/lib/libmpeg2dec.a"; do
+    [[ -s "$artifact" ]] || CODEC_CACHE_COMPLETE=0
+done
+if [[ "${DVBSTREAMER5_CODEC_FORCE_REBUILD:-0}" != 1 &&
+      "$CODEC_CACHE_COMPLETE" == 1 && -s "$CODEC_STAMP" &&
+      "$(cat "$CODEC_STAMP")" == "$CODEC_FINGERPRINT" ]]; then
+    echo "Native codec sources and toolchain unchanged; reusing $PREFIX"
+    exit 0
+fi
+
+echo "Codec sources/toolchain changed or cache incomplete: rebuilding native dependencies"
 rm -rf "$BUILD_ROOT" "$PREFIX"
 mkdir -p "$BUILD_ROOT" "$PREFIX/include" "$PREFIX/lib"
 
