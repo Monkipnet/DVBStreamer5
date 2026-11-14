@@ -1,5 +1,6 @@
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeNvencQualityPolicy.h"
+#include "media/WisiChameleonProfilePolicy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1157,9 +1158,13 @@ private:
         const std::uint64_t frameBudget = std::max<std::uint64_t>(
             1ULL, static_cast<std::uint64_t>(encodeConfig.rcParams.averageBitRate) /
                 roundedFps);
+        const std::uint32_t vbvFrames = config_.wisiChameleonProfile
+            ? WisiChameleonProfilePolicy::nvencVbvFrames(
+                  qualityChoice.vbvFrames, fps)
+            : qualityChoice.vbvFrames;
         const std::uint64_t vbv = std::min<std::uint64_t>(
             0xffffffffULL, frameBudget *
-                static_cast<std::uint64_t>(qualityChoice.vbvFrames));
+                static_cast<std::uint64_t>(vbvFrames));
         encodeConfig.rcParams.vbvBufferSize = static_cast<std::uint32_t>(vbv);
         encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
         if (config_.outputCodec == mpegts::ElementaryCodec::H264) {
@@ -1235,7 +1240,8 @@ private:
                   << " tuning="
                   << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr bframes=0 lookahead=0 reorder_delay=0"
-                  << " vbv_frames=" << qualityChoice.vbvFrames
+                  << " vbv_frames=" << vbvFrames
+                  << " wisi_profile=" << (config_.wisiChameleonProfile ? 1 : 0)
                   << " spatial_aq=1"
                   << " nvenc_quality=" << (qualityChoice.enabled ? 1 : 0)
                   << " requested_preset=" << config_.preset
