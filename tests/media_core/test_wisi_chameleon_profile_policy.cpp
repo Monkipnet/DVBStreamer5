@@ -1,4 +1,5 @@
 #include "media/WisiChameleonProfilePolicy.h"
+#include "media/IpCbrSourceClockPolicy.h"
 #include <cstdlib>
 #include <iostream>
 using dvbstreamer5::media::codec::WisiChameleonProfilePolicy;
@@ -24,5 +25,22 @@ int main() {
     test(P::nvencVbvFrames(2,25.0)==2,"keep 2-frame NVENC default");
     test(P::nvencVbvFrames(30,25.0)==10,"cap NVENC A/B at 400ms");
     test(P::nvencVbvFrames(30,50.0)==20,"50fps cap");
+    // A saved legacy 3-s or 5-s WISI CBR buffer must keep its exact
+    // effective bitrate and startup duration when Source-PCR is selected.
+    using dvbstreamer5::media::network::sourcePcrCbrTargetKeepingStartupBuffer;
+    using dvbstreamer5::media::mpegts::CbrTsPacer;
+    for (const auto input : {8000000ULL, 8000705ULL, 8000709ULL}) {
+        const auto output = sourcePcrCbrTargetKeepingStartupBuffer(input);
+        test(CbrTsPacer::decodeTargetBitrate(output) == 8000000ULL,
+             "WISI Source-PCR physical CBR bitrate unchanged");
+        test(CbrTsPacer::startupBufferMilliseconds(output) ==
+                 CbrTsPacer::startupBufferMilliseconds(input),
+             "WISI Source-PCR startup buffer unchanged");
+        test(CbrTsPacer::sourcePllEncodedTargetBitrate(output),
+             "WISI Source-PCR mode must be selected");
+    }
+    const auto zeroBuffer = sourcePcrCbrTargetKeepingStartupBuffer(8000699ULL);
+    test(CbrTsPacer::startupBufferMilliseconds(zeroBuffer) == 0,
+         "explicit zero-buffer preference retained");
     std::cout << "V516 WISI common profile policy: OK\n";
 }
