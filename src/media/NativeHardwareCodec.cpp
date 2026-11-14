@@ -2,6 +2,7 @@
 #include "media/NativeI420Nv12.h"
 #include "media/NativeNvencQualityPolicy.h"
 #include "media/VaapiHrdPolicy.h"
+#include "media/WisiChameleonProfilePolicy.h"
 #include "media/NativeScaleMode.h"
 #include "media/NativeVideoProcessing.h"
 
@@ -1205,8 +1206,10 @@ public:
         params_.mfx.RateControlMethod = MFX_RATECONTROL_CBR;
         // Two seconds of video at the effective video bitrate. This gives
         // Intel QSV CBR enough reservoir for transient complex scenes.
-        const auto vbvKib = std::clamp<std::uint64_t>(
-            (bitrate * 2ULL + 7999ULL) / 8000ULL, 1ULL, 65535ULL);
+        const auto vbvKib = options_.wisiChameleonProfile
+            ? static_cast<std::uint64_t>(WisiChameleonProfilePolicy::qsvBufferKB(bitrate))
+            : std::clamp<std::uint64_t>(
+                (bitrate * 2ULL + 7999ULL) / 8000ULL, 1ULL, 65535ULL);
         params_.mfx.BufferSizeInKB = static_cast<mfxU16>(vbvKib);
         params_.mfx.InitialDelayInKB = static_cast<mfxU16>(vbvKib / 2ULL);
         params_.mfx.GopPicSize = static_cast<mfxU16>(std::clamp<std::uint32_t>(
@@ -1276,6 +1279,10 @@ public:
                   << " gop_frames=" << params_.mfx.GopPicSize
                   << " refs=" << params_.mfx.NumRefFrame
                   << " bframes=0"
+                  << " rc=cbr"
+                  << " vbv_kb=" << params_.mfx.BufferSizeInKB
+                  << " vbv_window_ms=" << (options_.wisiChameleonProfile ? 400 : 2000)
+                  << " wisi_profile=" << (options_.wisiChameleonProfile ? 1 : 0)
                   << std::endl;
         return true;
     }
@@ -1512,9 +1519,13 @@ public:
         const std::uint64_t frameBudgetBits = std::max<std::uint64_t>(
             1ULL, static_cast<std::uint64_t>(cfg.rcParams.averageBitRate) /
                 roundedFps);
+        const std::uint32_t vbvFrames = options_.wisiChameleonProfile
+            ? WisiChameleonProfilePolicy::nvencVbvFrames(
+                  qualityChoice.vbvFrames, fps_)
+            : qualityChoice.vbvFrames;
         const std::uint64_t vbvBits = std::min<std::uint64_t>(
             0xffffffffULL, frameBudgetBits *
-                static_cast<std::uint64_t>(qualityChoice.vbvFrames));
+                static_cast<std::uint64_t>(vbvFrames));
         cfg.rcParams.vbvBufferSize = static_cast<std::uint32_t>(vbvBits);
         cfg.rcParams.vbvInitialDelay = cfg.rcParams.vbvBufferSize;
 
@@ -1595,7 +1606,8 @@ public:
                   << " tuning=" << (modernLowLatency ? "low-latency" : "legacy-low-latency")
                   << " rc=cbr"
                   << " bframes=0 lookahead=0 reorder_delay=0"
-                  << " vbv_frames=" << qualityChoice.vbvFrames
+                  << " vbv_frames=" << vbvFrames
+                  << " wisi_profile=" << (options_.wisiChameleonProfile ? 1 : 0)
                   << " spatial_aq=1"
                   << " nvenc_quality=" << (qualityChoice.enabled ? 1 : 0)
                   << " requested_preset=" << options_.preset
