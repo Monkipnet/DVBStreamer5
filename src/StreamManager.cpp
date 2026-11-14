@@ -818,21 +818,26 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
               << " policy=nvenc->qsv-vaapi->cpu"
               << std::endl;
 
-    // V516: explicitly selected channel only; Copy, VBR and browser preview
-    // retain their previous encoder and transport behavior.
-    bool wisiChameleonProfileActive =
-        dvbstreamer5::media::codec::WisiChameleonProfilePolicy::eligible(
-            streamConfig.wisiChameleonProfile,
+    // V518: WISI encoder defaults are automatic for transcoded UDP outputs.
+    // Copy, non-UDP and browser-preview paths retain their old semantics.
+    const auto outputVideoCodec = toLower(streamConfig.transcodeVideoCodec);
+    const auto hasPhysicalCbr = std::any_of(
+        nativeOutputs.begin(), nativeOutputs.end(),
+        [](const auto& out) { return out.outputType == "udp-cbr"; });
+    const auto hasPhysicalVbr = std::any_of(
+        nativeOutputs.begin(), nativeOutputs.end(),
+        [](const auto& out) { return out.outputType == "udp-vbr"; });
+    bool wisiCbrProfileActive =
+        dvbstreamer5::media::codec::WisiChameleonProfilePolicy::cbrEligible(
             streamConfig.transcodeEnabled, streamConfig.cbr,
-            std::any_of(nativeOutputs.begin(), nativeOutputs.end(),
-                [](const auto& out) { return out.outputType == "udp-cbr"; }),
-            toLower(streamConfig.transcodeVideoCodec));
-    if (streamConfig.wisiChameleonProfile && !wisiChameleonProfileActive) {
-        std::cerr << "NATIVE WISI ENCODER PROFILE inactive stream_id="
-                  << streamConfig.id
-                  << " reason=requires-transcode-cbr-udp-and-encoded-video"
-                  << std::endl;
-    }
+            hasPhysicalCbr, outputVideoCodec);
+    const bool wisiVbrProfileActive =
+        dvbstreamer5::media::codec::WisiChameleonProfilePolicy::vbrEligible(
+            streamConfig.transcodeEnabled, hasPhysicalVbr,
+            outputVideoCodec);
+    std::uint64_t wisiVbrPeakBitsPerSecond = 0ULL;
+    bool wisiChameleonProfileActive =
+        wisiCbrProfileActive || wisiVbrProfileActive;
 
     if (streamConfig.transcodeEnabled) {
         state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
@@ -900,14 +905,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
             tc.videoBitrate = effectiveVideo;
         }
-        if (wisiChameleonProfileActive) {
+        if (wisiCbrProfileActive) {
             const auto transportBps =
                 dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(
                     streamConfig.targetBitrate);
             if (!dvbstreamer5::media::codec::WisiChameleonProfilePolicy::
                     hasTransportHeadroom(transportBps, tc.videoBitrate,
                                          tc.audioBitrate)) {
-                wisiChameleonProfileActive = false;
+                wisiCbrProfileActive = false;
                 std::cerr << "NATIVE WISI ENCODER PROFILE inactive stream_id="
                           << streamConfig.id
                           << " reason=insufficient-ts-audio-psi-headroom"
@@ -917,14 +922,25 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                           << std::endl;
             }
         }
+        wisiChameleonProfileActive =
+            wisiCbrProfileActive || wisiVbrProfileActive;
+        if (wisiVbrProfileActive) {
+            wisiVbrPeakBitsPerSecond =
+                dvbstreamer5::media::codec::WisiChameleonProfilePolicy::
+                    vbrPeakBitsPerSecond(tc.videoBitrate, tc.audioBitrate);
+        }
         tc.wisiChameleonProfile = wisiChameleonProfileActive;
         if (tc.wisiChameleonProfile) {
             std::cerr << "NATIVE WISI ENCODER PROFILE active stream_id="
                       << streamConfig.id
+                      << " mode=" << (wisiCbrProfileActive ? "cbr" : "vbr")
+                      << " policy=automatic"
                       << " codec=" << tc.videoCodec
                       << " encoder=" << tc.videoEncoder
                       << " video_kbps=" << tc.videoBitrate / 1000ULL
-                      << " cpb_window_ms=400 pcr_interval_ms=20"
+                      << " cpb_window_ms=400"
+                      << " pcr_interval_ms=" << (wisiCbrProfileActive ? 20 : 40)
+                      << " vbr_peak_kbps=" << wisiVbrPeakBitsPerSecond / 1000ULL
                       << " experimental=1" << std::endl;
         }
         // V10.8.240: encoder tuning follows the user-selected TRANSCODING
@@ -1438,13 +1454,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     // marker while selecting Source-PCR for the WISI channel. The old
     // +809 shortcut would silently skip output PCR smoothing for legacy
     // buffered CBR markers (for example, 8000705 => 3000 ms).
-    relay.wisiSourcePcrStrict = wisiChameleonProfileActive || ipSourceClockAb;
+    relay.wisiSourcePcrStrict = wisiCbrProfileActive || ipSourceClockAb;
     // Existing opt-in for *transcoded* WISI profiles remains unchanged.
     const bool transcodePcrAb = streamConfig.transcodeEnabled &&
         streamConfig.cbr && std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB") &&
         std::string(std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB")) == "1";
-    relay.wisiChameleonProfile = wisiChameleonProfileActive;
-    relay.wisiPreserveSourcePcr = wisiChameleonProfileActive ||
+    relay.wisiChameleonProfile = wisiCbrProfileActive;
+    relay.vbrPeakBitsPerSecond = wisiVbrPeakBitsPerSecond;
+    relay.wisiPreserveSourcePcr = wisiCbrProfileActive ||
         transcodePcrAb || ipSourceClockAb;
     relay.sourcePcrPacketPacing = dvbstreamer5::media::network::enableDvbSourcePcrPacketPacing(
         streamConfig.dvbSourcePcrPacing, DvbSatellite::isDvbUri(normalizedInput),
