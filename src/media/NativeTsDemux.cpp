@@ -142,6 +142,15 @@ void NativeTsDemux::reset() {
     pmtPid_ = 0xffff;
     pesTrimEvents_ = 0;
     pesTruncatedEvents_ = 0;
+    rawClockVideoPid_ = 0xffff;
+    rawClockAudioPid_ = 0xffff;
+    rawVideoPesPts90k_ = 0;
+    rawAudioPesPts90k_ = 0;
+    assembledVideoAuPts90k_ = 0;
+    rawVideoPesAt_ = {};
+    rawAudioPesAt_ = {};
+    assembledVideoAuAt_ = {};
+    rawAvClockReportAt_ = {};
 }
 
 std::vector<DemuxStreamInfo> NativeTsDemux::streams() const {
@@ -467,6 +476,29 @@ void NativeTsDemux::flushPes(std::uint16_t pid) {
     DemuxSample sample;
     if (!parsePes(current, sample)) return;
 
+    // These are the PES header timestamps BEFORE H.264 access-unit
+    // reassembly. The transcoder's lastInputVideoPts90k_ is downstream of
+    // that reassembly and cannot distinguish source clock drift from AU drift.
+    if (sample.hasPts) {
+        const auto now = std::chrono::steady_clock::now();
+        if (sample.stream.kind == ElementaryKind::Video &&
+            sample.stream.codec == ElementaryCodec::H264) {
+            if (rawClockVideoPid_ == 0xffff)
+                rawClockVideoPid_ = sample.stream.pid;
+            if (sample.stream.pid == rawClockVideoPid_) {
+                rawVideoPesPts90k_ = sample.pts90k;
+                rawVideoPesAt_ = now;
+            }
+        } else if (sample.stream.kind == ElementaryKind::Audio) {
+            if (rawClockAudioPid_ == 0xffff)
+                rawClockAudioPid_ = sample.stream.pid;
+            if (sample.stream.pid == rawClockAudioPid_) {
+                rawAudioPesPts90k_ = sample.pts90k;
+                rawAudioPesAt_ = now;
+            }
+        }
+    }
+
     // V10.8.45: an MPEG-TS PES boundary is not an AVC access-unit or NAL
     // boundary. The live LVM AVC Main service can split SPS/PPS and slices
     // across adjacent PES packets. Passing each PES directly to OpenH264 made
@@ -477,9 +509,11 @@ void NativeTsDemux::flushPes(std::uint16_t pid) {
     if (sample.stream.kind == ElementaryKind::Video &&
         sample.stream.codec == ElementaryCodec::H264) {
         queueVideoSample(std::move(sample));
+        reportRawAvClock();
         return;
     }
     if (sampleCallback_) sampleCallback_(std::move(sample));
+    reportRawAvClock();
 }
 
 void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
@@ -772,6 +806,10 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         ready.randomAccess = state.randomAccess ||
             containsRandomAccessNal(state.stream.codec, ready.data.data(), ready.data.size());
 
+        if (ready.hasPts && ready.stream.pid == rawClockVideoPid_) {
+            assembledVideoAuPts90k_ = ready.pts90k;
+            assembledVideoAuAt_ = std::chrono::steady_clock::now();
+        }
         if (sampleCallback_ && !ready.data.empty()) sampleCallback_(std::move(ready));
 
         state.bytes.erase(state.bytes.begin(),
@@ -826,7 +864,55 @@ void NativeTsDemux::flushVideoAu(std::uint16_t pid) {
     sample.randomAccess = state.randomAccess ||
         containsRandomAccessNal(state.stream.codec, sample.data.data(), sample.data.size());
     state = {};
+    if (sample.hasPts && sample.stream.pid == rawClockVideoPid_) {
+        assembledVideoAuPts90k_ = sample.pts90k;
+        assembledVideoAuAt_ = std::chrono::steady_clock::now();
+    }
     if (sampleCallback_ && !sample.data.empty()) sampleCallback_(std::move(sample));
+}
+
+void NativeTsDemux::reportRawAvClock() {
+    if (rawClockVideoPid_ == 0xffff || rawClockAudioPid_ == 0xffff ||
+        rawVideoPesAt_.time_since_epoch().count() == 0 ||
+        rawAudioPesAt_.time_since_epoch().count() == 0 ||
+        assembledVideoAuAt_.time_since_epoch().count() == 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (rawAvClockReportAt_.time_since_epoch().count() != 0 &&
+        now - rawAvClockReportAt_ < std::chrono::seconds(5)) {
+        return;
+    }
+    rawAvClockReportAt_ = now;
+    // 33-bit MPEG PTS differences must remain signed across wraparound.
+    const auto ptsDeltaMs = [](std::uint64_t a, std::uint64_t b) -> std::int64_t {
+        constexpr std::uint64_t kMask = (1ULL << 33U) - 1ULL;
+        constexpr std::uint64_t kHalf = 1ULL << 32U;
+        const std::uint64_t forward = (a - b) & kMask;
+        const auto signedDelta = forward >= kHalf
+            ? static_cast<std::int64_t>(forward) - static_cast<std::int64_t>(kMask + 1)
+            : static_cast<std::int64_t>(forward);
+        return signedDelta / 90LL;
+    };
+    const auto ageMs = [now](std::chrono::steady_clock::time_point at) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(now - at).count();
+    };
+    std::cerr << "NATIVE DEMUX RAW AV CLOCK"
+              << " video_pid=" << rawClockVideoPid_
+              << " audio_pid=" << rawClockAudioPid_
+              << " raw_video_pes_pts=" << rawVideoPesPts90k_
+              << " raw_audio_pes_pts=" << rawAudioPesPts90k_
+              << " assembled_video_au_pts=" << assembledVideoAuPts90k_
+              << " raw_audio_vs_raw_video_ms=" <<
+                  ptsDeltaMs(rawAudioPesPts90k_, rawVideoPesPts90k_)
+              << " raw_video_vs_assembled_ms=" <<
+                  ptsDeltaMs(rawVideoPesPts90k_, assembledVideoAuPts90k_)
+              << " raw_audio_vs_assembled_ms=" <<
+                  ptsDeltaMs(rawAudioPesPts90k_, assembledVideoAuPts90k_)
+              << " raw_video_age_ms=" << ageMs(rawVideoPesAt_)
+              << " raw_audio_age_ms=" << ageMs(rawAudioPesAt_)
+              << " assembled_video_age_ms=" << ageMs(assembledVideoAuAt_)
+              << " diagnostic_only=1" << std::endl;
 }
 
 } // namespace dvbstreamer5::media::mpegts
