@@ -1436,9 +1436,27 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     }
                 }
             } else if (target == "/api/restart-program") {
-                handleRestartProgram();
                 res.set(http::field::content_type, "application/json");
-                res.body() = "{\"result\": \"restarting\"}";
+                // Program restart is a privileged system operation. API keys
+                // for stream sessions must not authorize it, even if their
+                // scope expands in future revisions.
+                if (apiKeyAttempt ||
+                    !(isPanelSessionAuthorized(req) || isAuthorized(req))) {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"result":"error","error":"Panel login required to restart DVBStreamer5"})";
+                } else {
+                    std::string restartError;
+                    if (!handleRestartProgram(&restartError)) {
+                        res.result(http::status::service_unavailable);
+                        Json::Value failure(Json::objectValue);
+                        failure["result"] = "error";
+                        failure["error"] = restartError;
+                        Json::StreamWriterBuilder writer;
+                        res.body() = Json::writeString(writer, failure);
+                    } else {
+                        res.body() = R"({"result":"restarting","scheduled":true,"delay_s":2})";
+                    }
+                }
             } else if (target == "/api/delete-stream") {
               handleDeleteStream(req.body());
               res.set(http::field::content_type, "application/json");
