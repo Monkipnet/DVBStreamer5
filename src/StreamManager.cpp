@@ -3254,12 +3254,29 @@ void StreamManager::monitorOnDemandStreams() {
             }
 
             bool hasHttpClient = false;
+            bool hasRecentHlsMedia = false;
             {
                 std::lock_guard<std::mutex> lock(managerMutex);
+                // A connected authenticated preview is also a real viewer.
+                // Only live TCP sockets count; a closed preview never keeps
+                // an OnDemand stream alive.
                 for (const auto& [fd, session] : httpClients) {
                     (void)fd;
-                    if (session.streamId == id && session.previewSession.empty()) {
+                    if (session.streamId == id) {
                         hasHttpClient = true;
+                        break;
+                    }
+                }
+                // Unlike HTTP TS, HLS has no long-lived socket. A successful
+                // segment request is recorded in adHocSessions; retain the
+                // stream for a bounded playback/buffer gap since that media,
+                // even if no playlist request has arrived in the last 30 s.
+                for (const auto& [key, session] : adHocSessions) {
+                    (void)key;
+                    if (session.streamId == id && session.protocol == "hls" &&
+                        dvbstreamer5::media::ondemand::keepHlsOnDemandFromRecentMedia(
+                            session.lastActivity, now)) {
+                        hasRecentHlsMedia = true;
                         break;
                     }
                 }
@@ -3279,7 +3296,8 @@ void StreamManager::monitorOnDemandStreams() {
                 dvbstreamer5::media::ondemand::keepTranscodedHlsOnDemandStarting(
                     hlsStartup->second, now,
                     onDemandHlsFirstMediaServed.count(id) != 0);
-            if (hasHttpClient || recentActivity || pendingFirstHlsMedia) {
+            if (hasHttpClient || hasRecentHlsMedia ||
+                recentActivity || pendingFirstHlsMedia) {
                 ++it;
                 continue;
             }
