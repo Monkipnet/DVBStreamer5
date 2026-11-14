@@ -20,6 +20,17 @@ int main() {
         steady_clock::time_point{},start,false));
     assert(!keepTranscodedHlsOnDemandStarting(start,start-seconds(1),false));
 
-    std::cout << "OnDemand HLS cold-start policy OK\n";
+    // A real HLS .ts/.m4s delivery, not a playlist probe, renews a
+    // bounded viewer grace. At expiry an idle stream is released.
+    const auto media = start + seconds(15);
+    assert(keepHlsOnDemandFromRecentMedia(media, media));
+    assert(keepHlsOnDemandFromRecentMedia(media, media + seconds(30)));
+    assert(keepHlsOnDemandFromRecentMedia(media, media + seconds(74)));
+    assert(!keepHlsOnDemandFromRecentMedia(media, media + seconds(75)));
+    assert(!keepHlsOnDemandFromRecentMedia(media, media + seconds(120)));
+    assert(!keepHlsOnDemandFromRecentMedia(media, media - seconds(1)));
+    assert(!keepHlsOnDemandFromRecentMedia(steady_clock::time_point{}, media));
+
+    std::cout << "OnDemand HLS cold-start and viewer-grace policy OK\n";
     return 0;
 }
