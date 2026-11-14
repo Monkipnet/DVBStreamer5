@@ -1,4 +1,5 @@
 #include "media/NativeIntelZeroCopy.h"
+#include "media/WisiChameleonProfilePolicy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -247,6 +248,14 @@ private:
                 std::llround((fps > 0.0 ? fps : 25.0) * 2.0)));
         params.mfx.GopPicSize = static_cast<mfxU16>(
             std::min<std::uint64_t>(gopFrames_, 65535ULL));
+        if (config_.wisiChameleonProfile) {
+            // Both initial and resized QSV encoders share the same CPB.
+            // Other channels retain driver-defined zero/default VBV.
+            params.mfx.BufferSizeInKB =
+                WisiChameleonProfilePolicy::qsvBufferKB(config_.bitrate);
+            params.mfx.InitialDelayInKB =
+                static_cast<mfxU16>(params.mfx.BufferSizeInKB / 2U);
+        }
 
         // Current live mux is intentionally zero-reorder (DTS=PTS).
         params.mfx.GopRefDist = 1;
@@ -416,6 +425,8 @@ private:
                   << " gop_frames=" << encodeParams_.mfx.GopPicSize
                   << " refs=" << encodeParams_.mfx.NumRefFrame
                   << " bframes=0"
+                  << " vbv_kb=" << encodeParams_.mfx.BufferSizeInKB
+                  << " wisi_profile=" << (config_.wisiChameleonProfile ? 1 : 0)
                   << " decode_copies=0 gpu_surface_copies=0"
                   << std::endl;
         return true;
