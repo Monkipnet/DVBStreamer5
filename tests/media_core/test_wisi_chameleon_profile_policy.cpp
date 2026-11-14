@@ -8,13 +8,21 @@ static void test(bool ok, const char* msg) {
 }
 int main() {
     using P = WisiChameleonProfilePolicy;
-    test(!P::eligible(false,true,true,true,"h264"),"default off");
-    test(!P::eligible(true,false,true,true,"h264"),"copy input");
-    test(!P::eligible(true,true,false,true,"h264"),"VBR not eligible");
-    test(!P::eligible(true,true,true,false,"h264"),"HTTP-only not eligible");
-    test(!P::eligible(true,true,true,true,"copy"),"video copy bypass");
-    test(P::eligible(true,true,true,true,"h264"),"H264 CBR");
-    test(P::eligible(true,true,true,true,"hevc"),"HEVC CBR");
+    test(!P::cbrEligible(false,true,true,"h264"),"non-transcoded CBR bypass");
+    test(!P::cbrEligible(true,false,true,"h264"),"non-CBR bypass");
+    test(!P::cbrEligible(true,true,false,"h264"),"non-UDP CBR bypass");
+    test(!P::cbrEligible(true,true,true,"copy"),"video copy bypass");
+    test(P::cbrEligible(true,true,true,"h264"),"automatic H264 CBR");
+    test(P::cbrEligible(true,true,true,"hevc"),"automatic HEVC CBR");
+    test(!P::vbrEligible(false,true,"h264"),"VBR source copy bypass");
+    test(!P::vbrEligible(true,false,"h264"),"non-UDP VBR bypass");
+    test(!P::vbrEligible(true,true,"copy"),"video copy in VBR bypass");
+    test(P::vbrEligible(true,true,"h264"),"automatic H264 VBR");
+    test(P::vbrEligible(true,true,"hevc"),"automatic HEVC VBR");
+    test(P::vbrPeakBitsPerSecond(6000000ULL,192000ULL) == 13384000ULL,
+         "automatic physical UDP-VBR peak ceiling");
+    test(P::vbrPeakBitsPerSecond(UINT64_MAX,192000ULL) == 0ULL,
+         "invalid bitrate disables VBR limiter");
     test(!P::hasTransportHeadroom(4000000,3900000,192000),"oversubscribed");
     test(P::hasTransportHeadroom(8000000,6000000,192000),"MIR24 budget");
     test(P::reserveBitsPerSecond(8000000,192000)==592000,"audio+5% reserve");
