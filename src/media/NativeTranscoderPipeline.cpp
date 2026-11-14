@@ -1769,6 +1769,33 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                     }
                     chooseVideo = haveVideo;
                     if (!ready) {
+                        // V522: distinguish mux peer starvation from encoder/input
+                        // loss. This is telemetry only: no timing, clock or queue
+                        // policy changes until the actual HLS/audio stall is measured.
+                        const auto reportNow = std::chrono::steady_clock::now();
+                        if (otherClock != 0 &&
+                            waited >= std::chrono::seconds(2) &&
+                            reportNow - lastMuxPeerStallReportAt_ >=
+                                std::chrono::seconds(5)) {
+                            lastMuxPeerStallReportAt_ = reportNow;
+                            const auto aheadMs = mpegts::ptsDelta90k(
+                                clock, otherClock) / 90LL;
+                            std::cerr << "NATIVE AV MUX PEER STALL"
+                                      << " stream_id=" << config_.streamId
+                                      << " waiting=" << (haveVideo ? "video" : "audio")
+                                      << " missing=" << (haveVideo ? "audio" : "video")
+                                      << " wait_ms=" <<
+                                          std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              waited).count()
+                                      << " queue_video=" << muxVideoQueue_.size()
+                                      << " queue_audio=" << muxAudioQueue_.size()
+                                      << " lead_ms=" << aheadMs
+                                      << " video_clock=" <<
+                                          lastMuxVideoClock90k_.load(std::memory_order_relaxed)
+                                      << " audio_clock=" <<
+                                          lastMuxAudioClock90k_.load(std::memory_order_relaxed)
+                                      << " diagnostic_only=1" << std::endl;
+                        }
                         // V10.8.230: never spin on an expired timed wait.
                         // When the single-stream clock is >500 ms ahead,
                         // waiting longer cannot make the sample eligible:
