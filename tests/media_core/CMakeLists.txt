@@ -188,3 +188,9 @@ add_test(NAME native_video_pes_pacer COMMAND native_video_pes_pacer_test)
 add_executable(auto_start_recovery_policy_test ../test_auto_start_recovery_policy.cpp)
 target_include_directories(auto_start_recovery_policy_test PRIVATE ../../src)
 add_test(NAME auto_start_recovery_policy COMMAND auto_start_recovery_policy_test)
+
+# V526: source PES PTS must periodically re-anchor reassembled H.264 access
+# units without breaking split-PES picture boundaries or MPEG PTS wrap.
+add_executable(h264_pes_pts_recovery_test test_h264_pes_pts_recovery.cpp)
+target_include_directories(h264_pes_pts_recovery_test PRIVATE ../../src)
+add_test(NAME h264_pes_pts_recovery COMMAND h264_pes_pts_recovery_test)
