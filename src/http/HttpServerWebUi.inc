@@ -8258,7 +8258,7 @@ function openStreamModal() {
   openStreamForm({
     id: 'stream-' + Date.now(),
     name:'', input_uri:'', backup_input_uri:'', backup_input_type:'url', backup_file_loop:false, output_type:'udp-cbr', output_mode:'listener', output_host:'127.0.0.1', output_port:1234,
-    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_deinterlace_mode:'legacy', transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
+    interface_address:'', input_interface_address:'', input_mode:'auto', srt_input_latency_ms:120, srt_input_passphrase:'', srt_input_streamid:'', srt_input_pbkeylen:16, srt_output_latency_ms:120, srt_output_passphrase:'', srt_output_streamid:'', srt_output_pbkeylen:16, hls_access_key_mode:'none', hls_access_key_name:'Authorization', hls_access_key_value:'', hls_user_agent:'Mozilla/5.0 DVBStreamer5', conditional_access_client:'', test_pattern:false, activation_mode:'online', auto_start:false, remap_enabled:false, cbr:true, target_bitrate:2000000, transcode_enabled:false, wisi_chameleon_profile:false, transcode_resolution:'1920x1080', transcode_video_codec:'h264', transcode_video_encoder:'auto', transcode_video_decoder:'auto', transcode_video_bitrate:6000000, transcode_fps:25, transcode_deinterlace:true, transcode_deinterlace_mode:'legacy', transcode_multibitrate_enabled:false, hls_segment_duration:0, hls_segment_count:0, hls_archive_enabled:false, hls_archive_hours:24, hls_archive_path:'/var/lib/dvbstreamer5/archive', hls_container:'mpegts', hls_encryption:'none', hls_encryption_key_uri:'key.bin', hls_encryption_key_hex:'', transcode_audio_codec:'aac', transcode_audio_bitrate:192000,
     audio_pid:0, input_audio_pid:0, video_pid:0, input_service_id:0, service_id:1, service_name:'', service_provider:'', epg_enabled:false, epg_days:3, additional_outputs:[]
   });
 }
@@ -9106,6 +9106,11 @@ function openStreamForm(stream) {
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Разрешение','Resolution')}>${uiBiText('Разрешение','Resolution')}</div><small class="field-help" ${uiBiAttrs('Размер выходного видео после масштабирования.','Output video size after scaling.')}>${uiBiText('Размер выходного видео после масштабирования.','Output video size after scaling.')}</small><select id="streamTranscodeResolution" onchange="applyRecommendedTranscodeBitrate()"><option value="3840x2160" ${stream.transcode_resolution==='3840x2160'?'selected':''}>3840×2160 / 4K UHD</option><option value="3200x1800" ${stream.transcode_resolution==='3200x1800'?'selected':''}>3200×1800 / 3K</option><option value="2560x1440" ${stream.transcode_resolution==='2560x1440'?'selected':''}>2560×1440 / 2K QHD</option><option value="1920x1080" ${(!stream.transcode_resolution||stream.transcode_resolution==='1920x1080')?'selected':''}>1920×1080 / Full HD</option><option value="1280x720" ${stream.transcode_resolution==='1280x720'?'selected':''}>1280×720 / HD</option><option value="1024x576" ${stream.transcode_resolution==='1024x576'?'selected':''}>1024×576 / SD 16:9</option><option value="720x576_16_9" ${stream.transcode_resolution==='720x576_16_9'?'selected':''}>720×576 / anamorphic 16:9</option><option value="720x576" ${stream.transcode_resolution==='720x576'?'selected':''}>720×576 / PAL SD</option></select></div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('Видео bitrate, kbps','Video bitrate, kbps')}>${uiBiText('Видео bitrate, kbps','Video bitrate, kbps')}</div><small class="field-help" ${uiBiAttrs('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}>${uiBiText('Целевой CBR видеокодировщика.','Target CBR for the video encoder.')}</small><input id="streamTranscodeBitrate" type="number" min="500" max="100000" step="100" value="${Math.round((stream.transcode_video_bitrate||6000000)/1000)}" /></div>
           </div>
+          <div class="edit-field" id="streamWisiChameleonProfileRow">
+            <div class="edit-field-title" ${uiBiAttrs('Профиль WISI Chameleon','WISI Chameleon profile')}>${uiBiText('Профиль WISI Chameleon','WISI Chameleon profile')}</div>
+            <small class="field-help" ${uiBiAttrs('Экспериментальный режим только для транскодирования в UDP CBR: запас битрейта, буфер кодировщика и PCR каждые 20 мс. Выключен по умолчанию.','Experimental transcoded UDP CBR mode: bitrate headroom, encoder buffer and 20-ms PCR. Disabled by default.')}>${uiBiText('Экспериментальный режим только для транскодирования в UDP CBR: запас битрейта, буфер кодировщика и PCR каждые 20 мс. Выключен по умолчанию.','Experimental transcoded UDP CBR mode: bitrate headroom, encoder buffer and 20-ms PCR. Disabled by default.')}</small>
+            <label class="checkbox-inline"><input id="streamWisiChameleonProfile" type="checkbox" ${stream.wisi_chameleon_profile===true?'checked':''} /><span ${uiBiAttrs('Включить профиль WISI (A/B)','Enable WISI profile (A/B)')}>${uiBiText('Включить профиль WISI (A/B)','Enable WISI profile (A/B)')}</span></label>
+          </div>
           <div class="edit-field" id="streamIntelPresetRow">
             <div class="edit-field-title" ${subtitleUiTriAttrs('Intel preset','Intel preset','Intel preset')}>Intel preset</div>
             <small class="field-help" ${subtitleUiTriAttrs('Авто выбирает Balanced или Quality; вручную можно переопределить.','Auto selects Balanced or Quality; manual override available.','Auto bira Balanced ili Quality; moguće ručno odabrati.') }>${subtitleUiTriText('Авто выбирает Balanced или Quality; вручную можно переопределить.','Auto selects Balanced or Quality; manual override available.','Auto bira Balanced ili Quality; moguće ručno odabrati.')}</small>
@@ -9196,6 +9201,7 @@ const transcodeFieldClipboardSchema = 'DVBStreamer5/transcode-settings';
 const transcodeClipboardFields = Object.freeze([
   ['streamTranscodeVideoCodec','transcode_video_codec','select'],
   ['streamTranscodeVideoEncoder','transcode_video_encoder','select'],
+  ['streamWisiChameleonProfile','wisi_chameleon_profile','checkbox'],
   ['streamIntelPresetMode','intel_preset_mode','select'],
   ['streamTranscodeProfileMode','transcode_profile_mode','select'],
   ['streamTranscodeVideoDecoder','transcode_video_decoder','select'],
@@ -9352,8 +9358,10 @@ function updateTranscodeVideoControls() {
   const resolution = document.getElementById('streamTranscodeResolution');
   const bitrate = document.getElementById('streamTranscodeBitrate');
   const multibitrate = document.getElementById('streamTranscodeMultibitrate');
+  const wisiProfile = document.getElementById('streamWisiChameleonProfile');
   const copy = codec && codec.value === 'copy';
   const hevc = codec && codec.value === 'hevc';
+  if (wisiProfile) wisiProfile.disabled = Boolean(copy);
   // Keep stored values intact while Copy bypasses the video encoder.
   for (const id of ['streamTranscodeFps','streamTranscodeDeinterlace']) {
     const control = document.getElementById(id);
@@ -9676,6 +9684,7 @@ function saveStream(id) {
     cbr: selectedCbr,
     target_bitrate: encodedCbrBitrate,
     transcode_enabled: state.transcoder?.available === true && document.getElementById('streamTranscodeEnabled').checked,
+    wisi_chameleon_profile: document.getElementById('streamWisiChameleonProfile')?.checked === true,
     transcode_resolution: document.getElementById('streamTranscodeResolution').value,
     transcode_video_codec: document.getElementById('streamTranscodeVideoCodec').value,
     transcode_video_encoder: document.getElementById('streamTranscodeVideoEncoder').value,
