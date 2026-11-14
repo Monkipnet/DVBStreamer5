@@ -1,6 +1,7 @@
 #include "media/NativeHardwareCodec.h"
 #include "media/NativeI420Nv12.h"
 #include "media/NativeNvencQualityPolicy.h"
+#include "media/VaapiHrdPolicy.h"
 #include "media/NativeScaleMode.h"
 #include "media/NativeVideoProcessing.h"
 
@@ -443,6 +444,8 @@ public:
         fps_ = fps > 0.0 ? fps : 25.0;
         bitrate_ = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(bitrate, 0xffffffffULL));
+        // V514: per-test-tile rate-control HRD; default is unchanged.
+        strictHrd_ = cbr_ && bitrate_ != 0 && options_.vaapiStrictHrd;
         gop_ = std::max(1, static_cast<int>(
             options_.gopFrames > 0 ? options_.gopFrames :
             std::lround(fps_ * 2.0)));
@@ -514,6 +517,9 @@ public:
             << " gop_frames=" << gop_
             << " refs=" << refFrames_
             << " rc=" << (cbr_ ? "cbr" : "cqp")
+            << " strict_hrd=" << (strictHrd_ ? 1 : 0)
+            << " hrd_window_ms=" << (strictHrd_ ? 400 : 0)
+            << " hrd_buffer_bits=" << (strictHrd_ ? vaapiStrictHrdBufferBits(bitrate_) : 0)
             << " entropy=" << (cabac_ ? "cabac" : "cavlc")
             << " cabac_optout=" << (disableCabac ? 1 : 0)
             << std::endl;
@@ -604,6 +610,51 @@ public:
             params.push_back(id);
             return true;
         };
+
+        if (strictHrd_ && frameIndex_ == 0) {
+            // VA_RC_CBR alone leaves driver CPB/window unconstrained.
+            // Only the explicitly selected diagnostic tile requests this.
+            // 400-ms CPB < mux 500-ms DTS-PCR preroll. The driver may still
+            // overshoot; we measure, never truncate or drop media packets.
+            const auto createMisc = [&](VAEncMiscParameterType type,
+                                        const auto& config) -> bool {
+                const std::size_t bytes =
+                    sizeof(VAEncMiscParameterBuffer) + sizeof(config);
+                std::vector<std::uint32_t> storage((bytes + 3U) / 4U, 0U);
+                auto* misc = reinterpret_cast<VAEncMiscParameterBuffer*>(
+                    storage.data());
+                misc->type = type;
+                std::memcpy(misc->data, &config, sizeof(config));
+                return createParam(VAEncMiscParameterBufferType,
+                                   storage.data(), static_cast<unsigned>(bytes));
+            };
+            VAEncMiscParameterRateControl rate{};
+            rate.bits_per_second = bitrate_;
+            rate.target_percentage = 100;
+            rate.window_size = 400;
+            VAEncMiscParameterFrameRate frameRate{};
+            const unsigned fpsMilli = static_cast<unsigned>(
+                std::clamp(std::lround(fps_ * 1000.0), 1000L, 65535L));
+            frameRate.framerate = (1000U << 16U) | fpsMilli;
+            VAEncMiscParameterHRD hrd{};
+            hrd.buffer_size = vaapiStrictHrdBufferBits(bitrate_);
+            hrd.initial_buffer_fullness = hrd.buffer_size / 2U;
+            if (!createMisc(VAEncMiscParameterTypeRateControl, rate) ||
+                !createMisc(VAEncMiscParameterTypeFrameRate, frameRate) ||
+                !createMisc(VAEncMiscParameterTypeHRD, hrd)) {
+                std::cerr << "NATIVE VAAPI STRICT HRD init failed"
+                          << " requested=1 action=stop-test-tile"
+                          << " detail=" << error << std::endl;
+                destroyBuffers(params);
+                vaDestroyBuffer(display_, coded);
+                return false;
+            }
+            std::cerr << "NATIVE VAAPI STRICT HRD configured"
+                      << " bitrate_kbps=" << bitrate_ / 1000U
+                      << " window_ms=400 buffer_bits=" << hrd.buffer_size
+                      << " initial_bits=" << hrd.initial_buffer_fullness
+                      << " only_selected_tile=1" << std::endl;
+        }
 
         if (idr) {
             VAEncSequenceParameterBufferH264 seq{};
@@ -804,6 +855,17 @@ public:
             }
         }
 
+        if (strictHrd_ && vaapiHrdFrameExceedsBuffer(
+                frame.data.size(), vaapiStrictHrdBufferBits(bitrate_)) &&
+            (frameIndex_ == 0 || frameIndex_ >= lastHrdWarningFrame_ + 25ULL)) {
+            lastHrdWarningFrame_ = frameIndex_;
+            std::cerr << "NATIVE VAAPI STRICT HRD OVERSIZE"
+                      << " frame_index=" << frameIndex_
+                      << " idr=" << (idr ? 1 : 0)
+                      << " frame_bytes=" << frame.data.size()
+                      << " buffer_bits=" << vaapiStrictHrdBufferBits(bitrate_)
+                      << " policy=report_only" << std::endl;
+        }
         vaUnmapBuffer(display_, coded);
         vaDestroyBuffer(display_, coded);
 
@@ -1036,6 +1098,8 @@ private:
         startupLogged_ = false;
         scalePolicyLogged_ = false;
         cabac_ = false;
+        strictHrd_ = false;
+        lastHrdWarningFrame_ = 0;
         spsAnnexB_.clear();
         ppsAnnexB_.clear();
     }
@@ -1055,6 +1119,8 @@ private:
     bool configured_ = false;
     bool cbr_ = false;
     bool cabac_ = false;
+    bool strictHrd_ = false;
+    std::uint64_t lastHrdWarningFrame_ = 0;
     int width_ = 0;
     int height_ = 0;
     int alignedWidth_ = 0;
