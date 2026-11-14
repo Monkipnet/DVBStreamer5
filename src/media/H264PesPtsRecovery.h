@@ -23,7 +23,7 @@ public:
         std::int64_t drift90k = 0;
     };
 
-    void reset() noexcept { anchors_.clear(); }
+    void reset() noexcept { anchors_.clear(); sourceClockLocked_ = false; }
 
     void appendPes(std::size_t offset, std::uint64_t pts90k,
                    std::uint64_t dts90k, bool hasPts, bool hasDts) {
@@ -39,8 +39,13 @@ public:
         if (!anchors_.empty() && anchors_.front().offset == 0) {
             const Anchor& source = anchors_.front();
             const auto drift = signedPtsDelta90k(source.pts90k, result.pts90k);
+            // Lock to the broadcast PES clock only after confirmed phase
+            // drift. Afterwards take each aligned source PTS directly, instead
+            // of waiting for repeated 500-ms staircase corrections.
             if (!result.hasPts || drift > kResyncThreshold90k ||
-                drift < -kResyncThreshold90k) {
+                drift < -kResyncThreshold90k)
+                sourceClockLocked_ = true;
+            if (sourceClockLocked_ && (!result.hasPts || drift != 0)) {
                 result.pts90k = source.pts90k;
                 result.dts90k = source.dts90k;
                 result.hasPts = true;
@@ -75,6 +80,7 @@ private:
         bool hasDts;
     };
     std::deque<Anchor> anchors_;
+    bool sourceClockLocked_ = false;
 };
 
 } // namespace dvbstreamer5::media::mpegts
