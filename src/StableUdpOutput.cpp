@@ -48,6 +48,15 @@ bool makeWarmDvbTune(const StreamConfig& cfg,
     tune.lnbLof1KHz = params.lnbLof1KHz;
     tune.lnbLof2KHz = params.lnbLof2KHz;
     tune.lnbSlofKHz = params.lnbSlofKHz;
+    // Must match StreamManager::startStream's relay.dvbTuneConfig.
+    // Omitting Unicable/JESS changes the shared transponder key: a cold
+    // OnDemand HTTP/HLS request then falsely sees the active frontend as
+    // tuned to a different transponder and cannot join its live DVB bus.
+    tune.unicableMode = params.unicableMode;
+    tune.unicableUserBand = params.unicableUserBand;
+    tune.unicableFrequencyKHz = params.unicableFrequencyKHz;
+    tune.unicablePosition = params.unicablePosition;
+    tune.unicablePin = params.unicablePin;
     tune.streamId = params.streamId;
     tune.pids = "8192";
     return true;
