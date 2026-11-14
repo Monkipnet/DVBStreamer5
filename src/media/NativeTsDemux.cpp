@@ -806,9 +806,10 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
                           state.bytes.begin() + static_cast<std::ptrdiff_t>(boundary));
         // V526: extrapolation by 1800/3600 ticks alone accumulates seconds
         // of drift if interlaced AUs/field pairs are grouped at a different
-        // cadence from source PES. Re-anchor only when a PES timestamp is
-        // tied to this AU's first byte and differs by >500 ms. B-frame
-        // reorder/jitter below the threshold keeps existing timestamps.
+        // cadence from source PES. Lock to original PES time when the first
+        // byte-aligned source anchor differs by >500 ms; once locked, each
+        // new aligned PES anchor keeps timestamps source-correct. Before lock,
+        // ordinary B-frame jitter retains the existing prediction.
         const auto recovered = state.ptsRecovery.completeAu(
             boundary, state.pts90k, state.dts90k, state.hasPts, state.hasDts);
         ready.pts90k = recovered.pts90k;
