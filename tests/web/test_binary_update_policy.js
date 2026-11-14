@@ -141,7 +141,7 @@ for(const token of [
   "OUTPUT_DIR=\"${OUTPUT_DIR:-$PROJECT_ROOT/dist/${APP}-${VERSION}-linux-x86_64}\"",
   "ARCHIVE_NAME=\"$(basename -- \"${OUTPUT_DIR%/}\")\"",
   "ARCHIVE_NAME=\"${ARCHIVE_NAME%-linux-x86_64}-${VERSION}-linux-x86_64\"",
-  "sha256sum \"$ARCHIVE\" > \"${ARCHIVE}.sha256\"",
+  "sha256sum \"$(basename -- \"$ARCHIVE\")\" > \"$(basename -- \"$ARCHIVE\").sha256\"",
   "fail \"--output-dir has a different release version from kProgramVersion: $ARCHIVE_NAME\""
 ]) assert.ok(packageScript.includes(token),'Archive must always be versioned: '+token);
 for(const token of [
