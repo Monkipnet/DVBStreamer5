@@ -1434,7 +1434,11 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             hasUdpCbrOutput, physicalTargetBitrate >= 100000ULL &&
                 physicalTargetBitrate % 1000ULL == 0ULL,
             testInput, hlsInput);
-    relay.wisiSourcePcrStrict = ipSourceClockAb;
+    // V517: preserve the user's 0/500/.../15000-ms startup-buffer
+    // marker while selecting Source-PCR for the WISI channel. The old
+    // +809 shortcut would silently skip output PCR smoothing for legacy
+    // buffered CBR markers (for example, 8000705 => 3000 ms).
+    relay.wisiSourcePcrStrict = wisiChameleonProfileActive || ipSourceClockAb;
     // Existing opt-in for *transcoded* WISI profiles remains unchanged.
     const bool transcodePcrAb = streamConfig.transcodeEnabled &&
         streamConfig.cbr && std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB") &&
