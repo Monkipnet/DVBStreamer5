@@ -49,6 +49,31 @@ nm -g --defined-only "$LIB" | grep ' dvbcsa_bs_key_set_ecm$' >/dev/null || {
     echo "Missing ECM-aware dvbcsa library implementation" >&2; exit 2;
 }
 
+# A pinned TSDecrypt executable is independent of most DVBStreamer5 UI
+# and mux changes. Rebuild only if its patched recipe, ECM policy, linked CSA
+# static library, source commit, or target compiler has actually changed.
+TSDECRYPT_STAMP="${OUT}.build-stamp"
+TSDECRYPT_FINGERPRINT="$(
+    {
+        sha256sum "$ROOT/scripts/build_tsdecrypt_icam.sh"
+        sha256sum "$ROOT/src/ca/backends/tsdecrypt/TsDecryptEcmPidPolicy.h"
+        sha256sum "$LIB"
+        git -C "$SRC" rev-parse HEAD 2>/dev/null || true
+        git -C "$SRC/libfuncs" rev-parse HEAD 2>/dev/null || true
+        git -C "$SRC/libtsfuncs" rev-parse HEAD 2>/dev/null || true
+        cc --version | sed -n '1p'
+        uname -m
+    } | sha256sum | awk '{print $1}'
+)"
+
+if [[ "${DVBSTREAMER5_TSDECRYPT_FORCE_REBUILD:-0}" != 1 &&
+      -x "$OUT" && -s "$TSDECRYPT_STAMP" &&
+      "$(cat "$TSDECRYPT_STAMP")" == "$TSDECRYPT_FINGERPRINT" ]]; then
+    echo "Pinned iCAM TSDecrypt unchanged; reusing $OUT"
+    sha256sum "$OUT"
+    exit 0
+fi
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/dvbstreamer5-tsdecrypt-XXXXXX")"
 trap 'rm -rf -- "$WORK"' EXIT
 cp -a "$SRC"/. "$WORK"/
@@ -204,6 +229,7 @@ if readelf -d "$WORK/tsdecrypt" | grep 'libdvbcsa.so' >/dev/null; then
     echo "Dynamic libdvbcsa is not allowed in this portable build" >&2; exit 3;
 fi
 install -m0755 "$WORK/tsdecrypt" "$OUT"
+printf '%s\n' "$TSDECRYPT_FINGERPRINT" > "$TSDECRYPT_STAMP"
 echo "Experimental TSDecrypt compiled: $OUT"
 sha256sum "$OUT"
 echo "Do not replace a running production TSDecrypt before one-tile A/B validation."
