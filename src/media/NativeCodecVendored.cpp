@@ -823,6 +823,8 @@ public:
                   << " adaptive_quant=" << (extended ? "on" : "legacy")
                   << " optout=" << (optOut ? 1 : 0)
                   << " bframes=0 refs=encoder-default"
+                  << " wisi_profile=" << (options_.wisiChameleonProfile ? 1 : 0)
+                  << " per_au_cap=not_guaranteed"
                   << std::endl;
         if (options_.bFrames > 0 || options_.openGop ||
             options_.refFrames > 0 || options_.level != "auto") {
@@ -965,6 +967,8 @@ public:
                   << " fps=" << cfg_->framerate_num
                   << " bitrate_kbps=" << (static_cast<unsigned long long>(bitrate) / 1000ULL)
                   << " adaptive=1"
+                  << " wisi_profile=" << (options_.wisiChameleonProfile ? 1 : 0)
+                  << " per_au_cap=not_guaranteed"
                   << "\n";
 
         // Keep Kvazaar's native GOP/intra defaults here.  V8.3 tried to
