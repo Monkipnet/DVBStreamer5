@@ -30,6 +30,7 @@
 #include "media/HttpTsEpollDispatcher.h"
 #include "media/TransportStream.h"
 #include "media/NativeFailoverHealth.h"
+#include "media/InputLivenessPolicy.h"
 #include "media/RtpMpegTs.h"
 
 #include <algorithm>
@@ -2488,9 +2489,15 @@ void StreamManager::monitorNativeStream(StreamState* state) {
     std::size_t rateWindowIndex = 0;
     std::size_t rateWindowSamples = 0;
     std::uint64_t monitorTicks = 0;
-    std::uint64_t telegramNoInputSeconds = 0;
+    // V519: differentiate network ingress progress from selected TS/CA
+    // consumption; short socket bursts must not trigger spurious failover.
+    const std::string inputUriLower = toLower(normalizeInputUri(state->config.inputUri));
+    const bool bufferedNetworkInput =
+        dvbstreamer5::media::network::InputLivenessPolicy::isNetworkSource(
+            inputUriLower, toLower(state->config.inputMode));
+    dvbstreamer5::media::network::InputLivenessPolicy inputLiveness(
+        bufferedNetworkInput);
     bool telegramInputUnavailable = false;
-    constexpr std::uint64_t kTelegramInputLossSeconds = 5;
     while (!state->monitorStop.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         if (state->monitorStop.load()) break;
@@ -2579,11 +2586,24 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         // reported immediately.  Any later byte progress is a recovery.
         const std::string relayErrorNow = relay->lastError();
         const uint64_t usefulInput = relay->selectedInputBytes();
-        const bool inputAdvanced = usefulInput > lastUsefulInput;
-        const bool recoveredFromInputLoss = inputAdvanced && telegramInputUnavailable;
+        const auto inputHealth = inputLiveness.observe(
+            usefulInput, relay->sourceInputBytes(),
+            std::chrono::steady_clock::now());
+        const bool inputAdvanced = inputHealth.mediaAdvanced;
+        const bool recoveredFromInputLoss =
+            inputAdvanced && telegramInputUnavailable;
+        state->inputStalled.store(inputHealth.stalled, std::memory_order_release);
+        if (bufferedNetworkInput && inputHealth.jitterGrace &&
+            (monitorTicks % 5U) == 0U) {
+            std::cerr << "NATIVE INPUT JITTER GRACE"
+                      << " stream_id=" << state->config.id
+                      << " media_silence_ms=" << inputHealth.mediaSilenceMs
+                      << " network_silence_ms=" << inputHealth.sourceSilenceMs
+                      << " incoming_bytes_advanced=" << (inputHealth.sourceAdvanced ? 1 : 0)
+                      << " action=keep_live"
+                      << std::endl;
+        }
         if (inputAdvanced) {
-            state->inputStalled.store(false, std::memory_order_release);
-            telegramNoInputSeconds = 0;
             if (recoveredFromInputLoss) {
                 sendTelegramStreamState(
                     telegramNotifier, configManager, state->config, "🟢",
@@ -2611,18 +2631,23 @@ void StreamManager::monitorNativeStream(StreamState* state) {
                 if (state->config.transcodeEnabled) state->statusMessage += " + native transcoder";
             }
         } else {
-            if (telegramNoInputSeconds < kTelegramInputLossSeconds) {
-                ++telegramNoInputSeconds;
-            }
-            const bool inputTimedOut = telegramNoInputSeconds >= kTelegramInputLossSeconds;
-            state->inputStalled.store(inputTimedOut, std::memory_order_release);
+            const bool inputTimedOut = inputHealth.stalled;
             if (!relayErrorNow.empty() || inputTimedOut) {
                 const std::string inputLossDetails = !relayErrorNow.empty()
                     ? relayErrorNow
                     : telegramText(
                         configManager,
-                        "Нет входных медиаданных более 5 секунд",
-                        "No input media data for more than 5 seconds");
+                        "Нет входных медиаданных (ожидание при неравномерном приёме исчерпано)",
+                        "Input media stalled (bounded network jitter grace exhausted)");
+                if (inputTimedOut && !telegramInputUnavailable) {
+                    std::cerr << "NATIVE INPUT HEALTH LOST"
+                              << " stream_id=" << state->config.id
+                              << " cause=" << inputHealth.cause
+                              << " media_silence_ms=" << inputHealth.mediaSilenceMs
+                              << " network_silence_ms=" << inputHealth.sourceSilenceMs
+                              << " network_input=" << (bufferedNetworkInput ? 1 : 0)
+                              << std::endl;
+                }
                 state->statusMessage = inputLossDetails;
                 if (!telegramInputUnavailable) {
                     sendTelegramStreamState(
@@ -2653,7 +2678,6 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         lastTsClearPesStarts = tsClearPesStarts;
 
         lastIn = in;
-        lastUsefulInput = relay->selectedInputBytes();
         lastOut = out;
         lastPayloadOut = payloadOut;
         lastCc = cc;
