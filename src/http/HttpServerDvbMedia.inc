@@ -648,9 +648,17 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
         // service cannot be ready until decoder, encoder and an IDR-aligned
         // segment have all started. The old unconditional 3-s probe budget
         // returned 503 while a valid 4-s segment was still being assembled.
-        // Only these transcoded OnDemand HLS requests get a 12-s cold-start
-        // allowance. Passthrough HLS and all online streams keep the 3-s path.
-        const int maxStartupAttempts = cfg->transcodeEnabled ? 120 : 30;
+        // V530: the short-segment transcoded OnDemand profile now publishes
+        // a playable playlist only after three COMPLETE segments (~10-14 s
+        // for the default 4s target). Give this narrowly-scoped cold start
+        // up to 20s, otherwise VLC may abandon the first 503 before its
+        // initial playable buffer exists. Passthrough retains 3s and other
+        // transcodes retain 12s. This does not alter online playlists.
+        const bool prefilledOnDemandTranscode = cfg->transcodeEnabled &&
+            toLower(cfg->transcodeVideoCodec) != "copy" &&
+            (cfg->hlsSegmentDuration == 0U || cfg->hlsSegmentDuration <= 4U);
+        const int maxStartupAttempts =
+            prefilledOnDemandTranscode ? 200 : (cfg->transcodeEnabled ? 120 : 30);
         bool ready = livePlaylistReady();
         int startupAttempts = 0;
         for (; startupAttempts < maxStartupAttempts && !ready; ++startupAttempts) {
