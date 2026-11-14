@@ -26,7 +26,8 @@ public:
                           std::atomic<std::uint64_t>* globalBytes,
                           std::atomic<std::uint64_t>* outputBytes,
                           ErrorCallback onError,const std::string& streamId,
-                          ObserverCallback observer={});
+                          ObserverCallback observer={},
+                          std::uint64_t peakBitsPerSecond=0);
     ~PcrVbrUdpOutputWorker();
     PcrVbrUdpOutputWorker(const PcrVbrUdpOutputWorker&)=delete;
     PcrVbrUdpOutputWorker& operator=(const PcrVbrUdpOutputWorker&)=delete;
@@ -42,6 +43,7 @@ private:
     ErrorCallback onError_;
     ObserverCallback observer_;
     std::string streamId_;
+    std::uint64_t peakBitsPerSecond_=0;
     std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<dvbstreamer5::media::mpegts::Packet> packets_;
