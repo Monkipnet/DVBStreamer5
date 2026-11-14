@@ -31,7 +31,7 @@ struct WisiChameleonProfilePolicy {
         std::uint64_t target, std::uint64_t audio) noexcept {
         const std::uint64_t percentage = target / 20ULL;
         if (audio > UINT64_MAX - percentage) return UINT64_MAX;
-        return (std::max)(500000ULL, audio + percentage);
+        return (std::max<std::uint64_t>)(500000ULL, audio + percentage);
     }
 
     static bool hasTransportHeadroom(
@@ -50,7 +50,7 @@ struct WisiChameleonProfilePolicy {
         const std::uint64_t sizeKB =
             (bytes * windowMs / 1000ULL + 999ULL) / 1000ULL;
         return static_cast<std::uint16_t>(
-            (std::clamp)(sizeKB, 1ULL, 65535ULL));
+            (std::clamp<std::uint64_t>)(sizeKB, 1ULL, 65535ULL));
     }
 
     // NVENC already has a very small 2-frame default VBV. Never enlarge it
