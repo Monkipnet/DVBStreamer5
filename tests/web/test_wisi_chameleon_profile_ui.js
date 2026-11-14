@@ -15,6 +15,13 @@ assert(source.includes('wisi_chameleon_profile:false'),
     'new tiles must stay off');
 assert(source.includes("if (wisiProfile) wisiProfile.disabled = Boolean(copy);"),
     'video copy must disable WISI encoder switch');
+// V517: stream manager must preserve previously selected 500ms–15s
+// transport startup choices when enabling Source-PCR/20ms output PCR.
+const manager=fs.readFileSync(
+  path.join(__dirname,'../../src/StreamManager.cpp'),'utf8');
+assert(manager.includes(
+  'relay.wisiSourcePcrStrict = wisiChameleonProfileActive || ipSourceClockAb;'),
+  'WISI profile must use startup-buffer-preserving Source-PCR marker conversion');
 const start=source.indexOf('<script>');
 const end=source.indexOf('</script>',start);
 assert(start>=0 && end>start,'web UI script found');
