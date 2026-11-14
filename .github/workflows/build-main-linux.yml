@@ -18,6 +18,9 @@ jobs:
   linux-x86_64:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 850M
     steps:
       - name: Checkout main source
         uses: actions/checkout@v4
@@ -28,12 +31,33 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config python3 nodejs curl ca-certificates \
+            build-essential cmake ccache pkg-config python3 nodejs curl ca-certificates \
             binutils nasm autoconf automake libtool file \
             libpcsclite-dev libssl-dev libcrypt-dev libmp3lame-dev \
             libcurl4-openssl-dev libxml2-dev zlib1g-dev \
             libva-dev libvpl-dev libfreetype-dev \
             libavcodec-dev libavutil-dev
+
+      # A GitHub-hosted runner starts with an empty workspace. Restore safe
+      # compiler results, not stale installed binaries. ccache verifies source
+      # bytes, compiler flags, toolchain and included headers on each hit.
+      - name: Restore incremental C/C++ compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: dvbstreamer5-ccache-ubuntu2404-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            dvbstreamer5-ccache-ubuntu2404-
+
+      # These pinned dependencies do not change when application C++ files
+      # change. Cache their validated static libraries by the build recipes;
+      # the codec build script checks its own compiler/source fingerprint.
+      - name: Restore pinned native codec library cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/native-codecs-prefix
+          key: dvbstreamer5-native-codecs-ubuntu2404-${{ hashFiles('scripts/build_native_codecs.sh', 'scripts/vendor_native_codecs.sh') }}
 
       - name: Validate DVB-T/T2 UI, terrestrial API and JavaScript syntax
         run: node tests/web/test_dvb_terrestrial_ui.js
@@ -99,6 +123,8 @@ jobs:
         run: |
           cmake -S . -B build-main-ci \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DDVBSTREAMER5_ENABLE_FFMPEG_AVC=ON \
             -DDVBSTREAMER5_ENABLE_NVENC=ON \
             -DDVBSTREAMER5_ENABLE_VAAPI=ON \
@@ -120,7 +146,10 @@ jobs:
 
       - name: Build and run native MPEG-TS/MP4/failover tests
         run: |
-          cmake -S tests/media_core -B build-test-media-ci -DCMAKE_BUILD_TYPE=Release
+          cmake -S tests/media_core -B build-test-media-ci \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build-test-media-ci --parallel 2
           ctest --test-dir build-test-media-ci --output-on-failure
           cmake --build build-main-ci --parallel 2 --target \
@@ -163,6 +192,10 @@ jobs:
           bash scripts/build_tsdecrypt_icam.sh /tmp/dvbstreamer5-tsdecrypt build-main-ci
           test -x build-main-ci/tsdecrypt-icam/tsdecrypt
           strings build-main-ci/tsdecrypt-icam/tsdecrypt | grep -F "Holding recently valid ECM pid"
+
+      - name: Report incremental compiler cache utilization
+        if: always()
+        run: ccache --show-stats || true
 
       - name: Package portable Linux x86_64 and checksums
         id: package
