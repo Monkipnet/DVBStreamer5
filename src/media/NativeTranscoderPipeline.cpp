@@ -2023,11 +2023,13 @@ bool NativeTranscoderPipeline::ensureVideoEncoder(std::string& error) {
         options.refFrames = config_.refFrames;
         options.openGop = config_.openGop;
         options.aqStrength = config_.aqStrength;
+        options.wisiChameleonProfile = config_.wisiChameleonProfile;
         // V514: only an exact stream ID matches. No process-wide rate-control
         // changes for other VAAPI, GPU, Copy or CPU output tiles.
-        options.vaapiStrictHrd = (backend == "vaapi") &&
-            codec::vaapiStrictHrdForStream(config_.streamId,
-                std::getenv("DVBSTREAMER5_VAAPI_HRD_STREAM_ID"));
+        options.vaapiStrictHrd = config_.wisiChameleonProfile ||
+            ((backend == "vaapi") &&
+             codec::vaapiStrictHrdForStream(config_.streamId,
+                std::getenv("DVBSTREAMER5_VAAPI_HRD_STREAM_ID")));
         candidate->setOptions(options);
         if (!candidate->configure(
                 config_.width, config_.height, config_.fps,
@@ -2297,6 +2299,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.refFrames = config_.refFrames;
                 zeroCopyConfig.openGop = config_.openGop;
                 zeroCopyConfig.aqStrength = config_.aqStrength;
+                zeroCopyConfig.wisiChameleonProfile = config_.wisiChameleonProfile;
                 zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 nvidiaZeroCopy_ = codec::createNvidiaZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);
@@ -2400,6 +2403,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
                 zeroCopyConfig.refFrames = config_.refFrames;
                 zeroCopyConfig.openGop = config_.openGop;
                 zeroCopyConfig.aqStrength = config_.aqStrength;
+                zeroCopyConfig.wisiChameleonProfile = config_.wisiChameleonProfile;
                 zeroCopyConfig.lockOutputGeometry = config_.lockOutputGeometry;
                 intelZeroCopy_ = codec::createIntelZeroCopyTranscoder(
                     zeroCopyConfig, zeroCopyError);
