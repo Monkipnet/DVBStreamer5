@@ -30,9 +30,12 @@ int main() {
           "encoder bitrate modified");
     const auto restored=StreamConfig::fromJson(stored);
     check(restored.wisiChameleonProfile,"WISI flag not restored");
-    check(WisiChameleonProfilePolicy::eligible(
-        restored.wisiChameleonProfile, restored.transcodeEnabled,
-        restored.cbr, true, restored.transcodeVideoCodec),"MIR24 not eligible");
+    check(WisiChameleonProfilePolicy::cbrEligible(
+        restored.transcodeEnabled, restored.cbr,
+        true, restored.transcodeVideoCodec),"MIR24 CBR auto profile not eligible");
+    check(WisiChameleonProfilePolicy::vbrEligible(
+        restored.transcodeEnabled, true, restored.transcodeVideoCodec),
+        "MIR24 VBR auto profile not eligible");
     enabled.wisiChameleonProfile=false;
     check(!StreamConfig::fromJson(enabled.toJson()).wisiChameleonProfile,
           "rollback not persisted");
