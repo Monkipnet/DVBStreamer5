@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/NativeMpegTsMux.h"
+#include "media/H264PesPtsRecovery.h"
 #include "media/TransportStream.h"
 
 #include <array>
@@ -95,6 +96,7 @@ private:
     };
     struct VideoAuAssembler {
         DemuxStreamInfo stream;
+        H264PesPtsRecovery ptsRecovery;
         std::vector<std::uint8_t> bytes;
         std::uint64_t pts90k = 0;
         std::uint64_t dts90k = 0;
@@ -140,6 +142,7 @@ private:
     std::uint16_t pmtPid_ = 0xffff;
     std::uint64_t pesTrimEvents_ = 0;
     std::uint64_t pesTruncatedEvents_ = 0;
+    std::uint64_t h264PesPtsResyncEvents_ = 0;
 
     // Compare original PES source timestamps with assembled H.264 access-unit
     // timestamps. Read-only diagnostics: no change to output PTS or scheduler.
