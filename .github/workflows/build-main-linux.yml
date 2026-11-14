@@ -81,6 +81,11 @@ jobs:
       - name: Verify DVB transponder and IP subnet tile grouping
         run: node tests/web/test_tile_input_grouping.js
 
+      - name: Verify NVENC HLS decoder-safe IDR boundaries and mux stall diagnostics
+        run: |
+          node tests/web/test_nvenc_hls_keyframe_policy.js
+          node tests/web/test_mux_audio_stall_policy.js
+
       - name: Verify signed binary update policy and UI
         run: node tests/web/test_binary_update_policy.js
 
