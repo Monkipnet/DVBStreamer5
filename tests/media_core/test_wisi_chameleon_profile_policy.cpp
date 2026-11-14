@@ -19,6 +19,8 @@ int main() {
     test(P::reserveBitsPerSecond(8000000,192000)==592000,"audio+5% reserve");
     test(P::qsvBufferKB(6000000)==300,"QSV 6Mbps 400ms");
     test(P::qsvBufferKB(8000000)==400,"QSV 8Mbps 400ms");
+    test(P::qsvBufferKB(UINT64_MAX)==65535,"QSV extreme bitrate saturates");
+    test(P::qsvBufferKB(0)==1,"QSV zero bitrate bounds");
     test(P::nvencVbvFrames(2,25.0)==2,"keep 2-frame NVENC default");
     test(P::nvencVbvFrames(30,25.0)==10,"cap NVENC A/B at 400ms");
     test(P::nvencVbvFrames(30,50.0)==20,"50fps cap");
