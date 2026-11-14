@@ -92,7 +92,7 @@ private:
     std::string handleDeleteBackupFile(const std::string& body);
     std::string handleStartStream(const std::string& body);
     std::string handleStopStream(const std::string& body);
-    void handleRestartProgram();
+    bool handleRestartProgram(std::string* error);
     void handleDeleteStream(const std::string& body);
     void handleSaveSubscribers(const std::string& body);
     void handleResetSubscriber(const std::string& body);
