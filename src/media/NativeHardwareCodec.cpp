@@ -1810,9 +1810,11 @@ private:
         frame.data.assign(p, p + lock.bitstreamSizeInBytes);
         frame.hasPts = input.hasPts; frame.hasDts = input.hasDts;
         frame.pts90k = input.pts90k; frame.dts90k = input.hasDts ? input.dts90k : input.pts90k;
+        // An NVENC intra-only I picture may not be a decoder-safe IDR.
+        // HLS uses this flag as a random-access boundary, so only advertise
+        // an explicit forced IDR or an NVENC-reported true IDR.
         frame.keyFrame = forcedRandomAccess ||
-            lock.pictureType == NV_ENC_PIC_TYPE_IDR ||
-            lock.pictureType == NV_ENC_PIC_TYPE_I;
+            lock.pictureType == NV_ENC_PIC_TYPE_IDR;
         api_.nvEncUnlockBitstream(encoder_, bitstream_);
 
         if (forcedRandomAccess) {
