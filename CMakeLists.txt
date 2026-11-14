@@ -577,6 +577,11 @@ target_link_libraries(dvbstreamer5_source_pcr_config_test PRIVATE
     dvbstreamer5_jsoncpp OpenSSL::Crypto)
 add_test(NAME dvb_source_pcr_config COMMAND dvbstreamer5_source_pcr_config_test)
 
+# V514: pure policy test, no VAAPI/GPU required.
+add_executable(dvbstreamer5_vaapi_hrd_policy_test tests/media_core/test_vaapi_hrd_policy.cpp)
+target_include_directories(dvbstreamer5_vaapi_hrd_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME vaapi_hrd_policy COMMAND dvbstreamer5_vaapi_hrd_policy_test)
+
 # V384: fail-closed Cesbo middleware auth, HLS token propagation and SRT token
 # parsing. The test uses no network, decoders, tuners or live service.
 add_executable(dvbstreamer5_stream_auth_test tests/test_stream_auth_backend.cpp)
