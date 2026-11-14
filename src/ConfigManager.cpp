@@ -429,7 +429,6 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.cbr = root.get("cbr", true).asBool();
     config.targetBitrate = root.get("target_bitrate", Json::UInt64(2000000)).asUInt64();
     config.transcodeEnabled = root.get("transcode_enabled", false).asBool();
-    config.wisiChameleonProfile = root.get("wisi_chameleon_profile", false).asBool();
     config.transcodeResolution = root.get("transcode_resolution", "1920x1080").asString();
     config.transcodeVideoCodec = toLower(root.get("transcode_video_codec", "h264").asString());
     if (config.transcodeVideoCodec == "h265") config.transcodeVideoCodec = "hevc";
@@ -636,7 +635,6 @@ Json::Value StreamConfig::toJson() const {
     root["cbr"] = cbr;
     root["target_bitrate"] = Json::UInt64(targetBitrate);
     root["transcode_enabled"] = transcodeEnabled;
-    root["wisi_chameleon_profile"] = wisiChameleonProfile;
     root["transcode_resolution"] = transcodeResolution;
     root["transcode_video_codec"] = transcodeVideoCodec;
     root["transcode_video_encoder"] = transcodeVideoEncoder;
