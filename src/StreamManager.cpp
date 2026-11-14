@@ -9,6 +9,7 @@
 #include "AutoTranscodePolicy.h"
 #include "media/IpCbrSourceClockPolicy.h"
 #include "media/DvbSourcePcrPacingPolicy.h"
+#include "media/WisiChameleonProfilePolicy.h"
 #include "mpts/MptsOutputManager.h"
 #include "protocols/SrtVpsProfile.h"
 #include "protocols/stream/inputs/StreamVdrInputProtocol.h"
@@ -817,6 +818,22 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
               << " policy=nvenc->qsv-vaapi->cpu"
               << std::endl;
 
+    // V516: explicitly selected channel only; Copy, VBR and browser preview
+    // retain their previous encoder and transport behavior.
+    bool wisiChameleonProfileActive =
+        dvbstreamer5::media::codec::WisiChameleonProfilePolicy::eligible(
+            streamConfig.wisiChameleonProfile,
+            streamConfig.transcodeEnabled, streamConfig.cbr,
+            std::any_of(nativeOutputs.begin(), nativeOutputs.end(),
+                [](const auto& out) { return out.outputType == "udp-cbr"; }),
+            toLower(streamConfig.transcodeVideoCodec));
+    if (streamConfig.wisiChameleonProfile && !wisiChameleonProfileActive) {
+        std::cerr << "NATIVE WISI ENCODER PROFILE inactive stream_id="
+                  << streamConfig.id
+                  << " reason=requires-transcode-cbr-udp-and-encoded-video"
+                  << std::endl;
+    }
+
     if (streamConfig.transcodeEnabled) {
         state->nativeTranscoder = std::make_unique<dvbstreamer5::media::transcode::NativeTranscoderPipeline>();
         dvbstreamer5::media::transcode::NativeTranscoderConfig tc;
@@ -882,6 +899,33 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                           << std::endl;
             }
             tc.videoBitrate = effectiveVideo;
+        }
+        if (wisiChameleonProfileActive) {
+            const auto transportBps =
+                dvbstreamer5::media::mpegts::CbrTsPacer::decodeTargetBitrate(
+                    streamConfig.targetBitrate);
+            if (!dvbstreamer5::media::codec::WisiChameleonProfilePolicy::
+                    hasTransportHeadroom(transportBps, tc.videoBitrate,
+                                         tc.audioBitrate)) {
+                wisiChameleonProfileActive = false;
+                std::cerr << "NATIVE WISI ENCODER PROFILE inactive stream_id="
+                          << streamConfig.id
+                          << " reason=insufficient-ts-audio-psi-headroom"
+                          << " target_kbps=" << transportBps / 1000ULL
+                          << " video_kbps=" << tc.videoBitrate / 1000ULL
+                          << " audio_kbps=" << tc.audioBitrate / 1000ULL
+                          << std::endl;
+            }
+        }
+        tc.wisiChameleonProfile = wisiChameleonProfileActive;
+        if (tc.wisiChameleonProfile) {
+            std::cerr << "NATIVE WISI ENCODER PROFILE active stream_id="
+                      << streamConfig.id
+                      << " codec=" << tc.videoCodec
+                      << " encoder=" << tc.videoEncoder
+                      << " video_kbps=" << tc.videoBitrate / 1000ULL
+                      << " cpb_window_ms=400 pcr_interval_ms=20"
+                      << " experimental=1" << std::endl;
         }
         // V10.8.240: encoder tuning follows the user-selected TRANSCODING
         // video bitrate, independent of the separate transport CBR setting.
@@ -1395,7 +1439,9 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     const bool transcodePcrAb = streamConfig.transcodeEnabled &&
         streamConfig.cbr && std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB") &&
         std::string(std::getenv("DVBSTREAMER5_WISI_SOURCE_PCR_AB")) == "1";
-    relay.wisiPreserveSourcePcr = transcodePcrAb || ipSourceClockAb;
+    relay.wisiChameleonProfile = wisiChameleonProfileActive;
+    relay.wisiPreserveSourcePcr = wisiChameleonProfileActive ||
+        transcodePcrAb || ipSourceClockAb;
     relay.sourcePcrPacketPacing = dvbstreamer5::media::network::enableDvbSourcePcrPacketPacing(
         streamConfig.dvbSourcePcrPacing, DvbSatellite::isDvbUri(normalizedInput),
         streamConfig.transcodeEnabled, streamConfig.cbr, hasUdpCbrOutput,
