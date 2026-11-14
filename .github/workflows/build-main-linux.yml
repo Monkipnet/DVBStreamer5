@@ -160,10 +160,12 @@ jobs:
           strings build-main-ci/tsdecrypt-icam/tsdecrypt | grep -F "Holding recently valid ECM pid"
 
       - name: Package portable Linux x86_64 and checksums
+        id: package
         run: |
           version="$(sed -n 's/.*kProgramVersion = "\([^"]*\)";.*/\1/p' src/AppVersion.h)"
           test -n "$version"
           echo "Building version ${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           bash scripts/make_portable_linux_bundle.sh \
             --build-dir build-main-ci \
             --binary build-main-ci/DVBStreamer5 \
@@ -173,15 +175,17 @@ jobs:
             --archive
           test -x "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt"
           test -s "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt.bin"
-          sha256sum "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz" > dist/SHA256SUMS.txt
+          sha256sum -c "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256"
+          cp "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256" dist/SHA256SUMS.txt
           cat dist/SHA256SUMS.txt
 
       - name: Upload portable + binary for download
         uses: actions/upload-artifact@v4
         with:
-          name: DVBStreamer5-linux-x86_64
+          name: DVBStreamer5-${{ steps.package.outputs.version }}-linux-x86_64
           path: |
             dist/*.tar.gz
+            dist/*.tar.gz.sha256
             dist/SHA256SUMS.txt
             build-main-ci/DVBStreamer5
           if-no-files-found: error
