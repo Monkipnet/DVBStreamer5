@@ -609,7 +609,7 @@ if (( DO_ARCHIVE )); then
     ARCHIVE="$(dirname -- "${OUTPUT_DIR%/}")/${ARCHIVE_NAME}.tar.gz"
     rm -f -- "$ARCHIVE" "${ARCHIVE}.sha256"
     tar -C "$(dirname -- "$OUTPUT_DIR")" -czf "$ARCHIVE" "$(basename -- "$OUTPUT_DIR")"
-    sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+    ( cd "$(dirname -- "$ARCHIVE")" && sha256sum "$(basename -- "$ARCHIVE")" > "$(basename -- "$ARCHIVE").sha256" )
     log "Archive: $ARCHIVE"
     log "Checksum: ${ARCHIVE}.sha256"
 fi
