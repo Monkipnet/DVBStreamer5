@@ -290,4 +290,7 @@ PL_MPEG: c871f2be022ece7ef4f64230b4fb8e1fb9eb6023
 All codec libraries are built as project-local static inputs. No FFmpeg/libav/GStreamer.
 INFO
 
+# Publish the cache marker only after all required libraries and headers have
+# passed verification. An interrupted build cannot masquerade as a cache hit.
+printf '%s\n' "$CODEC_FINGERPRINT" > "$CODEC_STAMP"
 echo "Native codec prefix ready: $PREFIX"
