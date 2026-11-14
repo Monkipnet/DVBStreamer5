@@ -124,7 +124,10 @@ jobs:
             dvbstreamer5_native_scaler_simd_test \
             dvbstreamer5_ticker_test \
             dvbstreamer5_docx_import_test \
-            dvbstreamer5_source_pcr_config_test
+            dvbstreamer5_source_pcr_config_test \
+            dvbstreamer5_vaapi_hrd_policy_test \
+            dvbstreamer5_wisi_profile_policy_test \
+            dvbstreamer5_wisi_profile_config_test
           cmake --build build-main-ci --parallel 2 --target dvbstreamer5_stream_auth_test dvbstreamer5_udp_vbr_pcr_test dvbstreamer5_shared_vbr_test dvbstreamer5_hls_cache_test dvbstreamer5_http_epoll_test dvbstreamer5_stream_api_key_test
           # V474: CTest registers these targets; build before calling CTest.
           cmake --build build-main-ci --parallel 2 --target \
