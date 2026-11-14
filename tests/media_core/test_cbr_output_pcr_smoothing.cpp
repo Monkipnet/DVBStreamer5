@@ -15,6 +15,7 @@ static constexpr std::uint64_t kHz = 27000000ULL;
 static constexpr std::uint64_t kWrap = (1ULL << 33U) * 300ULL;
 static constexpr std::uint64_t kRate = 8000000ULL;
 static constexpr std::uint16_t kPid = 0x0102;
+static constexpr std::uint16_t kAudioPid = 0x0101;
 
 static void need(bool value, const char* what) {
     if (!value) { std::cerr << what << '\n'; std::exit(1); }
@@ -59,6 +60,24 @@ static Packet makeVideoPacket(unsigned frame, unsigned packetIndex,
     return p;
 }
 
+static Packet makeAudioPacket(unsigned frame, unsigned packetIndex,
+                              unsigned cc) {
+    Packet p {};
+    p.fill(static_cast<std::uint8_t>(0x90U + (frame & 0x3fU)));
+    p[0] = 0x47;
+    p[1] = static_cast<std::uint8_t>((kAudioPid >> 8) |
+                                      (packetIndex == 0 ? 0x40 : 0));
+    p[2] = static_cast<std::uint8_t>(kAudioPid);
+    p[3] = static_cast<std::uint8_t>(0x10U | (cc & 15));
+    if (packetIndex == 0) {
+        p[4] = 0; p[5] = 0; p[6] = 1; p[7] = 0xc0;
+        p[8] = 0; p[9] = 0; p[10] = 0x80; p[11] = 0x80;
+        p[12] = 5; writeTimestamp(p, 13,
+            (90000ULL + frame * 3600ULL) & ((1ULL<<33)-1));
+    }
+    return p;
+}
+
 static void checkPolicy() {
     need(!CbrOutputPcrSmoothingPolicy::selected("A", nullptr), "default selector off");
     need(!CbrOutputPcrSmoothingPolicy::selected("A", "B"), "other stream off");
@@ -82,7 +101,7 @@ static void simulateLargePes() {
     std::deque<Packet> expected;
     const auto epoch = std::chrono::steady_clock::time_point(std::chrono::seconds(1));
     constexpr unsigned kFrames = 120;
-    unsigned cc = 0;
+    unsigned cc = 0, audioCc = 0;
     for (unsigned frame = 0; frame < kFrames; ++frame) {
         // 40-ms PCRs; a single 900-packet P-frame is impossible in 40 ms
         // at 8 Mbps. The CBR output will transmit it over ~169 ms.
@@ -93,10 +112,15 @@ static void simulateLargePes() {
             need(pcr.enqueueAt(src, epoch), "enqueue source PES");
             expected.push_back(src);
         }
+        for (unsigned n = 0; n < 2; ++n) {
+            const auto src = makeAudioPacket(frame, n, audioCc++);
+            need(pcr.enqueueAt(src, epoch), "enqueue audio PES");
+            expected.push_back(src);
+        }
     }
     std::uint64_t slot = 0, lastPcrSlot = 0, firstPcrSlot = 0;
     std::uint64_t firstPcr = 0, previousPcr = 0;
-    std::uint64_t originalPackets = 0, synthetic = 0, pcrs = 0;
+    std::uint64_t originalPackets = 0, originalAudio = 0, synthetic = 0, pcrs = 0;
     std::uint8_t lastPayloadCc = 0;
     bool havePcr = false, havePayload = false;
 
@@ -153,6 +177,12 @@ static void simulateLargePes() {
                     previousPcr = ticks;
                     ++pcrs;
                 }
+            } else if (pid == kAudioPid) {
+                need(!expected.empty(), "unexpected audio payload");
+                need(pkt == expected.front(), "audio PES/PTS/CC changed");
+                expected.pop_front();
+                ++originalPackets;
+                ++originalAudio;
             } else {
                 need(pid == 0x1fffU, "unexpected PID");
             }
@@ -161,7 +191,8 @@ static void simulateLargePes() {
         if (expected.empty()) break;
     }
     need(expected.empty(), "lost or excessively delayed source PES payload");
-    need(originalPackets == 80ULL * kFrames + 820ULL, "incorrect payload count");
+    need(originalPackets == 82ULL * kFrames + 820ULL, "incorrect A/V payload count");
+    need(originalAudio == 2ULL * kFrames, "audio packets dropped");
     need(synthetic > 100 && pcrs > 200,
          "did not generate 20ms PCR during real media transmission");
     need(pcr.clockOnlyPcrPackets() == synthetic, "clock-only counter mismatch");
