@@ -123,6 +123,9 @@ jobs:
           node tests/web/test_nvenc_hls_keyframe_policy.js
           node tests/web/test_mux_audio_stall_policy.js
 
+      - name: Verify incremental compiler and dependency cache policy
+        run: node tests/web/test_incremental_build_policy.js
+
       - name: Verify signed binary update policy and UI
         run: node tests/web/test_binary_update_policy.js
 
