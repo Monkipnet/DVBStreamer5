@@ -531,6 +531,14 @@ void NativeTranscoderPipeline::reset() {
     muxDroppedAudio_.store(0, std::memory_order_release);
     lastMuxVideoClock90k_.store(0, std::memory_order_release);
     lastMuxAudioClock90k_.store(0, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(muxQueueMutex_);
+        lastMuxPeerStallReportAt_ = {};
+        lastMuxVideoProducedAt_ = {};
+        lastMuxAudioProducedAt_ = {};
+        lastMuxVideoProducedPts90k_ = 0;
+        lastMuxAudioProducedPts90k_ = 0;
+    }
     lastInputVideoPts90k_.store(0, std::memory_order_release);
     lastInputAudioPts90k_.store(0, std::memory_order_release);
     lastDecodedVideoPts90k_.store(0, std::memory_order_release);
@@ -1255,6 +1263,16 @@ void NativeTranscoderPipeline::enqueueMuxSample(MuxQueuedSample&& sample) {
     std::size_t queueSize = 0;
     {
         std::lock_guard<std::mutex> lock(muxQueueMutex_);
+        // Record producer activity even when a full queue must discard this
+        // sample: queue age alone cannot tell whether NVENC/audio stopped
+        // producing or the mux is blocked by mismatched PTS.
+        if (sample.kind == mpegts::ElementaryKind::Video) {
+            lastMuxVideoProducedAt_ = sample.queuedAt;
+            lastMuxVideoProducedPts90k_ = muxClockOf(sample);
+        } else {
+            lastMuxAudioProducedAt_ = sample.queuedAt;
+            lastMuxAudioProducedPts90k_ = muxClockOf(sample);
+        }
         auto& queue = sample.kind == mpegts::ElementaryKind::Video ? muxVideoQueue_ : muxAudioQueue_;
         const std::size_t limit = sample.kind == mpegts::ElementaryKind::Video
             ? kMaxMuxVideoQueue : kMaxMuxAudioQueue;
@@ -1780,6 +1798,15 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                             lastMuxPeerStallReportAt_ = reportNow;
                             const auto aheadMs = mpegts::ptsDelta90k(
                                 clock, otherClock) / 90LL;
+                            const auto lastVideoEnqueued = lastMuxVideoProducedAt_;
+                            const auto lastAudioEnqueued = lastMuxAudioProducedAt_;
+                            const auto ageMs = [reportNow](
+                                std::chrono::steady_clock::time_point at) -> long long {
+                                if (at.time_since_epoch().count() == 0) return -1;
+                                return std::chrono::duration_cast<
+                                    std::chrono::milliseconds>(
+                                        reportNow - at).count();
+                            };
                             std::cerr << "NATIVE AV MUX PEER STALL"
                                       << " stream_id=" << config_.streamId
                                       << " waiting=" << (haveVideo ? "video" : "audio")
@@ -1790,6 +1817,21 @@ void NativeTranscoderPipeline::muxWorkerLoop() {
                                       << " queue_video=" << muxVideoQueue_.size()
                                       << " queue_audio=" << muxAudioQueue_.size()
                                       << " lead_ms=" << aheadMs
+                                      << " video_producer_idle_ms=" << ageMs(lastVideoEnqueued)
+                                      << " audio_producer_idle_ms=" << ageMs(lastAudioEnqueued)
+                                      << " last_video_produced_pts=" << lastMuxVideoProducedPts90k_
+                                      << " last_audio_produced_pts=" << lastMuxAudioProducedPts90k_
+                                      << " queued_head_pts=" << clock
+                                      << " queued_video_head_pts=" <<
+                                          (muxVideoQueue_.empty() ? 0 : muxClockOf(muxVideoQueue_.front()))
+                                      << " queued_audio_head_pts=" <<
+                                          (muxAudioQueue_.empty() ? 0 : muxClockOf(muxAudioQueue_.front()))
+                                      << " input_video_pts=" <<
+                                          lastInputVideoPts90k_.load(std::memory_order_relaxed)
+                                      << " input_audio_pts=" <<
+                                          lastInputAudioPts90k_.load(std::memory_order_relaxed)
+                                      << " encoded_audio_pts=" <<
+                                          lastEncodedAudioPts90k_.load(std::memory_order_relaxed)
                                       << " video_clock=" <<
                                           lastMuxVideoClock90k_.load(std::memory_order_relaxed)
                                       << " audio_clock=" <<
