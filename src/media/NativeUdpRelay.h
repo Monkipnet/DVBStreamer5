@@ -162,6 +162,9 @@ struct NativeUdpRelayConfig {
     // V516: explicit per-channel profile; triggers the V515 smoother only
     // on eligible transcoded Source-PCR UDP-CBR output.
     bool wisiChameleonProfile = false;
+    // V518: paced UDP-VBR peak ceiling only for transcoded encoded video.
+    // Zero leaves Copy, non-transcoded streams and observers untouched.
+    std::uint64_t vbrPeakBitsPerSecond = 0;
     // V333: +777 source-PCR profile with no legacy reservoir-rate correction,
     // and the existing 3-s startup buffer. Never enabled automatically.
     bool wisiSourcePcrStrict = false;
