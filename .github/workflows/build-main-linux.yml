@@ -175,7 +175,7 @@ jobs:
             --archive
           test -x "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt"
           test -s "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt.bin"
-          sha256sum -c "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256"
+          ( cd dist && sha256sum -c "DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256" )
           cp "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256" dist/SHA256SUMS.txt
           cat dist/SHA256SUMS.txt
 
