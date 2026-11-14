@@ -142,6 +142,7 @@ void NativeTsDemux::reset() {
     pmtPid_ = 0xffff;
     pesTrimEvents_ = 0;
     pesTruncatedEvents_ = 0;
+    h264PesPtsResyncEvents_ = 0;
     rawClockVideoPid_ = 0xffff;
     rawClockAudioPid_ = 0xffff;
     rawVideoPesPts90k_ = 0;
@@ -535,6 +536,11 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         state.hasDts = sample.hasDts;
         state.randomAccess = sample.randomAccess;
     }
+    // Record the exact byte offset of each PES header PTS. Reassembly can
+    // retain the end of the previous picture, so a fresh PES PTS must not
+    // be assigned to that unfinished access unit before its boundary.
+    state.ptsRecovery.appendPes(state.bytes.size(), sample.pts90k,
+                                sample.dts90k, sample.hasPts, sample.hasDts);
     state.bytes.insert(state.bytes.end(), sample.data.begin(), sample.data.end());
     state.randomAccess = state.randomAccess || sample.randomAccess;
 
@@ -798,10 +804,29 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
         ready.stream = state.stream;
         ready.data.assign(state.bytes.begin(),
                           state.bytes.begin() + static_cast<std::ptrdiff_t>(boundary));
-        ready.pts90k = state.pts90k;
-        ready.dts90k = state.dts90k;
-        ready.hasPts = state.hasPts;
-        ready.hasDts = state.hasDts;
+        // V526: extrapolation by 1800/3600 ticks alone accumulates seconds
+        // of drift if interlaced AUs/field pairs are grouped at a different
+        // cadence from source PES. Re-anchor only when a PES timestamp is
+        // tied to this AU's first byte and differs by >500 ms. B-frame
+        // reorder/jitter below the threshold keeps existing timestamps.
+        const auto recovered = state.ptsRecovery.completeAu(
+            boundary, state.pts90k, state.dts90k, state.hasPts, state.hasDts);
+        ready.pts90k = recovered.pts90k;
+        ready.dts90k = recovered.dts90k;
+        ready.hasPts = recovered.hasPts;
+        ready.hasDts = recovered.hasDts;
+        if (recovered.corrected) {
+            ++h264PesPtsResyncEvents_;
+            if (h264PesPtsResyncEvents_ <= 8U ||
+                h264PesPtsResyncEvents_ % 50U == 0U) {
+                std::cerr << "NATIVE AVC PES PTS RESYNC pid=" << sample.stream.pid
+                          << " drift_ms=" << (recovered.drift90k / 90LL)
+                          << " old_pts=" << state.pts90k
+                          << " source_pts=" << recovered.pts90k
+                          << " events=" << h264PesPtsResyncEvents_
+                          << " mode=au_boundary" << std::endl;
+            }
+        }
         ready.h264FieldCoded = state.h264FieldCoded;
         ready.randomAccess = state.randomAccess ||
             containsRandomAccessNal(state.stream.codec, ready.data.data(), ready.data.size());
@@ -842,8 +867,14 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
             }
         }
 
-        if (state.hasPts) state.pts90k += step90k;
-        if (state.hasDts) state.dts90k += step90k;
+        // Predict the following AU only from the timestamp actually emitted;
+        // otherwise a recovery is undone on the very next iteration.
+        state.hasPts = recovered.hasPts;
+        state.hasDts = recovered.hasDts;
+        if (state.hasPts)
+            state.pts90k = (recovered.pts90k + step90k) & H264PesPtsRecovery::kMask33;
+        if (state.hasDts)
+            state.dts90k = (recovered.dts90k + step90k) & H264PesPtsRecovery::kMask33;
         state.randomAccess = containsRandomAccessNal(
             state.stream.codec, state.bytes.data(), state.bytes.size());
     }
@@ -856,10 +887,15 @@ void NativeTsDemux::flushVideoAu(std::uint16_t pid) {
     DemuxSample sample;
     sample.stream = state.stream;
     sample.data.swap(state.bytes);
-    sample.pts90k = state.pts90k;
-    sample.dts90k = state.dts90k;
-    sample.hasPts = state.hasPts;
-    sample.hasDts = state.hasDts;
+    // Also honor a PES timestamp if the last AU never received a following
+    // picture boundary (finite input, source switch or end of stream).
+    const auto recovered = state.ptsRecovery.completeAu(
+        sample.data.size(), state.pts90k, state.dts90k,
+        state.hasPts, state.hasDts);
+    sample.pts90k = recovered.pts90k;
+    sample.dts90k = recovered.dts90k;
+    sample.hasPts = recovered.hasPts;
+    sample.hasDts = recovered.hasDts;
     sample.h264FieldCoded = state.h264FieldCoded;
     sample.randomAccess = state.randomAccess ||
         containsRandomAccessNal(state.stream.codec, sample.data.data(), sample.data.size());
