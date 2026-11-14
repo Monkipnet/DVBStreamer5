@@ -11,6 +11,16 @@ fetch_commit() {
     local url="https://github.com/${repo}/archive/${commit}.tar.gz"
     local archive="$TMP/${name}.tar.gz"
     local out="$DEST/${name}"
+    local manifest="$out/DVBSTREAMER5_VENDOR_INFO.txt"
+    # Immutable, pinned vendor commits. Do not re-download or replace the
+    # existing source tree on every incremental build.
+    if [[ "${DVBSTREAMER5_VENDOR_FORCE:-0}" != 1 && -s "$manifest" ]] &&
+       grep -Fxq "Upstream: $repo" "$manifest" &&
+       grep -Fxq "Commit: $commit" "$manifest" &&
+       [[ -n "$(find "$out" -mindepth 1 -maxdepth 1 ! -name DVBSTREAMER5_VENDOR_INFO.txt -print -quit)" ]]; then
+        echo "Reusing pinned ${name}@${commit} (no download)"
+        return 0
+    fi
     echo "Downloading ${repo}@${commit}"
     curl -fL --retry 3 --connect-timeout 15 -o "$archive" "$url"
     rm -rf "$out"
