@@ -5015,11 +5015,36 @@ function outputConfigsForStream(stream) {
     ...(Array.isArray(stream.additional_outputs) ? stream.additional_outputs.map(makeOutput) : [])
   ];
 }
-function streamLinks(stream) {
-  if (Array.isArray(stream.vlc_links) && stream.vlc_links.length) {
-    return stream.vlc_links.filter(link => link.url);
+// V513: 0.0.0.0 / :: is the explicit automatic *advertised-link* mode.
+ // Never substitute manually typed IPv4, IPv6, multicast or DNS addresses.
+function outputHostIsAuto(host) {
+  const value = String(host ?? '').trim();
+  return value === '' || value === '0.0.0.0' || value === '::' || value === '[::]';
+}
+function advertisedOutputLink(link) {
+  if (!link || !link.url) return '';
+  const type = String(link.output_type || '').toLowerCase();
+  const listener = String(link.output_mode || 'listener').toLowerCase() !== 'caller';
+  if (!outputHostIsAuto(link.output_host) ||
+      !(type === 'http' || type === 'hls' || (type === 'srt' && listener)))
+    return link.url;
+  // Use the URL of the current admin browser session, not Host/X-Forwarded-Host
+  // from an API request and never a guessed first network interface.
+  try {
+    const browserHost = window.location.hostname;
+    if (!browserHost) return link.url;
+    const url = new URL(link.url);
+    url.hostname = browserHost;
+    return url.toString();
+  } catch (_) {
+    return link.url;
   }
-  return stream.vlc_link ? [{output_type: normalizedOutputType(stream), url: stream.vlc_link}] : [];
+}
+function streamLinks(stream) {
+  const raw = Array.isArray(stream.vlc_links) && stream.vlc_links.length
+    ? stream.vlc_links.filter(link => link.url)
+    : (stream.vlc_link ? [{output_type: normalizedOutputType(stream), url: stream.vlc_link}] : []);
+  return raw.map(link => ({...link, url: advertisedOutputLink(link)}));
 }
 function outputBadgeText(stream) {
   const outputs = outputConfigsForStream(stream);
@@ -8266,13 +8291,15 @@ function renderOutputRows(outputs, links=[], startIndex=0) {
   return outputs.map((output, offset) => {
     const index = startIndex + offset;
     const type = normalizedOutputType(output);
-    const link = links[index]?.url || '';
+    const link = advertisedOutputLink(links[index]);
     const interfaceAddress = String(output.interface_address || '');
+    const autoHost = outputHostIsAuto(output.output_host);
     return `
       <div class="output-row" data-output-index="${index}">
         <div class="form-row"><label>${index === 0 ? 'Основной формат' : 'Доп. формат'}</label><select data-output-field="output_type" onchange="updateOutputHints()">${outputTypeOptions(type)}</select></div>
         <div class="form-row"><label>SRT режим</label><select data-output-field="output_mode" onchange="updateOutputHints()"><option value="listener" ${(!output.output_mode || output.output_mode==='listener')?'selected':''}>Listener</option><option value="caller" ${output.output_mode==='caller'?'selected':''}>Caller</option></select></div>
-        <div class="form-row"><label data-output-host-label>Адрес выхода</label><input data-output-field="output_host" value="${output.output_host||'239.0.0.1'}" placeholder="239.0.0.1" /></div>
+        <div class="form-row"><label data-output-host-label>Адрес выхода</label><input data-output-field="output_host" value="${escapeHtmlValue(output.output_host||'239.0.0.1')}" placeholder="239.0.0.1" oninput="markOutputHostManual(this)" /></div>
+        <div class="form-row full" data-output-auto-host-row style="grid-column:1/-1;display:none"><label><input type="checkbox" data-output-auto-host ${autoHost?'checked':''} onchange="toggleOutputAutoHost(this)" /> ${uiBiText('Авто: IP/домен входа в админку','Auto: admin login IP/domain')}</label></div>
         <div class="form-row"><label data-output-port-label>Порт</label><input data-output-field="output_port" type="number" min="1" max="65535" value="${output.output_port||1234}" placeholder="1234" /></div>
         <div class="form-row"><label>Интерфейс</label><select data-output-field="interface_address" onchange="outputInterfaceChanged(this)" ${index === 0 ? 'disabled' : ''}>${outputInterfaceOptions(interfaceAddress, index === 0 ? 'Основной интерфейс' : 'Как основной')}</select></div>
         <div class="srt-output-options form-row full" style="grid-column:1/-1;display:${type==='srt'?'grid':'none'};grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px">
@@ -8300,8 +8327,9 @@ function addStreamOutput() {
   const list = document.getElementById('streamOutputs');
   if (!list) return;
   const index = list.querySelectorAll('.output-row').length;
-  const iface = document.getElementById('streamInterface')?.value || '127.0.0.1';
-  list.insertAdjacentHTML('beforeend', renderOutputRows([{output_type:'hls', output_mode:'listener', output_host:iface, output_port:state.http_port || 9000, interface_address:'', cbr:document.getElementById('streamCbr')?.checked}], [], index));
+  // New HLS listener starts in automatic link-host mode; existing outputs
+  // and manually supplied multicast/DNS/IP addresses remain untouched.
+  list.insertAdjacentHTML('beforeend', renderOutputRows([{output_type:'hls', output_mode:'listener', output_host:'0.0.0.0', output_port:state.http_port || 9000, interface_address:'', cbr:document.getElementById('streamCbr')?.checked}], [], index));
   updateOutputHints();
 }
 function removeStreamOutput(button) {
@@ -9409,17 +9437,14 @@ function updateOutputHints() {
       port.placeholder = '7001';
       if (!Number(port.value || 0)) port.value = '7001';
       host.placeholder = outputMode === 'caller' ? 'server.example.com или IP' : '0.0.0.0 для listener';
-      if (outputMode === 'listener' && (!host.value || host.value === '127.0.0.1' || host.value === '239.0.0.1')) {
-        host.value = '0.0.0.0';
-      } else if (outputMode === 'caller' && (!host.value || host.value === '0.0.0.0' || host.value === '239.0.0.1')) {
-        host.value = '127.0.0.1';
-      }
+      // Preserve every manually configured host when the mode changes.
+      // For listener auto-advertise, use the explicit Auto checkbox.
     } else if (type === 'rtsp') {
       hostLabel.textContent = 'RTSP сервер';
       portLabel.textContent = 'RTSP порт';
       port.disabled = false;
       host.placeholder = 'rtsp://server/app/name или IP сервера';
-      if (!host.value || host.value === '0.0.0.0' || host.value === '239.0.0.1') host.value = '127.0.0.1';
+      // A manually entered RTSP endpoint is never silently replaced.
     } else if (type === 'youtube') {
       hostLabel.textContent = 'YouTube key / URL';
       portLabel.textContent = 'Порт';
@@ -9436,6 +9461,13 @@ function updateOutputHints() {
       port.disabled = false;
       host.placeholder = '239.0.0.1';
     }
+    const autoHost = row.querySelector('[data-output-auto-host]');
+    const autoRow = row.querySelector('[data-output-auto-host-row]');
+    const canAdvertiseAuto = type === 'http' || type === 'hls' ||
+      (type === 'srt' && outputMode === 'listener');
+    if (autoRow) autoRow.style.display = canAdvertiseAuto ? '' : 'none';
+    if (autoHost) autoHost.checked = canAdvertiseAuto && outputHostIsAuto(host.value);
+    host.readOnly = Boolean(autoHost?.checked);
   });
   if (cbrInput && cbrRow) {
     const primaryType = rows[0]?.querySelector('[data-output-field="output_type"]')?.value || 'udp-cbr';
@@ -9457,34 +9489,32 @@ function updateOutputHints() {
   syncOutputHostWithInterface();
 }
 function outputInterfaceChanged(select) {
-  const row = select?.closest('.output-row');
-  if (!row) return;
-  const mainInterface = document.getElementById('streamInterface')?.value || '';
-  const iface = select.value || mainInterface;
-  if (!iface) return;
-  const type = row.querySelector('[data-output-field="output_type"]')?.value || 'udp-cbr';
-  const outputMode = row.querySelector('[data-output-field="output_mode"]')?.value || 'listener';
-  const host = row.querySelector('[data-output-field="output_host"]');
-  if (host && (type === 'http' || type === 'hls' || (type === 'srt' && outputMode === 'listener'))) {
-    host.value = iface;
-  }
+  // The selected NIC controls routing/binding, never the stream destination
+  // or the explicitly entered advertised link hostname.
+  void select;
 }
 function syncOutputHostWithInterface() {
   const iface = document.getElementById('streamInterface')?.value || '';
   const primaryInterface = document.querySelector('.output-row[data-output-index="0"] [data-output-field="interface_address"]');
   if (primaryInterface) primaryInterface.value = iface;
-  document.querySelectorAll('.output-row').forEach(row => {
-    const type = row.querySelector('[data-output-field="output_type"]')?.value || 'udp-cbr';
-    const outputMode = row.querySelector('[data-output-field="output_mode"]')?.value || 'listener';
-    const host = row.querySelector('[data-output-field="output_host"]');
-    const rowInterface = row.querySelector('[data-output-field="interface_address"]')?.value || '';
-    const effectiveInterface = rowInterface || iface;
-    if (!effectiveInterface) return;
-    if (!host || (type !== 'http' && type !== 'hls' && !(type === 'srt' && outputMode === 'listener'))) return;
-    if (!host.value || host.value === '0.0.0.0' || host.value === '127.0.0.1') {
-      host.value = effectiveInterface;
-    }
-  });
+}
+function markOutputHostManual(input) {
+  const row = input?.closest('.output-row');
+  const auto = row?.querySelector('[data-output-auto-host]');
+  if (auto) auto.checked = false;
+}
+function toggleOutputAutoHost(checkbox) {
+  const row = checkbox?.closest('.output-row');
+  const host = row?.querySelector('[data-output-field="output_host"]');
+  if (!host) return;
+  if (checkbox.checked) {
+    row.dataset.manualOutputHost = host.value;
+    host.value = '0.0.0.0';
+  } else {
+    host.value = row.dataset.manualOutputHost ||
+      window.location.hostname || '127.0.0.1';
+  }
+  host.readOnly = checkbox.checked;
 }
 function saveSettings() {
   const httpPortInput = document.getElementById('httpPort');
