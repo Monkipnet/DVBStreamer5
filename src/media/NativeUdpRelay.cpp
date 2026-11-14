@@ -977,7 +977,8 @@ void NativeUdpRelay::run() {
                         },config_.streamId,
                         vbrObserverEnabled && !vbrObserverAttached
                             ? config_.observeTransport
-                            : PcrVbrUdpOutputWorker::ObserverCallback{});
+                            : PcrVbrUdpOutputWorker::ObserverCallback{},
+                        config_.vbrPeakBitsPerSecond);
                 if(vbrObserverEnabled && !vbrObserverAttached)
                     vbrObserverAttached=true;
             }catch(const std::exception& exception){
