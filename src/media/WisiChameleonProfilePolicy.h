@@ -46,11 +46,19 @@ struct WisiChameleonProfilePolicy {
     // 16-bit limits; unlike the old 2000-ms setting, V516 opts in to 400 ms.
     static std::uint16_t qsvBufferKB(
         std::uint64_t bitrate, std::uint32_t windowMs = kCpbWindowMs) noexcept {
-        const std::uint64_t bytes = bitrate / 8ULL;
-        const std::uint64_t sizeKB =
-            (bytes * windowMs / 1000ULL + 999ULL) / 1000ULL;
+        if (!windowMs || !bitrate) return 1U;
+        // 1 kB = 8,000 bits; milliseconds add another factor of 1,000.
+        // Early saturation prevents unsigned overflow on corrupt configs.
+        constexpr std::uint64_t kBitsPerKBMillisecond = 8000000ULL;
+        constexpr std::uint64_t kMaxKB = 65535ULL;
+        if (bitrate > kMaxKB * kBitsPerKBMillisecond / windowMs)
+            return static_cast<std::uint16_t>(kMaxKB);
+        const auto bitsMilliseconds = bitrate * windowMs;
+        const auto kilobytes =
+            (bitsMilliseconds + kBitsPerKBMillisecond - 1ULL) /
+            kBitsPerKBMillisecond;
         return static_cast<std::uint16_t>(
-            (std::clamp<std::uint64_t>)(sizeKB, 1ULL, 65535ULL));
+            (std::clamp<std::uint64_t>)(kilobytes, 1ULL, kMaxKB));
     }
 
     // NVENC already has a very small 2-frame default VBV. Never enlarge it
