@@ -1027,9 +1027,11 @@ private:
         encoded.hasDts = hasPts;
         encoded.pts90k = hasPts ? lock.outputTimeStamp : 0;
         encoded.dts90k = encoded.pts90k;
+        // An NVENC intra-only I picture may not be a decoder-safe IDR.
+        // HLS uses this flag as a random-access boundary, so only advertise
+        // an explicit forced IDR or an NVENC-reported true IDR.
         encoded.keyFrame = forceRandomAccess ||
-            lock.pictureType == NV_ENC_PIC_TYPE_IDR ||
-            lock.pictureType == NV_ENC_PIC_TYPE_I;
+            lock.pictureType == NV_ENC_PIC_TYPE_IDR;
         (void)api_.nvEncUnlockBitstream(encoder_, bitstream_);
 
         cleanup();
