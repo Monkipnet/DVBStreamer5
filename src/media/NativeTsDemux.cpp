@@ -898,6 +898,8 @@ void NativeTsDemux::reportRawAvClock() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(now - at).count();
     };
     std::cerr << "NATIVE DEMUX RAW AV CLOCK"
+              << " service_id=" << programNumber_
+              << " pmt_pid=" << pmtPid_
               << " video_pid=" << rawClockVideoPid_
               << " audio_pid=" << rawClockAudioPid_
               << " raw_video_pes_pts=" << rawVideoPesPts90k_
