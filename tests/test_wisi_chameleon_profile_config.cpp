@@ -18,28 +18,30 @@ int main() {
     legacy["transcode_audio_bitrate"]=Json::UInt64(192000ULL);
     legacy["target_bitrate"]=Json::UInt64(8000000ULL);
     legacy["cbr"]=true;
-    const auto parsed=StreamConfig::fromJson(legacy);
-    check(!parsed.wisiChameleonProfile,"previous streams must remain off");
-    auto enabled=parsed;
-    enabled.wisiChameleonProfile=true;
-    const auto stored=enabled.toJson();
-    check(stored["wisi_chameleon_profile"].asBool(),"WISI flag not saved");
-    check(stored["target_bitrate"].asUInt64()==8000000ULL,
-          "physical WISI bitrate modified");
-    check(stored["transcode_video_bitrate"].asUInt64()==6000000ULL,
-          "encoder bitrate modified");
-    const auto restored=StreamConfig::fromJson(stored);
-    check(restored.wisiChameleonProfile,"WISI flag not restored");
-    check(WisiChameleonProfilePolicy::cbrEligible(
-        restored.transcodeEnabled, restored.cbr,
-        true, restored.transcodeVideoCodec),"MIR24 CBR auto profile not eligible");
-    check(WisiChameleonProfilePolicy::vbrEligible(
-        restored.transcodeEnabled, true, restored.transcodeVideoCodec),
-        "MIR24 VBR auto profile not eligible");
-    enabled.wisiChameleonProfile=false;
-    check(!StreamConfig::fromJson(enabled.toJson()).wisiChameleonProfile,
-          "rollback not persisted");
-    check(!StreamConfig::fromJson(legacy).wisiChameleonProfile,
-          "unrelated config unexpectedly enabled");
-    std::cout<<"WISI Chameleon persisted profile: OK\n";
+    // An old checked/unchecked UI setting must no longer affect runtime
+    // compatibility or reappear in new JSON after upgrade.
+    for (const bool oldFlag : {false, true}) {
+        legacy["wisi_chameleon_profile"]=oldFlag;
+        const auto parsed=StreamConfig::fromJson(legacy);
+        const auto stored=parsed.toJson();
+        check(!stored.isMember("wisi_chameleon_profile"),
+              "removed UI switch was written back to stream JSON");
+        check(stored["target_bitrate"].asUInt64()==8000000ULL,
+              "transport bitrate changed during migration");
+        check(stored["transcode_video_bitrate"].asUInt64()==6000000ULL,
+              "video bitrate changed during migration");
+        const auto restored=StreamConfig::fromJson(stored);
+        check(WisiChameleonProfilePolicy::cbrEligible(
+            restored.transcodeEnabled, restored.cbr, true,
+            restored.transcodeVideoCodec),
+            "saved legacy WISI checkbox disabled automatic CBR");
+        check(WisiChameleonProfilePolicy::vbrEligible(
+            restored.transcodeEnabled, true,
+            restored.transcodeVideoCodec),
+            "saved legacy WISI checkbox disabled automatic VBR");
+        check(!WisiChameleonProfilePolicy::cbrEligible(
+            restored.transcodeEnabled, restored.cbr, true, "copy"),
+            "Copy must never acquire the encoder profile");
+    }
+    std::cout << "V518 automatic WISI stream-config migration: OK\n";
 }
