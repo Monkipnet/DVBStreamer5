@@ -25,7 +25,7 @@ Usage:
 Options:
   --build-dir DIR       CMake build directory (default: ./build)
   --binary FILE         Exact DVBStreamer5 executable to package
-  --output-dir DIR      Bundle directory (default: dist/DVBStreamer5-linux-x86_64)
+  --output-dir DIR      Bundle directory (default: dist/DVBStreamer5-<version>-linux-x86_64)
   --build               Build DVBStreamer5 before packaging
   --jobs N              Parallel build jobs used with --build
   --with-oscam          Require and include build/oscam-mini/oscam-mini
@@ -33,7 +33,7 @@ Options:
   --with-tsdecrypt      Require an iCAM TSDecrypt executable in the bundle
   --without-tsdecrypt   Do not include external TSDecrypt
   --tsdecrypt-binary FILE   Bundle a supplied executable as bin/tsdecrypt
-  --archive             Also create <bundle>.tar.gz
+  --archive             Create a versioned .tar.gz and .tar.gz.sha256
   -h, --help            Show this help
 
 The bundle contains the application, web assets, CA plugins found in the build
@@ -79,8 +79,6 @@ for tool in ldd readelf file awk sed find sha256sum; do
 done
 
 [[ "$BUILD_DIR" == /* ]] || BUILD_DIR="$PROJECT_ROOT/$BUILD_DIR"
-OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/dist/${APP}-linux-x86_64}"
-[[ "$OUTPUT_DIR" == /* ]] || OUTPUT_DIR="$PROJECT_ROOT/$OUTPUT_DIR"
 
 if (( DO_BUILD )); then
     [[ -d "$BUILD_DIR" ]] || fail "build directory does not exist: $BUILD_DIR (configure it with cmake -S . -B ...)"
@@ -139,6 +137,8 @@ if [[ -n "$TSDECRYPT_BINARY" ]]; then
 fi
 VERSION="$(sed -n 's/.*kProgramVersion = "\([^"]*\)".*/\1/p' "$PROJECT_ROOT/src/AppVersion.h")"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "cannot determine binary release version"
+OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/dist/${APP}-${VERSION}-linux-x86_64}"
+[[ "$OUTPUT_DIR" == /* ]] || OUTPUT_DIR="$PROJECT_ROOT/$OUTPUT_DIR"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 
 install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_update.sh" "$STAGE/updater.sh"
@@ -590,10 +590,28 @@ trap - EXIT
 rm -rf -- "$TMP"
 
 if (( DO_ARCHIVE )); then
-    ARCHIVE="${OUTPUT_DIR%/}.tar.gz"
-    rm -f -- "$ARCHIVE"
+    # Never publish an unversioned or inaccurately versioned portable archive.
+    # A custom --output-dir may be kept for staging, but the archive filename
+    # must always carry the version embedded in the packaged VERSION file.
+    ARCHIVE_NAME="$(basename -- "${OUTPUT_DIR%/}")"
+    if [[ "$ARCHIVE_NAME" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+        [[ "${BASH_REMATCH[1]}" == "$VERSION" ]] ||
+            fail "--output-dir has a different release version from kProgramVersion: $ARCHIVE_NAME"
+    fi
+    if [[ "$ARCHIVE_NAME" != *"$VERSION"* ]]; then
+        case "$ARCHIVE_NAME" in
+            *-linux-x86_64)
+                ARCHIVE_NAME="${ARCHIVE_NAME%-linux-x86_64}-${VERSION}-linux-x86_64" ;;
+            *)
+                ARCHIVE_NAME="${ARCHIVE_NAME}-${VERSION}" ;;
+        esac
+    fi
+    ARCHIVE="$(dirname -- "${OUTPUT_DIR%/}")/${ARCHIVE_NAME}.tar.gz"
+    rm -f -- "$ARCHIVE" "${ARCHIVE}.sha256"
     tar -C "$(dirname -- "$OUTPUT_DIR")" -czf "$ARCHIVE" "$(basename -- "$OUTPUT_DIR")"
+    sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
     log "Archive: $ARCHIVE"
+    log "Checksum: ${ARCHIVE}.sha256"
 fi
 
 log "Portable bundle created: $OUTPUT_DIR"
