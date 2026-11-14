@@ -112,6 +112,7 @@ jobs:
           node tests/web/test_ondemand_activation_v528.js
           node tests/web/test_ondemand_viewer_v529.js
           node tests/web/test_ondemand_hls_prefill_v530.js
+          node tests/web/test_restart_ondemand_v531.js
 
       - name: Verify per-channel WISI Chameleon encoder profile UI
         run: node tests/web/test_wisi_chameleon_profile_ui.js
@@ -205,6 +206,7 @@ jobs:
           node tests/web/test_ondemand_activation_v528.js
           node tests/web/test_ondemand_viewer_v529.js
           node tests/web/test_ondemand_hls_prefill_v530.js
+          node tests/web/test_restart_ondemand_v531.js
           node tests/web/test_pcr_cpu_optimization_ui.js
           node tests/web/test_cbr_profile_ui.js
           ctest --test-dir build-main-ci --output-on-failure
