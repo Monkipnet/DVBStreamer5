@@ -1520,7 +1520,8 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
     // This is intentionally opt-in and does not change encoded frames.
     if (queued.kind == mpegts::ElementaryKind::Video) {
         const char* burstId = std::getenv("DVBSTREAMER5_DIAG_VIDEO_BURSTS_STREAM_ID");
-        if (burstId && config_.streamId == burstId) {
+        if (config_.wisiChameleonProfile ||
+            (burstId && config_.streamId == burstId)) {
             static thread_local const NativeTranscoderPipeline* burstOwner = nullptr;
             static thread_local std::deque<std::pair<std::uint64_t, std::size_t>> burstSamples;
             static thread_local std::uint64_t burstBytes100 = 0;
@@ -1585,6 +1586,7 @@ bool NativeTranscoderPipeline::writeMuxSample(MuxQueuedSample&& queued, std::str
             if (burstNow - burstSince >= std::chrono::seconds(5)) {
                 std::cerr << "NATIVE VIDEO BURST DIAG stream_id=" << config_.streamId
                           << " codec=" << config_.videoCodec
+                          << " wisi_profile=" << (config_.wisiChameleonProfile ? 1 : 0)
                           << " au=" << burstAuCount
                           << " peak_100ms_kbps=" << burstPeak100Kbps
                           << " peak_1s_kbps=" << burstPeak1000Kbps
