@@ -20,8 +20,22 @@ bash scripts/make_portable_linux_bundle.sh \
 Output:
 
 ```text
-dist/DVBStreamer5-linux-x86_64/
-dist/DVBStreamer5-linux-x86_64.tar.gz
+dist/DVBStreamer5-<version>-linux-x86_64/
+dist/DVBStreamer5-<version>-linux-x86_64.tar.gz
+dist/DVBStreamer5-<version>-linux-x86_64.tar.gz.sha256
+```
+
+The archive and checksum filenames always include the precise version read
+from `src/AppVersion.h` (for example `DVBStreamer5-10.8.521-linux-x86_64.tar.gz`).
+Versioning also applies when `--output-dir` specifies a custom directory; a
+conflicting version in that directory name causes packaging to fail rather than
+publishing a mislabeled release. The GitHub Actions artifact is also versioned.
+
+To verify the checksum from the repository root:
+
+```bash
+VERSION="$(sed -n 's/.*kProgramVersion = "\([^"]*\)";.*/\1/p' src/AppVersion.h)"
+sha256sum -c "dist/DVBStreamer5-${VERSION}-linux-x86_64.tar.gz.sha256"
 ```
 
 ## Install on another Linux host
