@@ -51,6 +51,21 @@ int main() {
     a = pts.completeAu(100, base + 183600, base + 180000, true, true);
     assert(!a.corrected && a.pts90k == base + 183600);
 
+    // Home2 regression: a 25-fps H.264 AU assembler incrementing only
+    // 1800 ticks for each real 3600-tick frame used to accumulate a
+    // 140-second skew. Verify the new clock stays within 500 ms over
+    // 250 frames of simulated erroneous field-duration predictions.
+    pts.reset();
+    std::uint64_t predicted = base;
+    for (int i = 0; i < 250; ++i) {
+        const std::uint64_t source = base + 3600ULL * i;
+        pts.appendPes(0, source, source, true, true);
+        auto frame = pts.completeAu(100, predicted, predicted, true, true);
+        const auto delta = H264PesPtsRecovery::signedPtsDelta90k(source, frame.pts90k);
+        assert(delta <= 45000 && delta >= -45000);
+        predicted = (frame.pts90k + 1800ULL) & H264PesPtsRecovery::kMask33;
+    }
+
     // Signed MPEG 33-bit wrap-aware delta: +/-1 s remains +/-90000.
     constexpr std::uint64_t wrap = 1ULL << 33U;
     assert(H264PesPtsRecovery::signedPtsDelta90k(45000, wrap - 45000) == 90000);
