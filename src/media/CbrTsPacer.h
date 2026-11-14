@@ -2,6 +2,7 @@
 
 #include "media/TransportStream.h"
 #include "media/SourcePcrPacketSchedule.h"
+#include "media/CbrOutputPcrSmoothingPolicy.h"
 
 #include <array>
 #include <chrono>
@@ -24,7 +25,8 @@ using CbrDatagram = std::array<Packet, kPacketsPerCbrDatagram>;
 // input delivery jitter and queue locks from moving the UDP transmission clock.
 class CbrTsPacer {
 public:
-    explicit CbrTsPacer(std::uint64_t targetBitrate, bool sourceTimelinePacing = false);
+    explicit CbrTsPacer(std::uint64_t targetBitrate, bool sourceTimelinePacing = false,
+                        bool smoothOutputPcr = false);
 
     bool canEnqueue(const Packet& packet) const noexcept;
     bool enqueue(const Packet& packet);
@@ -61,6 +63,10 @@ public:
     std::uint64_t outputSlots() const noexcept;
     bool sourcePllMode() const noexcept { return sourcePllMode_; }
     bool sourceTimelinePacing() const noexcept { return sourceTimelinePacing_; }
+    bool outputPcrSmoothing() const noexcept { return outputPcrSmoothing_; }
+    std::uint64_t clockOnlyPcrPackets() const noexcept {
+        return clockOnlyPcrPackets_;
+    }
 
     // V176 keeps the per-stream controls backward-compatible with the existing
     // StreamManager wiring. The Web UI stores target bitrate in whole kbps and
@@ -188,6 +194,10 @@ private:
 
     const bool sourcePllMode_;
     const bool sourceTimelinePacing_;
+    // V515: strictly opt-in, only for source-timeline transcoded UDP CBR.
+    // Enables output-slot PCR and 20-ms PCR-only adaptation packets, without
+    // touching the original MPEG-TS packet data or PES payload.
+    const bool outputPcrSmoothing_;
     SourcePcrPacketSchedule sourceSchedule_;
     std::uint64_t emittedUsefulPackets_ = 0;
     // V299 opt-in WISI-only reservoir assist (+809); not used by HTTP observers.
@@ -238,6 +248,11 @@ private:
     std::array<OutputPcrState, kPidCount> outputPcrStates_ {};
     std::uint64_t pcrRewriteCount_ = 0;
     std::uint64_t pcrPidCount_ = 0;
+    std::uint64_t clockOnlyPcrPackets_ = 0;
+    std::uint64_t lastOutputReferencePcrSlot_ = 0;
+    std::uint8_t lastReferencePayloadCc_ = 0;
+    bool haveOutputReferencePcr_ = false;
+    bool haveReferencePayloadCc_ = false;
 };
 
 static_assert(CbrTsPacer::decodeTargetBitrate(6000699ULL) == 6000000ULL);
