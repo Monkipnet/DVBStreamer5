@@ -43,6 +43,8 @@ struct NativeTranscoderConfig {
     bool videoPesPacerEnabled = false;
     std::uint64_t videoBitrate = 6000000;
     std::uint64_t audioBitrate = 192000;
+    // V516: selected test channel only; do not apply to preview or HLS ABR.
+    bool wisiChameleonProfile = false;
     bool deinterlace = true;
     std::string deinterlaceMode = "legacy"; // legacy | off | 25p | bob50
     std::string preset = "balanced";
