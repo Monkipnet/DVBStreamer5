@@ -82,6 +82,43 @@ int main() {
     s.stop();
     if(readText(dir/"video.m3u8").find("#EXT-X-ENDLIST")==std::string::npos)return 11;
     std::filesystem::remove_all(dir,ec);
-    std::cout<<"PASS: HLS live media sequence and discontinuities primary->backup->primary\n";
+
+    // V530: an OnDemand transcoded HLS player must not receive a manifest
+    // containing only the first 1–2 seconds of media. Prefill three CLOSED
+    // IDR-aligned chunks so VLC can start behind the live edge. This is
+    // opt-in: the legacy test above still uses an immediate playlist.
+    const auto prefillDir=std::filesystem::temp_directory_path()/
+        "dvbstreamer5-hls-ondemand-prefill-v530-test";
+    std::filesystem::remove_all(prefillDir,ec);
+    dvbstreamer5::media::hls::NativeHlsSegmenter prefill;
+    auto prefillConfig=cfg;
+    prefillConfig.directory=prefillDir;
+    prefillConfig.startupPrefillSegments=3U;
+    if(!prefill.start(prefillConfig,error))return 12;
+    bool published=false;
+    for(unsigned i=0;i<10;++i){
+        const auto p=packetAt(i*90000ULL);
+        if(!prefill.push(p.data(),p.size()))return 13;
+        const auto completed=prefill.segmentCount();
+        const bool hasManifest=std::filesystem::exists(prefillDir/"video.m3u8");
+        if(completed<3U && hasManifest)return 14;
+        if(completed>=3U){
+            if(!hasManifest)return 15;
+            const auto playlist=readText(prefillDir/"video.m3u8");
+            std::size_t count=0,offset=0;
+            while((offset=playlist.find("#EXTINF:",offset))!=std::string::npos){
+                ++count;
+                offset+=8;
+            }
+            if(count<3U||playlist.find("#EXT-X-ENDLIST")!=std::string::npos)
+                return 16;
+            published=true;
+            break;
+        }
+    }
+    if(!published)return 17;
+    prefill.stop();
+    std::filesystem::remove_all(prefillDir,ec);
+    std::cout<<"PASS: HLS failover and OnDemand three-segment prefill\n";
     return 0;
 }
