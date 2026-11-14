@@ -613,6 +613,13 @@ add_executable(dvbstreamer5_udp_vbr_pcr_test tests/test_udp_vbr_pcr_clock.cpp)
 target_include_directories(dvbstreamer5_udp_vbr_pcr_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME udp_vbr_pcr_clock COMMAND dvbstreamer5_udp_vbr_pcr_test)
 
+# V518: automatic transcoded UDP-VBR burst cap and PCR deadline safety.
+add_executable(dvbstreamer5_vbr_peak_rate_test
+    tests/test_vbr_peak_rate_policy.cpp)
+target_include_directories(dvbstreamer5_vbr_peak_rate_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME udp_vbr_peak_rate COMMAND dvbstreamer5_vbr_peak_rate_test)
+
 add_executable(dvbstreamer5_shared_vbr_test tests/test_shared_vbr_fanout.cpp)
 target_include_directories(dvbstreamer5_shared_vbr_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(dvbstreamer5_shared_vbr_test PRIVATE
