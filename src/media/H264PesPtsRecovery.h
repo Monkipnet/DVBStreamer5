@@ -23,12 +23,27 @@ public:
         std::int64_t drift90k = 0;
     };
 
-    void reset() noexcept { anchors_.clear(); sourceClockLocked_ = false; }
+    void reset() noexcept {
+        anchors_.clear();
+        sourceClockLocked_ = false;
+        carriedInteriorAnchors_ = 0;
+    }
+
+    std::uint64_t carriedInteriorAnchors() const noexcept {
+        return carriedInteriorAnchors_;
+    }
 
     void appendPes(std::size_t offset, std::uint64_t pts90k,
                    std::uint64_t dts90k, bool hasPts, bool hasDts) {
         if (!hasPts) return;
-        anchors_.push_back({offset, pts90k & kMask33, dts90k & kMask33, hasDts});
+        const Anchor source{offset, pts90k & kMask33, dts90k & kMask33, hasDts};
+        if (offset == 0 && !anchors_.empty() && anchors_.front().offset == 0) {
+            // An actual PES at the AU boundary supersedes a carried anchor
+            // that originated inside the previous picture.
+            anchors_.front() = source;
+            return;
+        }
+        anchors_.push_back(source);
     }
 
     Recovery completeAu(std::size_t consumedBytes, std::uint64_t predictedPts90k,
@@ -57,12 +72,26 @@ public:
                 result.drift90k = drift;
             }
         }
-        // A PES with a PTS inside this AU may describe a following AU.
-        // Do not transfer that timestamp backwards onto the previous frame.
-        while (!anchors_.empty() && anchors_.front().offset < consumedBytes)
+        // The PES PTS belongs to the first access unit STARTING within
+        // that PES. A PES header falling in the middle of the current AU
+        // applies to the NEXT AU. V526 dropped those PTS anchors entirely.
+        Anchor nextAuAnchor{};
+        bool carryInteriorAnchor = false;
+        while (!anchors_.empty() && anchors_.front().offset < consumedBytes) {
+            if (anchors_.front().offset != 0) {
+                nextAuAnchor = anchors_.front();
+                carryInteriorAnchor = true;
+            }
             anchors_.pop_front();
+        }
         for (auto& anchor : anchors_)
             anchor.offset -= consumedBytes;
+        if (carryInteriorAnchor &&
+            (anchors_.empty() || anchors_.front().offset != 0)) {
+            nextAuAnchor.offset = 0;
+            anchors_.push_front(nextAuAnchor);
+            ++carriedInteriorAnchors_;
+        }
         return result;
     }
 
@@ -84,6 +113,7 @@ private:
     };
     std::deque<Anchor> anchors_;
     bool sourceClockLocked_ = false;
+    std::uint64_t carriedInteriorAnchors_ = 0;
 };
 
 } // namespace dvbstreamer5::media::mpegts
