@@ -1,4 +1,5 @@
 #include "media/PcrVbrUdpOutputWorker.h"
+#include "media/VbrPeakRatePolicy.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -21,10 +22,6 @@ constexpr std::size_t kMaximumObserverBytes=2U*1024U*1024U;
 constexpr auto kPcrPrebuffer=1200ms;
 constexpr auto kMaxNoPcrWait=550ms;
 constexpr auto kMaximumLate=80ms;
-// Keep source PCR/PTS/DTS safety above burst suppression. If the peak cap
-// would add >80ms beyond the source-PCR deadline, send uncapped rather than
-// accumulating a decoder-underrun-inducing backlog.
-constexpr auto kMaximumPeakCapDebt=80ms;
 constexpr std::uint64_t kFallbackBps=4000000ULL;
 }
 PcrVbrUdpOutputWorker::PcrVbrUdpOutputWorker(
@@ -182,12 +179,11 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         // actual send time, not on bursty enqueue/producer timestamps.
         if(peakBitsPerSecond_>=4000000ULL && lastWireBytes &&
            lastWireSendAt.time_since_epoch().count()!=0){
-            const auto intervalNs=static_cast<std::int64_t>(
-                (static_cast<std::uint64_t>(lastWireBytes)*8000000000ULL +
-                 peakBitsPerSecond_-1ULL)/peakBitsPerSecond_);
+            const auto intervalNs=VbrPeakRatePolicy::spacingNs(
+                lastWireBytes,peakBitsPerSecond_);
             const auto peakDue=lastWireSendAt+std::chrono::nanoseconds(intervalNs);
             if(peakDue>due){
-                if(peakDue-due<=kMaximumPeakCapDebt){
+                if(VbrPeakRatePolicy::canDelay(due,peakDue)){
                     due=peakDue;
                     ++peakThrottled;
                 }else{
