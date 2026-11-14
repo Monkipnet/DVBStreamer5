@@ -456,6 +456,8 @@ private:
     std::deque<mpegts::DemuxSample> audioQueue_;
     std::deque<MuxQueuedSample> muxVideoQueue_;
     std::deque<MuxQueuedSample> muxAudioQueue_;
+    // Telemetry-only; protected by muxQueueMutex_, never affects scheduling.
+    std::chrono::steady_clock::time_point lastMuxPeerStallReportAt_{};
     std::atomic<bool> workersStop_{false};
     std::atomic<bool> muxStop_{false};
     // End-of-input drain: release mux peer waits only during flush().
