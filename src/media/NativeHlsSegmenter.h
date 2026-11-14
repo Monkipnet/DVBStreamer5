@@ -27,6 +27,11 @@ struct NativeHlsSegmenterConfig {
     // For transcoded ABR renditions every published segment must begin at a
     // random-access point so a player can switch bitrate without freezing.
     bool independentSegments = false;
+    // V530: only selected OnDemand + transcoded HLS streams prefill the
+    // initial live playlist. Prevent VLC starting on a single segment at
+    // the live edge and stalling until each following 4s chunk finalizes.
+    // Zero preserves the legacy Online, passthrough and ABR behavior.
+    std::size_t startupPrefillSegments = 0;
     std::string encryption = "none"; // none | aes-128 | sample-aes
     std::string keyUri = "key.bin";
     std::array<std::uint8_t, 16> key{};
