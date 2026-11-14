@@ -2024,6 +2024,16 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         hlsConfig.independentSegments =
             streamConfig.transcodeEnabled &&
             toLower(streamConfig.transcodeVideoCodec) != "copy";
+        // V530: prefill only short-segment OnDemand transcodes. Their initial
+        // 1–2s startup chunk was advertised immediately, leaving VLC with
+        // no completed media ahead and a freeze at every 4s rotation.
+        // Online, video-copy, long explicit segments and other outputs retain
+        // their previous startup and latency.
+        if (toLower(streamConfig.activationMode) == "ondemand" &&
+            hlsConfig.independentSegments &&
+            hlsConfig.targetDurationSeconds <= 4.0) {
+            hlsConfig.startupPrefillSegments = 3U;
+        }
         hlsConfig.encryption = toLower(streamConfig.hlsEncryption);
         hlsConfig.keyUri = streamConfig.hlsEncryptionKeyUri;
         hlsConfig.hasKey = dvbstreamer5::media::hls::parseHexKey16(streamConfig.hlsEncryptionKeyHex, hlsConfig.key);
