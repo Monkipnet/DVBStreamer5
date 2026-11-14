@@ -4,6 +4,7 @@
 #include "media/TransportStream.h"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -116,6 +117,7 @@ private:
     void flushPes(std::uint16_t pid);
     void queueVideoSample(DemuxSample&& sample);
     void flushVideoAu(std::uint16_t pid);
+    void reportRawAvClock();
     void notifyProgram();
 
     static ElementaryCodec codecFromStreamType(std::uint8_t streamType,
@@ -138,6 +140,18 @@ private:
     std::uint16_t pmtPid_ = 0xffff;
     std::uint64_t pesTrimEvents_ = 0;
     std::uint64_t pesTruncatedEvents_ = 0;
+
+    // Compare original PES source timestamps with assembled H.264 access-unit
+    // timestamps. Read-only diagnostics: no change to output PTS or scheduler.
+    std::uint16_t rawClockVideoPid_ = 0xffff;
+    std::uint16_t rawClockAudioPid_ = 0xffff;
+    std::uint64_t rawVideoPesPts90k_ = 0;
+    std::uint64_t rawAudioPesPts90k_ = 0;
+    std::uint64_t assembledVideoAuPts90k_ = 0;
+    std::chrono::steady_clock::time_point rawVideoPesAt_{};
+    std::chrono::steady_clock::time_point rawAudioPesAt_{};
+    std::chrono::steady_clock::time_point assembledVideoAuAt_{};
+    std::chrono::steady_clock::time_point rawAvClockReportAt_{};
 };
 
 } // namespace dvbstreamer5::media::mpegts
