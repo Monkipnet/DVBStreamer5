@@ -864,6 +864,7 @@ html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-
 <summary data-ui-ru="Администрирование" data-ui-en="Administration" data-ui-hr="Administracija">Администрирование</summary>
 <div class="system-submenu-list">
 <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()" data-ui-ru="Конфигурация" data-ui-en="Configuration" data-ui-hr="Konfiguracija">Конфигурация</button>
+<button class="system-menu-item" onclick="openTileViewModal();closeSystemMenu()" data-ui-ru="Вид плиток" data-ui-en="Tile display" data-ui-hr="Prikaz pločica">Вид плиток</button>
 <button class="system-menu-item" id="dashboardThemeButton" onclick="toggleDashboardTheme()" aria-pressed="false" data-ui-ru="Светлая тема" data-ui-en="Light theme" data-ui-hr="Svijetla tema">Светлая тема</button>
 <button class="system-menu-item" onclick="openAboutModal();closeSystemMenu()" data-i18n="about">About</button>
 </div>
@@ -919,6 +920,85 @@ function toggleDashboardTheme(){
     drawQualityChart(qualityChart.lastData);
   }
 }
+
+const tileVisibilityStorageKey='dvbstreamer5-tile-visible-v1';
+const tileVisibilityFields=[
+ ['status','Статус Online/Offline','Online/offline status','Status Online/Offline'],
+ ['uptime','Время работы','Uptime','Vrijeme rada'],
+ ['runtime','Состояние процесса','Runtime status','Status procesa'],
+ ['badge','Тип выхода / CBR/VBR','Output mode / CBR/VBR','Vrsta izlaza / CBR/VBR'],
+ ['signal','Уровень сигнала','Signal level','Razina signala'],
+ ['quality','Качество сигнала','Signal quality','Kvaliteta signala'],
+ ['output','Выходной адрес','Output address','Izlazna adresa'],
+ ['activeInput','Активный вход','Active input','Aktivni ulaz'],
+ ['primary','Основной вход','Primary input','Primarni ulaz'],
+ ['backup','Резервный вход','Backup input','Rezervni ulaz'],
+ ['sid','SID','SID','SID'],
+ ['frontend','Frontend','Frontend','Frontend'],
+ ['tuning','Настройка DVB','DVB tuning','DVB podešavanje'],
+ ['ca','Условный доступ (CA)','Conditional access (CA)','Uvjetni pristup (CA)'],
+ ['decode','Декодирование','Descrambling','Dekodiranje'],
+ ['bitrateIn','Входящий битрейт','Input bitrate','Ulazni bitrate'],
+ ['bitrateOut','Исходящий битрейт','Output bitrate','Izlazni bitrate']
+];
+let tileVisibility={};
+try{
+ const saved=JSON.parse(localStorage.getItem(tileVisibilityStorageKey)||'{}');
+ if(saved && typeof saved==='object' && !Array.isArray(saved)){
+   for(const [key] of tileVisibilityFields)if(typeof saved[key]==='boolean')tileVisibility[key]=saved[key];
+ }
+}catch(_){}
+function tileVisibilityLabel(field){
+ return language==='ru'?field[1]:language==='hr'?field[3]:field[2];
+}
+function applyTileVisibility(tile){
+ if(!tile)return;
+ const set=(element,key)=>{
+   if(element)element.style.display=tileVisibility[key]===false?'none':'';
+ };
+ set(tile.querySelector('[data-role="status-pill"]'),'status');
+ set(tile.querySelector('[data-role="tile-uptime"]'),'uptime');
+ set(tile.querySelector('[data-role="runtime-status"]'),'runtime');
+ set(tile.querySelector('.tile-actions .badge'),'badge');
+ const meters=tile.querySelectorAll('.dvb-meters .dvb-meter');
+ set(meters[0],'signal');set(meters[1],'quality');
+ const rows=tile.querySelectorAll('.info > .info-row');
+ const keys=['output','activeInput','primary','backup','sid'];
+ if(rows.length>=9){
+   if(rows.length===11)keys.push('frontend','tuning');
+   keys.push('ca','decode','bitrateIn','bitrateOut');
+   rows.forEach((row,i)=>set(row,keys[i]));
+ }
+}
+function applyTileVisibilityAll(){
+ document.querySelectorAll('#tiles .tile').forEach(applyTileVisibility);
+}
+function setTileVisibility(key,visible){
+ if(!tileVisibilityFields.some(field=>field[0]===key))return;
+ tileVisibility[key]=!!visible;
+ try{localStorage.setItem(tileVisibilityStorageKey,JSON.stringify(tileVisibility));}catch(_){}
+ applyTileVisibilityAll();
+}
+function resetTileVisibility(){
+ tileVisibility={};
+ try{localStorage.removeItem(tileVisibilityStorageKey);}catch(_){}
+ applyTileVisibilityAll();
+ openTileViewModal();
+}
+function openTileViewModal(){
+ const title=language==='ru'?'Вид плиток':language==='hr'?'Prikaz pločica':'Tile display';
+ const hint=language==='ru'?'Выберите данные, отображаемые в плитках. Изменения применяются сразу и сохраняются в этом браузере.'
+   :language==='hr'?'Odaberite podatke vidljive na pločicama. Promjene se odmah primjenjuju i spremaju u pregledniku.'
+   :'Choose which tile details are visible. Changes apply immediately and are saved in this browser.';
+ const reset=language==='ru'?'Показать всё (по умолчанию)':language==='hr'?'Prikaži sve (zadano)':'Show all (default)';
+ const rows=tileVisibilityFields.map(field=>
+   '<label style="display:flex;align-items:center;gap:10px;padding:7px 0;cursor:pointer"><input type="checkbox" data-tile-visibility="'+field[0]+'" '+(tileVisibility[field[0]]===false?'':'checked')+'><span>'+tileVisibilityLabel(field)+'</span></label>'
+ ).join('');
+ openModal('<h2>'+title+'</h2><p>'+hint+'</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));column-gap:22px;margin:12px 0">'+rows+'</div><button type="button" class="button-secondary" onclick="resetTileVisibility()">'+reset+'</button>');
+ document.querySelectorAll('#modalContent input[data-tile-visibility]').forEach(input=>
+   input.addEventListener('change',()=>setTileVisibility(input.dataset.tileVisibility,input.checked)));
+}
+
 const translations = {
   en: {
     subtitle:'Broadcast monitoring and stream control', total:'Total:', active:'Active:', network:'Network', system:'Menu', user:'User', addStream:'+ Add stream', addChannel:'+ Add channel',
@@ -6029,6 +6109,7 @@ function render(force=false) {
       </div>`;
     (parents.get(String(stream.id)) || tiles).appendChild(tile);
     updateStreamTile(tile, stream);
+    applyTileVisibility(tile);
   });
   lastTileStructureSignature = signature;
   updateLiveTiles();
