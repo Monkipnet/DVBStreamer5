@@ -29,7 +29,8 @@ std::string physicalDvbCardKey(int adapter, int frontend) {
 
 std::string HttpServer::listInterfaces() {
     Json::Value root;
-    auto interfaces = enumerateNetworkInterfaces();
+    // V513: loopback is selectable for locally served stream outputs.
+    auto interfaces = enumerateNetworkInterfaces(true);
     for (auto& iface : interfaces) {
         Json::Value item;
         item["name"] = iface.name;
@@ -1143,7 +1144,8 @@ std::string HttpServer::currentState() {
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now() - startedAt_).count()));
     Json::Value interfaces(Json::arrayValue);
-    for (const auto& iface : enumerateNetworkInterfaces()) {
+    // V513: advertise lo in the OUTPUT interface selector, too.
+    for (const auto& iface : enumerateNetworkInterfaces(true)) {
         Json::Value item;
         item["name"] = iface.name;
         item["address"] = iface.address;
