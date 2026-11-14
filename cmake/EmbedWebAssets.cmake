@@ -55,8 +55,11 @@ function(dvbstreamer5_generate_embedded_web_assets asset_dir output_dir output_v
     # C++ recompile/relink, defeating incremental builds.
     set(should_write TRUE)
     if(EXISTS "${generated_path}")
-        file(READ "${generated_path}" previous_source)
-        if("${previous_source}" STREQUAL "${generated_source}")
+        # Hashing avoids passing the entire generated C++ source back through
+        # CMake's if() parser on every incremental reconfigure.
+        file(SHA256 "${generated_path}" previous_hash)
+        string(SHA256 generated_hash "${generated_source}")
+        if(previous_hash STREQUAL generated_hash)
             set(should_write FALSE)
         endif()
     endif()
