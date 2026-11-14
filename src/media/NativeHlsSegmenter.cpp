@@ -1123,7 +1123,18 @@ bool NativeHlsSegmenter::rotate(double durationSeconds) {
     // playlist. Wait for two finalized H.26x segments before making video.m3u8
     // visible; later rotations keep the normal rolling playlist cadence.
     const bool passthroughH26x = !config_.independentSegments && hasH26xVideo_;
-    if (passthroughH26x && completedSegments_ < 2U) return true;
+    const std::size_t minimumReadySegments = std::max<std::size_t>(
+        passthroughH26x ? 2U : 1U, config_.startupPrefillSegments);
+    if (completedSegments_ < minimumReadySegments) return true;
+    if (config_.startupPrefillSegments > 0 &&
+        completedSegments_ == minimumReadySegments) {
+        std::cerr << "NATIVE HLS STARTUP PREFILL READY"
+                  << " directory=" << config_.directory.string()
+                  << " segments=" << completedSegments_
+                  << " target=" << minimumReadySegments
+                  << " target_duration_s=" << config_.targetDurationSeconds
+                  << std::endl;
+    }
 
     if (!writePlaylist(false)) return false;
     return true;
