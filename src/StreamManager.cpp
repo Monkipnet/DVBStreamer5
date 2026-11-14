@@ -3246,6 +3246,29 @@ void StreamManager::monitorOnDemandStreams() {
 
         std::lock_guard<std::mutex> demandLock(onDemandMutex);
         const auto now = std::chrono::steady_clock::now();
+        // V531: include OnDemand services started by the panel, recovered
+        // while an activation was in flight, or otherwise already running.
+        // Previously only ensureOnDemandStreamParallel() inserted the ID;
+        // a manually started DVB OnDemand tile could remain active forever
+        // because this monitor never considered it for idle shutdown.
+        {
+            std::lock_guard<std::mutex> lock(managerMutex);
+            for (const auto& [id, state] : streams) {
+                if (!state || !state->active.load(std::memory_order_acquire) ||
+                    toLower(state->config.activationMode) != "ondemand" ||
+                    onDemandStartedStreams.count(id)) {
+                    continue;
+                }
+                onDemandStartedStreams.insert(id);
+                const auto started = state->startedAt;
+                onDemandLastActivity.try_emplace(id,
+                    started == std::chrono::steady_clock::time_point{} ? now : started);
+                std::cerr << "ONDEMAND TRACK ACTIVE"
+                          << " stream=" << id
+                          << " origin=existing-active-ondemand"
+                          << std::endl;
+            }
+        }
         for (auto it = onDemandStartedStreams.begin(); it != onDemandStartedStreams.end();) {
             const std::string id = *it;
             bool stillOnDemand = false;
