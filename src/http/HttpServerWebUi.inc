@@ -5043,7 +5043,7 @@ function advertisedOutputLink(link) {
 function streamLinks(stream) {
   const raw = Array.isArray(stream.vlc_links) && stream.vlc_links.length
     ? stream.vlc_links.filter(link => link.url)
-    : (stream.vlc_link ? [{output_type: normalizedOutputType(stream), url: stream.vlc_link}] : []);
+    : (stream.vlc_link ? [{output_type: normalizedOutputType(stream), output_mode: stream.output_mode, output_host: stream.output_host, url: stream.vlc_link}] : []);
   return raw.map(link => ({...link, url: advertisedOutputLink(link)}));
 }
 function outputBadgeText(stream) {
@@ -8309,7 +8309,7 @@ function renderOutputRows(outputs, links=[], startIndex=0) {
           <div><label>Passphrase</label><input data-output-field="srt_passphrase" type="password" value="${escapeHtmlValue(output.srt_passphrase||'')}" autocomplete="new-password" placeholder="10–79 chars, optional" /></div>
         </div>
         <button class="remove-output" type="button" onclick="removeStreamOutput(this)" ${index === 0 ? 'disabled' : ''}>×</button>
-        <div class="form-row full" style="grid-column:1/-1"><label>URL для плеера</label><input readonly value="${link}" placeholder="Ссылка появится после сохранения" /></div>
+        <div class="form-row full" style="grid-column:1/-1"><label>URL для плеера</label><input readonly value="${escapeHtmlValue(link)}" placeholder="Ссылка появится после сохранения" /></div>
       </div>
     `;
   }).join('');
