@@ -859,26 +859,33 @@ std::string HttpServer::handleStopStream(const std::string& body) {
     return Json::writeString(writer, response);
 }
 
-void HttpServer::handleRestartProgram() {
-    try {
-        std::thread([]() {
-            // Let the HTTP response leave the socket before systemd stops this
-            // process. --no-block is essential: a synchronous `systemctl restart`
-            // launched from the service can wait for the very process that is
-            // executing it. Queue the restart job and let PID 1 perform a full
-            // stop/start with a new process, new allocator and new media-engine state.
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            std::cerr << "PROGRAM RESTART 202.60: action=systemd-full-restart service=dvbstreamer5.service"
-                      << std::endl;
-            const int rc = std::system(
-                "/usr/bin/systemctl --no-block restart dvbstreamer5.service >/dev/null 2>&1");
-            if (rc != 0) {
-                std::cerr << "PROGRAM RESTART 202.60: systemctl failed rc=" << rc << std::endl;
-            }
-        }).detach();
-    } catch (const std::exception& ex) {
-        std::cerr << "Restart worker thread creation failed: " << ex.what() << std::endl;
+bool HttpServer::handleRestartProgram(std::string* error) {
+    if (error) error->clear();
+    // V531: never request our own systemd restart from a child thread in the
+    // dvbstreamer5.service cgroup. systemd may kill that whole cgroup while
+    // the request is still being issued. A transient timer/service belongs
+    // to PID 1, survives the web process shutdown, and starts *after* the
+    // API response can reach the browser.
+    const auto nonce = static_cast<unsigned long long>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::string command =
+        "/usr/bin/systemd-run --quiet --no-block --on-active=2s "
+        "--unit=dvbstreamer5-panel-restart-" + std::to_string(nonce) +
+        " /usr/bin/systemctl --no-block restart dvbstreamer5.service";
+    const int rc = std::system(command.c_str());
+    if (rc != 0) {
+        std::cerr << "PROGRAM RESTART V531 FAILED"
+                  << " action=schedule-independent-systemd-timer"
+                  << " rc=" << rc << std::endl;
+        if (error) *error = "Unable to schedule independent systemd restart (check journalctl and systemd-run)";
+        return false;
     }
+    std::cerr << "PROGRAM RESTART V531 SCHEDULED"
+              << " action=independent-systemd-timer"
+              << " delay_s=2 service=dvbstreamer5.service"
+              << " unit=dvbstreamer5-panel-restart-" << nonce
+              << std::endl;
+    return true;
 }
 
   void HttpServer::handleDeleteStream(const std::string& body) {
