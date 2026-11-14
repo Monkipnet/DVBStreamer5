@@ -66,6 +66,34 @@ int main() {
         predicted = (frame.pts90k + 1800ULL) & H264PesPtsRecovery::kMask33;
     }
 
+    // V527: a PES may start in the middle of an unfinished NAL.
+    // Its PTS must be carried to the FIRST following AU, not discarded.
+    // Reproduce a real 25-fps source with a broken 1800-tick predictor
+    // over 1000 AUs. V526 loses every interior anchor and fails this test.
+    pts.reset();
+    predicted = base;
+    for (int i = 0; i < 1000; ++i) {
+        const std::uint64_t source = base + 3600ULL * i;
+        pts.appendPes(50, source + 3600ULL, source + 3600ULL, true, true);
+        const auto frame = pts.completeAu(100, predicted, predicted, true, true);
+        const auto delta = H264PesPtsRecovery::signedPtsDelta90k(
+            source, frame.pts90k);
+        assert(delta <= H264PesPtsRecovery::kResyncThreshold90k);
+        assert(delta >= -H264PesPtsRecovery::kResyncThreshold90k);
+        predicted = (frame.pts90k + 1800ULL) & H264PesPtsRecovery::kMask33;
+    }
+    assert(pts.carriedInteriorAnchors() == 1000);
+
+    // If the next AU has a PES header at its exact byte boundary,
+    // it supersedes a timestamp carried from the previous NAL.
+    pts.reset();
+    pts.appendPes(40, base + 90000, base + 90000, true, true);
+    pts.appendPes(100, base + 180000, base + 180000, true, true);
+    a = pts.completeAu(100, base, base, true, true);
+    assert(!a.corrected);
+    a = pts.completeAu(100, base + 1800, base + 1800, true, true);
+    assert(a.corrected && a.pts90k == base + 180000);
+
     // Signed MPEG 33-bit wrap-aware delta: +/-1 s remains +/-90000.
     constexpr std::uint64_t wrap = 1ULL << 33U;
     assert(H264PesPtsRecovery::signedPtsDelta90k(45000, wrap - 45000) == 90000);
