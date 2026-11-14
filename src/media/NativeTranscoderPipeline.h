@@ -458,6 +458,13 @@ private:
     std::deque<MuxQueuedSample> muxAudioQueue_;
     // Telemetry-only; protected by muxQueueMutex_, never affects scheduling.
     std::chrono::steady_clock::time_point lastMuxPeerStallReportAt_{};
+    // Last encoded sample arrival per track (not last mux output): used only
+    // to distinguish a missing encoder from a timestamp-skewed pending queue.
+    // Both clocks are protected by muxQueueMutex_.
+    std::chrono::steady_clock::time_point lastMuxVideoProducedAt_{};
+    std::chrono::steady_clock::time_point lastMuxAudioProducedAt_{};
+    std::uint64_t lastMuxVideoProducedPts90k_ = 0;
+    std::uint64_t lastMuxAudioProducedPts90k_ = 0;
     std::atomic<bool> workersStop_{false};
     std::atomic<bool> muxStop_{false};
     // End-of-input drain: release mux peer waits only during flush().
