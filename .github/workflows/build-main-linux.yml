@@ -185,9 +185,19 @@ jobs:
           node tests/web/test_cbr_profile_ui.js
           ctest --test-dir build-main-ci --output-on-failure
 
+      - name: Restore pinned iCAM TSDecrypt source and executable cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/dvbstreamer5-tsdecrypt
+            build-main-ci/tsdecrypt-icam
+          key: dvbstreamer5-tsdecrypt-ubuntu2404-${{ hashFiles('scripts/build_tsdecrypt_icam.sh', 'src/ca/backends/tsdecrypt/TsDecryptEcmPidPolicy.h', 'third_party/libdvbcsa/**') }}
+
       - name: Build pinned iCAM TSDecrypt with restored GitHub submodules
         run: |
-          git clone https://github.com/gfto/tsdecrypt.git /tmp/dvbstreamer5-tsdecrypt
+          if [[ ! -d /tmp/dvbstreamer5-tsdecrypt/.git ]]; then
+            git clone https://github.com/gfto/tsdecrypt.git /tmp/dvbstreamer5-tsdecrypt
+          fi
           git -C /tmp/dvbstreamer5-tsdecrypt checkout --detach f4876e84cf1866645f84b93f830af67193c85f69
           bash scripts/build_tsdecrypt_icam.sh /tmp/dvbstreamer5-tsdecrypt build-main-ci
           test -x build-main-ci/tsdecrypt-icam/tsdecrypt
