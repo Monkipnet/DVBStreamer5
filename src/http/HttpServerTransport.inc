@@ -664,7 +664,17 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 int64_t archiveFrom = 0, archiveTo = 0; bool archiveEvent = false;
                 const bool dynamicArchive = hlsCfg && hlsCfg->hlsArchiveEnabled &&
                     parseHlsArchivePlaylistRequest(hlsFile, archiveFrom, archiveTo, archiveEvent);
-                if (!dynamicArchive && (!std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath))) {
+                // HEAD is a preflight, never a playback request. An idle
+                // OnDemand HLS manifest does not exist until a following GET
+                // activates the stream. Report that configured manifest as
+                // available so HEAD-first IPTV clients proceed to GET; do not
+                // start the tuner/transcoder or fabricate a segment here.
+                const bool idleOnDemandManifest =
+                    hlsCfg && hlsCfg->activationMode == "ondemand" &&
+                    filePath.extension() == ".m3u8";
+                if (!dynamicArchive && !idleOnDemandManifest &&
+                    (!std::filesystem::exists(filePath) ||
+                     !std::filesystem::is_regular_file(filePath))) {
                     res.result(http::status::not_found);
                     res.set(http::field::content_type, "text/plain");
                     res.keep_alive(false);
