@@ -104,6 +104,9 @@ struct VideoEncoderOptions {
     // V514: experimental, per-stream opt-in for the direct VAAPI H.264 encoder.
     // Other encoders ignore this field; default remains bit-for-bit unchanged.
     bool vaapiStrictHrd = false;
+    // V516: common WISI profile for the selected channel; backends apply
+    // supported rate-control subset and log their effective settings.
+    bool wisiChameleonProfile = false;
 };
 
 class VideoEncoder {
