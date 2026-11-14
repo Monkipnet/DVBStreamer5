@@ -143,6 +143,16 @@ add_executable(source_pcr_packet_pacing_test
 target_include_directories(source_pcr_packet_pacing_test PRIVATE ../../src)
 add_test(NAME source_pcr_packet_pacing COMMAND source_pcr_packet_pacing_test)
 
+# V515: physical CBR slot PCR / adaptation-only PCR packets, byte-exact PES,
+# payload continuity, and large 900-packet P-frame. No GPU or network needed.
+add_executable(cbr_output_pcr_smoothing_test
+    test_cbr_output_pcr_smoothing.cpp
+    ../../src/media/CbrTsPacer.cpp
+    ../../src/media/TransportStream.cpp)
+target_include_directories(cbr_output_pcr_smoothing_test PRIVATE ../../src)
+add_test(NAME cbr_output_pcr_smoothing COMMAND cbr_output_pcr_smoothing_test)
+
+
 # V425: no-hardware regression of pre-queue PID selection for shared DVB
 # multiplexes, including CAT/PMT, EIT and PMT-generation changes.
 add_executable(shared_dvb_pid_admission_test test_shared_dvb_pid_admission.cpp)
