@@ -992,17 +992,35 @@ void NativeUdpRelay::run() {
             try {
                 dvbstreamer5::media::network::WisiCbrOutputWorker::Observer observer;
                 if (index == observedCbrOutputIndex) observer = config_.observeTransport;
+                // V513: transcoded source-PCR TS must pace *useful packets* against
+                // its own queued PCR timeline, not an averaged useful bitrate.
+                // Otherwise 40-ms PCRs can leave the CBR socket 200-400 ms apart
+                // while NULL stuffing keeps the physical 8-Mbit sender regular.
+                // Only the already selected source-PCR mode with a nonzero
+                // startup reservoir opts in. Fixed PCR, copy and 0-ms profiles
+                // retain their previous behavior and timestamp semantics.
+                const std::uint64_t encodedCbrBitrate =
+                    config_.wisiSourcePcrStrict
+                        ? sourcePcrCbrTargetKeepingStartupBuffer(config_.targetBitrate)
+                        : (config_.wisiPreserveSourcePcr &&
+                           config_.targetBitrate % 1000ULL == 0ULL
+                           ? config_.targetBitrate + 809ULL
+                           : config_.targetBitrate);
+                const bool transcodeSourcePcrPacketPacing =
+                    config_.transcodedTransport &&
+                    mpegts::CbrTsPacer::sourcePllEncodedTargetBitrate(encodedCbrBitrate) &&
+                    mpegts::CbrTsPacer::startupBufferMilliseconds(encodedCbrBitrate) != 0;
+                if (transcodeSourcePcrPacketPacing) {
+                    std::cerr << "NATIVE TRANSCODE SOURCE PCR PACING stream_id="
+                              << config_.streamId << " output_index=" << index
+                              << " pcr=preserved packets=source_timeline"
+                              << " fixed_cbr=unchanged" << std::endl;
+                }
                 output.cbrWorker =
                     std::make_unique<dvbstreamer5::media::network::WisiCbrOutputWorker>(
                         output.socket,
                         index,
-                        config_.wisiSourcePcrStrict
-                            ? sourcePcrCbrTargetKeepingStartupBuffer(
-                                  config_.targetBitrate)
-                            : (config_.wisiPreserveSourcePcr &&
-                               config_.targetBitrate % 1000ULL == 0ULL
-                               ? config_.targetBitrate + 809ULL
-                               : config_.targetBitrate),
+                        encodedCbrBitrate,
                         &outputBytes_,
                         &running_,
                         std::move(observer),
@@ -1016,7 +1034,7 @@ void NativeUdpRelay::run() {
                         },
                         output.sentTsBytes ? output.sentTsBytes.get() : nullptr,
                         config_.streamId,
-                        config_.sourcePcrPacketPacing);
+                        config_.sourcePcrPacketPacing || transcodeSourcePcrPacketPacing);
             } catch (const std::exception& exception) {
                 std::lock_guard<std::mutex> lock(errorMutex_);
                 lastError_ = exception.what();
