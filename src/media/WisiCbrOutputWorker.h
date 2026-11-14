@@ -55,12 +55,13 @@ public:
         ErrorCallback errorCallback,
         std::atomic<std::uint64_t>* perOutputBytes = nullptr,
         std::string streamId = {},
-        bool sourcePcrPacketPacing = false)
+        bool sourcePcrPacketPacing = false,
+        bool smoothOutputPcr = false)
         : socket_(socket),
           outputIndex_(outputIndex),
           workerId_(nextWorkerId_.fetch_add(1ULL, std::memory_order_relaxed)),
           streamId_(std::move(streamId)),
-          pacer_(targetBitrate, sourcePcrPacketPacing),
+          pacer_(targetBitrate, sourcePcrPacketPacing, smoothOutputPcr),
           requestedStartupBuffer_(std::chrono::milliseconds(
               mpegts::CbrTsPacer::startupBufferMilliseconds(targetBitrate))),
           startupBuffer_(effectiveStartupBuffer(targetBitrate)),
@@ -864,6 +865,7 @@ private:
                             << " cc_errors=" << diagCcErrors
                             << " tei=" << diagTei
                             << " pcr_count=" << diagPcrCount
+                            << " pcr_only_total=" << pacer_.clockOnlyPcrPackets()
                             << " pcr_gap_max_ms=" << (diagPcrGapMaxTicks / 27000ULL)
                             << " pcr_gap_over100=" << diagPcrOver100
                             << " pcr_backwards=" << diagPcrBackwards
@@ -915,10 +917,13 @@ private:
                               << " ingress_clock=decoupled"
                               << " source_null=regenerated"
                               << " source_pcr="
-                              << (pacer_.sourcePllMode() ? "preserved" : "restamped-all-pids")
+                              << (pacer_.outputPcrSmoothing() ? "physical-slot-restamped" :
+                                  (pacer_.sourcePllMode() ? "preserved" : "restamped-all-pids"))
                               << " pcr_schedule="
-                              << (pacer_.sourcePllMode() ? "source-timeline" : "output-cbr-slot-clock")
+                              << (pacer_.outputPcrSmoothing() ? "physical-slot-20ms-pcr-only" :
+                                  (pacer_.sourcePllMode() ? "source-timeline" : "output-cbr-slot-clock"))
                               << " pts_dts=preserved"
+                              << " pcr_smoothing_test=" << (pacer_.outputPcrSmoothing() ? 1 : 0)
                               << " useful_schedule="
                               << (pacer_.sourceTimelinePacing() ? "pcr-intervals" : "legacy-rate")
                               << " auto_tune=off"
