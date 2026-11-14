@@ -50,6 +50,18 @@ function(dvbstreamer5_generate_embedded_web_assets asset_dir output_dir output_v
     )
 
     set(generated_path "${output_dir}/EmbeddedWebAssets.cpp")
-    file(WRITE "${generated_path}" "${generated_source}")
+    # CMake configure is run on every CI checkout. Updating the generated
+    # translation unit when its bytes have not changed forces an unnecessary
+    # C++ recompile/relink, defeating incremental builds.
+    set(should_write TRUE)
+    if(EXISTS "${generated_path}")
+        file(READ "${generated_path}" previous_source)
+        if("${previous_source}" STREQUAL "${generated_source}")
+            set(should_write FALSE)
+        endif()
+    endif()
+    if(should_write)
+        file(WRITE "${generated_path}" "${generated_source}")
+    endif()
     set(${output_var} "${generated_path}" PARENT_SCOPE)
 endfunction()
