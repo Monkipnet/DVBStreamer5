@@ -26,10 +26,12 @@ constexpr std::uint64_t kControllerStepDivisor = 400ULL;   // legacy fixed-CBR o
 
 } // namespace
 
-CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate, bool sourceTimelinePacing)
+CbrTsPacer::CbrTsPacer(std::uint64_t targetBitrate, bool sourceTimelinePacing,
+                       bool smoothOutputPcr)
     : sourcePllMode_(sourcePllEncodedTargetBitrate(targetBitrate)),
       sourceTimelinePacing_(sourceTimelinePacing && sourcePllMode_ &&
           startupBufferMilliseconds(targetBitrate) != 0),
+      outputPcrSmoothing_(smoothOutputPcr && sourceTimelinePacing_),
       wisiReservoirAssist_(targetBitrate % 1000ULL == 809ULL),
       targetBitrate_(std::clamp(
           decodeTargetBitrate(targetBitrate), kMinimumBitrate, kMaximumBitrate)) {
@@ -93,6 +95,33 @@ bool CbrTsPacer::emitDatagram(
 
     lastDatagramUsefulPackets_ = 0;
     for (Packet& packet : datagram) {
+        // V515 opt-in: the original PCR is carried once per encoded video AU.
+        // A 150-KiB P-frame takes ~154 ms at 8 Mbit/s, so a nominal 40-ms
+        // source-PCR interval can leave WISI without a PCR for >100 ms.
+        // While media is queued, insert a pure adaptation-only PCR at most
+        // once per 20 ms on the reference PID. Never pop or edit a useful
+        // source packet; output remains exactly 7 TS packets per datagram.
+        // The adaptation-only packet repeats the last *payload* CC.
+        if (outputPcrSmoothing_ && haveReferencePcrPid_ &&
+            haveOutputReferencePcr_ && haveReferencePayloadCc_ &&
+            !queuedPackets_.empty() &&
+            CbrOutputPcrSmoothingPolicy::due(
+                outputSlotCounter_, lastOutputReferencePcrSlot_,
+                targetBitrate_)) {
+            const auto& clock = outputPcrStates_[referencePcrPid_];
+            if (clock.anchored && outputSlotCounter_ >= clock.outputAnchorSlot) {
+                const auto pcr = CbrOutputPcrSmoothingPolicy::outputPcr(
+                    clock.sourceAnchorTicks,
+                    outputSlotCounter_ - clock.outputAnchorSlot,
+                    targetBitrate_);
+                CbrOutputPcrSmoothingPolicy::makeClockOnly(
+                    packet, referencePcrPid_, lastReferencePayloadCc_, pcr);
+                lastOutputReferencePcrSlot_ = outputSlotCounter_;
+                ++clockOnlyPcrPackets_;
+                ++outputSlotCounter_;
+                continue;
+            }
+        }
         const bool scheduled = sourceTimelinePacing_ && sourceSchedule_.ready();
         bool emitUseful = false;
         if (scheduled) {
@@ -111,6 +140,19 @@ bool CbrTsPacer::emitDatagram(
             queuedPackets_.pop_front();
             ++emittedUsefulPackets_;
             restampPcr(packet, outputSlotCounter_);
+            if (outputPcrSmoothing_ && haveReferencePcrPid_ &&
+                packetPid(packet) == referencePcrPid_) {
+                if ((packet[3] & 0x10U) != 0) {
+                    lastReferencePayloadCc_ = packet[3] & 0x0fU;
+                    haveReferencePayloadCc_ = true;
+                }
+                std::uint64_t pcrTicks = 0;
+                bool discontinuity = false;
+                if (readPcr(packet, pcrTicks, discontinuity)) {
+                    lastOutputReferencePcrSlot_ = outputSlotCounter_;
+                    haveOutputReferencePcr_ = true;
+                }
+            }
             ++lastDatagramUsefulPackets_;
         } else {
             // Do not accumulate unlimited useful entitlement while an input is
@@ -453,7 +495,7 @@ bool CbrTsPacer::restampPcr(
         return true;
     }
 
-    if (sourcePllMode_) {
+    if (sourcePllMode_ && !outputPcrSmoothing_) {
         // V175 source-PCR timeline mode deliberately preserves every provider
         // PCR value. PTS/DTS are already preserved, so all media timestamps stay
         // in one source clock domain. Correct physical arrival timing is achieved
