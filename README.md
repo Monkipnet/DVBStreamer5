@@ -6,6 +6,8 @@
 
 [Сайт проекта](https://tvstreammersat5.tech/) · [Исходный код](https://github.com/Monkipnet/DVBStreamer5) · [Android APK](android-client/release/DVBStreamer5-Remote-1.4.apk) · [Инструкция Android](android-client/release/Инструкция.md)
 
+**[Руководства оператора — Русский / English](OPERATOR_MANUALS.md)** · [RU](DVBStreamer5_Operator_Manual_V10.8.527_RU.md) · [EN](DVBStreamer5_Operator_Manual_V10.8.527_EN.md)
+
 > **Архитектура:** DVBStreamer5 не использует FFmpeg/libav или GStreamer как обязательный media framework. MPEG-TS, EPG, ремаппинг, выходные протоколы, CBR и ключевые этапы обработки реализованы в native media engine. Доступность аппаратного транскодирования зависит от оборудования, драйверов и параметров сборки.
 
 ![Веб-панель DVBStreamer5](docs/screenshots/dashboard.png)
