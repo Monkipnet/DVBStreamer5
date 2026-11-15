@@ -207,6 +207,7 @@ struct AppConfig {
     std::string password = "admin";
     std::string serverName = "DVBStreamer5";
     int httpPort = 9000;
+    bool trustLocalProxyRealIp = false; // Opt-in: X-Real-IP only from loopback reverse proxy.
     std::string language = "en";
     // Optional fail-closed Cesbo Astra HTTP Request backend.
     bool streamAuthBackendEnabled = false;
