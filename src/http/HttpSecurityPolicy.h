@@ -36,12 +36,16 @@ inline std::string effectiveClientIp(const std::string& socketIp,
     return remote.to_string();
 }
 inline std::size_t maxRequestBodyBytes(const std::string& target,
-                                       const std::string& method) {
+                                       const std::string& method,
+                                       bool panelAuthenticated=false) {
     if(method!="POST" && method!="PUT")return 16U*1024U;
-    if(target.rfind("/api/upload-backup-file",0)==0)return 64U*1024U*1024U;
-    if(target=="/api/config/import")return 16U*1024U*1024U;
-    if(target=="/api/tickers/import-docx")return 3U*1024U*1024U;
     if(target=="/api/panel/login")return 4096U;
+    // Preserve existing 512 MiB backup-upload functionality for authenticated
+    // administrators. Unauthenticated callers cannot allocate this body.
+    if(target.rfind("/api/upload-backup-file",0)==0)
+        return panelAuthenticated?512U*1024U*1024U:4096U;
+    if(target=="/api/config/import")return panelAuthenticated?16U*1024U*1024U:4096U;
+    if(target=="/api/tickers/import-docx")return panelAuthenticated?3U*1024U*1024U:4096U;
     return 1024U*1024U;
 }
 inline bool validSameOrigin(const std::string& origin,
