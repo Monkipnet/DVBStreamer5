@@ -1420,6 +1420,41 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
     relay.inputUri = testInput ? "external://test" : (hlsInput ? "external://hls" : (srtInput ? "external://srt" : (rtspInput ? "external://rtsp" : (rtmpInput ? "external://rtmp" : normalizedInput))));
     relay.externallyFedInput = testInput || hlsInput || srtInput || rtspInput || rtmpInput;
+    // V534: optional T2-MI demultiplexing on the outer transport.
+    // The URL stays a normal native DVB/UDP/HTTP input. Never tune DVB-T2
+    // directly or mistake its physical stream_id (ISI) for the inner PLP.
+    auto t2miNumber = [&](const std::string& key, int fallback, int maximum,
+                          int& out)->bool {
+        out=fallback;
+        const std::string& uri=normalizedInput;
+        const std::string needle=key+"=";
+        auto at=uri.find(needle);
+        while(at!=std::string::npos && at>0 &&
+              uri[at-1]!='?' && uri[at-1]!='&' && uri[at-1]!='#')
+            at=uri.find(needle,at+1);
+        if(at==std::string::npos)return true;
+        at+=needle.size();
+        const auto end=uri.find_first_of("&#",at);
+        const auto token=uri.substr(at,end==std::string::npos
+            ?std::string::npos:end-at);
+        if(token.empty()||token.size()>5 ||
+           !std::all_of(token.begin(),token.end(),[](unsigned char c){
+               return c>='0'&&c<='9'; }))return false;
+        try {
+            const int value=std::stoi(token);
+            if(value<0||value>maximum)return false;
+            out=value;
+            return true;
+        }catch(...){return false;}
+    };
+    if(!t2miNumber("t2mi_pid",-1,8190,relay.t2miPid) ||
+       !t2miNumber("t2mi_plp",-1,255,relay.t2miPlp) ||
+       !t2miNumber("t2mi_stream",-1,7,relay.t2miStream) ||
+       (relay.t2miPid<0 && (relay.t2miPlp>=0 || relay.t2miStream>=0))){
+        if(error)*error="Invalid T2-MI PID/PLP/stream URL parameters";
+        CardManager::instance().releaseService(streamConfig.id);
+        return false;
+    }
     relay.httpTsInputJitterEnabled = streamConfig.httpTsInputJitterEnabled;
     relay.outputs = nativeOutputs;
     relay.allowNoNetworkOutput = (hasHttpOutput || hasHlsOutput || !srtOutputSpecs.empty() || !rtspOutputSpecs.empty() || !rtmpOutputSpecs.empty()) && nativeOutputs.empty();
@@ -1675,7 +1710,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
 
     std::shared_ptr<SharedDvbServicePrefilter> sharedDvbPrefilter;
-    if (sharedDvbInputSource && relay.remapEnabled) {
+    if (sharedDvbInputSource && relay.remapEnabled && relay.t2miPid < 0) {
         sharedDvbPrefilter = std::make_shared<SharedDvbServicePrefilter>();
         // V10.8.239: An individual DVB service must never inherit the
         // transponder's NULL PID stuffing. In VBR mode that stuffing could
