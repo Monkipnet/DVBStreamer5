@@ -28,11 +28,14 @@ struct Peer {
     std::string name;
     std::string url;   // An origin, without path/query/credentials.
     std::string token; // Inbound token generated on the remote node.
+    std::string viewerUrl; // Optional viewer-facing HTTP(S) origin, never a cluster API URL.
 };
 
 struct Config {
     std::string nodeToken;
     std::vector<Peer> peers;
+    bool autoFailover = false; // Opt-in: new HTTP/HLS viewer redirects only.
+    bool balanceViewers = false; // Opt-in: load-based choice among healthy peers.
 };
 
 inline bool validToken(const std::string& token) {
@@ -89,7 +92,8 @@ inline bool validOrigin(const std::string& url) {
 inline bool validPeer(const Peer& peer) {
     return !peer.name.empty() && peer.name.size()<=80 &&
            peer.name.find_first_of("\r\n\t") == std::string::npos &&
-           validOrigin(peer.url) && validToken(peer.token);
+           validOrigin(peer.url) && validToken(peer.token) &&
+           (peer.viewerUrl.empty() || validOrigin(peer.viewerUrl));
 }
 inline std::filesystem::path filePath(const std::filesystem::path& configDirectory) {
     return configDirectory/"cluster-peers.json";
@@ -121,13 +125,15 @@ inline bool load(const std::filesystem::path& configDirectory,Config& result) {
     std::istringstream input(json);
     if(!Json::parseFromStream(reader,input,&root,&error)||!root.isObject())return false;
     result.nodeToken=root.get("node_token","").asString();
+    result.autoFailover=root.get("auto_failover",false).asBool();
+    result.balanceViewers=root.get("balance_viewers",false).asBool();
     if(!validToken(result.nodeToken))return false;
     if(root.isMember("peers")&&!root["peers"].isArray())return false;
     std::set<std::string> addresses;
     for(const auto& item:root["peers"]){
         if(!item.isObject()||result.peers.size()>=8)return false;
         Peer peer{item.get("name","").asString(),item.get("url","").asString(),
-                  item.get("token","").asString()};
+                  item.get("token","").asString(),item.get("viewer_url","").asString()};
         if(!validPeer(peer)||!addresses.insert(peer.url).second)return false;
         result.peers.push_back(std::move(peer));
     }
@@ -137,11 +143,14 @@ inline bool save(const std::filesystem::path& directory,const Config& config) {
     if(!validToken(config.nodeToken)||config.peers.size()>8)return false;
     Json::Value root(Json::objectValue),peers(Json::arrayValue);
     root["node_token"]=config.nodeToken;
+    root["auto_failover"]=config.autoFailover;
+    root["balance_viewers"]=config.balanceViewers;
     std::set<std::string> urls;
     for(const auto& peer:config.peers){
         if(!validPeer(peer)||!urls.insert(peer.url).second)return false;
         Json::Value item(Json::objectValue);
         item["name"]=peer.name;item["url"]=peer.url;item["token"]=peer.token;
+        if(!peer.viewerUrl.empty())item["viewer_url"]=peer.viewerUrl;
         peers.append(item);
     }
     root["peers"]=peers;
@@ -178,10 +187,13 @@ inline bool ensure(const std::filesystem::path& dir,Config& result) {
 inline Json::Value publicPeers(const Config& config,bool includeLocalToken) {
     Json::Value result(Json::objectValue),peers(Json::arrayValue);
     if(includeLocalToken)result["node_token"]=config.nodeToken;
+    result["auto_failover"]=config.autoFailover;
+    result["balance_viewers"]=config.balanceViewers;
     for(const auto& peer:config.peers){
         Json::Value item(Json::objectValue);
         item["name"]=peer.name;
         item["url"]=peer.url; // No stored remote token in browser responses.
+        if(!peer.viewerUrl.empty())item["viewer_url"]=peer.viewerUrl;
         peers.append(std::move(item));
     }
     result["peers"]=peers;
