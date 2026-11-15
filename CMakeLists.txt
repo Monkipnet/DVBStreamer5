@@ -443,6 +443,11 @@ target_link_libraries(dvbstreamer5_external_config_transfer_test PRIVATE
 add_test(NAME external_config_transfer
     COMMAND dvbstreamer5_external_config_transfer_test)
 
+# V534: packet-level T2-MI PID, CRC and BBFRAME inner TS recovery.
+add_executable(dvbstreamer5_t2mi_test tests/test_t2mi_inner_ts.cpp)
+target_include_directories(dvbstreamer5_t2mi_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME t2mi_inner_ts COMMAND dvbstreamer5_t2mi_test)
+
 # V10.8.460: key-free TSDecrypt ECM report parsing and clear PES validation.
 add_executable(dvbstreamer5_tsdecrypt_telemetry_test
     tests/test_tsdecrypt_telemetry.cpp)
