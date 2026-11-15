@@ -1260,41 +1260,47 @@ void NativeUdpRelay::run() {
             {
                 std::lock_guard<std::mutex> lock(observedCbrMutex);
                 const bool wasStarted = observedCbrPacer->started();
+                // V533: a short encoder burst may fill the 8-MiB CBR
+                // observer reservoir before its fixed-rate sender catches up.
+                // Backpressure the producer instead of taking the whole tile
+                // OFFLINE. The wait releases observedCbrMutex so the sender
+                // can drain; never discard TS/PCR/PES packets to hide overload.
                 for (const auto& packet : observedPackets) {
+                    auto waitedSince = std::chrono::steady_clock::time_point{};
+                    auto lastWarning = std::chrono::steady_clock::time_point{};
+                    while (!observedCbrPacer->canEnqueue(packet)) {
+                        if (!running_.load(std::memory_order_acquire) ||
+                            observedCbrStop) return false;
+                        const auto now = std::chrono::steady_clock::now();
+                        if (waitedSince == std::chrono::steady_clock::time_point{})
+                            waitedSince = now;
+                        if (lastWarning == std::chrono::steady_clock::time_point{} ||
+                            now - lastWarning >= std::chrono::seconds(5)) {
+                            lastWarning = now;
+                            std::cerr << "NATIVE OBSERVED CBR BACKPRESSURE"
+                                      << " stream_id=" << config_.streamId
+                                      << " queued_bytes=" << observedCbrPacer->queuedBytes()
+                                      << " limit_bytes="
+                                      << dvbstreamer5::media::mpegts::CbrTsPacer::maximumQueuedBytes()
+                                      << " target_kbps="
+                                      << observedCbrPacer->targetBitrate() / 1000ULL
+                                      << " measured_useful_kbps="
+                                      << observedCbrPacer->sourcePayloadBitrate() / 1000ULL
+                                      << " wait_ms="
+                                      << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          now - waitedSince).count()
+                                      << " action=producer_wait_not_tile_stop"
+                                      << std::endl;
+                        }
+                        observedCbrCondition.wait_for(
+                            lock, std::chrono::milliseconds(20));
+                    }
+                    if (!running_.load(std::memory_order_acquire) ||
+                        observedCbrStop) return false;
                     if (!observedCbrPacer->enqueue(packet)) {
+                        // A malformed TS sync byte is not a capacity issue.
                         std::lock_guard<std::mutex> errorLock(errorMutex_);
-                        // V341: the old error string said 2 MiB even though
-                        // the current CbrTsPacer limit is 8 MiB. Record the
-                        // exact queue and physical target so a persistent
-                        // encoded bitrate > transport CBR is distinguishable
-                        // from a short encoder/decoder burst.
-                        lastError_ =
-                            "observed CBR pacing queue overflow (queued_bytes=" +
-                            std::to_string(observedCbrPacer->queuedBytes()) +
-                            ", limit_bytes=" +
-                            std::to_string(
-                                dvbstreamer5::media::mpegts::CbrTsPacer::maximumQueuedBytes()) +
-                            ", target_kbps=" +
-                            std::to_string(observedCbrPacer->targetBitrate() / 1000ULL) +
-                            ", measured_useful_kbps=" +
-                            std::to_string(observedCbrPacer->sourcePayloadBitrate() / 1000ULL) +
-                            "); increase network CBR headroom or lower encoder bitrate";
-                        std::cerr << "NATIVE OBSERVED CBR OVERFLOW"
-                                  << " stream_id=" << config_.streamId
-                                  << " queued_bytes=" << observedCbrPacer->queuedBytes()
-                                  << " limit_bytes="
-                                  << dvbstreamer5::media::mpegts::CbrTsPacer::maximumQueuedBytes()
-                                  << " target_kbps="
-                                  << observedCbrPacer->targetBitrate() / 1000ULL
-                                  << " measured_useful_kbps="
-                                  << observedCbrPacer->sourcePayloadBitrate() / 1000ULL
-                                  << " paced_useful_kbps="
-                                  << observedCbrPacer->usefulPaceBitrate() / 1000ULL
-                                  << " buffered_media_ms="
-                                  << observedCbrPacer->bufferedMediaMilliseconds()
-                                  << " timing_locked="
-                                  << (observedCbrPacer->timingLocked() ? 1 : 0)
-                                  << std::endl;
+                        lastError_ = "observed CBR rejected malformed TS packet";
                         running_.store(false, std::memory_order_release);
                         httpQueueCondition_.notify_all();
                         return false;
