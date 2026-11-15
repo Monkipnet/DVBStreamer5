@@ -694,7 +694,8 @@ std::string HttpServer::handleDvbAddChannels(const std::string& body) {
     return Json::writeString(writer, response);
 }
 
-bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target) {
+bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target,
+                                  const std::string& effectiveClientIp) {
     std::string id;
     const bool publicHttp = resolveHttpMpegTsTarget(configManager.config.streams, target, id);
     if (!publicHttp) {
@@ -731,7 +732,9 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
         "\r\n";
     boost::asio::write(socket, boost::asio::buffer(header));
     boost::system::error_code endpointError;
-    const std::string clientIp = socket.remote_endpoint(endpointError).address().to_string();
+    const auto address = socket.remote_endpoint(endpointError);
+    const std::string clientIp = !effectiveClientIp.empty() ? effectiveClientIp :
+        (endpointError ? std::string{} : address.address().to_string());
     int fd = socket.release();
     std::string privateId, previewToken;
     if (resolvePrivatePreviewTarget(target, privateId)) {
@@ -755,7 +758,8 @@ bool HttpServer::handleHttpStream(tcp::socket& socket, const std::string& target
 
 bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& target,
                               http::response<http::string_body>& res,
-                              std::filesystem::path* directFile) {
+                              std::filesystem::path* directFile,
+                              const std::string& effectiveClientIp) {
     if(directFile)directFile->clear();
     std::string id;
     std::string fileName;
@@ -909,7 +913,9 @@ bool HttpServer::serveHlsFile(const tcp::socket& socket, const std::string& targ
             dvbstreamer5::stream_auth::propagateHlsQuery(res.body(),target.substr(q+1));
     }
     boost::system::error_code endpointError;
-    const std::string clientIp = socket.remote_endpoint(endpointError).address().to_string();
+    const auto address = socket.remote_endpoint(endpointError);
+    const std::string clientIp = !effectiveClientIp.empty() ? effectiveClientIp :
+        (endpointError ? std::string{} : address.address().to_string());
     // V509: HLS playlist activity is not playback. Record one logical
     // viewer only once a real media segment has been successfully served.
     // Covers transport stream, CMAF fragments, and init segments.
