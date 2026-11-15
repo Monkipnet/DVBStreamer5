@@ -54,8 +54,12 @@ files are Windows-1251 encoded**:
    `output_mode=listener`, `output_port=0` (existing
    DVBStreamer5 HTTP listener). **Astra's original HTTP server
    IP, port and path are not preserved**; the new public path is
-   `http://<DVBStreamer5-IP>:<configured-http-port>/<channel-name>/mpegts`.
-   This intentionally avoids binding someone else's IP/occupied old
+   `http://<DVBStreamer5-IP>:<configured-http-port>/<migration_astra_...>/mpegts`.
+   Imported Astra channels use their unique internal tile ID for their
+   public HTTP/HLS URL slug because duplicate or Cyrillic channel names
+   otherwise collapse to the same path. Human-readable display names and
+   original Astra `tvg-id` remain separate. This intentionally avoids
+   binding someone else's IP/occupied old
    Astra port and does not restart the current media pipeline.
    Existing UDP/RTP outputs and additional outputs remain available.
 4. Added `StreamConfig::tvgId` JSON field `tvg_id`, populated
