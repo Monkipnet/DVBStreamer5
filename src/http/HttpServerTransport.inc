@@ -1620,6 +1620,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/dvb-scan") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleDvbTune(req.body(), true);
+            } else if (target == "/api/dvb-transponder/edit") {
+                res.set(http::field::content_type, "application/json");
+                const auto requestedWith=req.find("X-Requested-With");
+                if(apiKeyAttempt ||
+                   !(isAuthorized(req)||isPanelSessionAuthorized(req)) ||
+                   requestedWith==req.end() ||
+                   requestedWith->value()!="DVBStreamer5"){
+                    res.result(http::status::forbidden);
+                    res.body()=R"({"result":"error","error":"Administrator session required"})";
+                }else{
+                    res.body()=handleDvbTransponderEdit(req.body());
+                }
             } else if (target == "/api/dvb-add-channels") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleDvbAddChannels(req.body());
