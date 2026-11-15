@@ -7077,6 +7077,22 @@ function tlsManagedLabel(value){
       'HTTPS priključak koristi stara DVBStreamer5 TLS konfiguracija'],
     certbot_install_failed:['Не удалось установить Certbot',
       'Failed to install Certbot','Instalacija Certbota nije uspjela'],
+    certbot_unavailable_retry_scheduled:['Certbot недоступен, HTTPS работает с резервным сертификатом; повтор запланирован','Certbot unavailable; fallback HTTPS is active and retry is scheduled','Certbot nije dostupan; pričuvni HTTPS radi i novi pokušaj je zakazan'],
+    nginx_config_invalid:['Ошибка конфигурации Nginx, выполнен откат','Invalid Nginx configuration; changes reverted','Neispravna Nginx konfiguracija; promjene su poništene'],
+    certificate_key_mismatch:['Сертификат не соответствует закрытому ключу','Certificate does not match private key','Certifikat se ne podudara s privatnim ključem'],
+    certificate_expired:['Сертификат истёк или скоро истечёт','Certificate expired or expiring','Certifikat je istekao ili uskoro istječe'],
+    nginx_install_failed:['Не удалось установить Nginx','Failed to install Nginx','Instalacija Nginxa nije uspjela'],
+    timer_enable_failed:['Не удалось включить автопродление','Cannot enable automatic renewal','Nije moguće uključiti automatsku obnovu'],
+    activation_failed:['Ошибка подключения сертификата; предыдущий восстановлен','Certificate activation failed; previous one restored','Aktivacija certifikata nije uspjela; prethodni je vraćen'],
+    invalid_ports:['Недопустимые порты HTTP/HTTPS','Invalid HTTP/HTTPS ports','Neispravni HTTP/HTTPS priključci'],
+    invalid_port:['Недопустимый порт','Invalid port','Neispravan priključak'],
+    invalid_arguments:['Недопустимые параметры','Invalid parameters','Neispravni parametri'],
+    openssl_generation_failed:['Не удалось создать самоподписанный сертификат','Failed to generate self-signed certificate','Izrada samopotpisanog certifikata nije uspjela'],
+    'Cannot launch TLS systemd worker':['Не удалось запустить TLS-процесс','Cannot start TLS systemd worker','Nije moguće pokrenuti TLS systemd proces'],
+    'Invalid certificate domain':['Недопустимый домен сертификата','Invalid certificate domain','Neispravna domena certifikata'],
+    'Invalid proxy port':['Недопустимый HTTPS-порт','Invalid HTTPS proxy port','Neispravan HTTPS proxy priključak'],
+    'Valid public domain and email are required for Let’s Encrypt':['Для Let’s Encrypt нужны правильный домен и email','Valid public domain and email are required for Let’s Encrypt','Za Let’s Encrypt potrebni su ispravna domena i e-pošta'],
+    'TLS modules are not installed; install V546 portable bundle':['Установите portable V546 с TLS-модулями','Install portable V546 with TLS modules','Instalirajte prijenosnu verziju V546 s TLS modulima'],
     invalid_domain:['Недопустимый домен','Invalid domain','Neispravna domena'],
     invalid_email:['Недопустимый email','Invalid email','Neispravna e-pošta'],
     nginx_reload_failed:['Ошибка обновления Nginx',
@@ -7127,7 +7143,7 @@ async function createManagedSelfSignedTls(){
       'Certificate generation started. Check status.',
       'Izrada certifikata pokrenuta. Provjerite stanje.');
     setTimeout(refreshManagedTlsStatus,3000);
-  }catch(error){uiError(error.message||String(error));}
+  }catch(error){uiError(tlsManagedLabel(error.message||String(error)));}
   finally{btn.disabled=false;}
 }
 async function toggleManagedLetsEncrypt(control){
@@ -7146,7 +7162,7 @@ async function toggleManagedLetsEncrypt(control){
     if(label)label.textContent=tlsManagedText('Изменение настроек запущено.',
       'Certificate settings update started.','Promjena postavki certifikata je pokrenuta.');
     setTimeout(refreshManagedTlsStatus,3500);
-  }catch(error){control.checked=!enabled;uiError(error.message||String(error));}
+  }catch(error){control.checked=!enabled;uiError(tlsManagedLabel(error.message||String(error)));}
   finally{control.disabled=false;delete control.dataset.pending;}
 }
 function closeNetworkModal() {
