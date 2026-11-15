@@ -1220,7 +1220,14 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
             }
         }
     }
-    const std::string normalizedInput = resolvedInputUri;
+    const std::string t2miOriginalInput = resolvedInputUri;
+    std::string normalizedInput = resolvedInputUri;
+    // The T2-MI selector fragment belongs to DVBStreamer5, not to the
+    // upstream HTTP/SRT/UDP server. Strip it before the transport opens.
+    if (!DvbSatellite::isDvbUri(normalizedInput)) {
+        const auto marker = normalizedInput.find("#t2mi_pid=");
+        if(marker!=std::string::npos)normalizedInput.resize(marker);
+    }
     const std::string inputMode = configuredInputMode;
     const bool hlsInput = inputMode == "hls" || toLower(normalizedInput).find(".m3u8") != std::string::npos ||
         toLower(normalizedInput).rfind("hls://", 0) == 0;
@@ -1426,7 +1433,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     auto t2miNumber = [&](const std::string& key, int fallback, int maximum,
                           int& out)->bool {
         out=fallback;
-        const std::string& uri=normalizedInput;
+        const std::string& uri=t2miOriginalInput;
         const std::string needle=key+"=";
         auto at=uri.find(needle);
         while(at!=std::string::npos && at>0 &&
