@@ -443,6 +443,11 @@ target_link_libraries(dvbstreamer5_external_config_transfer_test PRIVATE
 add_test(NAME external_config_transfer
     COMMAND dvbstreamer5_external_config_transfer_test)
 
+# V537: standalone healthy-origin load balancing / failover emulator.
+add_executable(dvbstreamer5_cluster_routing_test tests/test_cluster_routing_v537.cpp)
+target_include_directories(dvbstreamer5_cluster_routing_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME cluster_routing_emulator COMMAND dvbstreamer5_cluster_routing_test)
+
 # V536: secure peer storage and virtual cluster identity, no hardware required.
 add_executable(dvbstreamer5_cluster_test tests/test_cluster_peering_v536.cpp)
 target_include_directories(dvbstreamer5_cluster_test PRIVATE
