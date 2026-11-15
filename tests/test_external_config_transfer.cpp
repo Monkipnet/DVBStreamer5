@@ -126,7 +126,7 @@ int main() {
 
     // Astra CP1251 exports contain raw non-UTF8 channel titles.
     const std::string cp1251=
-        std::string(R"({"make_stream":[{"id":"a12","type":"spts","name":")")+
+        std::string(R"({"make_stream":[{"id":"a12","type":"spts","name":)")+
         "\"" + std::string({char(0xCC),char(0xE8),char(0xF0)}) +
         R"(","input":["udp://239.1.1.1:1234"]}]})";
     Conversion cp1251Out;
