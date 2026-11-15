@@ -237,18 +237,17 @@ void HttpServer::handleSession(
         }
         bool apiKeyGranted=false;
         if(apiKeyAttempt){
-            boost::system::error_code peerError;
-            const auto peer=socket.remote_endpoint(peerError);
+            const std::string effectiveIp=clientIpForRequest(socket,req);
             const auto method=req.method()==http::verb::get?"GET":
                               req.method()==http::verb::post?"POST":"OTHER";
             const bool inScope=dvbstreamer5::stream_auth::api_key::inScope(
                 target,method);
             {
                 std::lock_guard<std::mutex> lock(streamAuthApiKeyMutex_);
-                apiKeyGranted=inScope && !peerError &&
+                apiKeyGranted=inScope && !effectiveIp.empty() &&
                     dvbstreamer5::stream_auth::api_key::authorize(
                         streamAuthApiKeyDigest_,streamAuthApiAllowedIps_,apiToken,
-                        peerError?"":peer.address().to_string());
+                        effectiveIp);
             }
             if(!apiKeyGranted){
                 res.result(http::status::forbidden);
@@ -374,9 +373,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 res.result(http::status::forbidden);
                 res.body()="Cluster viewer authorization denied";
             }else{
-                boost::system::error_code clientError;
-                const auto remote=socket.remote_endpoint(clientError);
-                const auto key=clientError?std::string{}:remote.address().to_string();
+                const auto key=clientIpForRequest(socket,req);
                 const auto choice=clusterChooseStream(clusterWatchId,clusterWatchHls,key);
                 if(choice.get("result","").asString()=="ok"){
                     // Redirect to a direct media URL, NOT /cluster/watch/. No
@@ -765,7 +762,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                   const std::string internalTarget =
                       "/hls/" + privateHlsId + "/" + privateHlsFile;
                   std::filesystem::path directFile;
-                  if (!serveHlsFile(socket, internalTarget, res, &directFile)) {
+                  if (!serveHlsFile(socket, internalTarget, res, &directFile,clientIpForRequest(socket,req))) {
                       res.result(http::status::not_found);
                       res.body() = "Private HLS preview media not found";
                   } else if (!directFile.empty()) {
@@ -795,7 +792,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 res.result(http::status::bad_request);
                 res.set(http::field::content_type, "text/plain; charset=UTF-8");
                 res.body() = "Missing or invalid preview session";
-              } else if (handleHttpStream(socket, target)) {
+              } else if (handleHttpStream(socket, target,clientIpForRequest(socket,req))) {
                 return;
               } else {
                 res.result(http::status::service_unavailable);
@@ -809,7 +806,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
               res.result(http::status::forbidden);
               res.set(http::field::content_type, "text/plain");
               res.body() = "Stream access denied";
-            } else if (handleHttpStream(socket, target)) {
+            } else if (handleHttpStream(socket, target,clientIpForRequest(socket,req))) {
               return;
             }
             } else if ([&] { std::string sid, file; return resolveHlsTarget(configManager.config.streams, target, sid, file); }()) {
@@ -819,7 +816,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body() = "Stream access denied";
                 } else {
                     std::filesystem::path directFile;
-                    if(serveHlsFile(socket,target,res,&directFile)){
+                    if(serveHlsFile(socket,target,res,&directFile,clientIpForRequest(socket,req))){
                         hlsKeepAlive=res.result()==http::status::ok &&
                             req.keep_alive() && hlsRequests<7;
                         if(!directFile.empty()){
@@ -835,14 +832,12 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                        target == "/playlist.m3u") {
                 // IPTV/OTT clients usually cannot send control-panel Basic Auth.
                 // Only channels allowed for this client's IP are advertised.
-                boost::system::error_code peerEc;
-                const auto peer = socket.remote_endpoint(peerEc);
-                if (peerEc) {
+                const std::string clientIp = clientIpForRequest(socket,req);
+                if (clientIp.empty()) {
                     res.result(http::status::forbidden);
                     res.set(http::field::content_type, "text/plain");
                     res.body() = "Client address unavailable";
                 } else {
-                    const std::string clientIp = peer.address().to_string();
                     const EpgAllowed allowed = [this, &clientIp](
                         const std::string& id) {
                         return isClientAllowedForStream(id, clientIp);
@@ -1661,6 +1656,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
     }
 }
 
+std::string HttpServer::clientIpForRequest(
+    const tcp::socket& socket,const http::request<http::string_body>& req) const {
+    boost::system::error_code error;
+    const auto remote=socket.remote_endpoint(error);
+    if(error)return {};
+    const auto real=req.find("X-Real-IP");
+    return dvbstreamer5::http_security::effectiveClientIp(
+        remote.address().to_string(),
+        real==req.end()?std::string{}:std::string(real->value()),
+        configManager.config.trustLocalProxyRealIp);
+}
+
 std::string HttpServer::createPanelSession() {
     std::array<unsigned char, 32U> random{};
     if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1)
@@ -1773,11 +1780,8 @@ bool HttpServer::isClientAllowedForStream(const std::string& streamId, const std
 
 bool HttpServer::isStreamClientAllowed(const tcp::socket& socket, const std::string& target,
                                        const http::request<http::string_body>& request) const {
-  boost::system::error_code ec;
-  const std::string clientIp = socket.remote_endpoint(ec).address().to_string();
-  if (ec) {
-    return false;
-  }
+  const std::string clientIp = clientIpForRequest(socket,request);
+  if (clientIp.empty())return false;
   std::string streamId;
   resolveHttpMpegTsTarget(configManager.config.streams, target, streamId);
   if (streamId.empty()) {
