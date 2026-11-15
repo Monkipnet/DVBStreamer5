@@ -211,7 +211,7 @@ inline std::string convertDvb(const std::string& reference,
                               const std::map<std::string,Json::Value>& tunes,
                               uint32_t& sid,std::vector<std::string>& warnings) {
     // Legacy format: dvb://<dvb_tune-variable>#pnr=SID
-    std::string name=reference.substr(6);
+    std::string name=reference.substr(begins(lower(reference),"t2mi://")?7U:6U);
     const auto hash=name.find('#');
     const auto options=hash==std::string::npos?std::map<std::string,std::string>{}:
                        params(name.substr(hash+1));
@@ -287,6 +287,27 @@ inline std::string convertDvb(const std::string& reference,
         if(c.isMember("bandwidth") || c.isMember("modulation"))
             warnings.push_back("Astra 4.4: DVB-T bandwidth/modulation need review");
     }
+    const bool t2mi=begins(lower(reference),"t2mi://") ||
+        options.count("t2mi_pid")||options.count("t2mi");
+    if(t2mi){
+        if(type!="s"&&type!="s2"){
+            warnings.push_back("Astra 4.4: T2-MI requires a satellite source");
+            return {};
+        }
+        int pid=4096,miStream=0,plp=-1;
+        const auto readOption=[&](const char* key,int low,int high,int& value){
+            const auto it=options.find(key);
+            return it==options.end() || number(it->second,value,low,high);
+        };
+        if(!readOption("t2mi_pid",0,8190,pid)||
+           !readOption("t2mi",0,7,miStream)||
+           !readOption("plp",0,255,plp)){
+            warnings.push_back("Astra 4.4: invalid T2-MI PID, stream or PLP");
+            return {};
+        }
+        url<<"&t2mi_pid="<<pid<<"&t2mi_stream="<<miStream;
+        if(plp>=0)url<<"&t2mi_plp="<<plp;
+    }
     return url.str();
 }
 
@@ -350,7 +371,7 @@ inline bool importLegacy(const std::string& text,Conversion& result,
             if(!isSafeUri(uri)) {result.warnings.push_back(
                 "Astra 4.4: malformed input URI");continue;}
             uint32_t sid=0;
-            if(begins(lower(uri),"dvb://"))
+            if(begins(lower(uri),"dvb://") || begins(lower(uri),"t2mi://"))
                 uri=convertDvb(uri,tunes,sid,result.warnings);
             else {
                 const auto hash=uri.find('#');
