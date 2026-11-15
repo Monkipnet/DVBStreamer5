@@ -38,7 +38,7 @@ for(const fragment of [
   'Astra JSON DVB tuner reference missing',
   '"&bandwidth_hz="<<bandwidth',
   '"&delivery_system=dvb-"<<type',
-  '"&stream_id="<<plp',
+  '&stream_id="<<plp',
   'Astra JSON nonempty Unicable setting needs manual mapping'
 ]) assert.ok(tuner.includes(fragment),'Missing bounded tuner decoder: '+fragment);
 assert.ok(header.includes('std::string tvgId;'));
