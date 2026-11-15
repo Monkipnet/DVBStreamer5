@@ -22,7 +22,7 @@ for(const marker of [
  "event.stopPropagation();",
  "summary.append(editRow,spoilerSpace)",
  ".tp-spoiler-space:after{content:\"▼\";",
- ".tp-edit-subgroup[open] .tp-spoiler-space:after{content:\"▲\";",
+ ".tp-edit-subgroup[open] .tp-spoiler-space:after{content:\"▲\"",
  "const editGroup=editing ? findTransponderGroupForScan(",
  "initialTransponderTune.group_key,state.streams||[]",
  "group_key:initialTransponderTune.group_key",
