@@ -7046,6 +7046,45 @@ function tlsManagedFields(){
 function tlsManagedText(ru,en,hr){
   return language==='ru'?ru:language==='hr'?hr:en;
 }
+function tlsManagedLabel(value){
+  const map={
+    idle:['Ожидание','Idle','Mirovanje'],
+    running:['Выполняется','Running','Pokrenuto'],
+    ok:['Готово','Ready','Spremno'],
+    error:['Ошибка','Error','Pogreška'],
+    warning:['Предупреждение','Warning','Upozorenje'],
+    none:['Нет','None','Nema'],
+    selfsigned:['Самоподписанный','Self-signed','Samopotpisani'],
+    letsencrypt:['Let’s Encrypt','Let’s Encrypt','Let’s Encrypt'],
+    fallback:['Резервный сертификат','Fallback certificate','Rezervni certifikat'],
+    self_signed:['Самоподписанный','Self-signed','Samopotpisani'],
+    installing_nginx:['Установка Nginx','Installing Nginx','Instalacija Nginxa'],
+    installing_certbot:['Установка Certbot','Installing Certbot','Instalacija Certbota'],
+    generating:['Генерация сертификата','Generating certificate','Stvaranje certifikata'],
+    requesting:['Запрос сертификата','Requesting certificate','Zahtjev za certifikat'],
+    selfsigned_certificate_active:['Самоподписанный сертификат активен',
+      'Self-signed certificate active','Samopotpisani certifikat je aktivan'],
+    letsencrypt_certificate_active:['Сертификат Let’s Encrypt активен',
+      'Let’s Encrypt certificate active','Let’s Encrypt certifikat je aktivan'],
+    acme_failed_retry_scheduled:['Let’s Encrypt недоступен, запланирована повторная попытка',
+      'Let’s Encrypt failed; retry scheduled','Let’s Encrypt nije uspio; zakazan ponovni pokušaj'],
+    auto_renew_disabled:['Автообновление выключено',
+      'Auto-renewal disabled','Automatska obnova isključena'],
+    nginx_config_unmanaged:['Обнаружена чужая конфигурация Nginx',
+      'Unmanaged Nginx configuration detected','Pronađena tuđa Nginx konfiguracija'],
+    legacy_tls_proxy_port_conflict:['HTTPS-порт занят старой TLS-настройкой DVBStreamer5',
+      'HTTPS port conflicts with legacy DVBStreamer5 TLS setup',
+      'HTTPS priključak koristi stara DVBStreamer5 TLS konfiguracija'],
+    certbot_install_failed:['Не удалось установить Certbot',
+      'Failed to install Certbot','Instalacija Certbota nije uspjela'],
+    invalid_domain:['Недопустимый домен','Invalid domain','Neispravna domena'],
+    invalid_email:['Недопустимый email','Invalid email','Neispravna e-pošta'],
+    nginx_reload_failed:['Ошибка обновления Nginx',
+      'Nginx reload failed','Ponovno učitavanje Nginxa nije uspjelo']
+  };
+  const langIndex=language==='ru'?0:language==='hr'?2:1;
+  return map[String(value)]?.[langIndex]||String(value||'');
+}
 async function refreshManagedTlsStatus(){
   const label=document.getElementById('tlsManagedStatus');
   if(!label)return;
@@ -7060,11 +7099,11 @@ async function refreshManagedTlsStatus(){
     if(data.domain && !document.getElementById('tlsManagedDomain').value)
       document.getElementById('tlsManagedDomain').value=data.domain;
     label.textContent=(data.module_installed
-      ? tlsManagedText('Состояние','Status','Stanje')+': '+String(data.phase||'idle')+
-        ' · '+String(data.mode||'none')+
-        (data.issuer?' · '+data.issuer:'')+
+      ? tlsManagedText('Состояние','Status','Stanje')+': '+tlsManagedLabel(data.phase||'idle')+
+        ' · '+tlsManagedLabel(data.mode||'none')+
+        (data.issuer?' · '+tlsManagedLabel(data.issuer):'')+
         (data.expires?' · '+tlsManagedText('Истекает','Expires','Istječe')+': '+data.expires:'')+
-        (data.message?' · '+data.message:'')
+        (data.message?' · '+tlsManagedLabel(data.message):'')
       : tlsManagedText('TLS-модули не установлены. Обновите portable-установку.',
           'TLS modules not installed. Update the portable installation.',
           'TLS moduli nisu instalirani. Ažurirajte prijenosnu instalaciju.'));
