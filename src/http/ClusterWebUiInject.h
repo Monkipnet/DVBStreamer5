@@ -93,6 +93,10 @@ function clusterError(message){
       ['Неверный запрос кластера','Invalid cluster peer request','Neispravan zahtjev klastera'],
     'Use HTTPS or a private-LAN IPv4 HTTP origin, without a path':
       ['Используйте HTTPS или HTTP с частным IPv4, без пути','Use HTTPS or private IPv4 HTTP without a path','Koristite HTTPS ili privatni IPv4 HTTP bez putanje'],
+    'Use HTTPS or disable TLS verification for HTTP public DNS, without a path':
+      ['Для публичного HTTP отключите проверку TLS или используйте HTTPS, без пути',
+       'Disable TLS verification for public HTTP or use HTTPS, without a path',
+       'Za javni HTTP isključite TLS provjeru ili koristite HTTPS, bez putanje'],
     'Peer name and access token are required':
       ['Необходимо имя и ключ сервера','Peer name and token required','Potreban je naziv i ključ poslužitelja'],
     'Invalid peer name, origin or 64-digit token':
@@ -299,9 +303,9 @@ async function openClusterSettings(selectedUrl=''){
       '<label class="cluster-tls-option"><input type="checkbox" id="clusterPeerVerifyTls" '+(!selected||selected.verify_tls!==false?'checked':'')+'> '+
       clusterText('Проверять сертификат TLS','Verify TLS certificate','Provjeri TLS certifikat')+'</label>'+
       '<p class="cluster-config-hint">'+clusterText(
-      'Отключайте только для доверенных серверов с самоподписанным сертификатом. Без проверки возможна подмена узла и перехват ключа.',
-      'Disable only for trusted nodes with self-signed certificates. Disabling verification permits server impersonation and token interception.',
-      'Isključite samo za pouzdane čvorove sa samopotpisanim certifikatima. Bez provjere moguća je zamjena čvora i presretanje ključa.'
+      'При снятой галочке разрешён также HTTP по публичному домену. В HTTP нет шифрования: кластерный ключ можно перехватить. Используйте только в доверенной сети.',
+      'With this unchecked, public-domain HTTP is also allowed. HTTP is unencrypted and exposes the cluster token. Use only on a trusted network.',
+      'Ako je isključeno, dopušten je i HTTP preko javne domene. HTTP nije šifriran i ključ klastera može se presresti. Koristite samo na pouzdanoj mreži.'
       )+'</p>'+
       '<p class="cluster-config-hint">'+(selected?clusterText(
       'Редактирование выбранного сервера. Оставьте ключ пустым, чтобы сохранить существующий.',
@@ -350,13 +354,13 @@ async function addClusterPeer(){
   const token=document.getElementById('clusterPeerToken')?.value?.trim();
   const viewer_url=document.getElementById('clusterPeerViewerUrl')?.value?.trim()||'';
   const verify_tls=!!document.getElementById('clusterPeerVerifyTls')?.checked;
-  // Disabling verification applies only to HTTPS certificates, never to
-  // plaintext HTTP carrying the shared cluster access token.
-  if(/^http:\/\//i.test(url) && !/^http:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)\d{1,3}\.\d{1,3}(?::\d{1,5})?\/?$/i.test(url)){
+  // Public DNS over HTTP is an explicit per-peer choice, never the default.
+  if(verify_tls && /^http:\/\//i.test(url) &&
+     !/^http:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)\d{1,3}\.\d{1,3}(?::\d{1,5})?\/?$/i.test(url)){
     uiError(clusterText(
-      'Для публичного домена используйте HTTPS. Отключение проверки TLS разрешает самоподписанный сертификат, но не обычный HTTP.',
-      'Use HTTPS for a public domain. Disabling TLS verification allows a self-signed certificate, not plaintext HTTP.',
-      'Za javnu domenu koristite HTTPS. Isključivanje TLS provjere dopušta samopotpisani certifikat, ali ne obični HTTP.'
+      'Для HTTP по публичному домену снимите галочку проверки TLS или настройте HTTPS.',
+      'For public-domain HTTP, disable TLS verification or configure HTTPS.',
+      'Za HTTP preko javne domene isključite TLS provjeru ili postavite HTTPS.'
     ));
     return;
   }
