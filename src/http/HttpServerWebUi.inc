@@ -6967,6 +6967,20 @@ function openNetworkModal() {
           'Zadano isključeno. Vjeruje se samo X-Real-IP s 127.0.0.1 ili ::1. Izravni klijenti ne mogu lažirati IP zaglavljem. Pogrešna konfiguracija proxyja može ometati IP filtriranje.')}
       </p>
     </div>
+    <div class="modal-actions"><button class="button-secondary" onclick="closeNetworkModal()">${t('close')}</button></div>
+  `;
+  document.getElementById('modal').classList.add('active');
+  fetchSystemMetrics();
+  fetchJson('/api/security/proxy',{},8000).then(result=>{
+    const input=document.getElementById('trustLocalProxyRealIp');
+    if(input)input.checked=result.trust_local_proxy_real_ip===true;
+  }).catch(error=>console.warn('Proxy security settings:',error));
+}
+// Certificate Manager is a separate modal, not part of the network monitor.
+function openTlsCertificateModal(){
+  document.getElementById('modalContent').className='modal-content network-modal tls-modal';
+  const secureProxyText=(ru,en,hr)=>language==='ru'?ru:language==='hr'?hr:en;
+  document.getElementById('modalContent').innerHTML=modalCloseButton()+`
     <section style="margin:16px 0;padding:14px;border:1px solid var(--border-color,#52637d);border-radius:10px">
       <h3>${secureProxyText('SSL / TLS сертификаты','SSL / TLS certificates','SSL / TLS certifikati')}</h3>
       <p style="font-size:12px;opacity:.85">
@@ -7011,12 +7025,7 @@ function openNetworkModal() {
     <div class="modal-actions"><button class="button-secondary" onclick="closeNetworkModal()">${t('close')}</button></div>
   `;
   document.getElementById('modal').classList.add('active');
-  fetchSystemMetrics();
   refreshManagedTlsStatus();
-  fetchJson('/api/security/proxy',{},8000).then(result=>{
-    const input=document.getElementById('trustLocalProxyRealIp');
-    if(input)input.checked=result.trust_local_proxy_real_ip===true;
-  }).catch(error=>console.warn('Proxy security settings:',error));
 }
 async function saveTrustedProxySetting(control){
   if(!control||control.disabled)return;
