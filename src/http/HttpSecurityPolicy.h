@@ -84,12 +84,19 @@ public:
                 Clock::time_point now=Clock::now()) {
         std::lock_guard<std::mutex> lock(mu_);
         if(success){entries_.erase(ip);return;}
-        if(entries_.size()>2048){
+        if(entries_.size()>=2048){
             for(auto it=entries_.begin();it!=entries_.end();){
                 if(now>=it->second.until)it=entries_.erase(it);
                 else ++it;
             }
-            if(entries_.size()>2048)entries_.clear();
+            // Bounded storage without resetting everyone's active throttle.
+            if(entries_.size()>=2048 && entries_.find(ip)==entries_.end()){
+                const auto oldest=std::min_element(entries_.begin(),entries_.end(),
+                    [](const auto& lhs,const auto& rhs){
+                        return lhs.second.until<rhs.second.until;
+                    });
+                if(oldest!=entries_.end())entries_.erase(oldest);
+            }
         }
         auto& entry=entries_[ip];
         if(now>=entry.until)entry.failures=0;
