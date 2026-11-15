@@ -157,6 +157,7 @@ std::string HttpServer::clusterPeerStatus() {
         Json::Value item(Json::objectValue);
         item["name"]=peer.name;
         item["url"]=peer.url;
+        item["verify_tls"]=peer.verifyTlsPeer;
         if(!peer.viewerUrl.empty())item["viewer_url"]=peer.viewerUrl;
         item["online"]=false;
         item["channels"]=Json::Value(Json::arrayValue);
