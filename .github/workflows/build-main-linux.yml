@@ -79,6 +79,7 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends libjsoncpp-dev
           node tests/web/test_tls_modules_v546.js
+          node tests/web/test_tls_menu_v547.js
           node tests/web/test_tls_lifecycle_v546.js
           c++ -std=c++17 -O1 -g -UNDEBUG -Wall -Wextra \
             -fsanitize=address,undefined -fno-omit-frame-pointer \
