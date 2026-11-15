@@ -1709,6 +1709,21 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                   << " input_sid=auto" << std::endl;
     }
 
+    // V534: each T2-MI tile subscribes only to its outer PID. The physical
+    // DVB input remains shared, but entire satellite MPTS must not be copied
+    // to every inner-service relay (unlike a normal service prefilter,
+    // the PAT/PMT for T2-MI live inside the selected BBFRAME).
+    std::shared_ptr<dvbstreamer5::media::network::SharedDvbPidAdmission>
+        t2miAdmission;
+    if(sharedDvbInputSource && relay.t2miPid>=0) {
+        t2miAdmission=std::make_shared<
+            dvbstreamer5::media::network::SharedDvbPidAdmission>();
+        using Mask=dvbstreamer5::media::network::SharedDvbPidAdmission::Mask;
+        auto mask=std::make_shared<Mask>();
+        mask->fill(0);
+        (*mask)[static_cast<std::size_t>(relay.t2miPid)]=1;
+        t2miAdmission->publish(mask);
+    }
     std::shared_ptr<SharedDvbServicePrefilter> sharedDvbPrefilter;
     if (sharedDvbInputSource && relay.remapEnabled && relay.t2miPid < 0) {
         sharedDvbPrefilter = std::make_shared<SharedDvbServicePrefilter>();
@@ -2213,7 +2228,7 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
                     },
                     sharedDvbError, false,
                     sharedDvbPrefilter ? sharedDvbPrefilter->pidAdmission()
-                                      : nullptr)) {
+                                      : t2miAdmission)) {
                 state->nativeRelay->stop();
                 for (auto& output : state->nativeSrtOutputs) if (output) output->stop();
                 if (state->nativeHlsSegmenter) state->nativeHlsSegmenter->stop();
