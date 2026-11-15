@@ -18,7 +18,10 @@ const prefill=extract('// V538: prepopulate the existing satellite scanner',
 assert.ok(web.includes("heading.dataset.tpScanTitle='1'"));
 assert.ok(web.includes("editRow.addEventListener('click'"));
 assert.ok(web.includes("editRow.dataset.tpEditRow='1'"));
-assert.ok(web.includes("summary.append(editRow,spoilerSpace)"));
+assert.ok(web.includes("editRow.append(heading)"));
+assert.ok(web.includes("status.append(meters,count)"));
+assert.ok(web.includes(".tp-spoiler-space{grid-column:2;"));
+assert.ok(web.includes("summary.append(editRow,spoilerSpace,status)"));
 assert.ok(web.includes(".tp-edit-subgroup[open] .tp-spoiler-space:after{content:\"▲\""));
 assert.ok(web.includes(".tp-spoiler-space:after{content:\"▼\";"));
 assert.ok(web.includes("editRow.type='button'"));
