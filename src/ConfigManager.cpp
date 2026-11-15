@@ -691,6 +691,7 @@ Json::Value StreamConfig::toJson() const {
     root["epg_mode"] = epgMode;
     root["xmltv_source_id"] = xmltvSourceId;
     root["xmltv_channel_id"] = xmltvChannelId;
+    root["tvg_id"] = tvgId;
     root["conditional_access_client"] = conditionalAccessClient;
     Json::Value extraOutputs(Json::arrayValue);
     for (const auto& output : additionalOutputs) {
