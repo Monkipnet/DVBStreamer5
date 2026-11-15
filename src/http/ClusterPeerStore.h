@@ -85,8 +85,8 @@ inline bool validOrigin(const std::string& url, bool allowUnverifiedHttp=false) 
         const auto lastDot=host.rfind('.');
         if(lastDot!=std::string::npos && lastDot>0 && lastDot+1<host.size() &&
            host!="localhost" && host!="localhost.localdomain" &&
-           host.compare(host.size()-6,6,".local")!=0 &&
-           host.compare(host.size()-9,9,".internal")!=0) {
+           (host.size()<6 || host.compare(host.size()-6,6,".local")!=0) &&
+           (host.size()<9 || host.compare(host.size()-9,9,".internal")!=0)) {
             static const std::regex dottedName(R"(^[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$)");
             if(std::regex_match(host,dottedName)) {
                 // IPv4 literals are checked against the normal private ranges below.
