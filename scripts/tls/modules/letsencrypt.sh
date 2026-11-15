@@ -21,14 +21,14 @@ le_bootstrap() {
   activate_certificate "$folder/fullchain.pem" "$folder/privkey.pem"
 }
 le_timer() {
-  cat > /etc/systemd/system/dvbstreamer5-le-renew.service <<'UNIT'
+  cat > /etc/systemd/system/dvbstreamer5-le-renew.service <<UNIT
 [Unit]
 Description=DVBStreamer5 Let's Encrypt renewal check (opt-in)
 After=network-online.target
 Wants=network-online.target
 [Service]
 Type=oneshot
-ExecStart=/bin/bash /opt/DVBStreamer5/tls/manage.sh le-renew
+ExecStart=/bin/bash $HERE/manage.sh le-renew
 TimeoutStartSec=600
 UNIT
   cat > /etc/systemd/system/dvbstreamer5-le-renew.timer <<'UNIT'
@@ -46,12 +46,12 @@ UNIT
     die_tls timer_enable_failed
 }
 le_enable() {
-  MODE=letsencrypt AUTO_RENEW=true ISSUER=letsencrypt
+  MODE=letsencrypt AUTO_RENEW=false ISSUER=letsencrypt
   : "${DOMAIN:?}" "${EMAIL:?}" "${BACKEND_PORT:?}" "${HTTPS_PORT:?}"
   check_domain "$DOMAIN"; check_email "$EMAIL"
   check_port "$BACKEND_PORT"; check_port "$HTTPS_PORT"
   [[ "$BACKEND_PORT" != "$HTTPS_PORT" && "$HTTPS_PORT" != 80 ]] || die_tls invalid_ports
-  require_command nginx
+  ensure_nginx
   require_command openssl
   if ! command -v certbot >/dev/null 2>&1; then
     status running letsencrypt installing_certbot true none
@@ -73,6 +73,7 @@ le_enable() {
   # Create ACME-only HTTP-01 route. Certificate requests must not be proxied.
   nginx_managed_proxy "$DOMAIN" "$BACKEND_PORT" "$HTTPS_PORT" true
   le_timer
+  AUTO_RENEW=true
   if certbot certonly --webroot -w "$ACME_ROOT" -d "$DOMAIN" \
        --non-interactive --agree-tos --email "$EMAIL" \
        --keep-until-expiring --preferred-challenges http >/dev/null 2>&1; then
