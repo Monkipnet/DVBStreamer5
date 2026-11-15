@@ -39,6 +39,13 @@ jobs:
             libva-dev libvpl-dev libfreetype-dev \
             libavcodec-dev libavutil-dev
 
+      - name: Emulate T2-MI over MPEG-TS without a DVB tuner
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -UNDEBUG -Isrc \
+            tests/test_t2mi_inner_ts.cpp -o /tmp/dvbstreamer5-t2mi-emulator
+          /tmp/dvbstreamer5-t2mi-emulator
+          echo "PASS: emulated T2-MI BBFRAME, PLP selection, CRC and continuity"
+
       # A GitHub-hosted runner starts with an empty workspace. Restore safe
       # compiler results, not stale installed binaries. ccache verifies source
       # bytes, compiler flags, toolchain and included headers on each hit.
