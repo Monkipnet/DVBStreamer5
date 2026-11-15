@@ -58,6 +58,9 @@ jobs:
       - name: Verify dashboard channel search including devices domains and CIDR
         run: node tests/web/test_tile_search_v535.js
 
+      - name: Verify DVB transponder name-only editing and centered spoiler
+        run: node tests/web/test_dvb_spoiler_v549.js
+
       - name: Emulate selected DVB transponder editing with separate spoiler arrow
         run: |
           node tests/web/test_transponder_editor_v539.js
