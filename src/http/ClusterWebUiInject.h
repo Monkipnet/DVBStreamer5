@@ -96,6 +96,12 @@ function clusterError(message){
       ['Сервер не найден','Unknown peer','Nepoznat poslužitelj'],
     'Failed to write private cluster configuration':
       ['Ошибка сохранения настроек кластера','Failed to save cluster config','Nije moguće spremiti konfiguraciju klastera'],
+    'Invalid cluster routing settings':
+      ['Неверные настройки маршрутизации','Invalid routing settings','Neispravne postavke usmjeravanja'],
+    'Cannot read cluster settings':
+      ['Не удалось прочитать настройки маршрутизации','Cannot read cluster routing settings','Nije moguće pročitati postavke usmjeravanja'],
+    'Cannot save cluster routing settings':
+      ['Не удалось сохранить маршрутизацию','Cannot save cluster routing settings','Nije moguće spremiti usmjeravanje'],
     'Panel login and same-origin request required':
       ['Нужен вход администратора в панель','Panel administrator login required','Potrebna je prijava administratora'],
     'Cluster administration requires panel login':

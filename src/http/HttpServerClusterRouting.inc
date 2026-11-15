@@ -69,11 +69,14 @@ Json::Value HttpServer::clusterChooseStream(const std::string& id,bool hls,
                     const auto remoteId=ch.get("id","").asString();
                     const auto remoteTvgId=ch.get("tvg_id","").asString();
                     const auto remoteName=ch.get("name","").asString();
-                    const bool sameChannel=
-                        (!localCfg->tvgId.empty() && !remoteTvgId.empty() &&
-                         localCfg->tvgId==remoteTvgId) ||
-                        remoteId==id ||
-                        (!localCfg->name.empty() && localCfg->name==remoteName);
+                    const bool bothHaveTvgIds=
+                        !localCfg->tvgId.empty() && !remoteTvgId.empty();
+                    // Conflicting explicit TVG IDs must never fall back to a
+                    // coincidentally equal channel name or local ID.
+                    const bool sameChannel=bothHaveTvgIds
+                        ? localCfg->tvgId==remoteTvgId
+                        : (remoteId==id ||
+                           (!localCfg->name.empty() && localCfg->name==remoteName));
                     if(!sameChannel)continue;
                     const auto slug=ch.get("slug","").asString();
                     if(!dvbstreamer5::cluster::routing::safeChannelId(slug))continue;
