@@ -155,6 +155,27 @@ html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
 .input-subgroup-title[data-tp-scan-title]:focus-visible{outline:2px solid #5dbdff;outline-offset:3px}
 .input-subgroup-title[data-tp-scan-title][aria-disabled="true"]{opacity:.6;cursor:progress}
 .input-subgroup-count{font-size:.72rem;flex:none;color:#9fe7b3;font-variant-numeric:tabular-nums}
+
+/* V539: title/metrics row edits the TP, the lower blank area toggles a spoiler. */
+.input-subgroup.tp-edit-subgroup>summary{padding:0;display:flex;flex-direction:column;align-items:stretch;gap:0;cursor:default}
+.input-subgroup.tp-edit-subgroup>summary:before{display:none!important}
+.tp-edit-row{box-sizing:border-box;display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%;min-height:46px;padding:10px 13px;border:0;border-radius:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
+.tp-edit-row:hover{background:rgba(72,163,250,.14);color:#8cddff}
+.tp-edit-row:focus-visible{outline:2px solid #5ebcff;outline-offset:-3px}
+.tp-edit-row .input-subgroup-title{text-decoration:none!important;cursor:inherit}
+.tp-spoiler-space{display:flex;align-items:center;justify-content:center;width:100%;min-height:35px;cursor:pointer;background:rgba(71,143,209,.055);border-top:1px solid rgba(135,195,240,.13);color:#7dd1ff;transition:background .15s}
+.tp-spoiler-space:hover{background:rgba(70,161,235,.15)}
+.tp-spoiler-space:after{content:"▼";font-size:25px;line-height:1;display:block;transition:transform .16s ease}
+.tp-edit-subgroup[open] .tp-spoiler-space:after{content:"▲"}
+.tp-scan-context{border:1px solid rgba(96,184,246,.28);border-radius:10px;padding:10px 12px;margin:0 0 12px;background:rgba(79,152,217,.09)}
+.tp-scan-context label{display:block;font-size:12px;font-weight:700;margin-bottom:6px}
+.tp-scan-context select{width:100%;padding:8px;border-radius:7px;color:inherit;background:rgba(43,65,86,.25);border:1px solid rgba(141,195,239,.27);font-size:12px}
+.tp-scan-context small{display:block;margin-top:7px;opacity:.8}
+html[data-dashboard-theme="light"] .tp-edit-row:hover{color:#165c94;background:#e9f4ff}
+html[data-dashboard-theme="light"] .tp-scan-context{background:#eef7ff}
+html[data-dashboard-theme="light"] .tp-scan-context select{background:#fff;color:#1d364e}
+@media(max-width:700px){.tp-edit-row{gap:7px}.tp-edit-row .input-subgroup-title{flex-basis:100%}.tp-edit-row .dvb-card-meters{max-width:100%}}
+
 .input-subgroup-tiles{padding:10px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
 .non-dvb-tile-heading{color:#c2d3e6;margin:0 0 9px;font-size:.84rem;font-weight:700}
@@ -3724,6 +3745,7 @@ let satelliteTuneGeneration = 0;
 let satelliteServices = [];
 let satelliteLastScan = null;
 let transponderScanPreparing = false;
+let activeTransponderEdit = null;
 let satelliteModalGeneration = 0;
 let dvbAdapters = [];
 let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSourceSupported:false};
@@ -5116,6 +5138,9 @@ function closeModal() {
   stopXmltvRefreshPolling();
   stopQualityAutoRefresh();
   stopSatelliteSignalPolling();
+  activeTransponderEdit=null;
+  ++satelliteModalGeneration;
+  transponderScanPreparing=false;
   document.getElementById('modal').classList.remove('active', 'quality-open', 'stream-open', 'satellite-open');
 }
 function escapeHtmlValue(value) {
@@ -5598,8 +5623,9 @@ async function beginTransponderGroupScan(key){
       'Остановка не завершена: тюнер ещё занят. Сканирование не открыто.',
       'Stop not completed: tuner still busy. Scanning was not opened.',
       'Zaustavljanje nije završeno: tuner je zauzet. Skeniranje nije otvoreno.'));
-    // The dialog is opened only after the server confirmed every stop.
-    openAddChannelModal(tune);
+    // The actual selected group/IDs go to the editor; never use the
+    // adapter default or an unrelated transponder with a similar frequency.
+    openAddChannelModal({...tune,group_key:key,stream_ids:group.streams.map(s=>String(s.id))});
     fetchState();
     return true;
   }catch(error){
@@ -5633,37 +5659,45 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   heading.className='input-subgroup-title';
   heading.textContent=title;
   heading.title=title;
-  if(key.startsWith('tp:')) {
-    // V538: only the transponder title initiates scanning. The rest of the
-    // summary retains its original DVB-style expand/collapse interaction.
-    heading.dataset.tpScanTitle='1';
-    heading.setAttribute('role','button');
-    heading.setAttribute('tabindex','0');
-    heading.setAttribute('aria-label',subtitleUiTriText(
-      'Остановить плитки и открыть сканирование: ',
-      'Stop tiles and open scanning: ',
-      'Zaustavi pločice i otvori skeniranje: ')+title);
-    heading.addEventListener('click',event=>{
-      event.preventDefault();event.stopPropagation();
-      beginTransponderGroupScan(key);
-    });
-    heading.addEventListener('keydown',event=>{
-      if(event.key==='Enter'||event.key===' '){
-        event.preventDefault();event.stopPropagation();
-        beginTransponderGroupScan(key);
-      }
-    });
-  }
   const count=document.createElement('span');
   count.className='input-subgroup-count';
   count.dataset.subgroupCount='1';
   count.textContent=streams.filter(s=>s.active).length+'/'+streams.length+' '+t('cardActive');
   if(key.startsWith('tp:')) {
+    details.classList.add('tp-edit-subgroup');
+    // Entire top information row is an EDIT action, not a spoiler toggle.
+    const editRow=document.createElement('button');
+    editRow.type='button';
+    editRow.className='tp-edit-row';
+    editRow.dataset.tpEditRow='1';
+    editRow.title=subtitleUiTriText(
+      'Редактировать транспондер после остановки каналов',
+      'Edit transponder after stopping channels',
+      'Uredi transponder nakon zaustavljanja kanala');
+    editRow.setAttribute('aria-label',editRow.title+': '+title);
+    editRow.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      beginTransponderGroupScan(key);
+    });
+    heading.dataset.tpScanTitle='1';
     const meters=document.createElement('span');
     meters.className='dvb-card-meters';
     meters.dataset.tpMeters='1';
-    summary.append(heading,meters,count);
-  } else summary.append(heading,count);
+    editRow.append(heading,meters,count);
+    // The native <summary> owns the dedicated empty lower strip. Its
+    // large centered arrow flips ▼ / ▲ automatically with details[open].
+    const spoilerSpace=document.createElement('span');
+    spoilerSpace.className='tp-spoiler-space';
+    spoilerSpace.setAttribute('aria-hidden','true');
+    summary.title=subtitleUiTriText(
+      'Нажмите здесь для раскрытия или сворачивания плиток',
+      'Click here to expand or collapse tiles',
+      'Kliknite ovdje za otvaranje ili zatvaranje pločica');
+    summary.append(editRow,spoilerSpace);
+  }else{
+    summary.append(heading,count);
+  }
   const grid=document.createElement('div');
   grid.className='tile-grid input-subgroup-tiles';
   details.append(summary,grid);
@@ -8232,14 +8266,16 @@ function scheduleSatelliteSignalPolling() {
   satelliteSignalTimer = setInterval(updateSatelliteSignal, 2500);
   updateSatelliteSignal();
 }
-async function loadSatelliteAdapters(suppressInitialSignal=false) {
+async function loadSatelliteAdapters(suppressInitialSignal=false,preferredTune=null) {
   const info = document.getElementById('satDeviceInfo');
   try {
     const response = await fetch('/api/dvb-adapters', {cache:'no-store'});
     const data = await response.json();
     await loadCamClients();
-    const adapterBeforeLoad = Number(document.getElementById('satAdapter')?.value || 0);
-    const frontendBeforeLoad = Number(document.getElementById('satFrontend')?.value || 0);
+    const adapterBeforeLoad = preferredTune ? Number(preferredTune.adapter) :
+      Number(document.getElementById('satAdapter')?.value || 0);
+    const frontendBeforeLoad = preferredTune ? Number(preferredTune.frontend) :
+      Number(document.getElementById('satFrontend')?.value || 0);
     dvbAdapters = Array.isArray(data.adapters) ? data.adapters : [];
     dvbCapabilities = {
       dvbsrcAvailable:!!data.native_dvb_available,
@@ -8265,7 +8301,7 @@ async function loadSatelliteAdapters(suppressInitialSignal=false) {
       ? frontendBeforeLoad
       : Number((dvbAdapters.find(item => Number(item.adapter) === preferredAdapter) || dvbAdapters[0]).frontend || 0);
     refreshSatelliteAdapterOptions(preferredAdapter, preferredFrontend);
-    applySelectedDvbFrontendTuneToForm();
+    if(!preferredTune)applySelectedDvbFrontendTuneToForm();
     updateSatelliteDeviceInfo();
     if(!suppressInitialSignal)updateSatelliteSignal();
   } catch (error) {
@@ -8670,11 +8706,82 @@ function applyTransponderScanTune(tune) {
   return true;
 }
 
+// V539: persist only the TP tuning fields; channel PID/PNR, output links,
+// middleware, CAM and IDs remain untouched on the server. Does not auto start.
+async function saveExistingTransponderTune(){
+  if(!activeTransponderEdit||satelliteScanning)return false;
+  const button=document.getElementById('satSaveTransponderButton');
+  const selection=document.getElementById('satExistingTransponder');
+  if(!selection||selection.value!==activeTransponderEdit.group_key)return false;
+  const chosen=activeTransponderEdit;
+  const tune=satelliteTunePayload();
+  if(!(Number.isFinite(tune.frequency_mhz)&&tune.frequency_mhz>=900&&
+       tune.frequency_mhz<=14000 &&
+       Number.isFinite(tune.symbol_rate)&&tune.symbol_rate>=100 &&
+       tune.symbol_rate<=60000)){
+    uiError(subtitleUiTriText('Неверная частота или Symbol Rate',
+      'Invalid frequency or symbol rate',
+      'Neispravna frekvencija ili brzina simbola'));
+    return false;
+  }
+  const ok=window.confirm(subtitleUiTriText(
+    'Сохранить параметры транспондера «'+chosen.label+
+      '» для '+chosen.streams.length+' каналов? Каналы останутся остановленными.',
+    'Save tuning for transponder “'+chosen.label+
+      '” across '+chosen.streams.length+' channels? Channels will remain stopped.',
+    'Spremiti postavke transpondera „'+chosen.label+
+      '” za '+chosen.streams.length+' kanala? Kanali će ostati zaustavljeni.'));
+  if(!ok)return false;
+  if(button)button.disabled=true;
+  try{
+    const data=await fetchJson('/api/dvb-transponder/edit',{
+      method:'POST',headers:{
+        'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'
+      },
+      body:JSON.stringify({
+        streams:chosen.streams,
+        tune,
+        satellite_name:String(document.getElementById('satName')?.value||'').trim()
+      })
+    },15000);
+    if(data.result!=='ok')throw Error(data.error||'Transponder save failed');
+    closeModal();
+    await fetchState();
+    window.alert(subtitleUiTriText(
+      'Параметры транспондера сохранены. Каналы остаются остановленными.',
+      'Transponder settings saved. Channels remain stopped.',
+      'Postavke transpondera spremljene. Kanali ostaju zaustavljeni.'));
+    return true;
+  }catch(error){
+    uiError(error?.message||String(error));
+    return false;
+  }finally{
+    if(button)button.disabled=false;
+  }
+}
+
 function openAddChannelModal(initialTransponderTune=null) {
   const modalGeneration=++satelliteModalGeneration;
+  const editing=!!initialTransponderTune?.group_key;
+  const editGroup=editing ? findTransponderGroupForScan(
+    initialTransponderTune.group_key,state.streams||[]) : null;
+  activeTransponderEdit=editing&&editGroup?{
+    group_key:initialTransponderTune.group_key,
+    label:editGroup.title,
+    streams:editGroup.streams.map(s=>({id:String(s.id),
+      expected_input_uri:String(s.input_uri||'')}))
+  }:null;
   satelliteServices = [];
   openModal(`
-    <h2 id="satAddTitle">${subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
+    <h2 id="satAddTitle">${editing?subtitleUiTriText('Редактирование транспондера — DVB-S/S2','Edit transponder — DVB-S/S2','Uredi transponder — DVB-S/S2'):subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
+    ${editing&&editGroup? `
+    <div class="tp-scan-context">
+      <label for="satExistingTransponder">${subtitleUiTriText('Выбранный транспондер из списка плиток','Selected transponder from tile group','Odabrani transponder iz grupe pločica')}</label>
+      <select id="satExistingTransponder" disabled>
+        <option selected value="${escapeHtmlValue(activeTransponderEdit.group_key)}">${escapeHtmlValue(editGroup.title)}</option>
+      </select>
+      <small>${subtitleUiTriText('Выбран автоматически. Изменения сохраняются для всех каналов этого TP без изменения выходов, SID и CAM.','Selected automatically. Saves tuning for all channels in this TP without changing outputs, SID or CAM.','Automatski odabran. Spremanje podešavanja za sve kanale TP-a bez promjene izlaza, SID-a ili CAM-a.')}</small>
+    </div>`:''}
     <div class="sat-signal-panel">
       <div class="sat-meter"><div class="sat-meter-head"><span>Сигнал</span><strong id="satSignalValue">0%</strong></div><div class="sat-bar"><span id="satSignalBar"></span></div></div>
       <div class="sat-meter"><div class="sat-meter-head"><span>Качество</span><strong id="satQualityValue">0%</strong></div><div class="sat-bar"><span id="satQualityBar"></span></div></div>
@@ -8750,7 +8857,8 @@ function openAddChannelModal(initialTransponderTune=null) {
     </div>
     <div class="modal-actions">
       <button class="button-secondary" onclick="closeModal()">Отмена</button>
-      <button id="satSaveButton" class="button-primary" onclick="saveSelectedSatelliteChannels()">Сохранить выбранные</button>
+      ${editing&&editGroup?`<button id="satSaveTransponderButton" class="button-primary" type="button" onclick="saveExistingTransponderTune()">${subtitleUiTriText('Сохранить параметры TP','Save transponder settings','Spremi postavke transpondera')}</button>`:''}
+      <button id="satSaveButton" class="button-secondary" onclick="saveSelectedSatelliteChannels()">${subtitleUiTriText('Сохранить найденные каналы','Save found channels','Spremi pronađene kanale')}</button>
     </div>
   `);
   document.getElementById('modalContent').classList.add('satellite-modal');
@@ -8763,7 +8871,7 @@ function openAddChannelModal(initialTransponderTune=null) {
   updateSatelliteUnicableUi(false);
   updateSatelliteOutputHints(false);
   if(initialTransponderTune){
-    loadSatelliteAdapters(true).then(()=>{
+    loadSatelliteAdapters(true,initialTransponderTune).then(()=>{
       if(modalGeneration!==satelliteModalGeneration ||
          !document.getElementById('satFrequency'))return; // Closed/replaced.
       if(!applyTransponderScanTune(initialTransponderTune)){
@@ -8772,6 +8880,19 @@ function openAddChannelModal(initialTransponderTune=null) {
           'Cannot select the transponder frontend for scanning',
           'Nije moguće odabrati tuner transpondera za skeniranje'));
         return;
+      }
+      if(editing) {
+        document.getElementById('satAdapter').disabled=true;
+        document.getElementById('satFrontend').disabled=true;
+        document.getElementById('satReceptionType').disabled=true;
+        const title=document.getElementById('satAddTitle');
+        if(title) {
+          title.setAttribute('data-ui-ru','Редактирование транспондера — DVB-S/S2');
+          title.setAttribute('data-ui-en','Edit transponder — DVB-S/S2');
+          title.setAttribute('data-ui-hr','Uredi transponder — DVB-S/S2');
+          title.textContent=subtitleUiTriText('Редактирование транспондера — DVB-S/S2',
+            'Edit transponder — DVB-S/S2','Uredi transponder — DVB-S/S2');
+        }
       }
       scheduleSatelliteSignalPolling();
     }).catch(error=>uiError(error?.message||String(error)))
