@@ -487,6 +487,25 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket, res);
             return;
         }
+        // HTTP Basic is still supported for older administrators; protect it
+        // with the same per-client throttle as JSON login.
+        const bool basicAttempt=panelProtected &&
+            authorization!=req.end() &&
+            boost::algorithm::istarts_with(
+                std::string(authorization->value()),"Basic ");
+        const std::string basicIp=basicAttempt?clientIpForRequest(socket,req):std::string{};
+        if(basicAttempt){
+            if(basicIp.empty() || !panelLoginThrottle_.allowed(basicIp)){
+                res.result(http::status::too_many_requests);
+                res.set(http::field::retry_after,"300");
+                res.set(http::field::content_type,"application/json");
+                res.body()=R"({"error":"HTTP Basic login rate limit exceeded"})";
+                res.content_length(res.body().size());
+                http::write(socket,res);
+                return;
+            }
+            panelLoginThrottle_.record(basicIp,isAuthorized(req));
+        }
         if (panelProtected && !apiKeyGranted && !isAuthorized(req) &&
             !isPanelSessionAuthorized(req)) {
             writeUnauthorized(res);
