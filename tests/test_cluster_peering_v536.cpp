@@ -50,6 +50,8 @@ int main() {
   Peer b{"iptv","https://iptv.example.net",randomToken()};
   Peer c{"svettranscoding","http://192.168.1.22:9000",randomToken()};
   assert(validPeer(a)&&validPeer(b)&&validPeer(c));
+  b.verifyTlsPeer=false;
+  assert(a.verifyTlsPeer && !b.verifyTlsPeer);
   config.peers={a,b,c};
   assert(save(directory,config));
   Config reloaded;
@@ -58,6 +60,9 @@ int main() {
   assert(reloaded.peers[0].name=="home2");
   assert(reloaded.peers[1].name=="iptv");
   assert(reloaded.peers[2].name=="svettranscoding");
+  assert(!reloaded.peers[1].verifyTlsPeer);
+  assert(reloaded.peers[0].verifyTlsPeer);
+  assert(publicPeers(reloaded,false)["peers"][1]["verify_tls"].asBool()==false);
   const auto publicView=publicPeers(reloaded,false);
   assert(publicView["peers"].size()==3);
   assert(!publicView.isMember("node_token"));
