@@ -206,6 +206,8 @@ std::string HttpServer::handleConfigImport(const std::string& body) {
 
     // Config import must never resurrect a previously rotated/revoked API
     // key from an older backup, even when restoring a full admin bundle.
+    configRoot["trust_local_proxy_real_ip"] =
+        configManager.config.trustLocalProxyRealIp;
     configRoot["stream_auth_api_key_sha256"] =
         configManager.config.streamAuthApiKeySha256;
     configRoot["stream_auth_api_allowed_ips"] =
@@ -359,6 +361,8 @@ std::string HttpServer::handleSaveConfig(const std::string& body) {
     const auto previousStreams = streamConfigById(previousConfig.streams);
     const auto managedSnapshot = streamManager.snapshot();
     AppConfig nextConfig = AppConfig::fromJson(root);
+    // Only the dedicated admin checkbox API may change trust in proxy headers.
+    nextConfig.trustLocalProxyRealIp=previousConfig.trustLocalProxyRealIp;
     if (!root.isMember("login") || root.get("login", "").asString().empty()) {
         nextConfig.login = configManager.config.login;
     }
