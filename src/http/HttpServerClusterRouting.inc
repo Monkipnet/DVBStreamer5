@@ -59,7 +59,7 @@ Json::Value HttpServer::clusterChooseStream(const std::string& id,bool hls,
                     continue;
                 std::string origin=peer.get("viewer_url","").asString();
                 if(origin.empty())origin=peer.get("url","").asString();
-                if(!dvbstreamer5::cluster::validOrigin(origin))continue;
+                if(!dvbstreamer5::cluster::validOrigin(origin,!peer.get("verify_tls",true).asBool()))continue;
                 const auto peerName=peer.get("name","").asString();
                 for(const auto& ch:peer["channels"]){
                     if(!ch.isObject() || !ch.get("active",false).asBool() ||
