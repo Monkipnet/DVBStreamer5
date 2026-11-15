@@ -202,7 +202,8 @@ jobs:
             dvbstreamer5_t2mi_test
           # Synthetic on-wire T2-MI: outer PID, BBFRAME, PLP isolation,
           # CRC/continuity faults and recovered inner transport.
-          ctest --test-dir build-main-ci -R '^t2mi_inner_ts
+          ctest --test-dir build-main-ci -R t2mi_inner_ts --output-on-failure
+          node tests/web/test_shared_cw_broker_policy.js
           node tests/web/test_biss1_ui.js
           node tests/web/test_biss2_ui.js
           node tests/web/test_stream_toggle_stop_policy.js
