@@ -3,6 +3,7 @@
 // Foreign global settings, passwords, CAS, recording, template and auth
 // semantics are intentionally NOT applied to DVBStreamer5.
 #include "../ConfigManager.h"
+#include "AstraJsonDvbTune.h"
 #include <jsoncpp/json/json.h>
 #include <algorithm>
 #include <cctype>
@@ -143,15 +144,49 @@ inline StreamConfig baseStream(std::string name) {
     cfg.cbr = false;
     return cfg;
 }
+inline bool applyAstraHttpOutput(const std::string& input, StreamConfig& cfg) {
+    const std::string url=unquote(input);
+    const std::string low=lower(url);
+    if(!begins(low,"http://"))return false;
+    if(url.empty()||url.size()>8192U||url.find_first_of(" \r\n\t")!=std::string::npos||
+       url.find('@')!=std::string::npos||url.find('#')!=std::string::npos)
+        return false;
+    // Treat the Astra URL as a declaration of the output PROTOCOL, not
+    // an outbound HTTP push target. DVBStreamer5 hosts a pull endpoint on
+    // its configured panel/media port under /<channel-name>/mpegts.
+    // Never bind a foreign machine's address or occupy Astra's old port.
+    const auto authorityEnd=url.find_first_of("/?",7U);
+    const auto authority=url.substr(7U,authorityEnd==std::string::npos?
+        std::string::npos:authorityEnd-7U);
+    if(authority.empty()||authority.size()>256U ||
+       !std::all_of(authority.begin(),authority.end(),[](unsigned char c){
+           return std::isalnum(c)||c=='.'||c=='-'||c==':'||c=='['||c==']';
+       }))
+        return false;
+    cfg.outputType="http";
+    cfg.outputMode="listener";
+    cfg.outputHost="0.0.0.0";
+    cfg.outputPort=0; // use existing config.httpPort, not remote Astra port
+    cfg.interfaceAddress.clear();
+    cfg.cbr=false;
+    return true;
+}
 inline void addOutputs(StreamConfig& cfg, const std::vector<std::string>& urls,
                        std::vector<std::string>& warnings) {
     bool primary = false;
     for (const auto& url : urls) {
         StreamConfig copy = cfg;
-        if (!applyUdpOutput(url, copy)) {
-            if (!url.empty()) warnings.push_back("Output skipped (unsupported or invalid target)");
+        const bool udp=applyUdpOutput(url,copy);
+        const bool http=!udp && applyAstraHttpOutput(url,copy);
+        if (!udp && !http) {
+            if (!url.empty())
+                astra_json::warnOnce(warnings,
+                    "Output skipped (unsupported or invalid target)");
             continue;
         }
+        if(http)
+            astra_json::warnOnce(warnings,
+                "Astra HTTP output mapped to DVBStreamer5 HTTP MPEG-TS on the existing server port; original host/port/path not preserved");
         if (!primary) {
             cfg.outputType=copy.outputType;
             cfg.outputHost=copy.outputHost;
@@ -174,51 +209,102 @@ inline void addOutputs(StreamConfig& cfg, const std::vector<std::string>& urls,
 
 inline bool parseAstra(const std::string& data, Conversion& result,
                        std::string& error) {
-    result={};
-    if (data.size() > 4 * 1024 * 1024) { error="Astra file exceeds 4 MiB"; return false; }
+    result={};error.clear();
+    if (data.size() > 4U * 1024U * 1024U) {
+        error="Astra file exceeds 4 MiB";return false;
+    }
+    std::string document;
+    if(!astra_json::jsonUtf8(data,document,result.warnings)) {
+        error="Cannot decode Astra JSON as UTF-8 or Windows-1251";return false;
+    }
     Json::Value root;
     Json::CharReaderBuilder builder;
-    std::istringstream input(data);
+    std::istringstream input(document);
     if (!Json::parseFromStream(builder,input,&root,&error) || !root.isObject() ||
         !root["make_stream"].isArray()) {
         error="Expected a Cesbo Astra JSON config with make_stream array";
         return false;
     }
+    const auto tunes=astra_json::tunerIndex(root,result.warnings);
     for (const auto& item: root["make_stream"]) {
         if (!item.isObject()) { ++result.ignored; continue; }
         const std::string type = lower(item.get("type","spts").asString());
         if (type != "spts") {
             ++result.ignored;
-            result.warnings.push_back("MPTS stream skipped: manual service remapping required");
+            astra_json::warnOnce(result.warnings,
+                "MPTS stream skipped: manual service remapping required");
             continue;
         }
         const std::string name = item.get("name","").asString();
         const auto& inputs = item["input"];
         if (name.empty() || !inputs.isArray() || inputs.empty()) {
             ++result.ignored;
-            result.warnings.push_back("Astra stream without name or inputs skipped");
+            astra_json::warnOnce(result.warnings,
+                "Astra stream without name or inputs skipped");
             continue;
         }
         StreamConfig stream = baseStream(name);
+        if(item["id"].isString()) {
+            const std::string tvgId=item["id"].asString();
+            if(!tvgId.empty() && tvgId.size()<=128U &&
+               tvgId.find_first_of("\r\n\t\0",0,4)==std::string::npos)
+                stream.tvgId=tvgId;
+        }
         std::vector<std::string> sources;
+        uint32_t firstSid=0;
         for (const auto& v: inputs) {
-            StreamConfig inputProbe=stream;
-            const auto uri=sourceUrl(firstStringUrl(v),inputProbe);
+            StreamConfig probe=stream;
+            std::string source=unquote(firstStringUrl(v));
+            if(source.size()>8192U || source.find_first_of("\r\n")!=std::string::npos){
+                astra_json::warnOnce(result.warnings,
+                    "Unsafe Astra input URI skipped");
+                continue;
+            }
+            std::string uri;
+            uint32_t sourceSid=0;
+            const std::string low=lower(source);
+            if(begins(low,"dvb://")) {
+                // These are tuner IDs (not playable DVBStreamer5 URLs).
+                uri=astra_json::convertDvb(source,tunes,sourceSid,result.warnings);
+            }else if(begins(low,"t2mi://")) {
+                // T2MI encapsulates an inner transport stream. A direct
+                // DVB URI would silently deliver the WRONG service.
+                astra_json::warnOnce(result.warnings,
+                    "T2MI input skipped: native T2-MI PLP/TS depacketizer is unavailable; do not substitute DVB-T2");
+            }else{
+                uri=sourceUrl(source,probe);
+            }
             if (!uri.empty()) {
-                if (sources.empty()) stream.inputMode=inputProbe.inputMode;
+                if (sources.empty()) {
+                    stream.inputMode=probe.inputMode;
+                    firstSid=sourceSid;
+                }
                 sources.push_back(uri);
-            } else result.warnings.push_back("Unsupported Astra input skipped");
+            } else if(!begins(low,"dvb://")&&!begins(low,"t2mi://")) {
+                astra_json::warnOnce(result.warnings,
+                    "Unsupported Astra input skipped");
+            }
         }
         if (sources.empty()) {++result.ignored;continue;}
         stream.inputUri=sources[0];
-        if (sources.size()>1) stream.backupInputUri=sources[1];
+        stream.inputServiceId=firstSid;
+        if (sources.size()>1) {
+            stream.backupInputUri=sources[1];
+            if(begins(lower(sources[1]),"file://")) {
+                stream.backupInputType="file";
+                stream.backupFileLoop=true;
+            }
+        }
         if (sources.size()>2)
-            result.warnings.push_back("Only the first two Astra inputs can migrate");
+            astra_json::warnOnce(result.warnings,
+                "Only the first two Astra inputs can migrate");
         std::vector<std::string> outputs;
         if (item["output"].isArray()) {
-            for (const auto& v: item["output"]) outputs.push_back(firstStringUrl(v));
+            for (const auto& v: item["output"])
+                outputs.push_back(firstStringUrl(v));
         }
         addOutputs(stream,outputs,result.warnings);
+        // Imported tiles stay stopped even if Astra had enable=true.
         result.streams.push_back(std::move(stream));
     }
     if (result.streams.empty()) {error="No supported Astra SPTS streams found";return false;}
