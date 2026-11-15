@@ -3,6 +3,7 @@
 // No shell interprets admin-supplied arguments; no network calls on an HTTP worker.
 #include <jsoncpp/json/json.h>
 #include <chrono>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <spawn.h>
