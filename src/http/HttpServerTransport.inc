@@ -1149,6 +1149,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body()=target=="/api/cluster/config" ?
                         clusterPeerConfiguration():clusterPeerStatus();
                 }
+            } else if (target == "/api/tls/status") {
+                res.set(http::field::content_type,"application/json");
+                res.set(http::field::cache_control,"no-store");
+                if(apiKeyAttempt ||
+                   !(isAuthorized(req)||isPanelSessionAuthorized(req))){
+                    res.result(http::status::forbidden);
+                    res.body()=R"({"error":"TLS administration requires panel login"})";
+                }else{
+                    Json::StreamWriterBuilder writer;writer["indentation"]="";
+                    res.body()=Json::writeString(writer,
+                        dvbstreamer5::tls::status(configManager.config.httpPort));
+                }
             } else if (target == "/api/security/proxy") {
                 res.set(http::field::content_type,"application/json");
                 Json::Value response(Json::objectValue);
@@ -1359,6 +1371,43 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         closingPreviewId, payload["session"].asString());
                     res.body() = closed ? R"({"closed":true})" : R"({"closed":false})";
                 }
+            } else if(target=="/api/tls/selfsigned" ||
+                       target=="/api/tls/letsencrypt") {
+                res.set(http::field::content_type,"application/json");
+                res.set(http::field::cache_control,"no-store");
+                const auto requested=req.find("X-Requested-With");
+                Json::Value answer(Json::objectValue);
+                if(apiKeyAttempt ||
+                   !(isAuthorized(req)||isPanelSessionAuthorized(req)) ||
+                   requested==req.end() || requested->value()!="DVBStreamer5"){
+                    res.result(http::status::forbidden);
+                    answer["error"]="Administrator authentication required";
+                }else{
+                    Json::Value input;
+                    Json::CharReaderBuilder parser;
+                    std::string parseError;
+                    std::istringstream in(req.body());
+                    if(req.body().size()>1024 ||
+                       !Json::parseFromStream(parser,in,&input,&parseError) ||
+                       !input.isObject()){
+                        res.result(http::status::bad_request);
+                        answer["error"]="Invalid certificate request";
+                    }else{
+                        const bool le=(target=="/api/tls/letsencrypt");
+                        const bool enabled=input.get("enabled",false).asBool();
+                        const auto domain=input.get("domain","").asString();
+                        const auto email=input.get("email","").asString();
+                        const int httpsPort=input.get("https_port",9443).asInt();
+                        answer=le?dvbstreamer5::tls::LetsEncryptModule::setEnabled(
+                            enabled,domain,email,configManager.config.httpPort,httpsPort):
+                            dvbstreamer5::tls::SelfSignedModule::generate(
+                                domain,configManager.config.httpPort,httpsPort);
+                        if(answer.get("result","").asString()=="error")
+                            res.result(http::status::bad_request);
+                    }
+                }
+                Json::StreamWriterBuilder writer;writer["indentation"]="";
+                res.body()=Json::writeString(writer,answer);
             } else if (target == "/api/security/proxy") {
                 res.set(http::field::content_type,"application/json");
                 const auto requestedWith=req.find("X-Requested-With");
