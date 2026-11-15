@@ -48,6 +48,7 @@ HttpServer::HttpServer(boost::asio::io_context& ioc, ConfigManager& cfg, StreamM
       configManager(cfg), streamManager(sm),
       streamAuthApiKeyDigest_(cfg.config.streamAuthApiKeySha256),
       streamAuthApiAllowedIps_(cfg.config.streamAuthApiAllowedIps) {
+    trustLocalProxyIp_.store(cfg.config.trustLocalProxyRealIp,std::memory_order_relaxed);
     std::cerr << "HTTP worker pool 202.47: workers=" << kHttpSessionWorkers
               << " max_queued=" << kMaxQueuedHttpSessions
               << " thread_per_request=off" << std::endl;
