@@ -129,12 +129,19 @@ EOF
   mv -f "$candidate" "$NGINX_SITE"
   if ! nginx -t >/dev/null 2>&1; then
     if [[ -n "$backup" ]]; then mv -f "$backup" "$NGINX_SITE"; else rm -f "$NGINX_SITE"; fi
+    [[ -z "$backup" ]] || rm -f "$backup"
     die_tls nginx_config_invalid
+  fi
+  if ! systemctl enable --now nginx >/dev/null 2>&1 ||
+     ! systemctl reload nginx >/dev/null 2>&1; then
+    # Restore the last live configuration when the new port cannot bind or
+    # reload fails. Never disrupt an unrelated website's running Nginx.
+    if [[ -n "$backup" ]]; then mv -f "$backup" "$NGINX_SITE"; else rm -f "$NGINX_SITE"; fi
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+    die_tls nginx_reload_failed
   fi
   [[ -z "$backup" ]] || rm -f "$backup"
   touch "$TLS_DIR/nginx-managed"
-  systemctl enable --now nginx >/dev/null 2>&1 || die_tls nginx_start_failed
-  systemctl reload nginx >/dev/null 2>&1 || die_tls nginx_reload_failed
 }
 activate_certificate() {
   local cert="$1" key="$2"
