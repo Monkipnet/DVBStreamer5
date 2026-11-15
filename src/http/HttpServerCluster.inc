@@ -112,7 +112,8 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
         if(token.empty() && found!=config.peers.end())token=found->token;
         dvbstreamer5::cluster::Peer peer{
             input["name"].asString(),url,token,
-            input.get("viewer_url","").asString()};
+            input.get("viewer_url","").asString(),
+            input.get("verify_tls",found==config.peers.end()?true:found->verifyTlsPeer).asBool()};
         if(!peer.viewerUrl.empty() && peer.viewerUrl.back()=='/')
             peer.viewerUrl.pop_back();
         if(!dvbstreamer5::cluster::validPeer(peer))
@@ -165,7 +166,7 @@ std::string HttpServer::clusterPeerStatus() {
         options.totalTimeoutMs=1500;
         options.maxRedirects=0; // Never forward tokens across origins.
         options.maxBodyBytes=256U*1024U;
-        options.verifyTlsPeer=true;
+        options.verifyTlsPeer=peer.verifyTlsPeer;
         options.headers.emplace_back("X-DVBStreamer5-Cluster-Key",peer.token);
         dvbstreamer5::http::Response response;std::string error;
         if(dvbstreamer5::http::get(peer.url+"/api/cluster/node",options,response,error) &&
