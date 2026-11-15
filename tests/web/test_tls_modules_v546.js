@@ -51,7 +51,7 @@ for(const marker of ['flock -n 9','source "$HERE/modules/selfsigned.sh"',
 for(const marker of ['openssl req -x509','subjectAltName=DNS:',
                       'activate_certificate','status ok selfsigned'])
  assert.ok(self.includes(marker),marker);
-for(const marker of ['certbot certonly --webroot','OnCalendar=daily',
+for(const marker of ['certbot certonly --config-dir "$ACME_CONFIG"', 'certbot certonly --config-dir', 'OnCalendar=daily',
                       'enable --now dvbstreamer5-le-renew.timer',
                       'disable --now dvbstreamer5-le-renew.timer',
                       'status warning letsencrypt acme_failed_retry_scheduled'])
@@ -60,6 +60,12 @@ for(const marker of ['proxy_pass http://127.0.0.1:','proxy_set_header X-Real-IP'
                       'ssl_certificate','nginx -t','check_domain','check_email',
                       'nginx_config_unmanaged'])
  assert.ok(common.includes(marker),marker);
+assert(common.includes('ACME_CONFIG=$TLS_DIR/acme-client'));
+assert(common.includes('nginx_preflight'));
+assert(common.includes('nginx_reload_failed'));
+assert(le.includes('le_renew()'));
+assert(le.includes('le_disable()'));
+assert(le.includes('ACME_LOG'));
 assert(portable.includes('"$STAGE/tls/manage.sh"'));
 assert(portable.includes('bin lib web ca-plugins etc tls run.sh'));
 assert(direct.includes('"$INSTALL_DIR/tls/manage.sh"'));
