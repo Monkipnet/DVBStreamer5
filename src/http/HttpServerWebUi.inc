@@ -156,17 +156,19 @@ html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
 .input-subgroup-title[data-tp-scan-title][aria-disabled="true"]{opacity:.6;cursor:progress}
 .input-subgroup-count{font-size:.72rem;flex:none;color:#9fe7b3;font-variant-numeric:tabular-nums}
 
-/* V539: title/metrics row edits the TP, the lower blank area toggles a spoiler. */
-.input-subgroup.tp-edit-subgroup>summary{padding:0;display:flex;flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:0;cursor:default}
+/* V549: like Server Cluster — only the TP name edits; the centered arrow,
+   meters, count and blank summary toggle the DVB transponder spoiler. */
+.input-subgroup.tp-edit-subgroup>summary{padding:5px 10px;display:grid;grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);align-items:center;gap:8px;min-height:52px;cursor:pointer}
 .input-subgroup.tp-edit-subgroup>summary:before{display:none!important}
-.tp-edit-row{box-sizing:border-box;display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%;min-height:46px;padding:10px 13px;border:0;border-radius:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
+.tp-edit-row{box-sizing:border-box;display:inline-flex;align-items:center;justify-self:start;min-width:0;max-width:100%;min-height:40px;padding:6px 8px;border:0;border-radius:7px;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
 .tp-edit-row:hover{background:rgba(72,163,250,.14);color:#8cddff}
-.tp-edit-row:focus-visible{outline:2px solid #5ebcff;outline-offset:-3px}
-.tp-edit-row .input-subgroup-title{text-decoration:none!important;cursor:inherit}
-.tp-spoiler-space{display:flex;align-items:center;justify-content:center;width:100%;min-height:35px;cursor:pointer;background:rgba(71,143,209,.055);border-top:1px solid rgba(135,195,240,.13);color:#7dd1ff;transition:background .15s}
-.tp-spoiler-space:hover{background:rgba(70,161,235,.15)}
-.tp-spoiler-space:after{content:"▼";font-size:25px;line-height:1;display:block;transition:transform .16s ease}
+.tp-edit-row:focus-visible{outline:2px solid #5ebcff;outline-offset:2px}
+.tp-edit-row .input-subgroup-title{flex:0 1 auto;min-width:0;text-decoration:none!important;cursor:inherit}
+.tp-spoiler-space{grid-column:2;display:flex;align-items:center;justify-content:center;justify-self:center;align-self:center;width:52px;min-height:40px;color:#7dd1ff;pointer-events:none;user-select:none}
+.tp-spoiler-space:after{content:"▼";font-size:26px;line-height:1;display:block}
 .tp-edit-subgroup[open] .tp-spoiler-space:after{content:"▲"}
+.tp-spoiler-status{grid-column:3;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;min-width:0;min-height:40px}
+.tp-spoiler-status .dvb-card-meters{flex:0 1 auto;min-width:0;max-width:100%}
 .tp-scan-context{border:1px solid rgba(96,184,246,.28);border-radius:10px;padding:10px 12px;margin:0 0 12px;background:rgba(79,152,217,.09)}
 .tp-scan-context label{display:block;font-size:12px;font-weight:700;margin-bottom:6px}
 .tp-scan-context select{width:100%;padding:8px;border-radius:7px;color:inherit;background:rgba(43,65,86,.25);border:1px solid rgba(141,195,239,.27);font-size:12px}
@@ -174,7 +176,7 @@ html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
 html[data-dashboard-theme="light"] .tp-edit-row:hover{color:#165c94;background:#e9f4ff}
 html[data-dashboard-theme="light"] .tp-scan-context{background:#eef7ff}
 html[data-dashboard-theme="light"] .tp-scan-context select{background:#fff;color:#1d364e}
-@media(max-width:700px){.tp-edit-row{gap:7px}.tp-edit-row .input-subgroup-title{flex-basis:100%}.tp-edit-row .dvb-card-meters{max-width:100%}}
+@media(max-width:700px){.input-subgroup.tp-edit-subgroup>summary{grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);gap:4px;padding:6px}.tp-edit-row{padding:6px 4px}.tp-spoiler-space{width:40px}.tp-spoiler-status{gap:5px}.tp-spoiler-status .dvb-card-meters{max-width:100%}}
 
 .input-subgroup-tiles{padding:10px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
@@ -5681,7 +5683,8 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   count.textContent=streams.filter(s=>s.active).length+'/'+streams.length+' '+t('cardActive');
   if(key.startsWith('tp:')) {
     details.classList.add('tp-edit-subgroup');
-    // Entire top information row is an EDIT action, not a spoiler toggle.
+    // Editing is ONLY on the transponder title. Native summary handles
+    // clicks on meters, status, centered arrow and empty space.
     const editRow=document.createElement('button');
     editRow.type='button';
     editRow.className='tp-edit-row';
@@ -5700,17 +5703,20 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
     const meters=document.createElement('span');
     meters.className='dvb-card-meters';
     meters.dataset.tpMeters='1';
-    editRow.append(heading,meters,count);
-    // The native <summary> owns the dedicated empty lower strip. Its
-    // large centered arrow flips ▼ / ▲ automatically with details[open].
+    editRow.append(heading);
     const spoilerSpace=document.createElement('span');
     spoilerSpace.className='tp-spoiler-space';
     spoilerSpace.setAttribute('aria-hidden','true');
+    // Keep live frontend signal/quality and channel count visible, but
+    // separate from the edit button, as in Server Cluster.
+    const status=document.createElement('span');
+    status.className='tp-spoiler-status';
+    status.append(meters,count);
     summary.title=subtitleUiTriText(
-      'Нажмите здесь для раскрытия или сворачивания плиток',
-      'Click here to expand or collapse tiles',
-      'Kliknite ovdje za otvaranje ili zatvaranje pločica');
-    summary.append(editRow,spoilerSpace);
+      'Нажмите на название для редактирования, на стрелку или пустое место для раскрытия плиток',
+      'Click the title to edit, or the arrow/empty area to expand or collapse tiles',
+      'Kliknite naziv za uređivanje, a strelicu ili prazno područje za otvaranje i zatvaranje pločica');
+    summary.append(editRow,spoilerSpace,status);
   }else{
     summary.append(heading,count);
   }
