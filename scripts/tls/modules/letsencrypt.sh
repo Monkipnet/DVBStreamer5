@@ -51,7 +51,7 @@ le_enable() {
   check_domain "$DOMAIN"; check_email "$EMAIL"
   check_port "$BACKEND_PORT"; check_port "$HTTPS_PORT"
   [[ "$BACKEND_PORT" != "$HTTPS_PORT" && "$HTTPS_PORT" != 80 ]] || die_tls invalid_ports
-  ensure_nginx
+  nginx_preflight "$HTTPS_PORT"
   require_command openssl
   if ! command -v certbot >/dev/null 2>&1; then
     status running letsencrypt installing_certbot true none
