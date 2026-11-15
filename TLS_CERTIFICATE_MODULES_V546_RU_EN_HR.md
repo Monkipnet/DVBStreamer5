@@ -1,10 +1,10 @@
-# DVBStreamer5 V10.8.546 — Certificate Manager (RU / EN / HR)
+# DVBStreamer5 V10.8.547 — Certificate Manager (RU / EN / HR)
 
 ## Русский
 
 ### Два независимых модуля в программе
 
-Откройте **Меню → Мониторинг и сеть → SSL / TLS сертификаты**.
+В версии **V10.8.547** откройте **Меню → Мониторинг и сеть → SSL / TLS сертификаты**. Это самостоятельный пункт после «Кластер / Пиринг», открывающий отдельное окно. Настройки сертификатов больше не находятся внутри окна «Сеть».
 
 **Самоподписанный SSL** — введите домен сервера (например, `blumen.zapto.org`) и HTTPS-порт (обычно `9443`), нажмите **Создать самоподписанный сертификат**. Модуль `SelfSignedModule` создаёт RSA-3072/SHA-256 сертификат на 365 дней с SAN, закрытый ключ с правами 0600 и настраивает защищённый Nginx-прокси к действующему HTTP-порту DVBStreamer5. Переключение на самоподписанный сертификат **отключает** автопродление Let’s Encrypt. Самоподписанный сертификат не является публично доверенным — браузер или другой сервер предупредит о нём, пока он не добавлен в доверенные.
 
@@ -30,7 +30,8 @@ c++ -std=c++17 -Isrc -UNDEBUG tests/test_tls_certificate_v546.cpp \
 /tmp/dvbstreamer5-tls-test
 ctest --test-dir build --output-on-failure
 bash scripts/make_portable_linux_bundle.sh --build-dir build --archive
-ls -lh dist/DVBStreamer5-10.8.546-linux-x86_64.tar.gz
+node tests/web/test_tls_menu_v547.js
+ls -lh dist/DVBStreamer5-10.8.547-linux-x86_64.tar.gz
 
 # После установки portable и включения Let’s Encrypt в панели:
 systemctl status dvbstreamer5-le-renew.timer --no-pager
@@ -46,7 +47,7 @@ echo | openssl s_client -connect blumen.zapto.org:9443 \
 
 ## English
 
-Go to **Menu → Monitoring & network → SSL / TLS certificates**.
+In **V10.8.547**, go to **Menu → Monitoring & network → SSL / TLS certificates**. This is a separate menu item following Cluster / Peering and opens an independent certificate window; certificates are no longer embedded in Network.
 
 The **Self-signed SSL** module independently creates a 365-day RSA-3072 certificate with DNS SAN, stores its private key as root-only, and configures a local Nginx HTTPS reverse proxy. Activating this module disables Let’s Encrypt auto-renewal.
 
@@ -56,7 +57,7 @@ The two certificate modules ship with portable archives. Private keys, settings 
 
 ## Hrvatski
 
-Otvorite **Izbornik → Nadzor i mreža → SSL / TLS certifikati**.
+U **V10.8.547** otvorite **Izbornik → Nadzor i mreža → SSL / TLS certifikati**. Ovo je zasebna stavka iza Klaster / Peering i otvara samostalni prozor za certifikate; postavke certifikata više nisu unutar prozora Mreža.
 
 Neovisni modul **Samopotpisani SSL** stvara 365-dnevni RSA-3072 certifikat s DNS SAN-om, čuva privatni ključ s dopuštenjem samo za root i postavlja HTTPS putem lokalnog Nginx proxyja. Uključivanje samopotpisanog certifikata isključuje automatsku obnovu Let’s Encrypt.
 
