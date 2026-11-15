@@ -1033,6 +1033,12 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body()=target=="/api/cluster/config" ?
                         clusterPeerConfiguration():clusterPeerStatus();
                 }
+            } else if (target == "/api/security/proxy") {
+                res.set(http::field::content_type,"application/json");
+                Json::Value response(Json::objectValue);
+                response["trust_local_proxy_real_ip"]=configManager.config.trustLocalProxyRealIp;
+                Json::StreamWriterBuilder writer;writer["indentation"]="";
+                res.body()=Json::writeString(writer,response);
             } else if (target == "/api/interfaces") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listInterfaces();
@@ -1237,6 +1243,36 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         closingPreviewId, payload["session"].asString());
                     res.body() = closed ? R"({"closed":true})" : R"({"closed":false})";
                 }
+            } else if (target == "/api/security/proxy") {
+                res.set(http::field::content_type,"application/json");
+                const auto requestedWith=req.find("X-Requested-With");
+                Json::Value payload,reply(Json::objectValue);
+                Json::CharReaderBuilder reader;std::string error;
+                std::istringstream source(req.body());
+                if(requestedWith==req.end() ||
+                   requestedWith->value()!="DVBStreamer5" ||
+                   req.body().size()>512 ||
+                   !Json::parseFromStream(reader,source,&payload,&error) ||
+                   !payload.isObject() ||
+                   !payload["trust_local_proxy_real_ip"].isBool()){
+                    res.result(http::status::bad_request);
+                    reply["error"]="Invalid proxy security settings";
+                }else{
+                    const bool previous=configManager.config.trustLocalProxyRealIp;
+                    configManager.config.trustLocalProxyRealIp=
+                        payload["trust_local_proxy_real_ip"].asBool();
+                    if(!configManager.save()){
+                        configManager.config.trustLocalProxyRealIp=previous;
+                        res.result(http::status::internal_server_error);
+                        reply["error"]="Cannot save proxy security settings";
+                    }else{
+                        reply["result"]="ok";
+                        reply["trust_local_proxy_real_ip"]=
+                            configManager.config.trustLocalProxyRealIp;
+                    }
+                }
+                Json::StreamWriterBuilder writer;writer["indentation"]="";
+                res.body()=Json::writeString(writer,reply);
             } else if (target == "/api/network/udp-input-filter") {
                 res.set(http::field::content_type, "application/json");
                 Json::Value payload;
