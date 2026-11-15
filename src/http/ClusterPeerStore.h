@@ -29,6 +29,7 @@ struct Peer {
     std::string url;   // An origin, without path/query/credentials.
     std::string token; // Inbound token generated on the remote node.
     std::string viewerUrl; // Optional viewer-facing HTTP(S) origin, never a cluster API URL.
+    bool verifyTlsPeer = true; // Default secure; explicit opt-out for self-signed TLS.
 };
 
 struct Config {
@@ -133,7 +134,8 @@ inline bool load(const std::filesystem::path& configDirectory,Config& result) {
     for(const auto& item:root["peers"]){
         if(!item.isObject()||result.peers.size()>=8)return false;
         Peer peer{item.get("name","").asString(),item.get("url","").asString(),
-                  item.get("token","").asString(),item.get("viewer_url","").asString()};
+                  item.get("token","").asString(),item.get("viewer_url","").asString(),
+                  item.get("verify_tls",true).asBool()};
         if(!validPeer(peer)||!addresses.insert(peer.url).second)return false;
         result.peers.push_back(std::move(peer));
     }
@@ -151,6 +153,7 @@ inline bool save(const std::filesystem::path& directory,const Config& config) {
         Json::Value item(Json::objectValue);
         item["name"]=peer.name;item["url"]=peer.url;item["token"]=peer.token;
         if(!peer.viewerUrl.empty())item["viewer_url"]=peer.viewerUrl;
+        item["verify_tls"]=peer.verifyTlsPeer;
         peers.append(item);
     }
     root["peers"]=peers;
@@ -194,6 +197,7 @@ inline Json::Value publicPeers(const Config& config,bool includeLocalToken) {
         item["name"]=peer.name;
         item["url"]=peer.url; // No stored remote token in browser responses.
         if(!peer.viewerUrl.empty())item["viewer_url"]=peer.viewerUrl;
+        item["verify_tls"]=peer.verifyTlsPeer;
         peers.append(std::move(item));
     }
     result["peers"]=peers;
