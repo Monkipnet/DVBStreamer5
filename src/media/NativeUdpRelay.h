@@ -1,6 +1,7 @@
 #pragma once
 
 #include "media/CbrTsPacer.h"
+#include "media/T2miInnerTs.h"
 #include "media/LinuxDvbInput.h"
 #include "media/MpegTsRemapper.h"
 #include "media/NativePreviewHub.h"
@@ -106,6 +107,11 @@ struct NativeUdpRelayConfig {
     // Other external inputs retain the legacy full PacketFramer validation.
     bool trustedAlignedExternalInput = false;
     bool dvbInputSource = false;
+    // V534: selected outer PID, inner PLP, optional T2-MI stream id.
+    // -1 disables extraction or auto-selects first PLP/stream.
+    int t2miPid = -1;
+    int t2miPlp = -1;
+    int t2miStream = -1;
     LinuxDvbTuneConfig dvbTuneConfig;
     bool remapEnabled = false;
     mpegts::RemapConfig remapConfig;
