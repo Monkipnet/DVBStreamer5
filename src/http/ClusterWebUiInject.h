@@ -60,6 +60,8 @@ html[data-dashboard-theme="light"] .cluster-config-form label{color:#37516b}
     static const char* menu=R"CLUSTERMENU(
 <button type="button" class="system-menu-item" onclick="openClusterSettings();closeSystemMenu()"
 data-ui-ru="Кластер / Пиринг" data-ui-en="Cluster / Peering" data-ui-hr="Klaster / Peering">Кластер / Пиринг</button>
+<button type="button" class="system-menu-item" onclick="openTlsCertificateModal();closeSystemMenu()"
+data-ui-ru="SSL / TLS сертификаты" data-ui-en="SSL / TLS certificates" data-ui-hr="SSL / TLS certifikati">SSL / TLS сертификаты</button>
 )CLUSTERMENU";
     static const char* dashboard=R"CLUSTERDASH(
 <section id="clusterDashboard" hidden aria-label="Кластер серверов">
