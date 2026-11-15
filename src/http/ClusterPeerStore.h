@@ -62,10 +62,11 @@ inline bool tokenMatches(const std::string& actual,const std::string& received) 
 }
 
 // Do not allow a remotely configured peer URL to query arbitrary services.
-// HTTP is accepted ONLY for private RFC1918 IPv4 nodes (typically WireGuard/LAN).
-// For domain names or public networks HTTPS is mandatory and TLS verified.
+// By default HTTP is restricted to RFC1918 IPv4 (LAN/WireGuard).
+// An explicitly unverified peer may use HTTP over a public DNS name;
+// this exposes its shared token on the wire. Never accept localhost targets.
 // The port is optional. No username, path, query, fragment or redirects.
-inline bool validOrigin(const std::string& url) {
+inline bool validOrigin(const std::string& url, bool allowUnverifiedHttp=false) {
     if(url.size()>250 || url.find_first_of("\r\n\t@?#")!=std::string::npos)return false;
     static const std::regex origin(
         R"(^(https?)://([A-Za-z0-9][A-Za-z0-9.-]{0,190}|\[[0-9a-fA-F:]+\])(?::([0-9]{1,5}))?/?$)");
@@ -78,6 +79,22 @@ inline bool validOrigin(const std::string& url) {
     }
     if(parts[1]=="https")return true;
     const std::string host=parts[2].str();
+    // Explicit per-peer opt-out: support public DNS names with plaintext HTTP.
+    // Preserve the no-path/no-credentials check and reject local DNS aliases.
+    if(allowUnverifiedHttp){
+        const auto lastDot=host.rfind('.');
+        if(lastDot!=std::string::npos && lastDot>0 && lastDot+1<host.size() &&
+           host!="localhost" && host!="localhost.localdomain" &&
+           host.compare(host.size()-6,6,".local")!=0 &&
+           host.compare(host.size()-9,9,".internal")!=0) {
+            static const std::regex dottedName(R"(^[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$)");
+            if(std::regex_match(host,dottedName)) {
+                // IPv4 literals are checked against the normal private ranges below.
+                static const std::regex numericHost(R"(^[0-9.]+$)");
+                if(!std::regex_match(host,numericHost))return true;
+            }
+        }
+    }
     static const std::regex ipv4(R"(^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$)");
     std::smatch ip;
     if(!std::regex_match(host,ip,ipv4))return false;
@@ -93,8 +110,8 @@ inline bool validOrigin(const std::string& url) {
 inline bool validPeer(const Peer& peer) {
     return !peer.name.empty() && peer.name.size()<=80 &&
            peer.name.find_first_of("\r\n\t") == std::string::npos &&
-           validOrigin(peer.url) && validToken(peer.token) &&
-           (peer.viewerUrl.empty() || validOrigin(peer.viewerUrl));
+           validOrigin(peer.url,!peer.verifyTlsPeer) && validToken(peer.token) &&
+           (peer.viewerUrl.empty() || validOrigin(peer.viewerUrl,!peer.verifyTlsPeer));
 }
 inline std::filesystem::path filePath(const std::filesystem::path& configDirectory) {
     return configDirectory/"cluster-peers.json";
