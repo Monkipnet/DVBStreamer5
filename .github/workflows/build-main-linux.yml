@@ -109,6 +109,7 @@ jobs:
         run: |
           node tests/web/test_stream_toggle_stop_policy.js
           node tests/web/test_external_config_transfer_ui.js
+          node tests/web/test_astra_json_dvb_v532.js
           node tests/web/test_ondemand_activation_v528.js
           node tests/web/test_ondemand_viewer_v529.js
           node tests/web/test_ondemand_hls_prefill_v530.js
@@ -203,6 +204,7 @@ jobs:
           node tests/web/test_biss2_ui.js
           node tests/web/test_stream_toggle_stop_policy.js
           node tests/web/test_external_config_transfer_ui.js
+          node tests/web/test_astra_json_dvb_v532.js
           node tests/web/test_ondemand_activation_v528.js
           node tests/web/test_ondemand_viewer_v529.js
           node tests/web/test_ondemand_hls_prefill_v530.js
