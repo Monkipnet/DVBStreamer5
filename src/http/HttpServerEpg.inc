@@ -62,9 +62,10 @@ std::string epgXmlTime(Json::Int64 seconds) {
 }
 
 std::string epgChannelId(const StreamConfig& cfg) {
-    // One channel identifier for every configured output of a service. This
-    // deliberately stays stable when its output SID or protocol changes.
-    return cfg.id;
+    // V532: preserve Cesbo Astra's original make_stream.id as tvg-id without
+    // changing the internal DVBStreamer5 tile ID, XMLTV source mapping, or
+    // the channel's MPEG-TS service ID. Existing streams keep their IDs.
+    return !cfg.tvgId.empty() ? cfg.tvgId : cfg.id;
 }
 
 std::string epgChannelName(const StreamConfig& cfg) {
