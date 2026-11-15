@@ -208,6 +208,26 @@ void HttpServer::handleSession(
             (requestPath.rfind("/api/upload-backup-file",0)==0 ||
              requestPath=="/api/config/import" ||
              requestPath=="/api/tickers/import-docx");
+        // Rate-limit Basic Auth attempts even when a large upload is
+        // rejected before its body is read.
+        if(largePrivilegedUpload){
+            const auto authField=parser.get().find(http::field::authorization);
+            if(authField!=parser.get().end() &&
+               boost::algorithm::istarts_with(
+                   std::string(authField->value()),"Basic ")){
+                const auto ip=clientIpForRequest(socket,parser.get());
+                if(ip.empty() || !panelLoginThrottle_.allowed(ip)){
+                    http::response<http::string_body> limited{
+                        http::status::too_many_requests,parser.get().version()};
+                    limited.set(http::field::retry_after,"300");
+                    limited.body()=R"({"error":"Login rate limit exceeded"})";
+                    limited.prepare_payload();
+                    http::write(socket,limited);
+                    return;
+                }
+                panelLoginThrottle_.record(ip,authenticatedHeader);
+            }
+        }
         if(largePrivilegedUpload && !authenticatedHeader){
             http::response<http::string_body> denied{
                 http::status::unauthorized,parser.get().version()};
