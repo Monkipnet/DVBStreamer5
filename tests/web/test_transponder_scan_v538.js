@@ -16,9 +16,14 @@ const code=extract('// V538 TRANSPONDER SCAN ACTION BEGIN',
 const prefill=extract('// V538: prepopulate the existing satellite scanner',
                       'function openAddChannelModal(');
 assert.ok(web.includes("heading.dataset.tpScanTitle='1'"));
-assert.ok(web.includes("heading.addEventListener('click'"));
-assert.ok(web.includes("heading.addEventListener('keydown'"));
-assert.ok(web.includes("event.preventDefault();event.stopPropagation();"));
+assert.ok(web.includes("editRow.addEventListener('click'"));
+assert.ok(web.includes("editRow.dataset.tpEditRow='1'"));
+assert.ok(web.includes("summary.append(editRow,spoilerSpace)"));
+assert.ok(web.includes(".tp-edit-subgroup[open] .tp-spoiler-space:after{content:\"▲\"}"));
+assert.ok(web.includes(".tp-spoiler-space:after{content:\"▼\"}"));
+assert.ok(web.includes("editRow.type='button'"));
+assert.ok(web.includes("event.preventDefault();"));
+assert.ok(web.includes("event.stopPropagation();"));
 assert.ok(web.includes("transponderScanPreparing=!!initialTransponderTune"));
 assert.ok(web.includes("loadSatelliteAdapters(true).then"));
 assert.ok(web.includes("modalGeneration!==satelliteModalGeneration"));
@@ -134,6 +139,8 @@ async function main(){
  assert.equal(yes.opened[0].stream_id,0);
  assert.equal(yes.opened[0].diseqc_source,1);
  assert.equal(yes.opened[0].satellite_name,'BetaDigital');
+ assert.equal(yes.opened[0].group_key,groupKey);
+ assert.deepEqual([...yes.opened[0].stream_ids],['sat-1','sat-2','sat-3']);
  assert.ok(yes.polls().state>=2&&yes.polls().frontend>=2);
  const cancel=simulator({confirm:false,language:'en'});
  assert.equal(await cancel.context.beginTransponderGroupScan(groupKey),false);
@@ -189,6 +196,6 @@ async function main(){
  // Test depends on actual operator-visible instructions and stable version.
  assert.match(fs.readFileSync(path.join(__dirname,'../../src/AppVersion.h'),'utf8'),
    /kProgramVersion = "10\.8\.(53[8-9]|5[4-9]\d|[6-9]\d\d)"/);
- console.log('PASS V538: TP spoiler click, cancel, queued Stop, frontend release, conflicts, prefill and RU/EN/HR search labels');
+ console.log('PASS V538: TP editor row, centered spoiler arrow, cancel, queued Stop, frontend release, exact TP context and RU/EN/HR');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
