@@ -924,6 +924,16 @@ void NativeUdpRelay::run() {
     // often hid this because its chunks were already packet-aligned.
     dvbstreamer5::media::mpegts::PacketFramer inputFramer;
     dvbstreamer5::media::mpegts::PacketFramer transformedFramer;
+    // V534: decode the inner transport before service remap/CA/transcode,
+    // so all existing outputs consume the selected PLP's PAT/PMT/PES.
+    std::unique_ptr<dvbstreamer5::media::mpegts::T2miInnerTs> t2mi;
+    if (config_.t2miPid >= 0)
+        t2mi = std::make_unique<dvbstreamer5::media::mpegts::T2miInnerTs>(
+            static_cast<std::uint16_t>(config_.t2miPid),
+            config_.t2miPlp, config_.t2miStream);
+    std::vector<dvbstreamer5::media::mpegts::Packet> t2miPackets;
+    std::uint64_t lastT2miLogPackets = 0;
+
     dvbstreamer5::media::mpegts::ContinuityTracker continuity;
     std::vector<dvbstreamer5::media::mpegts::Packet> packets;
     std::vector<dvbstreamer5::media::mpegts::Packet> remappedPackets;
@@ -1801,6 +1811,26 @@ void NativeUdpRelay::run() {
                 } else {
                     inputFramer.push(datagram.data(), received, packets);
                 }
+            }
+        }
+
+        if (t2mi && !packets.empty()) {
+            t2miPackets.clear();
+            for (const auto& outer : packets) t2mi->feed(outer, t2miPackets);
+            packets.swap(t2miPackets);
+            if (t2mi->stats().outerPackets >= lastT2miLogPackets + 8192) {
+                lastT2miLogPackets = t2mi->stats().outerPackets;
+                std::cerr << "NATIVE T2MI STATUS stream_id=" << config_.streamId
+                          << " pid=" << config_.t2miPid
+                          << " plp=" << t2mi->activePlp()
+                          << " outer_packets=" << t2mi->stats().outerPackets
+                          << " mi_packets=" << t2mi->stats().miPackets
+                          << " bbframes=" << t2mi->stats().bbframes
+                          << " inner_packets=" << t2mi->stats().innerPackets
+                          << " crc_errors=" << t2mi->stats().crcErrors
+                          << " cc_errors=" << t2mi->stats().ccErrors
+                          << " invalid_frames=" << t2mi->stats().invalidFrames
+                          << std::endl;
             }
         }
 
