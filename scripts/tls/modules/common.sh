@@ -29,7 +29,9 @@ die_tls() {
 check_domain() {
   local name="$1" label
   [[ ${#name} -le 253 && ${#name} -ge 4 && "$name" == *.* &&
-     "$name" =~ ^[A-Za-z0-9.-]+$ && "$name" != *..* ]] || die_tls invalid_domain
+     "$name" =~ ^[A-Za-z0-9.-]+$ && "$name" != *..* &&
+     "$name" != .* && "$name" != *. ]] || die_tls invalid_domain
+  [[ ! "$name" =~ ^[0-9.]+$ ]] || die_tls invalid_domain
   local IFS=.
   read -ra labels <<< "$name"
   for label in "${labels[@]}"; do
