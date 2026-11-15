@@ -217,6 +217,9 @@ void HttpServer::handleSession(
         res.set(http::field::content_type, "text/html; charset=UTF-8");
         res.set(http::field::cache_control, "no-store");
         res.set(http::field::pragma, "no-cache");
+        res.set("X-Content-Type-Options","nosniff");
+        res.set("Referrer-Policy","no-referrer");
+        res.set("X-Frame-Options","SAMEORIGIN");
         // One accepted socket is handled for exactly one HTTP request in this
         // implementation. Advertising keep-alive while closing the socket after
         // the response makes HLS clients reuse a connection that no longer has a
@@ -225,6 +228,27 @@ void HttpServer::handleSession(
         bool hlsKeepAlive=false;
 
         const std::string target(req.target());
+        // Reject browser cross-site writes before any privileged API dispatch.
+        // Keep CLI HTTP Basic clients without browser Origin compatible.
+        if(req.method()==http::verb::post &&
+           target!="/api/panel/login" && requiresAuthentication(target) &&
+           (isPanelSessionAuthorized(req)||isAuthorized(req))){
+            const auto headerText=[&req](const char* name)->std::string{
+                const auto field=req.find(name);
+                return field==req.end()?std::string{}:std::string(field->value());
+            };
+            if(!dvbstreamer5::http_security::allowStateChangingBrowserRequest(
+                   headerText("Origin"),headerText("Host"),
+                   headerText("Sec-Fetch-Site"),headerText("X-Requested-With"),
+                   isPanelSessionAuthorized(req))){
+                res.result(http::status::forbidden);
+                res.set(http::field::content_type,"application/json");
+                res.body()=R"({"error":"Cross-site state-changing request rejected"})";
+                res.content_length(res.body().size());
+                http::write(socket,res);
+                return;
+            }
+        }
         // Independent API identity: never accept session-management keys for
         // admin/UI/config/restart routes. A forged X-Forwarded-For is ignored:
         // peer IP comes exclusively from the connected TCP socket.
@@ -325,6 +349,15 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
         }
         if (target == "/api/panel/login") {
             res.set(http::field::content_type, "application/json");
+            const std::string loginIp=clientIpForRequest(socket,req);
+            if(loginIp.empty() || !panelLoginThrottle_.allowed(loginIp)){
+                res.result(http::status::too_many_requests);
+                res.set(http::field::retry_after,"300");
+                res.body()=R"({"error":"Login rate limit exceeded"})";
+                res.content_length(res.body().size());
+                http::write(socket,res);
+                return;
+            }
             bool authenticated = false;
             if (req.method() == http::verb::post && req.body().size() <= 4096U) {
                 Json::Value body;
@@ -339,6 +372,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         constantTimeEquals(body["password"].asString(), configManager.config.password);
                 }
             }
+            panelLoginThrottle_.record(loginIp,authenticated);
             if (authenticated) {
                 const std::string token = createPanelSession();
                 if (token.empty()) {
@@ -349,7 +383,15 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         "dvbstreamer5_panel_logged_out=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
                     res.insert(http::field::set_cookie,
                         "dvbstreamer5_panel_session=" + token +
-                        "; Path=/; Max-Age=43200; HttpOnly; SameSite=Lax");
+                        "; Path=/; Max-Age=43200; HttpOnly; SameSite=Strict" +
+                        ((configManager.config.trustLocalProxyRealIp &&
+                          [&]{
+                            boost::system::error_code epEc;
+                            const auto peer=socket.remote_endpoint(epEc);
+                            const auto proto=req.find("X-Forwarded-Proto");
+                            return !epEc && peer.address().is_loopback() &&
+                                   proto!=req.end() && proto->value()=="https";
+                          }()) ? "; Secure" : ""));
                     res.body() = R"({"result":"ok"})";
                 }
             } else {
