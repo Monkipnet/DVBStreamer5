@@ -61,6 +61,11 @@ jobs:
       - name: Emulate cluster peers and MPEG-TS channels with RU EN HR spoilers
         run: node tests/web/test_cluster_peering_v536.js
 
+      - name: Emulate cluster row editing and automatic TLS certificate maintenance
+        run: |
+          node tests/web/test_cluster_edit_tls_v541.js
+          bash -n scripts/setup_cluster_tls.sh
+
       - name: Verify interserver viewer routing middleware API and local auth invariants
         run: |
           node tests/web/test_cluster_routing_v537.js
