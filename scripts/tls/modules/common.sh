@@ -149,6 +149,12 @@ activate_certificate() {
   openssl x509 -in "$cert" -noout -checkend 86400 >/dev/null 2>&1 ||
     die_tls certificate_expired
   openssl pkey -in "$key" -noout >/dev/null 2>&1 || die_tls invalid_private_key
+  local cert_public key_public
+  cert_public="$(openssl x509 -in "$cert" -pubkey -noout | openssl dgst -sha256)" ||
+    die_tls certificate_public_key_invalid
+  key_public="$(openssl pkey -in "$key" -pubout 2>/dev/null | openssl dgst -sha256)" ||
+    die_tls private_public_key_invalid
+  [[ "$cert_public" == "$key_public" ]] || die_tls certificate_key_mismatch
   local prior_cert='' prior_key=''
   [[ -L "$TLS_DIR/active.crt" ]] && prior_cert="$(readlink "$TLS_DIR/active.crt")"
   [[ -L "$TLS_DIR/active.key" ]] && prior_key="$(readlink "$TLS_DIR/active.key")"
