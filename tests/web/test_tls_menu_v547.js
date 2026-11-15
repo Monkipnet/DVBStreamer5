@@ -19,7 +19,7 @@ for(const marker of [
   'data-ui-en="SSL / TLS certificates"',
   'data-ui-hr="SSL / TLS certifikati"'
 ])assert(cluster.includes(marker),marker);
-assert(cluster.indexOf('onclick="openNetworkModal();closeSystemMenu()"')>=0);
+assert(cluster.includes('openNetworkModal();closeSystemMenu()'));
 assert(cluster.indexOf('onclick="openClusterSettings();closeSystemMenu()"')>=0);
 assert(cluster.indexOf('onclick="openTlsCertificateModal();closeSystemMenu()"')>
        cluster.indexOf('onclick="openClusterSettings();closeSystemMenu()"'));
