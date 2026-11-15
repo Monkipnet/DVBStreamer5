@@ -12,6 +12,7 @@
 #include "http/HttpServerQuality.inc"
 #include "http/HttpServerConfigActions.inc"
 #include "http/HttpServerCluster.inc"
+#include "http/HttpServerClusterRouting.inc"
 #include "http/ClusterWebUiInject.h"
 
 // V10.8.180: preserve the existing large WebUI implementation byte-for-byte and
