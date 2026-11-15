@@ -154,6 +154,9 @@ struct StreamConfig {
     std::string epgMode = "auto"; // auto (DVB, then XMLTV) | dvb | xmltv
     std::string xmltvSourceId;   // empty = search all sources by channel ID
     std::string xmltvChannelId;
+    // Stable external tvg-id for IPTV M3U/XMLTV; not the internal tile ID.
+    // V532 imports this from Cesbo Astra make_stream[].id.
+    std::string tvgId;
     std::string conditionalAccessClient;
     std::vector<StreamOutputConfig> additionalOutputs;
     // 203.67 runtime-inherited global mode; not serialized per stream.
