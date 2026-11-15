@@ -5571,11 +5571,11 @@ async function beginTransponderGroupScan(key){
   const active=group.streams.filter(s=>s.active===true||s.stop_pending===true);
   const confirmed=window.confirm(subtitleUiTriText(
     'Остановить '+active.length+' из '+group.streams.length+
-      ' плиток транспондера «'+group.title+'» и открыть окно сканирования? Вещание этих каналов прервётся.',
+      ' плиток транспондера «'+group.title+'» и открыть редактор выбранного транспондера? Вещание этих каналов прервётся.',
     'Stop '+active.length+' of '+group.streams.length+
-      ' tiles on “'+group.title+'” and open the scanning window? Their broadcast will be interrupted.',
+      ' tiles on “'+group.title+'” and open the selected transponder editor? Their broadcast will be interrupted.',
     'Zaustaviti '+active.length+' od '+group.streams.length+
-      ' pločica na transponderu „'+group.title+'” i otvoriti skeniranje? Emitiranje će se prekinuti.'));
+      ' pločica na transponderu „'+group.title+'” i otvoriti uređivač transpondera? Emitiranje će se prekinuti.'));
   if(!confirmed)return false;
   transponderGroupScanBusy=true;
   try{
@@ -8876,9 +8876,9 @@ function openAddChannelModal(initialTransponderTune=null) {
          !document.getElementById('satFrequency'))return; // Closed/replaced.
       if(!applyTransponderScanTune(initialTransponderTune)){
         uiError(subtitleUiTriText(
-          'Невозможно выбрать тюнер транспондера для сканирования',
-          'Cannot select the transponder frontend for scanning',
-          'Nije moguće odabrati tuner transpondera za skeniranje'));
+          'Невозможно выбрать тюнер указанного транспондера',
+          'Cannot select the requested transponder frontend',
+          'Nije moguće odabrati tuner odabranog transpondera'));
         return;
       }
       if(editing) {
