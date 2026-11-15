@@ -17,8 +17,8 @@ for(const marker of [
  "Сохранить сервер","Save server","Spremi poslužitelj",
  "Отмена редактирования","Cancel editing","Odustani od uređivanja",
  "Оставьте ключ пустым","Leave token empty","Ostavite ključ praznim",
- "clusterPeerVerifyTls","Проверять сертификат TLS","Verify TLS certificate",
- "Provjeri TLS certifikat","verify_tls,","selected.verify_tls!==false"
+ "clusterPeerVerifyTls","cluster-tls-option","Проверять сертификат TLS","Verify TLS certificate",
+ "Provjeri TLS certifikat","verify_tls,","selected.verify_tls!==false","Для публичного домена используйте HTTPS"
 ])assert.ok(ui.includes(marker),marker);
 for(const marker of [
  'original_url','Invalid original cluster peer address','Unknown peer',
