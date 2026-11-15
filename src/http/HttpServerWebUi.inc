@@ -7052,6 +7052,22 @@ async function exportDvbStreamerConfig() {
     uiError(error?.message || error);
   }
 }
+// V532: Astra 4.x/5.x exports may store names in Windows-1251. File.text()
+// silently replaces bad UTF-8 with U+FFFD, permanently losing channel names.
+// Decode the actual bytes strictly before creating the JSON API payload.
+async function readForeignConfigText(file, sourceKind) {
+  if (sourceKind !== 'astra' && sourceKind !== 'astra44' &&
+      sourceKind !== 'flussonic') return file.text();
+  if (file.size > 4*1024*1024)
+    throw Error(configTransferText('Файл больше 4 МБ','File exceeds 4 MiB'));
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', {fatal:true}).decode(bytes);
+  } catch (_utf8Error) {
+    // Fatal UTF-8 is necessary: do not reinterpret valid UTF-8 as CP1251.
+    return new TextDecoder('windows-1251', {fatal:true}).decode(bytes);
+  }
+}
 async function previewConfigImport(sourceKind) {
   sourceKind = sourceKind || document.getElementById('configImportFormat')?.value || 'dvbstreamer5';
   const mainFile = document.getElementById('configImportFile')?.files?.[0];
@@ -7067,7 +7083,7 @@ async function previewConfigImport(sourceKind) {
   try {
     const payload = {
       action:'preview', source_kind:sourceKind,
-      filename:mainFile.name, content:await mainFile.text()
+      filename:mainFile.name, content:await readForeignConfigText(mainFile, sourceKind)
     };
     if (subscriberFile) {
       payload.subscribers_filename = subscriberFile.name;
