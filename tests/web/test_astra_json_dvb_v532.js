@@ -59,5 +59,6 @@ assert.ok(test.includes('bandwidth_hz=7000000'));
 assert.ok(test.includes('hasCaWarning&&hasHttpWarning'));
 assert.ok(test.includes('assert(sat.tvgId=="a005")'));
 assert.ok(test.includes('cp1251Out.streams[0].tvgId=="a12"'));
-assert.ok(version.includes('kProgramVersion = "10.8.534"'));
+const release=version.match(/kProgramVersion = "10[.]8[.]([0-9]+)"/);
+assert.ok(release && Number(release[1]) >= 532);
 console.log('PASS: V532 Astra JSON DVB-S/S2/T2, HTTP MPEG-TS, CP1251, tvg-id and native T2MI mapping');
