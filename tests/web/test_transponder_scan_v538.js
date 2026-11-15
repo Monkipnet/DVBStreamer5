@@ -25,7 +25,7 @@ assert.ok(web.includes("editRow.type='button'"));
 assert.ok(web.includes("event.preventDefault();"));
 assert.ok(web.includes("event.stopPropagation();"));
 assert.ok(web.includes("transponderScanPreparing=!!initialTransponderTune"));
-assert.ok(web.includes("loadSatelliteAdapters(true).then"));
+assert.ok(web.includes("loadSatelliteAdapters(true,initialTransponderTune).then"));
 assert.ok(web.includes("modalGeneration!==satelliteModalGeneration"));
 assert.ok(web.includes("if(!suppressInitialSignal)updateSatelliteSignal()"));
 assert.ok(web.includes("if(!transponderScanPreparing)updateSatelliteSignal()"));
