@@ -47,7 +47,7 @@ static std::vector<Packet> fixture(int plp,bool corrupt=false){
             ts[3]|=0x30;
             const std::size_t aflen=183-(dataCount+(first?1:0));
             ts[at++]=static_cast<std::uint8_t>(aflen);
-            for(std::size_t i=0;i<aflen;++i)ts[at++]=0xff;
+            for(std::size_t i=0;i<aflen;++i)ts[at++]=i==0?0x00:0xff;
         }else ts[3]|=0x10;
         if(first)ts[at++]=0; // T2-MI PUSI pointer
         for(std::size_t i=0;i<dataCount;++i)ts[at++]=mi[p+i];
