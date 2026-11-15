@@ -1,3 +1,5 @@
+#include "http/DvbTransponderUriEditor.h"
+#include <cmath>
 std::string HttpServer::dvbAdapters() {
     Json::Value root = DvbSatellite::adapters();
     std::map<std::pair<int, int>, Json::Value> usage;
@@ -321,6 +323,171 @@ std::string HttpServer::handleDvbTune(const std::string& body, bool scan) {
     }
     Json::StreamWriterBuilder writer;
     return Json::writeString(writer, response);
+}
+
+// V539: only configured, stopped channels in the *same* physical transponder
+// may be retuned as a group. No new channel objects, output/CAM settings,
+// restart requests or other input URIs are changed by this endpoint.
+std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
+    Json::Value response(Json::objectValue);
+    const auto fail=[&](const std::string& message) {
+        response["result"]="error";response["error"]=message;
+        Json::StreamWriterBuilder writer;writer["indentation"]="";
+        return Json::writeString(writer,response);
+    };
+    if(body.size()>65536U)return fail("Transponder edit request too large");
+    Json::CharReaderBuilder readerBuilder;Json::Value root;
+    std::istringstream input(body);std::string parseError;
+    if(!Json::parseFromStream(readerBuilder,input,&root,&parseError) ||
+       !root.isObject()||!root["streams"].isArray() ||
+       root["streams"].empty()||root["streams"].size()>256U ||
+       !root["tune"].isObject())
+        return fail("Invalid transponder edit payload");
+    const auto& tune=root["tune"];
+    const auto validNumber=[&](const char* name,double min,double max) {
+        return tune.isMember(name)&&tune[name].isNumeric() &&
+               std::isfinite(tune[name].asDouble()) &&
+               tune[name].asDouble()>=min && tune[name].asDouble()<=max;
+    };
+    if(!validNumber("adapter",0,31) || !validNumber("frontend",0,31) ||
+       !validNumber("frequency_mhz",900,14000) ||
+       !validNumber("symbol_rate",100,60000) ||
+       !validNumber("diseqc_source",-1,3) ||
+       !validNumber("stream_id",-1,255) ||
+       !validNumber("lnb_lof1_mhz",0,14000) ||
+       !validNumber("lnb_lof2_mhz",0,14000) ||
+       !validNumber("lnb_slof_mhz",0,14000) ||
+       !validNumber("unicable_user_band",-1,31) ||
+       !validNumber("unicable_frequency_mhz",0,2150) ||
+       !validNumber("unicable_position",0,63) ||
+       !validNumber("unicable_pin",-1,255) ||
+       !tune["delivery_system"].isString() ||
+       !tune["polarity"].isString() ||
+       !tune["modulation"].isString() ||
+       !tune["fec"].isString() ||
+       !tune["unicable_mode"].isString() ||
+       !root.get("satellite_name","").isString())
+        return fail("Invalid DVB satellite tuning fields");
+    const auto name=root.get("satellite_name","").asString();
+    if(name.size()>80 || name.find_first_of("\r\n")!=std::string::npos)
+        return fail("Invalid satellite display name");
+    const int adapter=static_cast<int>(tune["adapter"].asInt());
+    const int frontend=static_cast<int>(tune["frontend"].asInt());
+    const auto mhzToKhz=[](const double mhz)->uint32_t {
+        return static_cast<uint32_t>(std::llround(mhz*1000.0));
+    };
+    std::vector<std::pair<std::size_t,std::string>> updates;
+    std::set<std::string> requested;
+    DvbSatelliteParams reference;
+    bool haveReference=false;
+    for(const auto& item:root["streams"]) {
+        if(!item.isObject()||!item["id"].isString()||
+           !item["expected_input_uri"].isString())
+            return fail("Missing stream ID or original URI");
+        const std::string id=item["id"].asString();
+        const std::string expected=item["expected_input_uri"].asString();
+        if(id.empty()||id.size()>128U || !requested.insert(id).second ||
+           expected.size()>4096U)
+            return fail("Invalid or duplicate stream identity");
+        auto found=std::find_if(configManager.config.streams.begin(),
+            configManager.config.streams.end(),
+            [&](const StreamConfig& cfg){return cfg.id==id;});
+        if(found==configManager.config.streams.end() ||
+           found->inputUri!=expected)
+            return fail("Channel configuration changed; reload before editing: "+id);
+        DvbSatelliteParams original;std::string error;
+        if(!DvbSatellite::parseUri(found->inputUri,original,error) ||
+           original.deliverySystem!="dvb-s" &&
+           original.deliverySystem!="dvb-s2" ||
+           original.adapter!=adapter || original.frontend!=frontend)
+            return fail("Selected channel is not on the expected satellite frontend: "+id);
+        if(haveReference &&
+           (original.frequencyKHz!=reference.frequencyKHz ||
+            original.symbolRateK!=reference.symbolRateK ||
+            original.polarity!=reference.polarity ||
+            original.deliverySystem!=reference.deliverySystem ||
+            original.streamId!=reference.streamId ||
+            original.diseqcSource!=reference.diseqcSource ||
+            original.unicableMode!=reference.unicableMode ||
+            original.unicablePosition!=reference.unicablePosition))
+            return fail("Selected channels belong to different transponders");
+        reference=original;haveReference=true;
+        if(streamManager.isStreamActive(id)||streamManager.isStopPending(id))
+            return fail("Stop all transponder channels before saving: "+id);
+        DvbSatelliteParams updated=original;
+        updated.frequencyKHz=mhzToKhz(tune["frequency_mhz"].asDouble());
+        updated.symbolRateK=tune["symbol_rate"].asUInt();
+        updated.polarity=tune["polarity"].asString();
+        updated.deliverySystem=tune["delivery_system"].asString();
+        updated.modulation=tune["modulation"].asString();
+        updated.fec=tune["fec"].asString();
+        updated.diseqcSource=tune["diseqc_source"].asInt();
+        updated.streamId=tune["stream_id"].asInt();
+        updated.lnbLof1KHz=mhzToKhz(tune["lnb_lof1_mhz"].asDouble());
+        updated.lnbLof2KHz=mhzToKhz(tune["lnb_lof2_mhz"].asDouble());
+        updated.lnbSlofKHz=mhzToKhz(tune["lnb_slof_mhz"].asDouble());
+        updated.unicableMode=tune["unicable_mode"].asString();
+        updated.unicableUserBand=tune["unicable_user_band"].asInt();
+        updated.unicableFrequencyKHz=mhzToKhz(
+            tune["unicable_frequency_mhz"].asDouble());
+        updated.unicablePosition=tune["unicable_position"].asInt();
+        updated.unicablePin=tune["unicable_pin"].asInt();
+        std::string validationError;
+        DvbSatelliteParams check;
+        if(!DvbSatellite::parseUri(DvbSatellite::buildUri(updated),
+                                  check,validationError))
+            return fail("Invalid updated transponder: "+validationError);
+        const std::string uri=dvbstreamer5::dvb_tp_editor::editUri(
+            expected,DvbSatellite::buildUri(check),name);
+        DvbSatelliteParams checkedUri;
+        if(uri.empty() ||
+           !DvbSatellite::parseUri(uri,checkedUri,validationError))
+            return fail("Cannot preserve channel tuning URI: "+id);
+        updates.emplace_back(static_cast<std::size_t>(std::distance(
+            configManager.config.streams.begin(),found)),uri);
+    }
+    // Require *all* configured services on the old transponder. No
+    // partial retune of services sharing one physical RF input.
+    for(const auto& cfg:configManager.config.streams){
+        DvbSatelliteParams other;std::string error;
+        if(!DvbSatellite::parseUri(cfg.inputUri,other,error) ||
+           other.adapter!=reference.adapter ||
+           other.frontend!=reference.frontend ||
+           other.frequencyKHz!=reference.frequencyKHz ||
+           other.symbolRateK!=reference.symbolRateK ||
+           other.polarity!=reference.polarity ||
+           other.streamId!=reference.streamId ||
+           other.deliverySystem!=reference.deliverySystem ||
+           other.diseqcSource!=reference.diseqcSource ||
+           other.unicableMode!=reference.unicableMode ||
+           other.unicablePosition!=reference.unicablePosition)continue;
+        if(!requested.count(cfg.id))
+            return fail("Not all services from this transponder were selected");
+    }
+    // Even a different TP on the same frontend must not be interrupted.
+    const auto live=streamManager.snapshot();
+    for(const auto& [id,state]:live) {
+        if(!state || !state->running.load(std::memory_order_acquire))continue;
+        DvbSatelliteParams params;std::string error;
+        if(DvbSatellite::parseUri(state->config.inputUri,params,error) &&
+           params.adapter==adapter && params.frontend==frontend)
+            return fail("Satellite frontend still has an active consumer");
+    }
+    if(dvbstreamer5::media::network::LinuxDvbInput::hasActiveFrontend(
+        adapter,frontend))
+        return fail("Satellite frontend is still occupied");
+    const auto before=configManager.config.streams;
+    for(const auto& [index,uri]:updates)
+        configManager.config.streams[index].inputUri=uri;
+    if(!configManager.save()) {
+        configManager.config.streams=before;
+        return fail("Failed to save transponder changes");
+    }
+    streamManager.configureAutoStartRecovery();
+    response["result"]="ok";
+    response["changed"]=Json::UInt64(updates.size());
+    Json::StreamWriterBuilder writer;writer["indentation"]="";
+    return Json::writeString(writer,response);
 }
 
 std::string HttpServer::handleDvbAddChannels(const std::string& body) {
