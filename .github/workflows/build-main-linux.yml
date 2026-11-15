@@ -49,6 +49,9 @@ jobs:
       - name: Verify dashboard channel search including devices domains and CIDR
         run: node tests/web/test_tile_search_v535.js
 
+      - name: Emulate cluster peers and MPEG-TS channels with RU EN HR spoilers
+        run: node tests/web/test_cluster_peering_v536.js
+
       # A GitHub-hosted runner starts with an empty workspace. Restore safe
       # compiler results, not stale installed binaries. ccache verifies source
       # bytes, compiler flags, toolchain and included headers on each hit.
@@ -209,7 +212,8 @@ jobs:
             dvbstreamer5_biss1_test \
             dvbstreamer5_biss2_test \
             dvbstreamer5_external_config_transfer_test \
-            dvbstreamer5_t2mi_test
+            dvbstreamer5_t2mi_test \
+            dvbstreamer5_cluster_test
           # Synthetic on-wire T2-MI: outer PID, BBFRAME, PLP isolation,
           # CRC/continuity faults and recovered inner transport.
           ctest --test-dir build-main-ci -R t2mi_inner_ts --output-on-failure
