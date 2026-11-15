@@ -18,6 +18,7 @@
 
 #include "ConfigManager.h"
 #include "http/HttpSecurityPolicy.h"
+#include "http/TlsCertificateModules.h"
 #include "StreamManager.h"
 
 using tcp = boost::asio::ip::tcp;
