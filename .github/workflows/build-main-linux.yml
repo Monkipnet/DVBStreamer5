@@ -198,7 +198,78 @@ jobs:
             dvbstreamer5_shared_cw_broker_test \
             dvbstreamer5_biss1_test \
             dvbstreamer5_biss2_test \
-            dvbstreamer5_external_config_transfer_test
+            dvbstreamer5_external_config_transfer_test \
+            dvbstreamer5_t2mi_test
+          # Synthetic on-wire T2-MI: outer PID, BBFRAME, PLP isolation,
+          # CRC/continuity faults and recovered inner transport.
+          ctest --test-dir build-main-ci -R '^t2mi_inner_ts
+          node tests/web/test_biss1_ui.js
+          node tests/web/test_biss2_ui.js
+          node tests/web/test_stream_toggle_stop_policy.js
+          node tests/web/test_external_config_transfer_ui.js
+          node tests/web/test_astra_json_dvb_v532.js
+          node tests/web/test_ondemand_activation_v528.js
+          node tests/web/test_ondemand_viewer_v529.js
+          node tests/web/test_ondemand_hls_prefill_v530.js
+          node tests/web/test_restart_ondemand_v531.js
+          node tests/web/test_pcr_cpu_optimization_ui.js
+          node tests/web/test_cbr_profile_ui.js
+          ctest --test-dir build-main-ci --output-on-failure
+
+      - name: Restore pinned iCAM TSDecrypt source and executable cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/dvbstreamer5-tsdecrypt
+            build-main-ci/tsdecrypt-icam
+          key: dvbstreamer5-tsdecrypt-ubuntu2404-${{ hashFiles('scripts/build_tsdecrypt_icam.sh', 'src/ca/backends/tsdecrypt/TsDecryptEcmPidPolicy.h', 'third_party/libdvbcsa/**') }}
+
+      - name: Build pinned iCAM TSDecrypt with restored GitHub submodules
+        run: |
+          if [[ ! -d /tmp/dvbstreamer5-tsdecrypt/.git ]]; then
+            git clone https://github.com/gfto/tsdecrypt.git /tmp/dvbstreamer5-tsdecrypt
+          fi
+          git -C /tmp/dvbstreamer5-tsdecrypt checkout --detach f4876e84cf1866645f84b93f830af67193c85f69
+          bash scripts/build_tsdecrypt_icam.sh /tmp/dvbstreamer5-tsdecrypt build-main-ci
+          test -x build-main-ci/tsdecrypt-icam/tsdecrypt
+          strings build-main-ci/tsdecrypt-icam/tsdecrypt | grep -F "Holding recently valid ECM pid"
+
+      - name: Report incremental compiler cache utilization
+        if: always()
+        run: ccache --show-stats || true
+
+      - name: Package portable Linux x86_64 and checksums
+        id: package
+        run: |
+          version="$(sed -n 's/.*kProgramVersion = "\([^"]*\)";.*/\1/p' src/AppVersion.h)"
+          test -n "$version"
+          echo "Building version ${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          bash scripts/make_portable_linux_bundle.sh \
+            --build-dir build-main-ci \
+            --binary build-main-ci/DVBStreamer5 \
+            --output-dir "dist/DVBStreamer5-${version}-linux-x86_64" \
+            --with-oscam \
+            --with-tsdecrypt \
+            --archive
+          test -x "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt"
+          test -s "dist/DVBStreamer5-${version}-linux-x86_64/bin/tsdecrypt.bin"
+          ( cd dist && sha256sum -c "DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256" )
+          cp "dist/DVBStreamer5-${version}-linux-x86_64.tar.gz.sha256" dist/SHA256SUMS.txt
+          cat dist/SHA256SUMS.txt
+
+      - name: Upload portable + binary for download
+        uses: actions/upload-artifact@v4
+        with:
+          name: DVBStreamer5-${{ steps.package.outputs.version }}-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/SHA256SUMS.txt
+            build-main-ci/DVBStreamer5
+          if-no-files-found: error
+          retention-days: 30
+ --output-on-failure
           node tests/web/test_shared_cw_broker_policy.js
           node tests/web/test_biss1_ui.js
           node tests/web/test_biss2_ui.js
