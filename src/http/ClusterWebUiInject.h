@@ -16,20 +16,20 @@ inline std::string addClusterWebUi(std::string html) {
 <style>
 #clusterDashboard{margin:16px 0 28px}
 #clusterDashboard[hidden],#clusterDashboard [hidden]{display:none!important}
-.cluster-server-edit{flex:1;min-width:0;text-align:left;background:transparent;border:0;color:inherit;cursor:pointer;padding:8px}
-.cluster-server-spoiler{min-width:55px;align-self:stretch;background:transparent;border:0;border-left:1px solid rgba(125,209,255,.2);color:#7dd1ff;cursor:pointer;font-size:19px}
+.cluster-server-edit{display:inline-flex;align-items:center;justify-self:start;max-width:100%;min-width:0;text-align:left;background:transparent;border:0;color:inherit;cursor:pointer;padding:8px;border-radius:7px}
+.cluster-server-edit:hover,.cluster-server-edit:focus-visible{background:rgba(125,209,255,.12);outline-offset:2px}
+.cluster-server-spoiler{grid-column:2;justify-self:center;align-self:center;display:flex;align-items:center;justify-content:center;width:52px;min-height:40px;color:#7dd1ff;font-size:26px;line-height:1;pointer-events:none;user-select:none}
 .cluster-server-group[open] .cluster-server-spoiler{transform:none}
 .cluster-peersetting-edit{background:transparent;border:0;color:inherit;cursor:pointer;text-align:left;flex:1;min-width:0}
 .cluster-peersetting-edit small{display:block}
 .cluster-heading{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700;color:#d9ebff;margin:0 0 10px}
 .cluster-heading button{margin-left:auto}
 .cluster-server-list{display:flex;flex-direction:column;gap:10px}
-.cluster-server-list .cluster-server-group>summary{list-style:none;display:flex;align-items:center;gap:10px;cursor:pointer}
+.cluster-server-list .cluster-server-group>summary{list-style:none;display:grid;grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);align-items:center;gap:8px;min-height:48px;cursor:pointer}
 .cluster-server-list .cluster-server-group>summary::-webkit-details-marker{display:none}
-.cluster-server-group>summary:before{content:"▸";color:#7dd1ff}
-.cluster-server-group[open]>summary:before{content:"▾"}
-.cluster-server-name{flex:1;min-width:0;overflow-wrap:anywhere;font-weight:700}
-.cluster-server-indicator{color:#a1e8b9;border-radius:999px;background:rgba(40,175,105,.16);padding:3px 8px;font-size:11px;white-space:nowrap}
+.cluster-server-group>summary:before,.cluster-server-group[open]>summary:before{content:none!important}
+.cluster-server-name{display:block;min-width:0;overflow-wrap:anywhere;font-weight:700}
+.cluster-server-indicator{grid-column:3;justify-self:end;color:#a1e8b9;border-radius:999px;background:rgba(40,175,105,.16);padding:3px 8px;font-size:11px;white-space:nowrap}
 .cluster-server-indicator.offline{color:#ffb3b3;background:rgba(255,84,84,.15)}
 .cluster-server-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));gap:10px}
 .cluster-channel{min-width:0;padding:10px;border-radius:10px;border:1px solid rgba(125,209,255,.17);background:rgba(22,32,46,.85);display:flex;flex-direction:column;gap:5px}
@@ -198,19 +198,19 @@ function renderClusterPeers(peers) {
     const editRow=document.createElement('button');
     editRow.type='button';editRow.className='cluster-server-edit';
     editRow.title=clusterText('Редактировать сервер','Edit server','Uredi poslužitelj');
-    editRow.append(name,indicator);
+    // Only the server name is an edit target. The status badge and blank
+    // summary area use native <details> expansion, not configuration editing.
+    editRow.append(name);
     editRow.addEventListener('click',event=>{
       event.preventDefault();event.stopPropagation();openClusterSettings(key);
     });
-    const arrow=document.createElement('button');arrow.type='button';
+    // The native <summary> is the accessible expansion control. Centered
+    // arrow is visual only, so clicks anywhere except the name toggle it.
+    const arrow=document.createElement('span');
     arrow.className='cluster-server-spoiler';
+    arrow.setAttribute('aria-hidden','true');
     arrow.textContent=details.open?'▲':'▼';
-    arrow.setAttribute('aria-label',clusterText('Развернуть или свернуть каналы',
-      'Expand or collapse channels','Proširi ili sažmi kanale'));
-    arrow.addEventListener('click',event=>{
-      event.preventDefault();event.stopPropagation();details.open=!details.open;
-    });
-    summary.append(editRow,arrow);
+    summary.append(editRow,arrow,indicator);
     const grid=document.createElement('div');
     grid.className='dvb-card-tiles cluster-server-tiles';
     if(online) {
