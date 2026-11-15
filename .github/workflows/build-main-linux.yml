@@ -75,6 +75,16 @@ jobs:
           node tests/web/test_cluster_edit_tls_v541.js
           bash -n scripts/setup_cluster_tls.sh
 
+      - name: Emulate integrated SSL and Let's Encrypt certificate modules
+        run: |
+          sudo apt-get install -y --no-install-recommends libjsoncpp-dev
+          node tests/web/test_tls_modules_v546.js
+          c++ -std=c++17 -O1 -g -UNDEBUG -Wall -Wextra \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Isrc tests/test_tls_certificate_v546.cpp \
+            -ljsoncpp -o /tmp/dvbstreamer5-tls-v546
+          ASAN_OPTIONS=detect_leaks=1 /tmp/dvbstreamer5-tls-v546
+
       - name: Verify interserver viewer routing middleware API and local auth invariants
         run: |
           node tests/web/test_cluster_routing_v537.js
