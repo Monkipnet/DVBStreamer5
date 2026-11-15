@@ -72,6 +72,11 @@ private:
     std::string systemMetrics();
     std::string systemLoadHistory(uint64_t periodSeconds);
     std::string currentState();
+    bool clusterTokenAuthorized(const std::string& token);
+    std::string clusterNodeSnapshot();
+    std::string clusterPeerConfiguration();
+    std::string clusterPeerStatus();
+    std::string clusterPeerChange(const std::string& body,bool remove);
     std::string qualityHistory(const std::string& target);
     std::string dvbAdapters();
     std::string caManagerStatus();
@@ -118,6 +123,7 @@ private:
     mutable std::mutex acceptorsMutex;
     std::atomic<uint64_t> acceptGeneration{0};
     ConfigManager& configManager;
+    mutable std::mutex clusterMutex_;
     StreamManager& streamManager;
     mutable std::mutex streamAuthApiKeyMutex_;
     std::string streamAuthApiKeyDigest_;
