@@ -17,8 +17,8 @@ for(const marker of [
  "Сохранить сервер","Save server","Spremi poslužitelj",
  "Отмена редактирования","Cancel editing","Odustani od uređivanja",
  "Оставьте ключ пустым","Leave token empty","Ostavite ključ praznim",
- "clusterPeerVerifyTls","cluster-tls-option","Проверять сертификат TLS","Verify TLS certificate",
- "Provjeri TLS certifikat","verify_tls,","selected.verify_tls!==false","Для публичного домена используйте HTTPS"
+ "clusterPeerVerifyTls","cluster-tls-option","При снятой галочке разрешён также HTTP","Проверять сертификат TLS","Verify TLS certificate",
+ "Provjeri TLS certifikat","verify_tls,","selected.verify_tls!==false","Для HTTP по публичному домену снимите галочку проверки TLS"
 ])assert.ok(ui.includes(marker),marker);
 for(const marker of [
  'original_url','Invalid original cluster peer address','Unknown peer',
@@ -28,6 +28,8 @@ for(const marker of [
 ])assert.ok(api.includes(marker),marker);
 assert.ok(!api.includes('result["token"]=peer.token'));
 assert.ok(store.includes('bool verifyTlsPeer = true'));
+assert.ok(store.includes('validOrigin(peer.url,!peer.verifyTlsPeer)'));
+assert.ok(api.includes('validOrigin(url,!verifyTls)'));
 assert.ok(store.includes('item["verify_tls"]=peer.verifyTlsPeer'));
 for(const marker of [
  'certbot certonly --standalone','--keep-until-expiring',
