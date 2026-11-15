@@ -55,9 +55,9 @@ html[data-dashboard-theme="light"] .cluster-config-form label{color:#37516b}
 data-ui-ru="Кластер / Пиринг" data-ui-en="Cluster / Peering" data-ui-hr="Klaster / Peering">Кластер / Пиринг</button>
 )CLUSTERMENU";
     static const char* dashboard=R"CLUSTERDASH(
-<section id="clusterDashboard" hidden aria-label="Cluster servers">
+<section id="clusterDashboard" hidden aria-label="Кластер серверов">
 <div class="cluster-heading"><span id="clusterDashboardTitle">Кластер серверов</span>
-<button type="button" class="button-secondary" onclick="refreshClusterStatus(true)" title="Refresh cluster servers">↻</button></div>
+<button type="button" id="clusterRefreshButton" class="button-secondary" onclick="refreshClusterStatus(true)" title="Обновить кластер" aria-label="Обновить кластер">↻</button></div>
 <div id="clusterServerList" class="cluster-server-list"></div>
 </section>
 )CLUSTERDASH";
@@ -73,6 +73,47 @@ try {
 }catch(_){}
 let clusterPeersSnapshot=[],clusterLastPoll=0,clusterRequest=null;
 function clusterText(ru,en,hr){return language==='ru'?ru:language==='hr'?hr:en;}
+function clusterError(message){
+  const text=String(message||'');
+  const translated={
+    'Cannot read or create private cluster configuration':
+      ['Не удалось создать защищённую конфигурацию кластера','Cannot create secure cluster config','Nije moguće stvoriti sigurnu konfiguraciju klastera'],
+    'Cannot read private cluster configuration':
+      ['Не удалось прочитать защищённую конфигурацию','Cannot read secure cluster config','Nije moguće pročitati konfiguraciju klastera'],
+    'Cluster peer configuration unreadable':
+      ['Не удалось прочитать настройки кластера','Cluster peer configuration unreadable','Konfiguracija klastera nije dostupna'],
+    'Invalid cluster peer request':
+      ['Неверный запрос кластера','Invalid cluster peer request','Neispravan zahtjev klastera'],
+    'Use HTTPS or a private-LAN IPv4 HTTP origin, without a path':
+      ['Используйте HTTPS или HTTP с частным IPv4, без пути','Use HTTPS or private IPv4 HTTP without a path','Koristite HTTPS ili privatni IPv4 HTTP bez putanje'],
+    'Peer name and access token are required':
+      ['Необходимо имя и ключ сервера','Peer name and token required','Potreban je naziv i ključ poslužitelja'],
+    'Invalid peer name, origin or 64-digit token':
+      ['Проверьте имя, адрес или 64-значный ключ','Invalid peer name, address or 64-digit key','Neispravan naziv, adresa ili ključ od 64 znamenke'],
+    'Maximum of 8 peers':
+      ['Максимум 8 серверов в кластере','Maximum of 8 peers','Najviše 8 poslužitelja u klasteru'],
+    'Unknown peer':
+      ['Сервер не найден','Unknown peer','Nepoznat poslužitelj'],
+    'Failed to write private cluster configuration':
+      ['Ошибка сохранения настроек кластера','Failed to save cluster config','Nije moguće spremiti konfiguraciju klastera'],
+    'Panel login and same-origin request required':
+      ['Нужен вход администратора в панель','Panel administrator login required','Potrebna je prijava administratora'],
+    'Cluster administration requires panel login':
+      ['Нужен вход администратора в панель','Panel administrator login required','Potrebna je prijava administratora']
+  };
+  const values=translated[text];
+  return values ? clusterText(values[0],values[1],values[2]) : text;
+}
+function updateClusterLabels(){
+  const area=document.getElementById('clusterDashboard');
+  if(area)area.setAttribute('aria-label',clusterText('Кластер серверов','Server cluster','Klaster poslužitelja'));
+  const button=document.getElementById('clusterRefreshButton');
+  if(button){
+    const label=clusterText('Обновить состояние кластера','Refresh cluster status','Osvježi status klastera');
+    button.title=label;button.setAttribute('aria-label',label);
+  }
+}
+
 function persistClusterOpen(){
   try{localStorage.setItem(clusterOpenStorageKey,JSON.stringify(clusterGroupOpen));}catch(_){}
 }
@@ -114,6 +155,7 @@ function renderClusterPeers(peers) {
   const title=document.getElementById('clusterDashboardTitle');
   if(title)title.textContent=clusterText('Кластер серверов','Server cluster','Klaster poslužitelja')+
     ' ('+clusterPeersSnapshot.length+')';
+  updateClusterLabels();
   const sorted=[...clusterPeersSnapshot].sort((a,b)=>
     String(a.name||'').localeCompare(String(b.name||''),language,{numeric:true,sensitivity:'base'}));
   for(const peer of sorted){
@@ -149,8 +191,10 @@ function renderClusterPeers(peers) {
         const metrics=document.createElement('div');
         metrics.className='cluster-channel-metrics'+(ch.active===true?' online':'');
         metrics.textContent=ch.active===true?
-          (ch.using_backup===true?'BACKUP':'ONLINE')+' · '+
-          (Number(ch.bitrate_out_kbps)||0)+' kbps':'OFFLINE';
+          (ch.using_backup===true?clusterText('РЕЗЕРВ','BACKUP','REZERVA'):
+            clusterText('ОНЛАЙН','ONLINE','ONLINE'))+' · '+
+          (Number(ch.bitrate_out_kbps)||0)+' kbps':
+          clusterText('ОФЛАЙН','OFFLINE','OFFLINE');
         card.append(heading,metrics);
         grid.appendChild(card);
       }
@@ -180,7 +224,7 @@ async function refreshClusterStatus(force=false){
   clusterLastPoll=Date.now();
   clusterRequest=fetchJson('/api/cluster/status',{},12000)
     .then(result=>{
-      if(result.result!=='ok')throw Error(result.error||'Cluster status failed');
+      if(result.result!=='ok')throw Error(clusterError(result.error||clusterText('Ошибка мониторинга кластера','Cluster status failed','Pogreška nadzora klastera')));
       renderClusterPeers(result.peers);
     })
     .catch(error=>console.warn('Cluster monitor:',error))
@@ -190,7 +234,7 @@ async function refreshClusterStatus(force=false){
 async function openClusterSettings(){
   try{
     const data=await fetchJson('/api/cluster/config',{},8000);
-    if(data.result!=='ok')throw Error(data.error||'Cluster configuration unavailable');
+    if(data.result!=='ok')throw Error(clusterError(data.error||clusterText('Настройки кластера недоступны','Cluster configuration unavailable','Konfiguracija klastera nije dostupna')));
     const peerRows=(data.peers||[]).map((peer,index)=>
       '<div class="cluster-peersetting"><div><strong>'+escapeHtmlValue(peer.name)+
       '</strong><small>'+escapeHtmlValue(peer.url)+'</small></div>'+
@@ -213,7 +257,7 @@ async function openClusterSettings(){
       '<label>'+clusterText('IP или домен с портом','IP or domain and port','IP ili domena i port')+'</label>'+
       '<input id="clusterPeerUrl" maxlength="250" placeholder="http://10.8.0.2:9000" autocomplete="off">'+
       '<label>'+clusterText('Ключ удалённого сервера','Remote server token','Ključ udaljenog poslužitelja')+'</label>'+
-      '<input id="clusterPeerToken" type="password" maxlength="64" autocomplete="new-password" placeholder="64 hexadecimal digits">'+
+      '<input id="clusterPeerToken" type="password" maxlength="64" autocomplete="new-password" placeholder="'+clusterText('64 шестнадцатеричных символа','64 hexadecimal digits','64 heksadekadske znamenke')+'">'+
       '<button class="button-primary" type="button" onclick="addClusterPeer()">'+
       clusterText('Добавить сервер','Add server','Dodaj poslužitelj')+'</button></div>');
     document.querySelectorAll('[data-cluster-remove]').forEach(button=>{
@@ -241,7 +285,7 @@ async function addClusterPeer(){
       method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
       body:JSON.stringify({name,url,token})
     },10000);
-    if(data.result!=='ok')throw Error(data.error||'Cannot add peer');
+    if(data.result!=='ok')throw Error(clusterError(data.error||clusterText('Не удалось добавить сервер','Cannot add peer','Nije moguće dodati poslužitelj')));
     await openClusterSettings();await refreshClusterStatus(true);
   }catch(error){uiError(error.message||String(error));}
 }
@@ -252,7 +296,7 @@ async function deleteClusterPeer(url){
       method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
       body:JSON.stringify({url})
     },10000);
-    if(data.result!=='ok')throw Error(data.error||'Cannot remove peer');
+    if(data.result!=='ok')throw Error(clusterError(data.error||clusterText('Не удалось удалить сервер','Cannot remove peer','Nije moguće ukloniti poslužitelj')));
     await openClusterSettings();await refreshClusterStatus(true);
   }catch(error){uiError(error.message||String(error));}
 }
@@ -260,7 +304,7 @@ async function deleteClusterPeer(url){
 const previousClusterTileFilter=applyTileSearch;
 applyTileSearch=function(){previousClusterTileFilter();filterClusterGroups();};
 const previousClusterLanguage=applyLanguage;
-applyLanguage=function(){previousClusterLanguage();if(clusterPeersSnapshot.length)renderClusterPeers(clusterPeersSnapshot);};
+applyLanguage=function(){previousClusterLanguage();updateClusterLabels();if(clusterPeersSnapshot.length)renderClusterPeers(clusterPeersSnapshot);};
 setInterval(()=>{if(!document.hidden)refreshClusterStatus();},15000);
 refreshClusterStatus();
 </script>
