@@ -157,7 +157,7 @@ html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
 .input-subgroup-count{font-size:.72rem;flex:none;color:#9fe7b3;font-variant-numeric:tabular-nums}
 
 /* V539: title/metrics row edits the TP, the lower blank area toggles a spoiler. */
-.input-subgroup.tp-edit-subgroup>summary{padding:0;display:flex;flex-direction:column;align-items:stretch;gap:0;cursor:default}
+.input-subgroup.tp-edit-subgroup>summary{padding:0;display:flex;flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:0;cursor:default}
 .input-subgroup.tp-edit-subgroup>summary:before{display:none!important}
 .tp-edit-row{box-sizing:border-box;display:flex;gap:10px;align-items:center;flex-wrap:wrap;width:100%;min-height:46px;padding:10px 13px;border:0;border-radius:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
 .tp-edit-row:hover{background:rgba(72,163,250,.14);color:#8cddff}
