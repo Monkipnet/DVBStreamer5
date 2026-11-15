@@ -294,6 +294,13 @@ async function openClusterSettings(selectedUrl=''){
       'Upišite adresu udaljenog HTTP(S) medijskog poslužitelja dostupnu gledateljima. Ako je prazna, koristi se adresa za nadzor.')+'</p>'+
       '<label>'+clusterText('Ключ удалённого сервера','Remote server token','Ključ udaljenog poslužitelja')+'</label>'+
       '<input id="clusterPeerToken" type="password" maxlength="64" autocomplete="new-password" placeholder="'+clusterText('64 шестнадцатеричных символа','64 hexadecimal digits','64 heksadekadske znamenke')+'">'+
+      '<label><input type="checkbox" id="clusterPeerVerifyTls" '+(!selected||selected.verify_tls!==false?'checked':'')+'> '+
+      clusterText('Проверять сертификат TLS','Verify TLS certificate','Provjeri TLS certifikat')+'</label>'+
+      '<p class="cluster-config-hint">'+clusterText(
+      'Отключайте только для доверенных серверов с самоподписанным сертификатом. Без проверки возможна подмена узла и перехват ключа.',
+      'Disable only for trusted nodes with self-signed certificates. Disabling verification permits server impersonation and token interception.',
+      'Isključite samo za pouzdane čvorove sa samopotpisanim certifikatima. Bez provjere moguća je zamjena čvora i presretanje ključa.'
+      )+'</p>'+
       '<p class="cluster-config-hint">'+(selected?clusterText(
       'Редактирование выбранного сервера. Оставьте ключ пустым, чтобы сохранить существующий.',
       'Editing selected server. Leave token empty to keep the existing one.',
@@ -340,6 +347,7 @@ async function addClusterPeer(){
   const url=document.getElementById('clusterPeerUrl')?.value?.trim();
   const token=document.getElementById('clusterPeerToken')?.value?.trim();
   const viewer_url=document.getElementById('clusterPeerViewerUrl')?.value?.trim()||'';
+  const verify_tls=!!document.getElementById('clusterPeerVerifyTls')?.checked;
   if(!name||!url||(!token&&!clusterEditingOriginalUrl)){
     uiError(clusterText('Укажите имя, адрес и ключ','Enter name, URL and token','Unesite naziv, adresu i ključ'));
     return;
@@ -347,7 +355,7 @@ async function addClusterPeer(){
   try{
     const data=await fetchJson('/api/cluster/add',{
       method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
-      body:JSON.stringify({name,url,token,viewer_url,
+      body:JSON.stringify({name,url,token,viewer_url,verify_tls,
         ...(clusterEditingOriginalUrl?{original_url:clusterEditingOriginalUrl}:{})})
     },10000);
     if(data.result!=='ok')throw Error(clusterError(data.error||clusterText('Не удалось добавить сервер','Cannot add peer','Nije moguće dodati poslužitelj')));
