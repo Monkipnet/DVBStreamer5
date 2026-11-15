@@ -74,11 +74,12 @@ le_enable() {
   nginx_managed_proxy "$DOMAIN" "$BACKEND_PORT" "$HTTPS_PORT" true
   le_timer
   AUTO_RENEW=true
-  if certbot certonly --webroot -w "$ACME_ROOT" -d "$DOMAIN" \
+  if certbot certonly --config-dir "$ACME_CONFIG" --work-dir "$ACME_WORK" \
+       --logs-dir "$ACME_LOG" --webroot -w "$ACME_ROOT" -d "$DOMAIN" \
        --non-interactive --agree-tos --email "$EMAIL" \
        --keep-until-expiring --preferred-challenges http >/dev/null 2>&1; then
-    local cert="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-    local key="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+    local cert="$ACME_CONFIG/live/$DOMAIN/fullchain.pem"
+    local key="$ACME_CONFIG/live/$DOMAIN/privkey.pem"
     activate_certificate "$cert" "$key"
     nginx -t >/dev/null 2>&1 || die_tls nginx_config_invalid
     systemctl reload nginx >/dev/null 2>&1 || die_tls nginx_reload_failed
