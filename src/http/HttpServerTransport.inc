@@ -1132,7 +1132,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/security/proxy") {
                 res.set(http::field::content_type,"application/json");
                 Json::Value response(Json::objectValue);
-                response["trust_local_proxy_real_ip"]=configManager.config.trustLocalProxyRealIp;
+                response["trust_local_proxy_real_ip"]=trustLocalProxyIp_.load(std::memory_order_relaxed);
                 Json::StreamWriterBuilder writer;writer["indentation"]="";
                 res.body()=Json::writeString(writer,response);
             } else if (target == "/api/interfaces") {
@@ -1362,6 +1362,8 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         res.result(http::status::internal_server_error);
                         reply["error"]="Cannot save proxy security settings";
                     }else{
+                        trustLocalProxyIp_.store(
+                            configManager.config.trustLocalProxyRealIp,std::memory_order_relaxed);
                         reply["result"]="ok";
                         reply["trust_local_proxy_real_ip"]=
                             configManager.config.trustLocalProxyRealIp;
@@ -1797,7 +1799,7 @@ std::string HttpServer::clientIpForRequest(
     return dvbstreamer5::http_security::effectiveClientIp(
         remote.address().to_string(),
         real==req.end()?std::string{}:std::string(real->value()),
-        configManager.config.trustLocalProxyRealIp);
+        trustLocalProxyIp_.load(std::memory_order_relaxed));
 }
 
 std::string HttpServer::createPanelSession() {
