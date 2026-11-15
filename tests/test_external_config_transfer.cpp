@@ -74,15 +74,15 @@ int main() {
          "input":["dvb://a0be#pnr=12"],"output":["http://192.0.2.1:5553/PADA"]},
         {"id":"a0es","name":"T2 7MHz","type":"spts",
          "input":["dvb://a0c5#pnr=2"],"output":["udp://239.23.2.5:1234"]},
-        {"id":"t2mi","name":"Unsupported encapsulation","type":"spts",
-         "input":["t2mi://a001#pnr=100"],"output":["http://192.0.2.1:5555/t2mi"]}
+        {"id":"t2mi","name":"Native T2-MI","type":"spts",
+         "input":["t2mi://a001#pnr=100&t2mi_pid=4096&t2mi=0&plp=7"],"output":["http://192.0.2.1:5555/t2mi"]}
       ],
       "users":{"admin":{"password":"SECRET_DO_NOT_IMPORT"}},
       "softcam":[{"id":"a0b1","type":"newcamd","pass":"SECRET_DO_NOT_IMPORT"}]
     })ASTRA532";
     Conversion astraDvb;
     assert(parseAstra(astraDvbJson,astraDvb,err));
-    assert(astraDvb.streams.size()==3 && astraDvb.ignored==1);
+    assert(astraDvb.streams.size()==4 && astraDvb.ignored==0);
     const auto& sat=astraDvb.streams[0];
     assert(sat.name=="Satellite Astra");
     assert(sat.inputUri.find("dvb://satellite?adapter=6&frontend=0") == 0);
@@ -109,21 +109,24 @@ int main() {
     assert(astraDvb.streams[2].inputUri.find("bandwidth_hz=7000000")!=std::string::npos);
     assert(astraDvb.streams[2].outputType=="udp-vbr");
     assert(!astraDvb.streams[2].autoStart);
-    bool hasT2miWarning=false,hasCaWarning=false,hasHttpWarning=false;
+    assert(astraDvb.streams[3].inputUri.find("t2mi_pid=4096")!=std::string::npos);
+    assert(astraDvb.streams[3].inputUri.find("t2mi_plp=7")!=std::string::npos);
+    assert(astraDvb.streams[3].inputUri.find("t2mi_stream=0")!=std::string::npos);
+    assert(astraDvb.streams[3].inputServiceId==100U);
+    bool hasCaWarning=false,hasHttpWarning=false;
     for(const auto& w:astraDvb.warnings){
-        hasT2miWarning |= w.find("T2MI input skipped")!=std::string::npos;
         hasCaWarning |= w.find("CA/CAM references not transferred")!=std::string::npos;
         hasHttpWarning |= w.find("Astra HTTP output mapped")!=std::string::npos;
         assert(w.find("SECRET_DO_NOT_IMPORT")==std::string::npos);
     }
-    assert(hasT2miWarning&&hasCaWarning&&hasHttpWarning);
+    assert(hasCaWarning&&hasHttpWarning);
     std::vector<StreamConfig> merged;
     size_t dvbDuplicates=0;
-    assert(mergeNewOnly(astraDvb,merged,"astra",dvbDuplicates)==3);
+    assert(mergeNewOnly(astraDvb,merged,"astra",dvbDuplicates)==4);
     assert(merged.front().id.find("migration_astra_")==0);
     assert(merged.front().id!="a005" && merged.front().tvgId=="a005");
     assert(mergeNewOnly(astraDvb,merged,"astra",dvbDuplicates)==0);
-    assert(dvbDuplicates==3);
+    assert(dvbDuplicates==4);
 
     // Astra CP1251 exports contain raw non-UTF8 channel titles.
     const std::string cp1251=
@@ -141,7 +144,7 @@ int main() {
       "adapter":0,"frequency":"11823","symbolrate":"bad"}],
       "make_stream":[{"name":"no-frequency","input":["dvb://broken#pnr=30"]}]})",
       cp1251Out,err));
-    std::cout<<"PASS Astra JSON satellite/T2 tuners, HTTP MPEGTS, tvg-id, CP1251 and safe T2MI refusal\\n";
+    std::cout<<"PASS Astra JSON satellite/T2 tuners, HTTP MPEGTS, tvg-id, CP1251 and native T2MI mapping\\n";
 
     const std::string flussonic=
         "http 8080;\n"
