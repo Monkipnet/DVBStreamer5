@@ -77,6 +77,11 @@ private:
     std::string clusterPeerConfiguration();
     std::string clusterPeerStatus();
     std::string clusterPeerChange(const std::string& body,bool remove);
+    Json::Value clusterChooseStream(const std::string& id,bool hls,const std::string& clientKey);
+    std::string clusterRoutingSettings(const std::string& body);
+    bool clusterViewerAllowed(const tcp::socket& socket,
+           const http::request<http::string_body>& req,
+           const std::string& id,bool hls) const;
     std::string qualityHistory(const std::string& target);
     std::string dvbAdapters();
     std::string caManagerStatus();
@@ -124,6 +129,10 @@ private:
     std::atomic<uint64_t> acceptGeneration{0};
     ConfigManager& configManager;
     mutable std::mutex clusterMutex_;
+    mutable std::mutex clusterStatusMutex_;
+    Json::Value clusterStatusCache_;
+    std::chrono::steady_clock::time_point clusterStatusAt_{};
+    bool clusterStatusValid_=false;
     StreamManager& streamManager;
     mutable std::mutex streamAuthApiKeyMutex_;
     std::string streamAuthApiKeyDigest_;
