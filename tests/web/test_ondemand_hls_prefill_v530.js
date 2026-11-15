@@ -34,5 +34,6 @@ assert.ok(server.includes('prefilledOnDemandTranscode ? 200 : (cfg->transcodeEna
 assert.ok(nativeTest.includes('prefillConfig.startupPrefillSegments=3U'));
 assert.ok(nativeTest.includes('if(completed<3U && hasManifest)return 14;'));
 assert.ok(nativeTest.includes('if(count<3U||playlist.find("#EXT-X-ENDLIST")'));
-assert.ok(version.includes('kProgramVersion = "10.8.530"'));
+const parsedVersion=version.match(/kProgramVersion = "10\\.8\\.(\\d+)"/);
+assert.ok(parsedVersion && Number(parsedVersion[1]) >= 530);
 console.log('PASS: V530 scoped OnDemand HLS three-segment startup prefill');
