@@ -4,7 +4,8 @@ set -Eeuo pipefail
 le_bootstrap() {
   require_command openssl
   if [[ -s "$TLS_DIR/active.crt" && -s "$TLS_DIR/active.key" ]] &&
-     openssl x509 -in "$TLS_DIR/active.crt" -noout -checkend 86400 >/dev/null 2>&1; then
+     openssl x509 -in "$TLS_DIR/active.crt" -noout -checkend 86400 >/dev/null 2>&1 &&
+     openssl x509 -in "$TLS_DIR/active.crt" -noout -checkhost "$DOMAIN" >/dev/null 2>&1; then
     return 0
   fi
   local work folder
