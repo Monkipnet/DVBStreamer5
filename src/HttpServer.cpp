@@ -5,6 +5,7 @@
 #include "media/NativeTickerOverlay.h"
 #include "http/HttpServerCommon.inc"
 #include "http/HttpServerTickerImport.inc"
+#include "http/ClusterViewerRouting.h"
 #include "http/HttpServerEpg.inc"
 #include "http/HttpServerTransport.inc"
 #include "http/HttpServerState.inc"
