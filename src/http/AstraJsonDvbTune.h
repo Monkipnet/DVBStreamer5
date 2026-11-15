@@ -144,7 +144,7 @@ inline std::string convertDvb(const std::string& source,
     const std::map<std::string,Json::Value>& tunes, uint32_t& pnr,
     std::vector<std::string>& warnings) {
     pnr=0;
-    if(source.size()>8192U||source.rfind("dvb://",0)!=0)return {};
+    if(source.size()>8192U || (source.rfind("dvb://",0)!=0 && source.rfind("t2mi://",0)!=0))return {};
     std::string reference=source.substr(6);
     const auto hash=reference.find('#');
     std::map<std::string,std::string> options;
@@ -278,6 +278,35 @@ inline std::string convertDvb(const std::string& source,
            <<"&frequency_khz="<<freq<<"&bandwidth_hz="<<bandwidth
            <<"&delivery_system=dvb-"<<type
            <<"&modulation=auto&stream_id="<<plp;
+    }
+    const bool t2miSource=source.rfind("t2mi://",0)==0 ||
+        options.count("t2mi_pid") || options.count("t2mi");
+    if(t2miSource){
+        if(!satellite){
+            warnOnce(warnings,"Astra T2-MI virtual adapter must use a satellite DVB source");
+            return {};
+        }
+        auto readOpt=[&](const char* key,int fallback,int min,int max,int& value)->bool{
+            value=fallback;
+            const auto it=options.find(key);
+            if(it==options.end())return true;
+            try {
+                size_t used=0;
+                const auto n=std::stol(it->second,&used);
+                if(used!=it->second.size()||n<min||n>max)return false;
+                value=static_cast<int>(n);
+                return true;
+            }catch(...){return false;}
+        };
+        int pid=4096,stream=0,plp=-1;
+        if(!readOpt("t2mi_pid",4096,0,8190,pid)||
+           !readOpt("t2mi",0,0,7,stream)||
+           !readOpt("plp",-1,0,255,plp)){
+            warnOnce(warnings,"Astra T2-MI PID, stream or PLP is invalid");
+            return {};
+        }
+        uri<<"&t2mi_pid="<<pid<<"&t2mi_stream="<<stream;
+        if(plp>=0)uri<<"&t2mi_plp="<<plp;
     }
     return uri.str();
 }
