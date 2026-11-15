@@ -145,7 +145,7 @@ inline std::string convertDvb(const std::string& source,
     std::vector<std::string>& warnings) {
     pnr=0;
     if(source.size()>8192U || (source.rfind("dvb://",0)!=0 && source.rfind("t2mi://",0)!=0))return {};
-    std::string reference=source.substr(6);
+    std::string reference=source.substr(source.rfind("t2mi://",0)==0 ? 7U : 6U);
     const auto hash=reference.find('#');
     std::map<std::string,std::string> options;
     if(hash!=std::string::npos){
