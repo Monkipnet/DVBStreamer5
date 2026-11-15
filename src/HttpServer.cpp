@@ -11,6 +11,7 @@
 #include "http/HttpServerDvbMedia.inc"
 #include "http/HttpServerQuality.inc"
 #include "http/HttpServerConfigActions.inc"
+#include "http/HttpServerCluster.inc"
 
 // V10.8.180: preserve the existing large WebUI implementation byte-for-byte and
 // wrap only its rendered HTML. The private sub-kbps carrier remains compatible
