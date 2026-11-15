@@ -570,6 +570,7 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
         config.epgMode = "auto";
     config.xmltvSourceId = root.get("xmltv_source_id", "").asString().substr(0, 128);
     config.xmltvChannelId = root.get("xmltv_channel_id", "").asString().substr(0, 256);
+    config.tvgId = root.get("tvg_id", "").asString().substr(0, 128);
     config.conditionalAccessClient = root.get("conditional_access_client", "").asString();
     if (root.isMember("outputs") && root["outputs"].isArray() && root["outputs"].size() > 0) {
         const auto primary = StreamOutputConfig::fromJson(root["outputs"][0]);
