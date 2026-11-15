@@ -66,6 +66,11 @@ ensure_nginx() {
 nginx_managed_proxy() {
   local domain="$1" backend="$2" https_port="$3" acme="${4:-false}"
   ensure_nginx
+  # Refuse to collide with the previous standalone TLS setup on the same port.
+  local legacy=/etc/nginx/conf.d/dvbstreamer5-cluster-tls.conf
+  if [[ -r "$legacy" ]] && grep -Fq "listen ${https_port} ssl;" "$legacy"; then
+    die_tls legacy_tls_proxy_port_conflict
+  fi
   if [[ -e "$NGINX_SITE" && ! -e "$TLS_DIR/nginx-managed" ]]; then
     die_tls nginx_config_unmanaged
   fi
@@ -117,7 +122,7 @@ EOF
     if [[ -n "$backup" ]]; then mv -f "$backup" "$NGINX_SITE"; else rm -f "$NGINX_SITE"; fi
     die_tls nginx_config_invalid
   fi
-  rm -f "$backup"
+  [[ -z "$backup" ]] || rm -f "$backup"
   touch "$TLS_DIR/nginx-managed"
   systemctl enable --now nginx >/dev/null 2>&1 || die_tls nginx_start_failed
   systemctl reload nginx >/dev/null 2>&1 || die_tls nginx_reload_failed
