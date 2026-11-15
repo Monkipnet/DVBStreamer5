@@ -70,6 +70,9 @@ jobs:
       - name: Emulate cluster peers and MPEG-TS channels with RU EN HR spoilers
         run: node tests/web/test_cluster_peering_v536.js
 
+      - name: Verify centered cluster spoiler and server-name-only editing
+        run: node tests/web/test_cluster_spoiler_v548.js
+
       - name: Emulate cluster row editing and automatic TLS certificate maintenance
         run: |
           node tests/web/test_cluster_edit_tls_v541.js
