@@ -58,6 +58,29 @@ header{position:fixed;top:0;left:0;right:0;z-index:100000;overflow:visible;displ
 .load-series-legend label:has(input:not(:checked)){opacity:.45}
 .system-menu-item.logout-button{border-top:1px solid rgba(255,255,255,.1);margin-top:4px;color:#ffcbcb}
 .header-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+/* V535: instant search is a view-only filter (no stream API calls). */
+.header-tile-search{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:7px;width:clamp(220px,23vw,360px);height:34px;padding:0 8px;box-sizing:border-box;border:1px solid rgba(125,209,255,.28);border-radius:10px;background:rgba(255,255,255,.07);color:#abcfe8;z-index:1}
+.header-tile-search:focus-within{border-color:#59b7ff;box-shadow:0 0 0 2px rgba(55,164,255,.15)}
+.header-tile-search-icon{font-size:19px;line-height:1;flex:none}
+.header-tile-search input{flex:1 1 auto;min-width:0;width:100%;border:0;outline:0;background:transparent;color:#fff;font:inherit;font-size:12px;padding:6px 0;box-shadow:none}
+.header-tile-search input::placeholder{color:#a7b5c6;opacity:1}
+.header-tile-search input::-webkit-search-cancel-button{display:none}
+.header-tile-search-clear{display:inline-flex;align-items:center;justify-content:center;flex:none;padding:0;border:0;border-radius:50%;width:22px;height:22px;background:rgba(255,255,255,.13);color:#fff;font:700 18px/1 Arial,sans-serif;cursor:pointer}
+.header-tile-search-clear:hover{background:rgba(255,255,255,.25)}
+.header-tile-search-clear[hidden]{display:none}
+#tiles :is(.tile,.input-subgroup,.dvb-card-group,.non-dvb-tile-group)[hidden]{display:none!important}
+#tileSearchEmpty{padding:26px 14px;text-align:center;color:#aabbd0;font-size:.92rem}
+#tileSearchEmpty[hidden]{display:none}
+html[data-dashboard-theme="light"] .header-tile-search{background:#f1f6fd;border-color:#bdd2e8;color:#426789}
+html[data-dashboard-theme="light"] .header-tile-search input{color:#203b55}
+html[data-dashboard-theme="light"] .header-tile-search input::placeholder{color:#627991}
+html[data-dashboard-theme="light"] .header-tile-search-clear{background:#dce8f5;color:#244663}
+html[data-dashboard-theme="light"] .header-tile-search-clear:hover{background:#c8dff4}
+html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
+@media(max-width:1500px){.header-tile-search{position:static;transform:none;order:3;flex:1 1 100%;width:min(100%,460px);max-width:460px;margin:0 auto}}
+@media(max-width:690px){.header-tile-search{max-width:none;width:100%}}
+
 .restart-button{border-color:rgba(255,184,77,.28);color:#ffe0a3;background:rgba(255,184,77,.1)}
 .restart-button:hover{background:rgba(255,184,77,.2);border-color:rgba(255,184,77,.38)}
 .restart-button:disabled{opacity:.65;cursor:wait}
@@ -829,6 +852,20 @@ html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-
 </div>
 </div>
 </div>
+<div class="header-tile-search" role="search" aria-label="Поиск каналов">
+<span class="header-tile-search-icon" aria-hidden="true">⌕</span>
+<input type="search" id="tileSearchInput" autocomplete="off" spellcheck="false"
+       placeholder="Поиск канала, устройства, IP, домена или подсети"
+       data-placeholder-ru="Поиск канала, устройства, IP, домена или подсети"
+       data-placeholder-en="Search channel, device, IP, domain or subnet"
+       data-placeholder-hr="Traži kanal, uređaj, IP, domenu ili podmrežu"
+       aria-label="Поиск канала, устройства, IP, домена или подсети"
+       oninput="setTileSearch(this.value)"
+       onkeydown="if(event.key==='Escape'){event.preventDefault();clearTileSearch()}">
+<button type="button" id="tileSearchClear" class="header-tile-search-clear"
+        aria-label="Очистить поиск" title="Очистить поиск" hidden
+        onclick="clearTileSearch()">×</button>
+</div>
 <div class="header-right">
 <button class="button-secondary" onclick="toggleLanguage()" id="languageButton">RU</button>
 <details class="system-menu" id="systemMenu">
@@ -889,6 +926,7 @@ html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-
 </header>
 <div class="container">
 <div id="tiles" class="tile-grid"></div>
+<div id="tileSearchEmpty" role="status" aria-live="polite" hidden></div>
 <div id="modal" class="modal">
 <div class="modal-content" id="modalContent"></div>
 </div>
@@ -3556,6 +3594,17 @@ function applyLanguage() {
     updateClose.title=closeLabel;
     updateClose.textContent=''; // The close glyph is CSS-only, never translated.
   }
+  const searchInput=document.getElementById('tileSearchInput');
+  const searchClear=document.getElementById('tileSearchClear');
+  const searchBox=document.querySelector('.header-tile-search');
+  const searchLabel=language==='ru'?'Поиск канала, устройства, IP, домена или подсети':
+    language==='hr'?'Traži kanal, uređaj, IP, domenu ili podmrežu':
+    'Search channel, device, IP, domain or subnet';
+  const clearLabel=language==='ru'?'Очистить поиск':
+    language==='hr'?'Očisti pretragu':'Clear search';
+  if(searchInput)searchInput.setAttribute('aria-label',searchLabel);
+  if(searchBox)searchBox.setAttribute('aria-label',searchLabel);
+  if(searchClear){searchClear.setAttribute('aria-label',clearLabel);searchClear.title=clearLabel;}
   // Apply the theme label last so new bilingual controls are localized too.
   updateDashboardThemeButton();
 }
@@ -5430,7 +5479,7 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   const grid=document.createElement('div');
   grid.className='tile-grid input-subgroup-tiles';
   details.append(summary,grid);
-  details.addEventListener('toggle',()=>rememberInputSubgroup(key,details.open));
+  details.addEventListener('toggle',()=>{if(!tileSearchQuery)rememberInputSubgroup(key,details.open);});
   parent.appendChild(details);
   for(const stream of streams) {
     parents.set(String(stream.id),grid);
@@ -5953,6 +6002,136 @@ function updateStreamTile(tile, stream) {
     toggleButton.onclick = null;
   }
 }
+// V535 TILE SEARCH PURE LOGIC BEGIN
+function normalizeTileSearch(text) {
+  return String(text??'').trim().toLocaleLowerCase().replace(/\s+/g,' ');
+}
+function tileSearchIpv4Parts(text) {
+  const parts=String(text||'').split('.');
+  if(parts.length!==4||!parts.every(p=>/^\d{1,3}$/.test(p)&&Number(p)<=255))return null;
+  return parts.map(Number);
+}
+function tileSearchHost(uri) {
+  try {
+    const raw=String(uri||'').trim();
+    if(!raw)return '';
+    const parsed=new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)?raw:'udp://'+raw);
+    return String(parsed.hostname||'').replace(/^\[|\]$/g,'').toLowerCase();
+  }catch(_){return '';}
+}
+function tileSearchStreamFields(stream, interfaces=[]) {
+  const fields=[
+    stream.name,stream.id,stream.tvg_id,stream.service_name,stream.service_provider,
+    stream.input_uri,stream.active_input_uri,stream.backup_input_uri,
+    stream.input_interface_address,stream.interface_address,
+    stream.input_interface_name,stream.interface_name,stream.device_name,
+    stream.dvb_device_name,stream.dvb_nit_network_name,stream.dvb_nit_orbital_position,
+    stream.dvb_card_key,stream.output_host,stream.output_port,stream.vlc_link
+  ];
+  if(stream.dvb_input===true){
+    fields.push('adapter'+stream.dvb_adapter,'A'+stream.dvb_adapter,
+      'frontend'+stream.dvb_frontend,
+      '/dev/dvb/adapter'+stream.dvb_adapter+'/frontend'+stream.dvb_frontend);
+  }
+  // Read configured output links and domains, not only the primary output.
+  for(const output of [...(Array.isArray(stream.outputs)?stream.outputs:[]),
+                       ...(Array.isArray(stream.vlc_links)?stream.vlc_links:[])]) {
+    if(!output||typeof output!=='object')continue;
+    for(const key of ['url','output_host','output_port','interface_address','host','name',
+                      'address','output_uri'])fields.push(output[key]);
+  }
+  const inputAddresses=[stream.input_interface_address,stream.interface_address];
+  for(const iface of interfaces){
+    if(!iface||typeof iface!=='object')continue;
+    const address=String(iface.address||'');
+    if(address && inputAddresses.some(a=>String(a||'')===address))
+      fields.push(iface.name,iface.display_name,iface.device,iface.address);
+  }
+  return fields.filter(value=>value!==undefined&&value!==null).map(String);
+}
+function tileSearchMatchesStream(stream,query,interfaces=[]) {
+  const needle=normalizeTileSearch(query);
+  if(!needle)return true;
+  const fields=tileSearchStreamFields(stream,interfaces);
+  const text=normalizeTileSearch(fields.join(' '));
+  if(needle.split(' ').every(term=>text.includes(term)))return true;
+  // CIDR: compare numeric IPv4 prefixes against addresses in configured
+  // primary/backup/active inputs and outputs (never guess via DNS lookup).
+  const cidr=needle.match(/^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/);
+  if(!cidr)return false;
+  const base=tileSearchIpv4Parts(cidr[1]),bits=Number(cidr[2]);
+  if(!base||bits>32)return false;
+  const mask=bits===0?0:(0xffffffff<<(32-bits))>>>0;
+  const network=(base[0]*16777216+base[1]*65536+base[2]*256+base[3])>>>0;
+  return fields.some(field=>{
+    const host=tileSearchHost(field);
+    const parts=tileSearchIpv4Parts(host);
+    if(!parts)return false;
+    const address=(parts[0]*16777216+parts[1]*65536+parts[2]*256+parts[3])>>>0;
+    return (address&mask)===(network&mask);
+  });
+}
+// V535 TILE SEARCH PURE LOGIC END
+
+let tileSearchQuery='';
+function setTileSearch(value) {
+  tileSearchQuery=normalizeTileSearch(value).slice(0,256);
+  applyTileSearch();
+}
+function clearTileSearch() {
+  const input=document.getElementById('tileSearchInput');
+  if(input)input.value='';
+  tileSearchQuery='';
+  applyTileSearch();
+  if(input)input.focus();
+}
+function applyTileSearch() {
+  const tiles=document.getElementById('tiles');
+  const clear=document.getElementById('tileSearchClear');
+  const empty=document.getElementById('tileSearchEmpty');
+  if(clear)clear.hidden=!tileSearchQuery;
+  if(!tiles)return;
+  const filtering=!!tileSearchQuery;
+  const byId=new Map((state.streams||[]).map(stream=>[String(stream.id),stream]));
+  const interfaces=[...(state.interfaces||[]),...(state.input_interfaces||[])];
+  let visible=0;
+  for(const tile of tiles.querySelectorAll('.tile[data-stream-id]')) {
+    const stream=byId.get(tile.dataset.streamId);
+    const matched=!filtering || (!!stream &&
+      (tileSearchMatchesStream(stream,tileSearchQuery,interfaces) ||
+       (stream.dvb_input===true &&
+        normalizeTileSearch(streamSatelliteTransponderInfo(stream)?.title).includes(tileSearchQuery)) ||
+       (stream.dvb_input!==true &&
+        normalizeTileSearch(streamInputNetworkGroup(stream).title).includes(tileSearchQuery))));
+    tile.hidden=!matched;
+    if(matched)++visible;
+  }
+  for(const details of tiles.querySelectorAll('.input-subgroup,.dvb-card-group')) {
+    const groupTitle=details.querySelector(':scope > summary .input-subgroup-title, :scope > summary .dvb-card-title');
+    const groupMatch=filtering&&normalizeTileSearch(groupTitle?.textContent).includes(tileSearchQuery);
+    if(groupMatch){
+      for(const tile of details.querySelectorAll('.tile[data-stream-id]')){
+        if(tile.hidden){tile.hidden=false;++visible;}
+      }
+    }
+    const hasMatches=!!details.querySelector('.tile[data-stream-id]:not([hidden])');
+    details.hidden=filtering&&!hasMatches;
+    if(filtering&&hasMatches)details.open=true;
+    else if(!filtering){
+      if(details.classList.contains('input-subgroup'))
+        details.open=inputSubgroupOpen[details.dataset.subgroupKey]!==false;
+      else details.open=dvbCardGroupOpen[details.dataset.cardKey]===true;
+    }
+  }
+  for(const section of tiles.querySelectorAll('.non-dvb-tile-group'))
+    section.hidden=filtering&&!section.querySelector('.tile[data-stream-id]:not([hidden])');
+  if(empty){
+    empty.hidden=!filtering||visible>0;
+    if(!empty.hidden)empty.textContent=language==='ru'?'Каналы не найдены':
+      language==='hr'?'Nema pronađenih kanala':'No matching channels';
+  }
+}
+
 function updateLiveTiles() {
   const headerServerName = document.getElementById('headerServerName');
   const totalCount = document.getElementById('totalCount');
@@ -5967,6 +6146,7 @@ function updateLiveTiles() {
   (state.streams || []).forEach(stream => updateStreamTile(byId.get(String(stream.id)), stream));
   updateDvbCardGroupCounts(tiles);
   updateInputSubgroupCounts(tiles);
+  applyTileSearch();
 }
 function render(force=false) {
   const tiles = document.getElementById('tiles');
@@ -6022,6 +6202,7 @@ function render(force=false) {
     summary.append(title,status);
     details.appendChild(summary);
     details.addEventListener('toggle',()=>{
+      if(tileSearchQuery)return; // Preserve the operator's previous collapsed state.
       dvbCardGroupOpen[group.key]=details.open;
       saveDvbCardGroupOpen();
     });
