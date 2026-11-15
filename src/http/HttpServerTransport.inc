@@ -1394,16 +1394,26 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         answer["error"]="Invalid certificate request";
                     }else{
                         const bool le=(target=="/api/tls/letsencrypt");
-                        const bool enabled=input.get("enabled",false).asBool();
-                        const auto domain=input.get("domain","").asString();
-                        const auto email=input.get("email","").asString();
-                        const int httpsPort=input.get("https_port",9443).asInt();
-                        answer=le?dvbstreamer5::tls::LetsEncryptModule::setEnabled(
-                            enabled,domain,email,configManager.config.httpPort,httpsPort):
-                            dvbstreamer5::tls::SelfSignedModule::generate(
-                                domain,configManager.config.httpPort,httpsPort);
-                        if(answer.get("result","").asString()=="error")
+                        const bool validTypes=(!le || input["enabled"].isBool()) &&
+                            (!input.isMember("domain") || input["domain"].isString()) &&
+                            (!input.isMember("email") || input["email"].isString()) &&
+                            (!input.isMember("https_port") ||
+                             input["https_port"].isInt() || input["https_port"].isUInt());
+                        if(!validTypes){
                             res.result(http::status::bad_request);
+                            answer["error"]="Invalid TLS field types";
+                        }else{
+                            const bool enabled=le && input["enabled"].asBool();
+                            const auto domain=input.get("domain","").asString();
+                            const auto email=input.get("email","").asString();
+                            const int httpsPort=input.get("https_port",9443).asInt();
+                            answer=le?dvbstreamer5::tls::LetsEncryptModule::setEnabled(
+                                enabled,domain,email,configManager.config.httpPort,httpsPort):
+                                dvbstreamer5::tls::SelfSignedModule::generate(
+                                    domain,configManager.config.httpPort,httpsPort);
+                            if(answer.get("result","").asString()=="error")
+                                res.result(http::status::bad_request);
+                        }
                     }
                 }
                 Json::StreamWriterBuilder writer;writer["indentation"]="";
