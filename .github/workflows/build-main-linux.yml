@@ -46,6 +46,9 @@ jobs:
           /tmp/dvbstreamer5-t2mi-emulator
           echo "PASS: emulated T2-MI BBFRAME, PLP selection, CRC and continuity"
 
+      - name: Verify dashboard channel search including devices domains and CIDR
+        run: node tests/web/test_tile_search_v535.js
+
       # A GitHub-hosted runner starts with an empty workspace. Restore safe
       # compiler results, not stale installed binaries. ccache verifies source
       # bytes, compiler flags, toolchain and included headers on each hit.
