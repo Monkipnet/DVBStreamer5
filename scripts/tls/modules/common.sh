@@ -65,10 +65,9 @@ ensure_nginx() {
   require_command nginx
 }
 # CA support: retain the previous active certificate on ACME request failure.
-nginx_managed_proxy() {
-  local domain="$1" backend="$2" https_port="$3" acme="${4:-false}"
+nginx_preflight() {
+  local https_port="$1"
   ensure_nginx
-  # Refuse to collide with the previous standalone TLS setup on the same port.
   local legacy=/etc/nginx/conf.d/dvbstreamer5-cluster-tls.conf
   if [[ -r "$legacy" ]] && grep -Fq "listen ${https_port} ssl;" "$legacy"; then
     die_tls legacy_tls_proxy_port_conflict
@@ -76,6 +75,10 @@ nginx_managed_proxy() {
   if [[ -e "$NGINX_SITE" && ! -e "$TLS_DIR/nginx-managed" ]]; then
     die_tls nginx_config_unmanaged
   fi
+}
+nginx_managed_proxy() {
+  local domain="$1" backend="$2" https_port="$3" acme="${4:-false}"
+  nginx_preflight "$https_port"
   local candidate
   candidate="$(mktemp /etc/nginx/conf.d/.dvbstreamer5-tls.XXXXXXXX)"
   cat > "$candidate" <<EOF
