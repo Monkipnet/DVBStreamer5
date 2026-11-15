@@ -244,8 +244,10 @@ function renderClusterPeers(peers) {
     }
     details.append(summary,grid);
     details.addEventListener('toggle',()=>{
-      if(tileSearchQuery)return;
       arrow.textContent=details.open?'▲':'▼';
+      // A search may open a group temporarily: update the arrow but do not
+      // overwrite the admin's saved spoiler expansion preference.
+      if(tileSearchQuery)return;
       clusterGroupOpen[key]=details.open;
       persistClusterOpen();
     });
