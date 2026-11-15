@@ -12,6 +12,7 @@ const tuner=read('src/http/AstraJsonDvbTune.h');
 const config=read('src/ConfigManager.cpp');
 const header=read('src/ConfigManager.h');
 const playlist=read('src/http/HttpServerEpg.inc');
+const links=read('src/http/HttpServerCommon.inc');
 const ui=read('src/http/HttpServerWebUi.inc');
 const test=read('tests/test_external_config_transfer.cpp');
 const version=read('src/AppVersion.h');
@@ -44,6 +45,9 @@ assert.ok(header.includes('std::string tvgId;'));
 assert.ok(config.includes('root["tvg_id"] = tvgId;'));
 assert.ok(config.includes('config.tvgId = root.get("tvg_id", "").asString().substr(0, 128);'));
 assert.ok(playlist.includes('return !cfg.tvgId.empty() ? cfg.tvgId : cfg.id;'));
+assert.ok(links.includes('cfg.id.rfind("migration_astra_", 0) == 0'));
+assert.ok(links.includes('const std::string raw = importedAstra ? cfg.id :'));
+
 assert.ok(ui.includes("readForeignConfigText(mainFile, sourceKind)"));
 assert.ok(ui.includes("new TextDecoder('utf-8', {fatal:true})"));
 assert.ok(ui.includes("new TextDecoder('windows-1251', {fatal:true})"));
