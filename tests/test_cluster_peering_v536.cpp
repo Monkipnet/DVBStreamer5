@@ -16,6 +16,11 @@ int main() {
   assert(validOrigin("http://192.168.1.22:9000"));
   assert(validOrigin("https://edge.example.net:443"));
   assert(!validOrigin("http://8.8.8.8:9000"));
+  assert(!validOrigin("http://blumen.zapto.org:9000"));
+  assert(validOrigin("http://blumen.zapto.org:9000",true));
+  assert(!validOrigin("http://localhost:9000",true));
+  assert(!validOrigin("http://127.0.0.1:9000",true));
+  assert(!validOrigin("http://blumen.zapto.org:9000/api",true));
   assert(!validOrigin("http://127.0.0.1:9000"));
   assert(!validOrigin("http://localhost:9000"));
   assert(!validOrigin("https://example.org@169.254.169.254"));
@@ -52,6 +57,10 @@ int main() {
   assert(validPeer(a)&&validPeer(b)&&validPeer(c));
   b.verifyTlsPeer=false;
   assert(a.verifyTlsPeer && !b.verifyTlsPeer);
+  Peer publicHttp{"Blumen","http://blumen.zapto.org:9000",randomToken()};
+  assert(!validPeer(publicHttp));
+  publicHttp.verifyTlsPeer=false;
+  assert(validPeer(publicHttp));
   config.peers={a,b,c};
   assert(save(directory,config));
   Config reloaded;
