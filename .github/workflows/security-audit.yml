@@ -1,0 +1,65 @@
+name: DVBStreamer5 security audit (CodeQL + CVE)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '25 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL C/C++ and JavaScript
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Initialize CodeQL with buildless analysis
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp,javascript-typescript
+          build-mode: none
+          queries: security-extended
+      - name: Analyze code and upload SARIF
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /dvbstreamer5-security
+
+  osv:
+    name: OSV CVE scan of pinned and vendored dependencies
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.7.1
+    with:
+      scan-args: |-
+        --recursive
+        ./
+      fail-on-vuln: true
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  checks:
+    name: Malformed-input and shell integrity regression
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install minimal C++ header dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libboost-dev
+      - name: Compile and run policy emulator with UBSan/ASan
+        run: |
+          c++ -std=c++17 -O1 -g -UNDEBUG -Wall -Wextra \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -Isrc \
+            tests/test_http_security_v545.cpp -o /tmp/security-policy
+          ASAN_OPTIONS=detect_leaks=1 /tmp/security-policy
+          node tests/web/test_http_security_v545.js
+          node tests/web/test_cluster_edit_tls_v541.js
+          bash -n scripts/setup_cluster_tls.sh
+          bash -n scripts/dvbstreamer5_update.sh
