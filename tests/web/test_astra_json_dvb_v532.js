@@ -48,6 +48,7 @@ assert.ok(ui.includes("readForeignConfigText(mainFile, sourceKind)"));
 assert.ok(ui.includes("new TextDecoder('utf-8', {fatal:true})"));
 assert.ok(ui.includes("new TextDecoder('windows-1251', {fatal:true})"));
 assert.ok(ui.includes('id="streamTvgId"'));
+assert.ok(ui.includes("const channelId = attr(stream.tvg_id || stream.id || '')"));
 assert.ok(ui.includes("tvg_id: String(document.getElementById('streamTvgId')"));
 assert.ok(test.includes('frequency_khz=11785020'));
 assert.ok(test.includes('bandwidth_hz=7000000'));
