@@ -22,6 +22,10 @@ inline bool validDomain(const std::string& domain) {
     if(domain.size()<4 || domain.size()>253 ||
        domain.find('.')==std::string::npos ||
        domain.find("..")!=std::string::npos ||
+       domain.front()=='.' || domain.back()=='.' ||
+       std::all_of(domain.begin(),domain.end(),[](unsigned char c){
+           return (c>='0'&&c<='9')||c=='.';
+       }) ||
        domain.size()>=6 && domain.compare(domain.size()-6,6,".local")==0 ||
        domain.size()>=9 && domain.compare(domain.size()-9,9,".internal")==0)
         return false;
