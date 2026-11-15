@@ -10,6 +10,7 @@
 #include <regex>
 #include <string>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <vector>
 extern char **environ;
 
@@ -48,13 +49,38 @@ inline bool validEmail(const std::string& email){
     return email.size()>=6 && email.size()<=254 &&
         std::regex_match(email,safe);
 }
+inline bool safeRootOwnedPath(const std::filesystem::path& path){
+    // A privileged systemd worker must never execute modules from a writable
+    // user checkout, symlink or world/group-writable ancestor directory.
+    auto current=path;
+    while(!current.empty()){
+        struct stat info{};
+        if(::lstat(current.c_str(),&info)!=0 || info.st_uid!=0 ||
+           (info.st_mode & (S_IWGRP|S_IWOTH)) || S_ISLNK(info.st_mode))
+            return false;
+        if(current==current.root_path())break;
+        const auto parent=current.parent_path();
+        if(parent==current)break;
+        current=parent;
+    }
+    return true;
+}
 inline std::string scriptPath() {
     std::error_code ec;
     const auto portable=std::filesystem::current_path(ec)/"tls/manage.sh";
-    if(!ec && std::filesystem::is_regular_file(portable,ec))
+    if(!ec && std::filesystem::is_regular_file(portable,ec) &&
+       safeRootOwnedPath(portable) &&
+       safeRootOwnedPath(portable.parent_path()/"modules/common.sh") &&
+       safeRootOwnedPath(portable.parent_path()/"modules/selfsigned.sh") &&
+       safeRootOwnedPath(portable.parent_path()/"modules/letsencrypt.sh"))
         return portable.string();
-    if(std::filesystem::is_regular_file("/opt/DVBStreamer5/tls/manage.sh",ec))
-        return "/opt/DVBStreamer5/tls/manage.sh";
+    const std::filesystem::path installed("/opt/DVBStreamer5/tls/manage.sh");
+    if(std::filesystem::is_regular_file(installed,ec) &&
+       safeRootOwnedPath(installed) &&
+       safeRootOwnedPath(installed.parent_path()/"modules/common.sh") &&
+       safeRootOwnedPath(installed.parent_path()/"modules/selfsigned.sh") &&
+       safeRootOwnedPath(installed.parent_path()/"modules/letsencrypt.sh"))
+        return installed.string();
     return {};
 }
 inline Json::Value status(int backendPort){
