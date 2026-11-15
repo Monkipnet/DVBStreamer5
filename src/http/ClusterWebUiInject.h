@@ -16,6 +16,11 @@ inline std::string addClusterWebUi(std::string html) {
 <style>
 #clusterDashboard{margin:16px 0 28px}
 #clusterDashboard[hidden],#clusterDashboard [hidden]{display:none!important}
+.cluster-server-edit{flex:1;min-width:0;text-align:left;background:transparent;border:0;color:inherit;cursor:pointer;padding:8px}
+.cluster-server-spoiler{min-width:55px;align-self:stretch;background:transparent;border:0;border-left:1px solid rgba(125,209,255,.2);color:#7dd1ff;cursor:pointer;font-size:19px}
+.cluster-server-group[open] .cluster-server-spoiler{transform:none}
+.cluster-peersetting-edit{background:transparent;border:0;color:inherit;cursor:pointer;text-align:left;flex:1;min-width:0}
+.cluster-peersetting-edit small{display:block}
 .cluster-heading{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:700;color:#d9ebff;margin:0 0 10px}
 .cluster-heading button{margin-left:auto}
 .cluster-server-list{display:flex;flex-direction:column;gap:10px}
@@ -182,7 +187,22 @@ function renderClusterPeers(peers) {
       channels.filter(ch=>ch.active===true).length+'/'+channels.length+' '+
        clusterText('активно','active','aktivno') :
       clusterText('Нет связи','Offline','Nedostupno');
-    summary.append(name,indicator);
+    const editRow=document.createElement('button');
+    editRow.type='button';editRow.className='cluster-server-edit';
+    editRow.title=clusterText('Редактировать сервер','Edit server','Uredi poslužitelj');
+    editRow.append(name,indicator);
+    editRow.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();openClusterSettings(key);
+    });
+    const arrow=document.createElement('button');arrow.type='button';
+    arrow.className='cluster-server-spoiler';
+    arrow.textContent=details.open?'▲':'▼';
+    arrow.setAttribute('aria-label',clusterText('Развернуть или свернуть каналы',
+      'Expand or collapse channels','Proširi ili sažmi kanale'));
+    arrow.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();details.open=!details.open;
+    });
+    summary.append(editRow,arrow);
     const grid=document.createElement('div');
     grid.className='dvb-card-tiles cluster-server-tiles';
     if(online) {
@@ -217,6 +237,7 @@ function renderClusterPeers(peers) {
     details.append(summary,grid);
     details.addEventListener('toggle',()=>{
       if(tileSearchQuery)return;
+      arrow.textContent=details.open?'▲':'▼';
       clusterGroupOpen[key]=details.open;
       persistClusterOpen();
     });
@@ -237,15 +258,18 @@ async function refreshClusterStatus(force=false){
     .finally(()=>{clusterRequest=null;});
   return clusterRequest;
 }
-async function openClusterSettings(){
+let clusterEditingOriginalUrl='';
+async function openClusterSettings(selectedUrl=''){
   try{
     const data=await fetchJson('/api/cluster/config',{},8000);
     if(data.result!=='ok')throw Error(clusterError(data.error||clusterText('Настройки кластера недоступны','Cluster configuration unavailable','Konfiguracija klastera nije dostupna')));
     const peerRows=(data.peers||[]).map((peer,index)=>
-      '<div class="cluster-peersetting"><div><strong>'+escapeHtmlValue(peer.name)+
-      '</strong><small>'+escapeHtmlValue(peer.url)+(peer.viewer_url?' · '+escapeHtmlValue(peer.viewer_url):'')+'</small></div>'+
+      '<div class="cluster-peersetting"><button class="cluster-peersetting-edit" type="button" data-cluster-edit="'+index+'"><strong>'+escapeHtmlValue(peer.name)+
+      '</strong><small>'+escapeHtmlValue(peer.url)+(peer.viewer_url?' · '+escapeHtmlValue(peer.viewer_url):'')+'</small></button>'+
       '<button class="button-danger" type="button" data-cluster-remove="'+index+'">×</button></div>'
     ).join('');
+    const selected=(data.peers||[]).find(p=>p.url===selectedUrl);
+    clusterEditingOriginalUrl=selected?selected.url:'';
     openModal('<h2>'+clusterText('Кластер / Пиринг','Cluster / Peering','Klaster / Peering')+'</h2>'+
       '<p class="cluster-config-hint">'+clusterText(
       'Мониторинг серверов; отдельная маршрутизация новых HTTP/HLS-зрителей. Существующее вещание не переключается. Используйте WireGuard или HTTPS.',
@@ -259,19 +283,27 @@ async function openClusterSettings(){
       '<div id="clusterSettingsPeers">'+(peerRows||'<p class="cluster-config-hint">'+
         clusterText('Серверы пока не добавлены','No peers configured','Nema čvorova')+'</p>')+'</div>'+
       '<div class="cluster-config-form"><label>'+clusterText('Имя сервера','Server name','Naziv poslužitelja')+'</label>'+
-      '<input id="clusterPeerName" maxlength="80" placeholder="home2" autocomplete="off">'+
+      '<input id="clusterPeerName" maxlength="80" placeholder="home2" autocomplete="off" value="'+escapeHtmlValue(selected?.name||'')+'">'+
       '<label>'+clusterText('IP или домен с портом','IP or domain and port','IP ili domena i port')+'</label>'+
-      '<input id="clusterPeerUrl" maxlength="250" placeholder="http://10.8.0.2:9000" autocomplete="off">'+
+      '<input id="clusterPeerUrl" maxlength="250" placeholder="https://node.example.org:9000" autocomplete="off" value="'+escapeHtmlValue(selected?.url||'')+'">'+
       '<label>'+clusterText('Публичный адрес для зрителей (необязательно)','Viewer-facing address (optional)','Adresa za gledatelje (neobvezno)')+'</label>'+
-      '<input id="clusterPeerViewerUrl" maxlength="250" autocomplete="off" placeholder="https://edge.example.com:9000">'+
+      '<input id="clusterPeerViewerUrl" maxlength="250" autocomplete="off" placeholder="https://edge.example.com:9000" value="'+escapeHtmlValue(selected?.viewer_url||'')+'">'+
       '<p class="cluster-config-hint">'+clusterText(
       'Укажите HTTP(S)-адрес удалённого сервера, доступный зрителям. Если пусто, используется служебный адрес. Не указывайте /api или /cluster/watch.',
       'Set the remote media HTTP(S) origin reachable by viewers. If empty, the control URL is used. Do not include /api or /cluster/watch.',
       'Upišite adresu udaljenog HTTP(S) medijskog poslužitelja dostupnu gledateljima. Ako je prazna, koristi se adresa za nadzor.')+'</p>'+
       '<label>'+clusterText('Ключ удалённого сервера','Remote server token','Ključ udaljenog poslužitelja')+'</label>'+
       '<input id="clusterPeerToken" type="password" maxlength="64" autocomplete="new-password" placeholder="'+clusterText('64 шестнадцатеричных символа','64 hexadecimal digits','64 heksadekadske znamenke')+'">'+
+      '<p class="cluster-config-hint">'+(selected?clusterText(
+      'Редактирование выбранного сервера. Оставьте ключ пустым, чтобы сохранить существующий.',
+      'Editing selected server. Leave token empty to keep the existing one.',
+      'Uređivanje odabranog poslužitelja. Ostavite ključ praznim da zadržite postojeći.'
+      ):clusterText('Добавление сервера','Adding server','Dodavanje poslužitelja'))+'</p>'+
       '<button class="button-primary" type="button" onclick="addClusterPeer()">'+
-      clusterText('Добавить сервер','Add server','Dodaj poslužitelj')+'</button></div>'+
+      (selected?clusterText('Сохранить сервер','Save server','Spremi poslužitelj'):
+      clusterText('Добавить сервер','Add server','Dodaj poslužitelj'))+'</button>'+
+      (selected?'<button class="button-secondary" type="button" onclick="openClusterSettings()">'+
+      clusterText('Отмена редактирования','Cancel editing','Odustani od uređivanja')+'</button>':'')+'</div>'+
       '<h3>'+clusterText('Маршрутизация HTTP / HLS','HTTP / HLS routing','HTTP / HLS usmjeravanje')+'</h3>'+
       '<div class="cluster-config-form">'+
       '<label><input type="checkbox" id="clusterAutoFailover" '+(data.auto_failover?'checked':'')+'> '+
@@ -288,6 +320,9 @@ async function openClusterSettings(){
       'Vrijedi samo za /cluster/watch/ID.ts, /cluster/watch/ID.m3u8 i /api/cluster/route. Izravne adrese ostaju iste. Odredišni čvor provjerava pristup.')+'</p>'+
       '<button class="button-primary" type="button" onclick="saveClusterRouting()">'+
       clusterText('Сохранить маршрутизацию','Save routing','Spremi usmjeravanje')+'</button></div>');
+    document.querySelectorAll('[data-cluster-edit]').forEach(button=>{
+      button.addEventListener('click',()=>openClusterSettings(data.peers[Number(button.dataset.clusterEdit)]?.url));
+    });
     document.querySelectorAll('[data-cluster-remove]').forEach(button=>{
       button.addEventListener('click',()=>deleteClusterPeer(data.peers[Number(button.dataset.clusterRemove)]?.url));
     });
@@ -305,14 +340,15 @@ async function addClusterPeer(){
   const url=document.getElementById('clusterPeerUrl')?.value?.trim();
   const token=document.getElementById('clusterPeerToken')?.value?.trim();
   const viewer_url=document.getElementById('clusterPeerViewerUrl')?.value?.trim()||'';
-  if(!name||!url||!token){
+  if(!name||!url||(!token&&!clusterEditingOriginalUrl)){
     uiError(clusterText('Укажите имя, адрес и ключ','Enter name, URL and token','Unesite naziv, adresu i ključ'));
     return;
   }
   try{
     const data=await fetchJson('/api/cluster/add',{
       method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
-      body:JSON.stringify({name,url,token,viewer_url})
+      body:JSON.stringify({name,url,token,viewer_url,
+        ...(clusterEditingOriginalUrl?{original_url:clusterEditingOriginalUrl}:{})})
     },10000);
     if(data.result!=='ok')throw Error(clusterError(data.error||clusterText('Не удалось добавить сервер','Cannot add peer','Nije moguće dodati poslužitelj')));
     await openClusterSettings();await refreshClusterStatus(true);
