@@ -125,7 +125,8 @@ inline bool backendIdVisible(bool middlewareEnabled,const std::string& keyDigest
     return middlewareEnabled && isLowerHex(keyDigest);
 }
 inline bool inScope(const std::string& path,const std::string& method) {
-    return (path=="/api/stream-auth/sessions" && method=="GET") ||
+    return ((path=="/api/cluster/route" || path.rfind("/api/cluster/route?",0)==0) && method=="GET") ||
+           (path=="/api/stream-auth/sessions" && method=="GET") ||
            (path=="/api/stream-auth/sessions/disconnect" && method=="POST");
 }
 } // namespace dvbstreamer5::stream_auth::api_key
