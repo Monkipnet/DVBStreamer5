@@ -4998,7 +4998,7 @@ function downloadVlcPlaylist(streams = state.streams || []) {
       const suffix = links.length > 1 && link.output_type ? ` ${String(link.output_type).toUpperCase()}` : '';
       const name = String((stream.name || stream.id) + suffix).replace(/[\r\n]/g, ' ').trim();
       const attr = value => String(value ?? '').replace(/[\x00-\x1f"]/g, ' ');
-      const channelId = attr(stream.id || '');
+      const channelId = attr(stream.tvg_id || stream.id || '');
       const channelName = attr(stream.service_name || stream.name || stream.id);
       const sid = Number(stream.remap_enabled ? stream.service_id : stream.input_service_id);
       const sidAttr = Number.isInteger(sid) && sid > 0 && sid <= 65535 ? ` tvg-sid="${sid}"` : '';
