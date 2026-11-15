@@ -142,6 +142,13 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/dist/${APP}-${VERSION}-linux-x86_64}"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 
 install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_update.sh" "$STAGE/updater.sh"
+# TLS certificate modules are available from the web UI on an installed bundle.
+# No certificate/key or ACME account is ever copied into the portable archive.
+install -d -m 0755 "$STAGE/tls/modules"
+install -m 0755 "$PROJECT_ROOT/scripts/tls/manage.sh" "$STAGE/tls/manage.sh"
+for tls_module in common selfsigned letsencrypt; do
+    install -m 0644 "$PROJECT_ROOT/scripts/tls/modules/$tls_module.sh" "$STAGE/tls/modules/$tls_module.sh"
+done
 cp -a -- "$WEB_DIR/." "$STAGE/web/"
 
 mapfile -t PLUGINS < <(find "$BUILD_DIR" -type f -name 'dvbstreamer5-ca-*.so' -print 2>/dev/null | sort -u)
@@ -368,7 +375,7 @@ if [[ -d "$INSTALL_DIR/oscam-mini/config" ]]; then
 fi
 
 log "Installing application runtime under $INSTALL_DIR"
-for item in bin lib web ca-plugins etc run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
+for item in bin lib web ca-plugins etc tls run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
     [[ -e "$BUNDLE_DIR/$item" ]] || continue
     rm -rf -- "$INSTALL_DIR/$item"
     cp -a -- "$BUNDLE_DIR/$item" "$INSTALL_DIR/$item"
