@@ -1,4 +1,7 @@
 #include "media/T2miInnerTs.h"
+#ifdef NDEBUG
+#undef NDEBUG // Keep fixture assertions active in Release GitHub Actions.
+#endif
 #include <cassert>
 #include <cstdint>
 #include <vector>
@@ -10,7 +13,7 @@ static std::uint32_t crc32(const std::vector<std::uint8_t>& data){
     }
     return crc;
 }
-static std::vector<Packet> fixture(int plp,bool corrupt=false){
+static std::vector<Packet> fixture(int plp,bool corrupt=false,int firstCc=0){
     std::vector<std::uint8_t> payload(3+10+188,0);
     payload[1]=static_cast<std::uint8_t>(plp);
     std::uint8_t* bb=payload.data()+3;
@@ -33,13 +36,13 @@ static std::vector<Packet> fixture(int plp,bool corrupt=false){
     if(corrupt)mi[20]^=0x01;
     std::vector<Packet> packets;
     std::size_t p=0;
-    int cc=0;
+    int cc=firstCc;
     while(p<mi.size()){
         Packet ts{};ts.fill(0xff);
         ts[0]=0x47;ts[1]=0x10;ts[2]=0x00;
         const bool first=p==0;
         if(first)ts[1]|=0x40;
-        ts[3]=static_cast<std::uint8_t>(cc++);
+        ts[3]=static_cast<std::uint8_t>((cc++)&15);
         const std::size_t remain=mi.size()-p;
         const std::size_t dataCount=std::min<std::size_t>(remain,first?183:184);
         std::size_t at=4;
@@ -70,5 +73,47 @@ int main(){
     decoder.reset();result.clear();
     for(const auto& ts:fixture(7,true))decoder.feed(ts,result);
     assert(result.empty() && decoder.stats().crcErrors==1);
+
+    // Multiple simulated PLPs share a single continuous outer TS PID.
+    // Only PLP 7 may reach this decoder; PLP 8 must be observable but absent.
+    T2miInnerTs multiplex(4096,7,0);
+    result.clear();
+    int nextCc=0;
+    for(int frame=0;frame<20;++frame){
+        const int plp=frame%2==0 ? 8 : 7;
+        const auto packets=fixture(plp,false,nextCc);
+        nextCc=(nextCc+static_cast<int>(packets.size()))&15;
+        for(const auto& pkt:packets)multiplex.feed(pkt,result);
+    }
+    assert(result.size()==10);
+    assert(multiplex.stats().miPackets==20);
+    assert(multiplex.stats().bbframes==10);
+    assert(multiplex.stats().plpFrames[7]==10);
+    assert(multiplex.stats().plpFrames[8]==10);
+    assert(multiplex.stats().ccErrors==0);
+    for(const auto& pkt:result)assert(pkt[0]==0x47);
+
+    // Outer PID isolation: foreign packets never reach the extractor.
+    auto foreign=fixture(7);
+    for(auto& pkt:foreign)pkt[2]=0x01;
+    T2miInnerTs isolated(4096,7,0);
+    result.clear();
+    for(const auto& pkt:foreign)isolated.feed(pkt,result);
+    assert(isolated.stats().outerPackets==0 && result.empty());
+
+    // Emulated missing outer packet causes a CC gap: no partial TS output.
+    auto lost=fixture(7);
+    assert(lost.size()>=2);
+    lost[1][3]=static_cast<std::uint8_t>((lost[1][3]&0xf0)|9);
+    T2miInnerTs damaged(4096,7,0);
+    result.clear();
+    for(const auto& pkt:lost)damaged.feed(pkt,result);
+    assert(result.empty() && damaged.stats().ccErrors==1);
+
+    // Auto PLP discovery should lock to the first successfully decoded PLP.
+    T2miInnerTs automatic(4096,-1,0);
+    result.clear();
+    for(const auto& pkt:fixture(11))automatic.feed(pkt,result);
+    assert(automatic.activePlp()==11 && result.size()==1);
     return 0;
 }
