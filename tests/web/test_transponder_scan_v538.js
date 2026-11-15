@@ -90,6 +90,8 @@ function simulator(options={}){
      }
      if(url==='/api/state'){
        statePolls++;
+       if(options.stateTimeoutOnce && statePolls===1)
+         throw Error('Request timeout: /api/state');
        if(!options.stuck && statePolls>=2){
          for(const stream of streams)
            if(['sat-1','sat-2'].includes(stream.id))
@@ -142,6 +144,11 @@ async function main(){
  assert.equal(yes.opened[0].group_key,groupKey);
  assert.deepEqual([...yes.opened[0].stream_ids],['sat-1','sat-2','sat-3']);
  assert.ok(yes.polls().state>=2&&yes.polls().frontend>=2);
+ const transient=simulator({stateTimeoutOnce:true});
+ assert.equal(await transient.context.beginTransponderGroupScan(groupKey),true);
+ assert.equal(transient.opened.length,1);
+ assert.equal(transient.errors.length,0);
+ assert.ok(transient.polls().state>=3);
  const cancel=simulator({confirm:false,language:'en'});
  assert.equal(await cancel.context.beginTransponderGroupScan(groupKey),false);
  assert.equal(cancel.requests.length,0);
