@@ -36,9 +36,9 @@ for(const label of [
  'Traži kanal, uređaj, IP, domenu ili podmrežu',
  'Очистить поиск','Clear search','Očisti pretragu',
  'Каналы не найдены','No matching channels','Nema pronađenih kanala',
- 'Остановить плитки и открыть сканирование',
- 'Stop tiles and open scanning',
- 'Zaustavi pločice i otvori skeniranje',
+ 'Редактировать транспондер после остановки каналов',
+ 'Edit transponder after stopping channels',
+ 'Uredi transponder nakon zaustavljanja kanala',
  'Вещание этих каналов прервётся.',
  'Their broadcast will be interrupted.',
  'Emitiranje će se prekinuti.'
