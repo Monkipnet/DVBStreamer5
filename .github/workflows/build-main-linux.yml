@@ -46,6 +46,15 @@ jobs:
           /tmp/dvbstreamer5-t2mi-emulator
           echo "PASS: emulated T2-MI BBFRAME, PLP selection, CRC and continuity"
 
+      - name: Emulate malformed HTTP requests, throttling, CSRF and trusted reverse proxy
+        run: |
+          sudo apt-get install -y --no-install-recommends libboost-dev
+          c++ -std=c++17 -O1 -g -UNDEBUG -Wall -Wextra -fsanitize=address,undefined \
+            -fno-omit-frame-pointer -Isrc tests/test_http_security_v545.cpp \
+            -o /tmp/dvbstreamer5-security-v545
+          ASAN_OPTIONS=detect_leaks=1 /tmp/dvbstreamer5-security-v545
+          node tests/web/test_http_security_v545.js
+
       - name: Verify dashboard channel search including devices domains and CIDR
         run: node tests/web/test_tile_search_v535.js
 
