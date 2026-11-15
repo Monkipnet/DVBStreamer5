@@ -54,27 +54,27 @@ le_enable() {
   [[ "$BACKEND_PORT" != "$HTTPS_PORT" && "$HTTPS_PORT" != 80 ]] || die_tls invalid_ports
   nginx_preflight "$HTTPS_PORT"
   require_command openssl
-  if ! command -v certbot >/dev/null 2>&1; then
-    status running letsencrypt installing_certbot true none
-    if command -v apt-get >/dev/null 2>&1; then
-      DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot ||
-        die_tls certbot_install_failed
-    else
-      die_tls certbot_unavailable
-    fi
-  fi
+  # Establish fallback HTTPS and the daily retry timer before installing
+  # Certbot. Even missing OS packages must not leave the server without TLS.
+  le_bootstrap
+  nginx_managed_proxy "$DOMAIN" "$BACKEND_PORT" "$HTTPS_PORT" true
   # Renewals use this root-only file. No user-controlled paths or commands.
   printf 'DOMAIN=%q\nEMAIL=%q\nBACKEND_PORT=%q\nHTTPS_PORT=%q\n' \
-    "$DOMAIN" "$EMAIL" "$BACKEND_PORT" "$HTTPS_PORT" >"$SETTINGS.tmp.$$"
-  chmod 0600 "$SETTINGS.tmp.$$"
-  mv -f "$SETTINGS.tmp.$$" "$SETTINGS"
-  status running letsencrypt requesting true none
-  le_bootstrap
-  # Create ACME-only HTTP-01 route. Certificate requests must not be proxied.
-  nginx_managed_proxy "$DOMAIN" "$BACKEND_PORT" "$HTTPS_PORT" true
+    "$DOMAIN" "$EMAIL" "$BACKEND_PORT" "$HTTPS_PORT" >"$SETTINGS.tmp.$"
+  chmod 0600 "$SETTINGS.tmp.$"
+  mv -f "$SETTINGS.tmp.$" "$SETTINGS"
   le_timer
   AUTO_RENEW=true
+  if ! command -v certbot >/dev/null 2>&1; then
+    status running letsencrypt installing_certbot true fallback
+    if ! command -v apt-get >/dev/null 2>&1 ||
+       ! { DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot; }; then
+      status warning letsencrypt certbot_unavailable_retry_scheduled true fallback
+      return 0
+    fi
+  fi
+  status running letsencrypt requesting true none
   if certbot certonly --config-dir "$ACME_CONFIG" --work-dir "$ACME_WORK" \
        --logs-dir "$ACME_LOG" --webroot -w "$ACME_ROOT" -d "$DOMAIN" \
        --non-interactive --agree-tos --email "$EMAIL" \
