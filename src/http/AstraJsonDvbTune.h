@@ -4,6 +4,7 @@
 // No CAM secrets, foreign panel/users or system settings are imported.
 #include <jsoncpp/json/json.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
