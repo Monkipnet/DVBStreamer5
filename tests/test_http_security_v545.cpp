@@ -17,8 +17,10 @@ int main(){
     assert(maxRequestBodyBytes("/api/state","GET")==16U*1024U);
     assert(maxRequestBodyBytes("/api/panel/login","POST")==4096U);
     assert(maxRequestBodyBytes("/api/save-config","POST")==1024U*1024U);
-    assert(maxRequestBodyBytes("/api/config/import","POST")==16U*1024U*1024U);
-    assert(maxRequestBodyBytes("/api/upload-backup-file?filename=x","POST")==64U*1024U*1024U);
+    assert(maxRequestBodyBytes("/api/config/import","POST")==4096U);
+    assert(maxRequestBodyBytes("/api/config/import","POST",true)==16U*1024U*1024U);
+    assert(maxRequestBodyBytes("/api/upload-backup-file?filename=x","POST")==4096U);
+    assert(maxRequestBodyBytes("/api/upload-backup-file?filename=x","POST",true)==512U*1024U*1024U);
     assert(validSameOrigin("https://blumen.zapto.org:9443","blumen.zapto.org:9443"));
     assert(validSameOrigin("http://192.168.1.22:9000","192.168.1.22:9000"));
     assert(!validSameOrigin("https://blumen.zapto.org.evil:9443","blumen.zapto.org:9443"));
