@@ -6950,13 +6950,48 @@ async function mptsActionByIndex(index, action) {
 }
 function openNetworkModal() {
   document.getElementById('modalContent').className = 'modal-content network-modal';
+  const secureProxyText=(ru,en,hr)=>language==='ru'?ru:language==='hr'?hr:en;
   document.getElementById('modalContent').innerHTML = modalCloseButton() + `
     <h2>${t('networkLoad')}</h2>
     <table class="network-table"><thead><tr><th>${t('interface')}</th><th>${t('incoming')}</th><th>${t('outgoing')}</th><th>${t('udpInputFilter')}</th></tr></thead><tbody id="networkTableBody"></tbody></table>
+    <div style="margin:14px 0;padding:12px;border:1px solid var(--border-color,#53657b);border-radius:10px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" id="trustLocalProxyRealIp" style="width:18px;height:18px;margin:0;flex:none" onchange="saveTrustedProxySetting(this)">
+        <span>${secureProxyText('Доверять реальному IP от локального HTTPS-прокси',
+          'Trust real client IP from local HTTPS proxy',
+          'Vjeruj stvarnoj IP adresi iz lokalnog HTTPS proxyja')}</span>
+      </label>
+      <p style="font-size:12px;line-height:1.5;opacity:.82">
+        ${secureProxyText('По умолчанию выключено. При включении используется только X-Real-IP от 127.0.0.1 или ::1. Прямые клиенты не могут подменить IP заголовком. Неверная конфигурация прокси может нарушить IP-фильтрацию.',
+          'Off by default. Only X-Real-IP from 127.0.0.1 or ::1 is trusted. Direct clients cannot spoof their IP using headers. Misconfigured proxies may disrupt IP filtering.',
+          'Zadano isključeno. Vjeruje se samo X-Real-IP s 127.0.0.1 ili ::1. Izravni klijenti ne mogu lažirati IP zaglavljem. Pogrešna konfiguracija proxyja može ometati IP filtriranje.')}
+      </p>
+    </div>
     <div class="modal-actions"><button class="button-secondary" onclick="closeNetworkModal()">${t('close')}</button></div>
   `;
   document.getElementById('modal').classList.add('active');
   fetchSystemMetrics();
+  fetchJson('/api/security/proxy',{},8000).then(result=>{
+    const input=document.getElementById('trustLocalProxyRealIp');
+    if(input)input.checked=result.trust_local_proxy_real_ip===true;
+  }).catch(error=>console.warn('Proxy security settings:',error));
+}
+async function saveTrustedProxySetting(control){
+  if(!control||control.disabled)return;
+  const desired=control.checked;
+  control.disabled=true;
+  try{
+    const result=await fetchJson('/api/security/proxy',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
+      body:JSON.stringify({trust_local_proxy_real_ip:desired})
+    },10000);
+    if(result.result!=='ok')throw Error(result.error||'Cannot save proxy settings');
+    control.checked=result.trust_local_proxy_real_ip===true;
+  }catch(error){
+    control.checked=!desired;
+    uiError(error.message||String(error));
+  }finally{control.disabled=false;}
 }
 function closeNetworkModal() {
   closeModal();
