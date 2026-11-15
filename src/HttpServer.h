@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "ConfigManager.h"
+#include "http/HttpSecurityPolicy.h"
 #include "StreamManager.h"
 
 using tcp = boost::asio::ip::tcp;
@@ -59,6 +60,8 @@ private:
     bool isAuthorized(const http::request<http::string_body>& req) const;
     bool isPanelSessionAuthorized(const http::request<http::string_body>& req) const;
     std::string createPanelSession();
+    std::string clientIpForRequest(const tcp::socket& socket,
+                                  const http::request<http::string_body>& req) const;
     void revokePanelSession(const http::request<http::string_body>& req);
     bool isStreamClientAllowed(const tcp::socket& socket, const std::string& target,
                                const http::request<http::string_body>& request) const;
@@ -89,10 +92,12 @@ private:
     std::string handleDvbTune(const std::string& body, bool scan);
     std::string handleDvbAddChannels(const std::string& body);
     std::string handleDvbTransponderEdit(const std::string& body);
-    bool handleHttpStream(tcp::socket& socket, const std::string& target);
+    bool handleHttpStream(tcp::socket& socket, const std::string& target,
+                          const std::string& effectiveClientIp = {});
     bool serveHlsFile(const tcp::socket& socket, const std::string& target,
                       http::response<http::string_body>& res,
-                      std::filesystem::path* directFile = nullptr);
+                      std::filesystem::path* directFile = nullptr,
+                      const std::string& effectiveClientIp = {});
     std::string handleConfigExport(const std::string& body = {});
     std::string handleConfigImport(const std::string& body);
     std::string handleSaveConfig(const std::string& body);
@@ -145,6 +150,7 @@ private:
     std::mutex metricsMutex;
     // Explicit login sessions make Logout work even when a browser caches Basic Auth.
     mutable std::mutex panelSessionsMutex_;
+    dvbstreamer5::http_security::LoginThrottle panelLoginThrottle_;
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         panelSessions_;
     const int64_t systemLoadHistoryStartEpoch_ =
