@@ -36,7 +36,7 @@ for(const fragment of [
   'Astra JSON invalid satellite symbol rate skipped',
   'Astra JSON invalid DVB frequency skipped',
   'Astra JSON DVB tuner reference missing',
-  '"bandwidth_hz="<<bandwidth',
+  '"&bandwidth_hz="<<bandwidth',
   '"&delivery_system=dvb-"<<type',
   '"&stream_id="<<plp',
   'Astra JSON nonempty Unicable setting needs manual mapping'
