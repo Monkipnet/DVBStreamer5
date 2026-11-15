@@ -52,6 +52,12 @@ jobs:
       - name: Emulate cluster peers and MPEG-TS channels with RU EN HR spoilers
         run: node tests/web/test_cluster_peering_v536.js
 
+      - name: Verify interserver viewer routing middleware API and local auth invariants
+        run: |
+          node tests/web/test_cluster_routing_v537.js
+          c++ -std=c++17 -Wall -Wextra -UNDEBUG -Isrc tests/test_cluster_routing_v537.cpp -o /tmp/dvbstreamer5-cluster-router
+          /tmp/dvbstreamer5-cluster-router
+
       # A GitHub-hosted runner starts with an empty workspace. Restore safe
       # compiler results, not stale installed binaries. ccache verifies source
       # bytes, compiler flags, toolchain and included headers on each hit.
@@ -213,7 +219,8 @@ jobs:
             dvbstreamer5_biss2_test \
             dvbstreamer5_external_config_transfer_test \
             dvbstreamer5_t2mi_test \
-            dvbstreamer5_cluster_test
+            dvbstreamer5_cluster_test \
+            dvbstreamer5_cluster_routing_test
           # Synthetic on-wire T2-MI: outer PID, BBFRAME, PLP isolation,
           # CRC/continuity faults and recovered inner transport.
           ctest --test-dir build-main-ci -R t2mi_inner_ts --output-on-failure
