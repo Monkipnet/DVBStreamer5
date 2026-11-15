@@ -804,6 +804,7 @@ Json::Value AppConfig::toJson() const {
     root["password"] = password;
     root["server_name"] = serverName;
     root["http_port"] = httpPort;
+    root["trust_local_proxy_real_ip"] = trustLocalProxyRealIp;
     root["language"] = language;
     root["stream_auth_backend_enabled"] = streamAuthBackendEnabled;
     root["stream_auth_backend_url"] = streamAuthBackendUrl;
@@ -845,6 +846,7 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
     config.password = root.get("password", "admin").asString();
     config.serverName = root.get("server_name", "DVBStreamer5").asString();
     config.httpPort = root.get("http_port", 9000).asInt();
+    config.trustLocalProxyRealIp = root.get("trust_local_proxy_real_ip", false).asBool();
     config.language = root.get("language", "en").asString();
     config.streamAuthBackendEnabled = root.get("stream_auth_backend_enabled", false).asBool();
     config.streamAuthBackendUrl = root.get("stream_auth_backend_url", "").asString();
