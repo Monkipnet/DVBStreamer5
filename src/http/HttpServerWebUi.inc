@@ -3723,6 +3723,7 @@ let satelliteDiscoverCancel = false;
 let satelliteTuneGeneration = 0;
 let satelliteServices = [];
 let satelliteLastScan = null;
+let transponderScanPreparing = false;
 let dvbAdapters = [];
 let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSourceSupported:false};
 let camClientsLoaded = false;
@@ -8053,7 +8054,7 @@ function satelliteDeliveryChanged() {
   }
   if (label) label.textContent = terrestrial ? 'PLP ID (DVB-T2)' : 'ISI / Stream ID';
   resetSatelliteServicesForTuneChange();
-  updateSatelliteSignal();
+  if(!transponderScanPreparing)updateSatelliteSignal();
 }
 function setDvbReceptionMode(resetFrequency=true) {
   const terrestrial = dvbReceptionIsTerrestrial();
@@ -8230,7 +8231,7 @@ function scheduleSatelliteSignalPolling() {
   satelliteSignalTimer = setInterval(updateSatelliteSignal, 2500);
   updateSatelliteSignal();
 }
-async function loadSatelliteAdapters() {
+async function loadSatelliteAdapters(suppressInitialSignal=false) {
   const info = document.getElementById('satDeviceInfo');
   try {
     const response = await fetch('/api/dvb-adapters', {cache:'no-store'});
@@ -8265,7 +8266,7 @@ async function loadSatelliteAdapters() {
     refreshSatelliteAdapterOptions(preferredAdapter, preferredFrontend);
     applySelectedDvbFrontendTuneToForm();
     updateSatelliteDeviceInfo();
-    updateSatelliteSignal();
+    if(!suppressInitialSignal)updateSatelliteSignal();
   } catch (error) {
     dvbAdapters = [];
     refreshSatelliteAdapterOptions();
@@ -8626,7 +8627,49 @@ async function saveSelectedSatelliteChannels() {
     if (saveButton) saveButton.disabled = false;
   }
 }
-function openAddChannelModal() {
+// V538: prepopulate the existing satellite scanner from the selected TP.
+// This is deliberately separate from starting a scan: only the operator can
+// click the existing "Scan channels" button after reviewing parameters.
+function applyTransponderScanTune(tune) {
+  if(!tune)return false;
+  const adapter=dvbAdapters.find(d=>Number(d.adapter)===tune.adapter &&
+    Number(d.frontend)===tune.frontend);
+  if(!adapter || adapter.external_in_use===true ||
+     adapter.frontend_active===true)return false;
+  const adapterSelect=document.getElementById('satAdapter');
+  const frontendSelect=document.getElementById('satFrontend');
+  if(!adapterSelect || !frontendSelect)return false;
+  adapterSelect.value=String(tune.adapter);
+  refreshSatelliteFrontendOptions(tune.frontend);
+  if(Number(frontendSelect.value)!==tune.frontend)return false;
+  const setValue=(name,value)=>{
+    const field=document.getElementById(name);
+    if(field && value!==null && value!==undefined &&
+       (!Number.isNaN(value)) && value!=='')field.value=String(value);
+  };
+  setValue('satName',tune.satellite_name);
+  setValue('satFrequency',tune.frequency_mhz);
+  setValue('satSymbolRate',tune.symbol_rate);
+  setValue('satPolarity',tune.polarity);
+  setValue('satDeliverySystem',tune.delivery_system);
+  setValue('satModulation',tune.modulation);
+  setValue('satFec',tune.fec);
+  setValue('satDiseqc',tune.diseqc_source);
+  setValue('satStreamId',tune.stream_id);
+  setValue('satUnicableMode',tune.unicable_mode);
+  setValue('satUnicableUserBand',tune.unicable_user_band);
+  setValue('satUnicableFrequency',tune.unicable_frequency_mhz);
+  setValue('satUnicablePosition',tune.unicable_position);
+  setValue('satUnicablePin',tune.unicable_pin);
+  setValue('satLof1',tune.lnb_lof1_mhz);
+  setValue('satLof2',tune.lnb_lof2_mhz);
+  setValue('satSlof',tune.lnb_slof_mhz);
+  updateSatelliteUnicableUi(false);
+  updateSatelliteDeviceInfo();
+  return true;
+}
+
+function openAddChannelModal(initialTransponderTune=null) {
   satelliteServices = [];
   openModal(`
     <h2 id="satAddTitle">${subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
@@ -8711,11 +8754,29 @@ function openAddChannelModal() {
   document.getElementById('modalContent').classList.add('satellite-modal');
   updateHeaderHeight();
   document.getElementById('modal').classList.add('satellite-open');
+  // Do not probe the default adapter while the selected transponder is
+  // waiting for adapter metadata and form tuning parameters.
+  transponderScanPreparing=!!initialTransponderTune;
   setDvbReceptionMode(false);
   updateSatelliteUnicableUi(false);
-  loadSatelliteAdapters();
   updateSatelliteOutputHints(false);
-  scheduleSatelliteSignalPolling();
+  if(initialTransponderTune){
+    loadSatelliteAdapters(true).then(()=>{
+      if(!document.getElementById('satFrequency'))return; // Modal closed.
+      if(!applyTransponderScanTune(initialTransponderTune)){
+        uiError(subtitleUiTriText(
+          'Невозможно выбрать тюнер транспондера для сканирования',
+          'Cannot select the transponder frontend for scanning',
+          'Nije moguće odabrati tuner transpondera za skeniranje'));
+        return;
+      }
+      scheduleSatelliteSignalPolling();
+    }).catch(error=>uiError(error?.message||String(error)))
+      .finally(()=>{transponderScanPreparing=false;});
+  }else{
+    loadSatelliteAdapters();
+    scheduleSatelliteSignalPolling();
+  }
 }
 
 function openStreamModal() {
