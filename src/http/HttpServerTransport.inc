@@ -182,17 +182,35 @@ void HttpServer::scheduleHlsKeepAlive(
 void HttpServer::handleSession(
     tcp::socket socket,std::shared_ptr<boost::beast::flat_buffer> buffered,
     unsigned hlsRequests) {
-    // Requests are processed by a bounded synchronous worker pool. The
-    // TCP receive timeout applies only after epoll/asio signalled readability.
-    if(hlsRequests>0){
-        struct timeval partialRequestTimeout{1,0};
-        ::setsockopt(socket.native_handle(),SOL_SOCKET,SO_RCVTIMEO,
-                     &partialRequestTimeout,sizeof(partialRequestTimeout));
-    }
+    // Protect all workers, including first-time connections, from slow
+    // headers and drip-fed bodies. Use both a per-read and an absolute timeout.
+    struct timeval receiveTimeout{hlsRequests>0 ? 1L : 2L,0};
+    ::setsockopt(socket.native_handle(),SOL_SOCKET,SO_RCVTIMEO,
+                 &receiveTimeout,sizeof(receiveTimeout));
     try {
         http::request_parser<http::string_body> parser;
-        parser.body_limit(512ULL * 1024ULL * 1024ULL);
-        http::read(socket,*buffered,parser);
+        parser.header_limit(16U*1024U);
+        parser.body_limit(64ULL*1024ULL*1024ULL); // provisional upper bound
+        parser.eager(false);
+        const auto started=std::chrono::steady_clock::now();
+        while(!parser.is_header_done()){
+            if(std::chrono::steady_clock::now()-started>std::chrono::seconds(8))
+                throw std::runtime_error("HTTP header deadline exceeded");
+            http::read_some(socket,*buffered,parser);
+        }
+        const std::string requestPath(parser.get().target());
+        const std::string requestMethod=std::string(parser.get().method_string());
+        const auto maxBody=dvbstreamer5::http_security::maxRequestBodyBytes(
+            requestPath,requestMethod);
+        parser.body_limit(maxBody);
+        parser.eager(true);
+        const auto bodyDeadline=started+std::chrono::seconds(
+            requestPath.rfind("/api/upload-backup-file",0)==0 ? 60 : 15);
+        while(!parser.is_done()){
+            if(std::chrono::steady_clock::now()>bodyDeadline)
+                throw std::runtime_error("HTTP body deadline exceeded");
+            http::read_some(socket,*buffered,parser);
+        }
         http::request<http::string_body> req = parser.release();
         http::response<http::string_body> res{http::status::ok, req.version()};
         res.set(http::field::server, "DVBStreamer5");
