@@ -9,6 +9,29 @@ source "$HERE/modules/common.sh"
 for cmd in flock openssl systemctl; do require_command "$cmd"; done
 exec 9>/run/lock/dvbstreamer5-tls.lock
 flock -n 9 || { echo "Another certificate operation is active" >&2; exit 3; }
+# Capture the last live pair before any module changes links. A failed
+# Nginx restart/configuration restores the previous certificate on disk too.
+PREVIOUS_CERT="$(readlink "$TLS_DIR/active.crt" 2>/dev/null || true)"
+PREVIOUS_KEY="$(readlink "$TLS_DIR/active.key" 2>/dev/null || true)"
+restore_certificate_on_failure() {
+  local code=$?
+  if (( code != 0 )); then
+    if [[ -n "$PREVIOUS_CERT" ]]; then
+      ln -sfn "$PREVIOUS_CERT" "$TLS_DIR/active.crt"
+    elif [[ -L "$TLS_DIR/active.crt" ]]; then
+      rm -f "$TLS_DIR/active.crt"
+    fi
+    if [[ -n "$PREVIOUS_KEY" ]]; then
+      ln -sfn "$PREVIOUS_KEY" "$TLS_DIR/active.key"
+    elif [[ -L "$TLS_DIR/active.key" ]]; then
+      rm -f "$TLS_DIR/active.key"
+    fi
+    if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx >/dev/null 2>&1 || true
+    fi
+  fi
+}
+trap restore_certificate_on_failure EXIT
 ACTION="${1:-}"
 MODE=none AUTO_RENEW=false ISSUER=none
 case "$ACTION" in
