@@ -401,8 +401,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.insert(http::field::set_cookie,
                         "dvbstreamer5_panel_session=" + token +
                         "; Path=/; Max-Age=43200; HttpOnly; SameSite=Strict" +
-                        ((configManager.config.trustLocalProxyRealIp &&
-                          [&]{
+                        (([&]{
                             boost::system::error_code epEc;
                             const auto peer=socket.remote_endpoint(epEc);
                             const auto proto=req.find("X-Forwarded-Proto");
