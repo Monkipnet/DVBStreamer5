@@ -7095,7 +7095,7 @@ async function refreshManagedTlsStatus(){
     const selfButton=document.getElementById('tlsSelfSignedButton');
     if(checkbox)checkbox.disabled=!data.module_installed;
     if(selfButton)selfButton.disabled=!data.module_installed;
-    if(checkbox && !checkbox.dataset.pending)checkbox.checked=data.auto_renew===true;
+    if(checkbox && !checkbox.dataset.pending && data.phase!=='running')checkbox.checked=data.auto_renew===true;
     if(data.domain && !document.getElementById('tlsManagedDomain').value)
       document.getElementById('tlsManagedDomain').value=data.domain;
     label.textContent=(data.module_installed
