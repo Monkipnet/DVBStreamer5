@@ -443,6 +443,14 @@ target_link_libraries(dvbstreamer5_external_config_transfer_test PRIVATE
 add_test(NAME external_config_transfer
     COMMAND dvbstreamer5_external_config_transfer_test)
 
+# V536: secure peer storage and virtual cluster identity, no hardware required.
+add_executable(dvbstreamer5_cluster_test tests/test_cluster_peering_v536.cpp)
+target_include_directories(dvbstreamer5_cluster_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(dvbstreamer5_cluster_test PRIVATE
+    dvbstreamer5_jsoncpp OpenSSL::Crypto)
+add_test(NAME cluster_peer_storage COMMAND dvbstreamer5_cluster_test)
+
 # V534: packet-level T2-MI PID, CRC and BBFRAME inner TS recovery.
 add_executable(dvbstreamer5_t2mi_test tests/test_t2mi_inner_ts.cpp)
 target_include_directories(dvbstreamer5_t2mi_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
