@@ -19,7 +19,7 @@ assert.ok(web.includes("heading.dataset.tpScanTitle='1'"));
 assert.ok(web.includes("editRow.addEventListener('click'"));
 assert.ok(web.includes("editRow.dataset.tpEditRow='1'"));
 assert.ok(web.includes("summary.append(editRow,spoilerSpace)"));
-assert.ok(web.includes(".tp-edit-subgroup[open] .tp-spoiler-space:after{content:\"▲\";"));
+assert.ok(web.includes(".tp-edit-subgroup[open] .tp-spoiler-space:after{content:\"▲\""));
 assert.ok(web.includes(".tp-spoiler-space:after{content:\"▼\";"));
 assert.ok(web.includes("editRow.type='button'"));
 assert.ok(web.includes("event.preventDefault();"));
