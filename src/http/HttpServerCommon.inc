@@ -224,7 +224,14 @@ std::string cleanHlsRelativePath(const std::string& value) {
 }
 
 std::string hlsPublicName(const StreamConfig& cfg) {
-    const std::string raw = !cfg.name.empty() ? cfg.name : (!cfg.serviceName.empty() ? cfg.serviceName : cfg.id);
+    // V532: Astra JSON files may contain different services whose names
+    // normalize to the SAME ASCII URL slug (including all-Cyrillic names).
+    // Import allocates a unique internal ID; use it for the HTTP/HLS path
+    // without changing the human-readable tile name or Astra tvg-id.
+    const bool importedAstra = cfg.id.rfind("migration_astra_", 0) == 0 &&
+        !cfg.tvgId.empty();
+    const std::string raw = importedAstra ? cfg.id :
+        (!cfg.name.empty() ? cfg.name : (!cfg.serviceName.empty() ? cfg.serviceName : cfg.id));
     std::string result;
     result.reserve(raw.size());
     bool underscore = false;
