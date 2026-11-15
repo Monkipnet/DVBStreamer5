@@ -49,6 +49,9 @@ jobs:
       - name: Verify dashboard channel search including devices domains and CIDR
         run: node tests/web/test_tile_search_v535.js
 
+      - name: Emulate DVB-S2 transponder stop and scan with translated header search
+        run: node tests/web/test_transponder_scan_v538.js
+
       - name: Emulate cluster peers and MPEG-TS channels with RU EN HR spoilers
         run: node tests/web/test_cluster_peering_v536.js
 
