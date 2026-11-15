@@ -150,6 +150,10 @@ html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
 .input-subgroup .dvb-card-meters{flex:none;max-width:48vw}
 @media(max-width:700px){.input-subgroup>summary{flex-wrap:wrap}.input-subgroup-title{flex-basis:100%}.input-subgroup .dvb-card-meters{max-width:100%}}
 .input-subgroup-title{font-size:.78rem;font-weight:700;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;text-align:left}
+.input-subgroup-title[data-tp-scan-title]{cursor:pointer;border-radius:5px;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:4px}
+.input-subgroup-title[data-tp-scan-title]:hover{color:#79cfff;text-decoration-style:solid}
+.input-subgroup-title[data-tp-scan-title]:focus-visible{outline:2px solid #5dbdff;outline-offset:3px}
+.input-subgroup-title[data-tp-scan-title][aria-disabled="true"]{opacity:.6;cursor:progress}
 .input-subgroup-count{font-size:.72rem;flex:none;color:#9fe7b3;font-variant-numeric:tabular-nums}
 .input-subgroup-tiles{padding:10px;border-top:1px solid rgba(255,255,255,.07)}
 .non-dvb-tile-group{border-color:rgba(255,255,255,.09);padding:10px 12px 12px}
@@ -926,7 +930,9 @@ html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-
 </header>
 <div class="container">
 <div id="tiles" class="tile-grid"></div>
-<div id="tileSearchEmpty" role="status" aria-live="polite" hidden></div>
+<div id="tileSearchEmpty" role="status" aria-live="polite" hidden
+     data-ui-ru="Каналы не найдены" data-ui-en="No matching channels"
+     data-ui-hr="Nema pronađenih kanala">Каналы не найдены</div>
 <div id="modal" class="modal">
 <div class="modal-content" id="modalContent"></div>
 </div>
@@ -3602,9 +3608,12 @@ function applyLanguage() {
     'Search channel, device, IP, domain or subnet';
   const clearLabel=language==='ru'?'Очистить поиск':
     language==='hr'?'Očisti pretragu':'Clear search';
-  if(searchInput)searchInput.setAttribute('aria-label',searchLabel);
+  if(searchInput){searchInput.setAttribute('aria-label',searchLabel);searchInput.placeholder=searchLabel;}
   if(searchBox)searchBox.setAttribute('aria-label',searchLabel);
   if(searchClear){searchClear.setAttribute('aria-label',clearLabel);searchClear.title=clearLabel;}
+  const searchEmpty=document.getElementById('tileSearchEmpty');
+  if(searchEmpty)searchEmpty.textContent=language==='ru'?'Каналы не найдены':
+    language==='hr'?'Nema pronađenih kanala':'No matching channels';
   // Apply the theme label last so new bilingual controls are localized too.
   updateDashboardThemeButton();
 }
@@ -5445,6 +5454,162 @@ function sortNetworkInputStreams(streams) {
   });
   return keyed.map(item=>item.stream);
 }
+// V538 TRANSPONDER SCAN ACTION BEGIN
+let transponderGroupScanBusy=false;
+function findTransponderGroupForScan(key,streams) {
+  if(typeof key!=='string'||!key.startsWith('tp:'))return null;
+  const cards=makeDvbCardGroups(streams||[]).cards;
+  for(const card of cards){
+    const grouped=makeSatelliteTransponderGroups(card.streams);
+    for(const tp of grouped.transponders){
+      if('tp:'+card.key+':'+tp.key===key)
+        return tp;
+    }
+  }
+  return null;
+}
+function transponderScanTuneFromStream(stream) {
+  const info=streamSatelliteTransponderInfo(stream);
+  if(!info||info.key.startsWith('unconfigured:'))return null;
+  const raw=String(stream.input_uri||'');
+  const question=raw.indexOf('?');
+  const params=new URLSearchParams(question<0?'':raw.slice(question+1));
+  const adapter=Number(stream.dvb_adapter),frontend=Number(stream.dvb_frontend);
+  const frequency=Number(params.get('frequency_khz'));
+  const symbolRate=Number(params.get('symbol_rate'));
+  const polarity=String(params.get('polarity')||'').toUpperCase();
+  if(!Number.isInteger(adapter)||adapter<0||!Number.isInteger(frontend)||frontend<0||
+     !Number.isInteger(frequency)||frequency<900000||frequency>14000000||
+     !Number.isFinite(symbolRate)||symbolRate<100||symbolRate>60000||
+     !/^[HV]$/.test(polarity))return null;
+  const numberField=(key,fallback)=> {
+    const value=params.get(key);
+    return value===null?fallback:Number(value);
+  };
+  return {
+    adapter,frontend,frequency_mhz:frequency/1000,symbol_rate:symbolRate,polarity,
+    delivery_system:params.get('delivery_system')||'dvb-s2',
+    modulation:params.get('modulation')||'auto',
+    fec:params.get('fec')||'auto',
+    stream_id:numberField('stream_id',Number(stream.dvb_stream_id??-1)),
+    diseqc_source:numberField('diseqc_source',Number(stream.dvb_diseqc_source??-1)),
+    unicable_mode:params.get('unicable_mode')||stream.dvb_unicable_mode||'none',
+    unicable_user_band:numberField('unicable_user_band',Number(stream.dvb_unicable_user_band??0)),
+    unicable_frequency_mhz:numberField('unicable_frequency_khz',
+      Number(stream.dvb_unicable_frequency_khz??1210000))/1000,
+    unicable_position:numberField('unicable_position',
+      Number(stream.dvb_unicable_position??0)),
+    unicable_pin:numberField('unicable_pin',Number(stream.dvb_unicable_pin??-1)),
+    lnb_lof1_mhz:numberField('lnb_lof1_khz',9750000)/1000,
+    lnb_lof2_mhz:numberField('lnb_lof2_khz',10600000)/1000,
+    lnb_slof_mhz:numberField('lnb_slof_khz',11700000)/1000,
+    satellite_name:params.get('satellite_name')||
+      stream.dvb_nit_network_name||''
+  };
+}
+function transponderFrontendEquals(stream,tune) {
+  return stream?.dvb_input===true &&
+    Number(stream.dvb_adapter)===tune.adapter &&
+    Number(stream.dvb_frontend)===tune.frontend;
+}
+async function beginTransponderGroupScan(key){
+  if(transponderGroupScanBusy)return false;
+  const group=findTransponderGroupForScan(key,state.streams||[]);
+  if(!group || !group.streams.length){
+    uiError(subtitleUiTriText('Транспондер не найден','Transponder not found',
+      'Transponder nije pronađen'));
+    return false;
+  }
+  const tune=transponderScanTuneFromStream(group.streams[0]);
+  if(!tune){
+    uiError(subtitleUiTriText('Параметры транспондера неполные',
+      'Transponder tuning parameters are incomplete',
+      'Parametri podešavanja transpondera nisu potpuni'));
+    return false;
+  }
+  const ids=new Set(group.streams.map(s=>String(s.id)));
+  // Another transponder sharing the same physical tuner must never be
+  // stopped implicitly; even an OnDemand channel can restart via a viewer.
+  const other=(state.streams||[]).filter(s=>
+    transponderFrontendEquals(s,tune)&&!ids.has(String(s.id))&&
+    (s.active===true||s.stop_pending===true));
+  if(other.length){
+    uiError(subtitleUiTriText(
+      'Этот тюнер занят другими плитками. Остановите их отдельно: ',
+      'The tuner is used by other tiles. Stop them separately: ',
+      'Tuner koriste druge pločice. Zaustavite ih zasebno: ')+
+      other.map(s=>s.name||s.id).join(', '));
+    return false;
+  }
+  const active=group.streams.filter(s=>s.active===true||s.stop_pending===true);
+  const confirmed=window.confirm(subtitleUiTriText(
+    'Остановить '+active.length+' из '+group.streams.length+
+      ' плиток транспондера «'+group.title+'» и открыть окно сканирования? Вещание этих каналов прервётся.',
+    'Stop '+active.length+' of '+group.streams.length+
+      ' tiles on “'+group.title+'” and open the scanning window? Their broadcast will be interrupted.',
+    'Zaustaviti '+active.length+' od '+group.streams.length+
+      ' pločica na transponderu „'+group.title+'” i otvoriti skeniranje? Emitiranje će se prekinuti.'));
+  if(!confirmed)return false;
+  transponderGroupScanBusy=true;
+  try{
+    for(const stream of active){
+      const response=await fetchJson('/api/stop-stream',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:stream.id})
+      },15000);
+      if(response.result!=='ok')
+        throw Error((stream.name||stream.id)+': '+(response.error||'Stop failed'));
+    }
+    // Queued Stop != completed Stop. Wait for all generations to release the
+    // frontend before the scan modal can issue its first signal probe.
+    const deadline=Date.now()+30000;
+    let ready=false;
+    while(Date.now()<deadline){
+      const live=await fetchJson('/api/state',{cache:'no-store'},6000);
+      const current=live.streams||[];
+      const waiting=current.some(s=>ids.has(String(s.id))&&
+        (s.active===true||s.stop_pending===true));
+      const foreign=current.some(s=>transponderFrontendEquals(s,tune)&&
+        !ids.has(String(s.id))&&(s.active===true||s.stop_pending===true));
+      if(foreign)throw Error(subtitleUiTriText(
+        'Другой канал занял выбранный тюнер','Another channel occupied the tuner',
+        'Drugi kanal zauzeo je odabrani tuner'));
+      if(!waiting){
+        const devices=await fetchJson('/api/dvb-adapters',{cache:'no-store'},6000);
+        const frontend=(devices.adapters||[]).find(d=>
+          Number(d.adapter)===tune.adapter&&Number(d.frontend)===tune.frontend);
+        if(!frontend)throw Error(subtitleUiTriText('Тюнер не найден','Tuner not found',
+          'Tuner nije pronađen'));
+        if(frontend.external_in_use===true)
+          throw Error(subtitleUiTriText('Тюнер занят другой программой',
+            'Tuner is occupied by another application',
+            'Tuner koristi druga aplikacija'));
+        // 'configured_streams' remains non-zero on stopped DVB tiles:
+        // that is not an active kernel owner, and must not block a scan.
+        ready=frontend.frontend_active!==true &&
+          Number(frontend.consumers||0)===0;
+        if(ready)break;
+      }
+      await new Promise(resolve=>setTimeout(resolve,600));
+    }
+    if(!ready)throw Error(subtitleUiTriText(
+      'Остановка не завершена: тюнер ещё занят. Сканирование не открыто.',
+      'Stop not completed: tuner still busy. Scanning was not opened.',
+      'Zaustavljanje nije završeno: tuner je zauzet. Skeniranje nije otvoreno.'));
+    // The dialog is opened only after the server confirmed every stop.
+    openAddChannelModal(tune);
+    fetchState();
+    return true;
+  }catch(error){
+    uiError(error?.message||String(error));
+    fetchState();
+    return false;
+  }finally{
+    transponderGroupScanBusy=false;
+  }
+}
+// V538 TRANSPONDER SCAN ACTION END
+
 function rememberInputSubgroup(key,open) {
   inputSubgroupOpen[key]=open;
   try {
@@ -5466,6 +5631,27 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   heading.className='input-subgroup-title';
   heading.textContent=title;
   heading.title=title;
+  if(key.startsWith('tp:')) {
+    // V538: only the transponder title initiates scanning. The rest of the
+    // summary retains its original DVB-style expand/collapse interaction.
+    heading.dataset.tpScanTitle='1';
+    heading.setAttribute('role','button');
+    heading.setAttribute('tabindex','0');
+    heading.setAttribute('aria-label',subtitleUiTriText(
+      'Остановить плитки и открыть сканирование: ',
+      'Stop tiles and open scanning: ',
+      'Zaustavi pločice i otvori skeniranje: ')+title);
+    heading.addEventListener('click',event=>{
+      event.preventDefault();event.stopPropagation();
+      beginTransponderGroupScan(key);
+    });
+    heading.addEventListener('keydown',event=>{
+      if(event.key==='Enter'||event.key===' '){
+        event.preventDefault();event.stopPropagation();
+        beginTransponderGroupScan(key);
+      }
+    });
+  }
   const count=document.createElement('span');
   count.className='input-subgroup-count';
   count.dataset.subgroupCount='1';
