@@ -360,6 +360,44 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket,res);
             return;
         }
+        // V537: opt-in public viewer entrypoint, never a substitute for
+        // subscriber / external middleware authorization. Direct media paths
+        // keep their original behavior and authentication.
+        std::string clusterWatchId;
+        bool clusterWatchHls=false;
+        if((req.method()==http::verb::get || req.method()==http::verb::head) &&
+           dvbstreamer5::cluster::routing::parseWatch(
+               target,clusterWatchId,clusterWatchHls)){
+            res.set(http::field::content_type,"text/plain; charset=UTF-8");
+            res.set(http::field::cache_control,"no-store");
+            if(!clusterViewerAllowed(socket,req,clusterWatchId,clusterWatchHls)){
+                res.result(http::status::forbidden);
+                res.body()="Cluster viewer authorization denied";
+            }else{
+                boost::system::error_code clientError;
+                const auto remote=socket.remote_endpoint(clientError);
+                const auto key=clientError?std::string{}:remote.address().to_string();
+                const auto choice=clusterChooseStream(clusterWatchId,clusterWatchHls,key);
+                if(choice.get("result","").asString()=="ok"){
+                    // Redirect to a direct media URL, NOT /cluster/watch/. No
+                    // cluster key or admin token is ever sent to the viewer.
+                    std::string location=choice.get("url","").asString();
+                    const auto q=target.find('?');
+                    if(q!=std::string::npos && target.size()-q<2048U &&
+                       target.find_first_of("\r\n",q)==std::string::npos)
+                        location+=(location.find('?')==std::string::npos?"?":"&")+
+                            target.substr(q+1);
+                    res.result(http::status::temporary_redirect);
+                    res.set(http::field::location,location);
+                }else{
+                    res.result(http::status::service_unavailable);
+                    res.body()="No healthy cluster output";
+                }
+            }
+            res.content_length(res.body().size());
+            http::write(socket,res);
+            return;
+        }
         const bool panelProtected = requiresAuthentication(target);
         if (loggedOut && panelProtected && !apiKeyGranted) {
             if (req.method() == http::verb::get && target == "/") {
@@ -950,6 +988,44 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 response["streams"] = streams;
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer, response);
+            } else if (target=="/api/cluster/route" ||
+                       target.rfind("/api/cluster/route?",0)==0) {
+                res.set(http::field::content_type,"application/json");
+                res.set(http::field::cache_control,"no-store");
+                Json::Value payload(Json::objectValue);
+                // Only a panel session or an allowlisted least-privilege
+                // middleware key may request route metadata.
+                if(!(apiKeyGranted || isAuthorized(req) ||
+                     isPanelSessionAuthorized(req))){
+                    res.result(http::status::forbidden);
+                    payload["error"]="Cluster route API unauthorized";
+                }else if(target.size()>1024U){
+                    res.result(http::status::bad_request);
+                    payload["error"]="Cluster route query too long";
+                }else{
+                    const auto id=urlDecode(queryValue(target,"stream_id"));
+                    const auto format=queryValue(target,"format");
+                    const auto ip=urlDecode(queryValue(target,"client_ip"));
+                    if(!dvbstreamer5::cluster::routing::safeChannelId(id) ||
+                       (format!="ts" && format!="hls") ||
+                       ip.empty() || normalizeIpAddress(ip).empty()){
+                        res.result(http::status::bad_request);
+                        payload["error"]="Expected stream_id, format=ts|hls and client_ip";
+                    }else if(!isClientAllowedForStream(id,ip) &&
+                             !dvbstreamer5::stream_auth::enabled(configManager.config,id)){
+                        res.result(http::status::forbidden);
+                        payload["error"]="Subscriber IP not authorized";
+                    }else{
+                        // This endpoint is discovery, never a playback
+                        // authorization grant; the actual origin rechecks
+                        // subscriber policy and external middleware.
+                        payload=clusterChooseStream(id,format=="hls",ip);
+                        if(payload.get("result","").asString()!="ok")
+                            res.result(http::status::service_unavailable);
+                    }
+                }
+                Json::StreamWriterBuilder writer;writer["indentation"]="";
+                res.body()=Json::writeString(writer,payload);
             } else if (target == "/api/cluster/config" ||
                        target == "/api/cluster/status") {
                 res.set(http::field::content_type,"application/json");
@@ -1415,6 +1491,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 }
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer, response);
+            } else if (target=="/api/cluster/routing/save") {
+                res.set(http::field::content_type,"application/json");
+                const auto requestedWith=req.find("X-Requested-With");
+                if(apiKeyAttempt ||
+                   !(isAuthorized(req)||isPanelSessionAuthorized(req)) ||
+                   requestedWith==req.end() ||
+                   requestedWith->value()!="DVBStreamer5"){
+                    res.result(http::status::forbidden);
+                    res.body()=R"({"error":"Panel login required to edit cluster routing"})";
+                }else{
+                    res.body()=clusterRoutingSettings(req.body());
+                }
             } else if (target == "/api/cluster/add" ||
                        target == "/api/cluster/delete") {
                 res.set(http::field::content_type,"application/json");
@@ -1612,6 +1700,7 @@ bool HttpServer::requiresAuthentication(const std::string& target) const {
     // Control-panel preview endpoints must never become public via a channel
     // whose HLS public name collides with the first URL segment ('api').
     if (target.rfind("/api/", 0) == 0) return true;
+    if (target.rfind("/cluster/watch/",0)==0) return false;
     std::string hlsId, hlsFile;
     const bool hlsTarget = resolveHlsTarget(configManager.config.streams, target, hlsId, hlsFile);
     std::string httpMpegTsId;
