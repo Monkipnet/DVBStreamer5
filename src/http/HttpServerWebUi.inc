@@ -9111,6 +9111,9 @@ function openStreamForm(stream) {
                 ${(state.xmltv_sources||[]).map(src=>`<option value="${escapeHtmlValue(src.id)}" ${src.id===stream.xmltv_source_id?'selected':''}>${escapeHtmlValue(src.name||src.id)}</option>`).join('')}
               </select>
             </div>
+            <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('IPTV tvg-id (Astra)','IPTV tvg-id (Astra)')}>${uiBiText('IPTV tvg-id (Astra)','IPTV tvg-id (Astra)')}</div><small class="field-help" ${uiBiAttrs('ID канала в M3U/XMLTV; не изменяет внутренний ID плитки или настройки EPG.','Channel ID in M3U/XMLTV; does not change the internal tile ID or EPG mapping.')}>${uiBiText('ID канала в M3U/XMLTV; не изменяет внутренний ID плитки или настройки EPG.','Channel ID in M3U/XMLTV; does not change the internal tile ID or EPG mapping.')}</small>
+              <input id="streamTvgId" maxlength="128" value="${escapeHtmlValue(stream.tvg_id||'')}" placeholder="a005" />
+            </div>
             <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('ID канала XMLTV','XMLTV channel ID')}>${uiBiText('ID канала XMLTV','XMLTV channel ID')}</div><small class="field-help" ${uiBiAttrs('Введите tvg-id канала или выберите из загруженного XMLTV.','Enter channel tvg-id or select from downloaded XMLTV.')}>${uiBiText('Введите tvg-id канала или выберите из загруженного XMLTV.','Enter channel tvg-id or select from downloaded XMLTV.')}</small>
               <input id="streamXmltvChannelId" list="streamXmltvChannels" value="${escapeHtmlValue(stream.xmltv_channel_id||'')}" placeholder="channel-id" />
               <datalist id="streamXmltvChannels"></datalist>
@@ -9818,6 +9821,7 @@ function saveStream(id) {
     dvb_subtitles_track: selectedSubtitleTrack,
     epg_days: Math.max(1, Math.min(7, Number(document.getElementById('streamEpgDays')?.value || 3))),
     epg_mode: document.getElementById('streamEpgMode')?.value || 'auto',
+    tvg_id: String(document.getElementById('streamTvgId')?.value || '').trim().slice(0,128),
     xmltv_source_id: document.getElementById('streamXmltvSourceId')?.value || '',
     xmltv_channel_id: document.getElementById('streamXmltvChannelId')?.value.trim() || '',
     conditional_access_client: selectedConditionalAccessClient
