@@ -6,6 +6,7 @@ require_command openssl
 MODE=selfsigned
 AUTO_RENEW=false
 ISSUER=self_signed
+nginx_preflight "$HTTPS_PORT"
 status running "$MODE" generating false "$ISSUER"
 mkdir -p "$TLS_DIR/selfsigned"
 chmod 0700 "$TLS_DIR/selfsigned"
