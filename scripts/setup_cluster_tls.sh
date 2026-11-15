@@ -20,8 +20,10 @@ for port in "$BACKEND_PORT" "$HTTPS_PORT"; do
 done
 [[ "$BACKEND_PORT" != "$HTTPS_PORT" ]] || { echo 'Proxy and application ports must differ' >&2; exit 2; }
 # This only binds HTTPS. It never changes the original HTTP/UDP/SRT ports.
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y nginx openssl certbot ca-certificates
+if ! command -v nginx >/dev/null || ! command -v certbot >/dev/null || ! command -v openssl >/dev/null; then
+ apt-get update
+ DEBIAN_FRONTEND=noninteractive apt-get install -y nginx openssl certbot ca-certificates
+fi
 DIR="/etc/dvbstreamer5/tls"
 install -d -m 0700 "$DIR"
 CERT="$DIR/fullchain.pem"
@@ -80,9 +82,9 @@ server {
     location / {
         proxy_pass http://127.0.0.1:${BACKEND_PORT};
         proxy_http_version 1.1;
-        proxy_set_header Host \\$host;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
     }
 }
