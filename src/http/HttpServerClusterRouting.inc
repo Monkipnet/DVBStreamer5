@@ -139,10 +139,8 @@ std::string HttpServer::clusterRoutingSettings(const std::string& body) {
 bool HttpServer::clusterViewerAllowed(const tcp::socket& socket,
                                     const http::request<http::string_body>& req,
                                     const std::string& id,bool hls) const {
-    boost::system::error_code ec;
-    const auto remote=socket.remote_endpoint(ec);
-    if(ec)return false;
-    const std::string ip=remote.address().to_string();
+    const std::string ip=clientIpForRequest(socket,req);
+    if(ip.empty())return false;
     if(dvbstreamer5::stream_auth::enabled(configManager.config,id)){
         const std::string target(req.target());
         const auto q=target.find('?');
