@@ -96,8 +96,9 @@ int main() {
     assert(sat.outputMode=="listener");
     assert(sat.outputPort==0); // existing HTTP server port
     assert(!sat.autoStart && sat.conditionalAccessClient.empty());
-    assert(sat.toJson()["tvg_id"].asString()=="a005");
-    assert(StreamConfig::fromJson(sat.toJson()).tvgId=="a005");
+    // ConfigManager::toJson/fromJson persistence is verified by the
+    // source/web regression; this lightweight converter CTest links
+    // jsoncpp only and deliberately does not link ConfigManager.cpp.
     assert(astraDvb.streams[1].tvgId=="a0co");
     assert(astraDvb.streams[1].inputUri.find("dvb://terrestrial?adapter=8&frontend=0") == 0);
     assert(astraDvb.streams[1].inputUri.find("frequency_khz=626000") != std::string::npos);
