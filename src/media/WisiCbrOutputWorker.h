@@ -365,9 +365,21 @@ private:
             std::lock_guard<std::mutex> lock(ingressMutex_);
             pending.swap(ingressQueue_);
         }
-        for (auto& item : pending) {
+        for (std::size_t i = 0; i < pending.size(); ++i) {
+            auto& item = pending[i];
+            // V533: the transport clock drains independently. If the pacer
+            // reservoir is full, restore the undrained FIFO prefix instead
+            // of shutting down this tile. The next sender tick will retry
+            // after emitDatagram() has freed useful packet slots.
+            if (!pacer_.canEnqueue(item.packet)) {
+                std::lock_guard<std::mutex> lock(ingressMutex_);
+                for (std::size_t j = pending.size(); j > i; --j) {
+                    ingressQueue_.push_front(std::move(pending[j - 1]));
+                }
+                return true;
+            }
             if (!pacer_.enqueueAt(item.packet, item.arrival)) {
-                fail("WISI CBR internal remux queue overflow; increase configured CBR bitrate");
+                fail("WISI CBR invalid TS packet in remux input");
                 return false;
             }
         }
