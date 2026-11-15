@@ -82,8 +82,9 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
     }
     std::string url=input["url"].asString();
     if(!url.empty()&&url.back()=='/')url.pop_back();
-    if(!dvbstreamer5::cluster::validOrigin(url))
-        return R"({"error":"Use HTTPS or a private-LAN IPv4 HTTP origin, without a path"})";
+    const bool verifyTls=input.get("verify_tls",true).asBool();
+    if(!dvbstreamer5::cluster::validOrigin(url,!verifyTls))
+        return R"({"error":"Use HTTPS or disable TLS verification for HTTP public DNS, without a path"})";
     std::lock_guard<std::mutex> lock(clusterMutex_);
     dvbstreamer5::cluster::Config config;
     if(!dvbstreamer5::cluster::ensure(configManager.configDirectory(),config))
@@ -91,7 +92,7 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
     // V541: editing an existing node uses its original URL as immutable
     // identity. A changed URL must not silently append a second node.
     const std::string originalUrl=input.get("original_url","").asString();
-    if(!originalUrl.empty() && !dvbstreamer5::cluster::validOrigin(originalUrl))
+    if(!originalUrl.empty() && !dvbstreamer5::cluster::validOrigin(originalUrl,true))
         return R"({"error":"Invalid original cluster peer address"})";
     auto found=std::find_if(config.peers.begin(),config.peers.end(),
         [&](const auto& peer){return peer.url==(originalUrl.empty()?url:originalUrl);});
@@ -113,7 +114,7 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
         dvbstreamer5::cluster::Peer peer{
             input["name"].asString(),url,token,
             input.get("viewer_url","").asString(),
-            input.get("verify_tls",found==config.peers.end()?true:found->verifyTlsPeer).asBool()};
+            verifyTls};
         if(!peer.viewerUrl.empty() && peer.viewerUrl.back()=='/')
             peer.viewerUrl.pop_back();
         if(!dvbstreamer5::cluster::validPeer(peer))
