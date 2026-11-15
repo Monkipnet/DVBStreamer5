@@ -267,10 +267,9 @@ inline bool parseAstra(const std::string& data, Conversion& result,
                 // These are tuner IDs (not playable DVBStreamer5 URLs).
                 uri=astra_json::convertDvb(source,tunes,sourceSid,result.warnings);
             }else if(begins(low,"t2mi://")) {
-                // T2MI encapsulates an inner transport stream. A direct
-                // DVB URI would silently deliver the WRONG service.
-                astra_json::warnOnce(result.warnings,
-                    "T2MI input skipped: native T2-MI PLP/TS depacketizer is unavailable; do not substitute DVB-T2");
+                // V534: resolve Astra tuner ID and retain the satellite
+                // outer T2-MI PID, stream ID and optional inner PLP.
+                uri=astra_json::convertDvb(source,tunes,sourceSid,result.warnings);
             }else{
                 uri=sourceUrl(source,probe);
             }
