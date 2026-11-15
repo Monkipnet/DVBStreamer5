@@ -26,7 +26,7 @@ for(const marker of [
  'X-Content-Type-Options','Referrer-Policy',
  'clientIpForRequest(socket,req)','effectiveClientIp('
 ])assert.ok(transport.includes(marker),marker);
-assert.ok(!transport.includes('parser.body_limit(512ULL'));
+assert.ok(transport.includes('parser.body_limit(maxBody)'));
 assert.ok(transport.includes('isPanelSessionAuthorized(req)||isAuthorized(req)'));
 assert.ok(media.includes('const std::string& effectiveClientIp'));
 assert.ok(routing.includes('clientIpForRequest(socket,req)'));
