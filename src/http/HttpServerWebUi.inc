@@ -3724,6 +3724,7 @@ let satelliteTuneGeneration = 0;
 let satelliteServices = [];
 let satelliteLastScan = null;
 let transponderScanPreparing = false;
+let satelliteModalGeneration = 0;
 let dvbAdapters = [];
 let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSourceSupported:false};
 let camClientsLoaded = false;
@@ -8670,6 +8671,7 @@ function applyTransponderScanTune(tune) {
 }
 
 function openAddChannelModal(initialTransponderTune=null) {
+  const modalGeneration=++satelliteModalGeneration;
   satelliteServices = [];
   openModal(`
     <h2 id="satAddTitle">${subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
@@ -8762,7 +8764,8 @@ function openAddChannelModal(initialTransponderTune=null) {
   updateSatelliteOutputHints(false);
   if(initialTransponderTune){
     loadSatelliteAdapters(true).then(()=>{
-      if(!document.getElementById('satFrequency'))return; // Modal closed.
+      if(modalGeneration!==satelliteModalGeneration ||
+         !document.getElementById('satFrequency'))return; // Closed/replaced.
       if(!applyTransponderScanTune(initialTransponderTune)){
         uiError(subtitleUiTriText(
           'Невозможно выбрать тюнер транспондера для сканирования',
@@ -8772,7 +8775,10 @@ function openAddChannelModal(initialTransponderTune=null) {
       }
       scheduleSatelliteSignalPolling();
     }).catch(error=>uiError(error?.message||String(error)))
-      .finally(()=>{transponderScanPreparing=false;});
+      .finally(()=>{
+        if(modalGeneration===satelliteModalGeneration)
+          transponderScanPreparing=false;
+      });
   }else{
     loadSatelliteAdapters();
     scheduleSatelliteSignalPolling();
