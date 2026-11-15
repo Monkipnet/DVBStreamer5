@@ -5591,8 +5591,20 @@ async function beginTransponderGroupScan(key){
     // frontend before the scan modal can issue its first signal probe.
     const deadline=Date.now()+30000;
     let ready=false;
+    let lastPollTimeout=false;
     while(Date.now()<deadline){
-      const live=await fetchJson('/api/state',{cache:'no-store'},6000);
+      let live;
+      try{
+        live=await fetchJson('/api/state',{cache:'no-store'},6000);
+        lastPollTimeout=false;
+      }catch(error){
+        // A single slow state snapshot during DVB/CAM shutdown must not
+        // abort the confirmed stop flow; do not open the editor blindly.
+        if(!/timeout|timed out|abort/i.test(String(error?.message||error)))throw error;
+        lastPollTimeout=true;
+        await new Promise(resolve=>setTimeout(resolve,600));
+        continue;
+      }
       const current=live.streams||[];
       const waiting=current.some(s=>ids.has(String(s.id))&&
         (s.active===true||s.stop_pending===true));
@@ -5619,10 +5631,14 @@ async function beginTransponderGroupScan(key){
       }
       await new Promise(resolve=>setTimeout(resolve,600));
     }
-    if(!ready)throw Error(subtitleUiTriText(
-      'Остановка не завершена: тюнер ещё занят. Сканирование не открыто.',
-      'Stop not completed: tuner still busy. Scanning was not opened.',
-      'Zaustavljanje nije završeno: tuner je zauzet. Skeniranje nije otvoreno.'));
+    if(!ready)throw Error(lastPollTimeout ? subtitleUiTriText(
+      'Сервер не отвечает на /api/state после остановки плиток. Проверьте журнал сервера; редактор не открыт.',
+      'Server did not answer /api/state after stopping tiles. Check server logs; editor was not opened.',
+      'Poslužitelj ne odgovara na /api/state nakon zaustavljanja pločica. Provjerite zapisnike; uređivač nije otvoren.'
+    ) : subtitleUiTriText(
+      'Остановка не завершена: тюнер ещё занят. Редактор не открыт.',
+      'Stop not completed: tuner still busy. Editor was not opened.',
+      'Zaustavljanje nije završeno: tuner je zauzet. Uređivač nije otvoren.'));
     // The actual selected group/IDs go to the editor; never use the
     // adapter default or an unrelated transponder with a similar frequency.
     openAddChannelModal({...tune,group_key:key,stream_ids:group.streams.map(s=>String(s.id))});
