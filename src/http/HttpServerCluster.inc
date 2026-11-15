@@ -34,6 +34,7 @@ std::string HttpServer::clusterNodeSnapshot() {
         channel["slug"]=hlsPublicName(stream);
         channel["http"]=hasOutputType(stream,"http");
         channel["hls"]=hasOutputType(stream,"hls");
+        channel["hls_playlist"]=stream.transcodeEnabled && stream.transcodeMultibitrateEnabled ? "master.m3u8" : "video.m3u8";
         channel["viewers"]=Json::UInt64(viewerCounts[stream.id]);
         const auto found=snapshot.find(stream.id);
         const bool running=found!=snapshot.end()&&found->second &&
