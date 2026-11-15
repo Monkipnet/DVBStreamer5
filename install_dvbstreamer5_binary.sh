@@ -309,6 +309,16 @@ if [[ -d "$INSTALL_DIR/web" ]]; then
     mv -- "$INSTALL_DIR/web" "$BACKUP/web.previous"  # fast, same filesystem
 fi
 mv -- "$STAGE/web" "$INSTALL_DIR/web"
+# Optional local SSL / Let's Encrypt UI modules. Secrets remain in
+# /etc/dvbstreamer5/tls and are never overwritten by program updates.
+if [[ -f "$SOURCE_DIR/scripts/tls/manage.sh" ]]; then
+    install -d -m 0755 "$INSTALL_DIR/tls/modules"
+    install -m 0755 "$SOURCE_DIR/scripts/tls/manage.sh" "$INSTALL_DIR/tls/manage.sh"
+    for tls_module in common selfsigned letsencrypt; do
+        install -m 0644 "$SOURCE_DIR/scripts/tls/modules/$tls_module.sh" \
+            "$INSTALL_DIR/tls/modules/$tls_module.sh"
+    done
+fi
 if [[ -n "$PLUGIN" ]]; then
     install -d -m 0755 "$INSTALL_DIR/ca-plugins"
     PLUGIN_CHANGED=1
