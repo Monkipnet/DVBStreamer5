@@ -52,10 +52,20 @@ check_email() {
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die_tls "missing_$1"
 }
+ensure_nginx() {
+  if ! command -v nginx >/dev/null 2>&1; then
+    command -v apt-get >/dev/null 2>&1 || die_tls nginx_not_installed
+    status running "${MODE:-selfsigned}" installing_nginx "${AUTO_RENEW:-false}" none
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx ||
+      die_tls nginx_install_failed
+  fi
+  require_command nginx
+}
 # CA support: retain the previous active certificate on ACME request failure.
 nginx_managed_proxy() {
   local domain="$1" backend="$2" https_port="$3" acme="${4:-false}"
-  require_command nginx
+  ensure_nginx
   if [[ -e "$NGINX_SITE" && ! -e "$TLS_DIR/nginx-managed" ]]; then
     die_tls nginx_config_unmanaged
   fi
