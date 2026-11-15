@@ -343,6 +343,23 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket, res);
             return;
         }
+        // V536: the only machine-to-machine endpoint. A dedicated random token
+        // grants read-only channel inventory, never admin APIs or stream control.
+        // It intentionally does not accept browser sessions or middleware keys.
+        if (target == "/api/cluster/node") {
+            res.set(http::field::content_type,"application/json");
+            const auto key=req.find("X-DVBStreamer5-Cluster-Key");
+            if(req.method()!=http::verb::get || apiKeyAttempt ||
+               key==req.end() || !clusterTokenAuthorized(std::string(key->value()))) {
+                res.result(http::status::forbidden);
+                res.body()=R"({"error":"Cluster node access denied"})";
+            }else{
+                res.body()=clusterNodeSnapshot();
+            }
+            res.content_length(res.body().size());
+            http::write(socket,res);
+            return;
+        }
         const bool panelProtected = requiresAuthentication(target);
         if (loggedOut && panelProtected && !apiKeyGranted) {
             if (req.method() == http::verb::get && target == "/") {
@@ -933,6 +950,18 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 response["streams"] = streams;
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer, response);
+            } else if (target == "/api/cluster/config" ||
+                       target == "/api/cluster/status") {
+                res.set(http::field::content_type,"application/json");
+                // Enforce full panel admin even if an API key scope changes.
+                if(apiKeyAttempt ||
+                   !(isAuthorized(req)||isPanelSessionAuthorized(req))){
+                    res.result(http::status::forbidden);
+                    res.body()=R"({"error":"Cluster administration requires panel login"})";
+                }else{
+                    res.body()=target=="/api/cluster/config" ?
+                        clusterPeerConfiguration():clusterPeerStatus();
+                }
             } else if (target == "/api/interfaces") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listInterfaces();
@@ -1386,6 +1415,17 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 }
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer, response);
+            } else if (target == "/api/cluster/add" ||
+                       target == "/api/cluster/delete") {
+                res.set(http::field::content_type,"application/json");
+                const auto requestedWith=req.find("X-Requested-With");
+                if(apiKeyAttempt || !(isAuthorized(req)||isPanelSessionAuthorized(req)) ||
+                   requestedWith==req.end() || requestedWith->value()!="DVBStreamer5"){
+                    res.result(http::status::forbidden);
+                    res.body()=R"({"error":"Panel login and same-origin request required"})";
+                }else{
+                    res.body()=clusterPeerChange(req.body(),target=="/api/cluster/delete");
+                }
             } else if (target == "/api/save-config") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleSaveConfig(req.body());
