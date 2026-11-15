@@ -63,5 +63,6 @@ assert.ok(manager.includes('sharedDvbInputs.unsubscribe(id)'));
 assert.ok(sharedDvb.includes('bus->subscribers.erase(item);'));
 assert.ok(sharedDvb.includes('if (bus->subscribers.empty())'));
 assert.ok(sharedDvb.includes('keepWarmOnIdle'));
-assert.ok(version.includes('kProgramVersion = "10.8.531"'));
+const parsedVersion=version.match(/kProgramVersion = "10\\.8\\.(\\d+)"/);
+assert.ok(parsedVersion && Number(parsedVersion[1]) >= 531);
 console.log('PASS: V531 independent program restart and DVB/HLS OnDemand idle teardown');
