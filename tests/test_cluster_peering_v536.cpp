@@ -1,6 +1,9 @@
 // V536 cluster credential store: exercise security constraints, persistence,
 // and simulated peer inventory transitions without real DVB hardware.
 #include "http/ClusterPeerStore.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <filesystem>
 #include <iostream>
