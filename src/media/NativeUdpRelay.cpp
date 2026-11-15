@@ -1268,7 +1268,7 @@ void NativeUdpRelay::run() {
         if (observedCbrPacer) {
             bool wakeForStart = false;
             {
-                std::lock_guard<std::mutex> lock(observedCbrMutex);
+                std::unique_lock<std::mutex> lock(observedCbrMutex);
                 const bool wasStarted = observedCbrPacer->started();
                 // V533: a short encoder burst may fill the 8-MiB CBR
                 // observer reservoir before its fixed-rate sender catches up.
