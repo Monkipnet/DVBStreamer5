@@ -151,6 +151,7 @@ private:
     // Explicit login sessions make Logout work even when a browser caches Basic Auth.
     mutable std::mutex panelSessionsMutex_;
     dvbstreamer5::http_security::LoginThrottle panelLoginThrottle_;
+    std::atomic<bool> trustLocalProxyIp_{false};
     std::unordered_map<std::string, std::chrono::steady_clock::time_point>
         panelSessions_;
     const int64_t systemLoadHistoryStartEpoch_ =
