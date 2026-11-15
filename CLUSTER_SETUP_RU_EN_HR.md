@@ -76,3 +76,13 @@ Uključite **Automatski preusmjeri nove gledatelje na dostupne poslužitelje** z
 Za gledatelje koristite /cluster/watch/CHANNEL_ID.ts ili /cluster/watch/CHANNEL_ID.m3u8. HTTP 307 vodi na izravnu adresu odabranog poslužitelja, koji ponovno provjerava prava pristupa. Postojeće TCP veze se **ne premještaju**, kao ni UDP/SRT/RTMP izlazi ili transkodiranje.
 
 Vanjska middleware koristi **GET /api/cluster/route?stream_id=CHANNEL_ID&format=ts|hls&client_ip=VIEWER_IP** uz poseban ključ **X-API-Key** i popis dopuštenih IP adresa. API vraća URL odabranog čvora, ali ne daje dozvolu za gledanje: završni poslužitelj mora provjeriti prava korisnika. Ne otkrivajte ključeve klastera gledateljima.
+
+---
+
+## V10.8.548 — Управление спойлерами кластера / Cluster spoiler controls / Kontrole klastera
+
+**Русский.** В разделе **Меню → Мониторинг и сеть → Кластер / Пиринг** группы серверов имеют большую стрелку **▼ / ▲ точно по центру заголовка**. Нажатие на стрелку, свободное место заголовка или индикатор статуса раскрывает/сворачивает каналы. **Только нажатие непосредственно на название сервера** открывает редактирование его настроек. Раскрытие группы не останавливает потоки, не открывает редактор и не изменяет конфигурацию. Поиск каналов может временно раскрыть группу, не перезаписывая сохранённое состояние.
+
+**English.** In **Menu → Monitoring & network → Cluster / Peering**, the **▼ / ▲ disclosure arrow is centered** in each server header. Click the arrow, empty header space or status indicator to expand/collapse channels. **Only clicking the server's name** opens editing for that server. Expanding a group does not stop streams or modify its configuration. Search may expand groups temporarily without overwriting saved disclosure state.
+
+**Hrvatski.** U **Izbornik → Nadzor i mreža → Klaster / Peering** strelica **▼ / ▲ nalazi se u sredini zaglavlja** poslužitelja. Klik na strelicu, prazni dio zaglavlja ili indikator stanja proširuje i sažima kanale. **Samo klik na naziv poslužitelja** otvara uređivanje tog poslužitelja. Otvaranje grupe ne zaustavlja tokove niti mijenja konfiguraciju. Pretraživanje može privremeno otvoriti grupu bez promjene spremljenog stanja.
