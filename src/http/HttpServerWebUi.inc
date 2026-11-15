@@ -6967,10 +6967,52 @@ function openNetworkModal() {
           'Zadano isključeno. Vjeruje se samo X-Real-IP s 127.0.0.1 ili ::1. Izravni klijenti ne mogu lažirati IP zaglavljem. Pogrešna konfiguracija proxyja može ometati IP filtriranje.')}
       </p>
     </div>
+    <section style="margin:16px 0;padding:14px;border:1px solid var(--border-color,#52637d);border-radius:10px">
+      <h3>${secureProxyText('SSL / TLS сертификаты','SSL / TLS certificates','SSL / TLS certifikati')}</h3>
+      <p style="font-size:12px;opacity:.85">
+        ${secureProxyText('HTTPS работает через локальный Nginx-прокси. Действующий HTTP-порт и потоки не изменяются.',
+          'HTTPS is terminated by the local Nginx proxy; the existing HTTP port and streams are unchanged.',
+          'HTTPS završava na lokalnom Nginx proxyju; postojeći HTTP port i tokovi ostaju nepromijenjeni.')}
+      </p>
+      <label style="display:block;margin:8px 0">${secureProxyText('Домен сервера','Server domain','Domena poslužitelja')}
+        <input id="tlsManagedDomain" placeholder="blumen.zapto.org" autocomplete="off">
+      </label>
+      <label style="display:block;margin:8px 0">${secureProxyText('HTTPS-порт','HTTPS port','HTTPS priključak')}
+        <input id="tlsManagedPort" type="number" min="1" max="65535" value="9443">
+      </label>
+      <div style="padding:9px 0">
+        <strong>${secureProxyText('Самоподписанный SSL','Self-signed SSL','Samopotpisani SSL')}</strong>
+        <p style="font-size:12px;opacity:.8">${secureProxyText('Отдельный модуль: создаёт новый сертификат на 365 дней и переключает HTTPS. При этом автообновление Let’s Encrypt отключается.',
+          'Independent module: creates a 365-day certificate and switches HTTPS. Automatic Let’s Encrypt renewal is disabled.',
+          'Neovisni modul: stvara certifikat na 365 dana i prebacuje HTTPS. Automatska Let’s Encrypt obnova se isključuje.')}</p>
+        <button class="button-secondary" type="button" id="tlsSelfSignedButton" onclick="createManagedSelfSignedTls()">
+          ${secureProxyText('Создать самоподписанный сертификат','Create self-signed certificate','Stvori samopotpisani certifikat')}
+        </button>
+      </div>
+      <div style="border-top:1px solid var(--border-color,#53657b);padding-top:12px;margin-top:8px">
+        <strong>Let’s Encrypt</strong>
+        <label style="display:block;margin:9px 0">${secureProxyText('Email для Let’s Encrypt','Let’s Encrypt email','E-pošta za Let’s Encrypt')}
+          <input id="tlsManagedEmail" type="email" placeholder="admin@example.org" autocomplete="email">
+        </label>
+        <label style="display:flex;align-items:center;justify-content:flex-start;gap:9px;cursor:pointer">
+          <input id="tlsManagedAutoRenew" type="checkbox" style="width:18px;height:18px;min-width:18px;flex:none;margin:0" onchange="toggleManagedLetsEncrypt(this)">
+          <span>${secureProxyText('Получать и автоматически обновлять сертификаты Let’s Encrypt',
+            'Obtain and automatically renew Let’s Encrypt certificates',
+            'Izdaj i automatski obnavljaj Let’s Encrypt certifikate')}</span>
+        </label>
+        <p style="font-size:12px;opacity:.8">${secureProxyText('Для выпуска нужен публичный DNS и доступный извне TCP/80. Проверка раз в сутки. Если выпуск не удался, остаётся текущий сертификат и запланирован повтор.',
+          'A public DNS name and reachable TCP/80 are required. Daily renewal checks. On failure, the current certificate remains active and retry is scheduled.',
+          'Potrebni su javni DNS i dostupan TCP/80. Provjera je dnevna. Pri neuspjehu postojeći certifikat ostaje aktivan i pokušaj se ponavlja.')}</p>
+      </div>
+      <p id="tlsManagedStatus" role="status" style="font-size:12px;line-height:1.5;opacity:.9">
+        ${secureProxyText('Получение состояния сертификатов…','Loading certificate status…','Učitavanje stanja certifikata…')}
+      </p>
+    </section>
     <div class="modal-actions"><button class="button-secondary" onclick="closeNetworkModal()">${t('close')}</button></div>
   `;
   document.getElementById('modal').classList.add('active');
   fetchSystemMetrics();
+  refreshManagedTlsStatus();
   fetchJson('/api/security/proxy',{},8000).then(result=>{
     const input=document.getElementById('trustLocalProxyRealIp');
     if(input)input.checked=result.trust_local_proxy_real_ip===true;
@@ -6992,6 +7034,81 @@ async function saveTrustedProxySetting(control){
     control.checked=!desired;
     uiError(error.message||String(error));
   }finally{control.disabled=false;}
+}
+
+function tlsManagedFields(){
+  return {
+    domain:document.getElementById('tlsManagedDomain')?.value?.trim()||'',
+    email:document.getElementById('tlsManagedEmail')?.value?.trim()||'',
+    https_port:Number(document.getElementById('tlsManagedPort')?.value||9443)
+  };
+}
+function tlsManagedText(ru,en,hr){
+  return language==='ru'?ru:language==='hr'?hr:en;
+}
+async function refreshManagedTlsStatus(){
+  const label=document.getElementById('tlsManagedStatus');
+  if(!label)return;
+  try{
+    const data=await fetchJson('/api/tls/status',{},8000);
+    if(!document.getElementById('tlsManagedStatus'))return;
+    const checkbox=document.getElementById('tlsManagedAutoRenew');
+    const selfButton=document.getElementById('tlsSelfSignedButton');
+    if(checkbox)checkbox.disabled=!data.module_installed;
+    if(selfButton)selfButton.disabled=!data.module_installed;
+    if(checkbox && !checkbox.dataset.pending)checkbox.checked=data.auto_renew===true;
+    if(data.domain && !document.getElementById('tlsManagedDomain').value)
+      document.getElementById('tlsManagedDomain').value=data.domain;
+    label.textContent=(data.module_installed
+      ? tlsManagedText('Состояние','Status','Stanje')+': '+String(data.phase||'idle')+
+        ' · '+String(data.mode||'none')+
+        (data.issuer?' · '+data.issuer:'')+
+        (data.expires?' · '+tlsManagedText('Истекает','Expires','Istječe')+': '+data.expires:'')+
+        (data.message?' · '+data.message:'')
+      : tlsManagedText('TLS-модули не установлены. Обновите portable-установку.',
+          'TLS modules not installed. Update the portable installation.',
+          'TLS moduli nisu instalirani. Ažurirajte prijenosnu instalaciju.'));
+  }catch(error){label.textContent=String(error.message||error);}
+  if(document.getElementById('tlsManagedStatus'))
+    setTimeout(refreshManagedTlsStatus,10000);
+}
+async function createManagedSelfSignedTls(){
+  const btn=document.getElementById('tlsSelfSignedButton');
+  if(!btn||btn.disabled)return;
+  btn.disabled=true;
+  try{
+    const data=await fetchJson('/api/tls/selfsigned',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
+      body:JSON.stringify(tlsManagedFields())
+    },12000);
+    if(data.result!=='started')throw Error(data.error||'Cannot start TLS module');
+    const label=document.getElementById('tlsManagedStatus');
+    if(label)label.textContent=tlsManagedText('Генерация запущена. Проверяйте состояние.',
+      'Certificate generation started. Check status.',
+      'Izrada certifikata pokrenuta. Provjerite stanje.');
+    setTimeout(refreshManagedTlsStatus,3000);
+  }catch(error){uiError(error.message||String(error));}
+  finally{btn.disabled=false;}
+}
+async function toggleManagedLetsEncrypt(control){
+  if(!control||control.disabled)return;
+  const enabled=control.checked;
+  control.disabled=true;
+  control.dataset.pending='yes';
+  try{
+    const data=await fetchJson('/api/tls/letsencrypt',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Requested-With':'DVBStreamer5'},
+      body:JSON.stringify({...tlsManagedFields(),enabled})
+    },12000);
+    if(data.result!=='started')throw Error(data.error||'Cannot configure Let’s Encrypt');
+    const label=document.getElementById('tlsManagedStatus');
+    if(label)label.textContent=tlsManagedText('Изменение настроек запущено.',
+      'Certificate settings update started.','Promjena postavki certifikata je pokrenuta.');
+    setTimeout(refreshManagedTlsStatus,3500);
+  }catch(error){control.checked=!enabled;uiError(error.message||String(error));}
+  finally{control.disabled=false;delete control.dataset.pending;}
 }
 function closeNetworkModal() {
   closeModal();
