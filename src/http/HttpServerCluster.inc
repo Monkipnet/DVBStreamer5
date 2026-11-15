@@ -2,6 +2,9 @@
 // This file is included from HttpServer.cpp after HttpServerState.inc.
 #include "http/ClusterPeerStore.h"
 #include "NativeHttpClient.h"
+#include "http/ClusterViewerRouting.h"
+#include <map>
+#include <unordered_set>
 
 bool HttpServer::clusterTokenAuthorized(const std::string& token) {
     std::lock_guard<std::mutex> lock(clusterMutex_);
@@ -16,12 +19,22 @@ std::string HttpServer::clusterNodeSnapshot() {
     root["server_name"]=configManager.config.serverName;
     root["version"]=kProgramVersion;
     auto snapshot=streamManager.snapshot();
+    std::map<std::string,std::uint64_t> viewerCounts;
+    for(const auto& session:streamManager.activeStreamSessions()){
+        if(!session.streamId.empty() && session.connections>0)
+            viewerCounts[session.streamId]+=session.connections;
+    }
     unsigned count=0,active=0;
     for(const auto& stream:configManager.config.streams) {
         if(++count>512U)break;
         Json::Value channel(Json::objectValue);
         channel["id"]=stream.id;
         channel["name"]=stream.name;
+        channel["tvg_id"]=stream.tvgId;
+        channel["slug"]=hlsPublicName(stream);
+        channel["http"]=hasOutputType(stream,"http");
+        channel["hls"]=hasOutputType(stream,"hls");
+        channel["viewers"]=Json::UInt64(viewerCounts[stream.id]);
         const auto found=snapshot.find(stream.id);
         const bool running=found!=snapshot.end()&&found->second &&
             found->second->active.load(std::memory_order_relaxed);
@@ -83,7 +96,10 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
         if(!input["name"].isString()||!input["token"].isString())
             return R"({"error":"Peer name and access token are required"})";
         dvbstreamer5::cluster::Peer peer{
-            input["name"].asString(),url,input["token"].asString()};
+            input["name"].asString(),url,input["token"].asString(),
+            input.get("viewer_url","").asString()};
+        if(!peer.viewerUrl.empty() && peer.viewerUrl.back()=='/')
+            peer.viewerUrl.pop_back();
         if(!dvbstreamer5::cluster::validPeer(peer))
             return R"({"error":"Invalid peer name, origin or 64-digit token"})";
         if(found!=config.peers.end())*found=std::move(peer);
@@ -94,6 +110,10 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
     }
     if(!dvbstreamer5::cluster::save(configManager.configDirectory(),config))
         return R"({"error":"Failed to write private cluster configuration"})";
+    {
+        std::lock_guard<std::mutex> statusLock(clusterStatusMutex_);
+        clusterStatusValid_=false;
+    }
     result=dvbstreamer5::cluster::publicPeers(config,false);
     result["result"]="ok";
     Json::StreamWriterBuilder writer;writer["indentation"]="";
@@ -107,12 +127,20 @@ std::string HttpServer::clusterPeerStatus() {
         if(!dvbstreamer5::cluster::load(configManager.configDirectory(),config))
             return R"({"error":"Cluster peer configuration unreadable"})";
     }
+    std::lock_guard<std::mutex> cacheLock(clusterStatusMutex_);
+    const auto now=std::chrono::steady_clock::now();
+    if(clusterStatusValid_ &&
+       now-clusterStatusAt_<std::chrono::seconds(5)){
+        Json::StreamWriterBuilder writer;writer["indentation"]="";
+        return Json::writeString(writer,clusterStatusCache_);
+    }
     Json::Value root(Json::objectValue),peers(Json::arrayValue);
     root["result"]="ok";
     for(const auto& peer:config.peers) {
         Json::Value item(Json::objectValue);
         item["name"]=peer.name;
         item["url"]=peer.url;
+        if(!peer.viewerUrl.empty())item["viewer_url"]=peer.viewerUrl;
         item["online"]=false;
         item["channels"]=Json::Value(Json::arrayValue);
         dvbstreamer5::http::RequestOptions options;
@@ -145,6 +173,9 @@ std::string HttpServer::clusterPeerStatus() {
         peers.append(std::move(item));
     }
     root["peers"]=std::move(peers);
+    clusterStatusCache_=root;
+    clusterStatusAt_=std::chrono::steady_clock::now();
+    clusterStatusValid_=true;
     Json::StreamWriterBuilder writer;writer["indentation"]="";
     return Json::writeString(writer,root);
 }
