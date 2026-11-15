@@ -6,10 +6,14 @@ TLS_DIR=/etc/dvbstreamer5/tls
 STATE=$TLS_DIR/state.json
 SETTINGS=$TLS_DIR/letsencrypt.env
 ACME_ROOT=/var/lib/dvbstreamer5/acme
+# Isolate the managed account from global certbot.timer and unrelated sites.
+ACME_CONFIG=$TLS_DIR/acme-client
+ACME_WORK=/var/lib/dvbstreamer5/acme-client-work
+ACME_LOG=/var/log/dvbstreamer5/acme-client
 NGINX_SITE=/etc/nginx/conf.d/dvbstreamer5-managed-tls.conf
 MODULE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-mkdir -p "$TLS_DIR" "$ACME_ROOT/.well-known/acme-challenge"
-chmod 0700 "$TLS_DIR"
+mkdir -p "$TLS_DIR" "$ACME_ROOT/.well-known/acme-challenge" "$ACME_CONFIG" "$ACME_WORK" "$ACME_LOG"
+chmod 0700 "$TLS_DIR" "$ACME_CONFIG" "$ACME_WORK" "$ACME_LOG"
 status() {
   local phase="$1" mode="$2" message="$3" enabled="${4:-false}" issuer="${5:-none}"
   local domain="${DOMAIN:-}" expiry=''
