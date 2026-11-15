@@ -443,6 +443,11 @@ target_link_libraries(dvbstreamer5_external_config_transfer_test PRIVATE
 add_test(NAME external_config_transfer
     COMMAND dvbstreamer5_external_config_transfer_test)
 
+# V539: two synthetic DVB services share a TP and keep distinct PID/SID/URI options.
+add_executable(dvbstreamer5_tp_editor_test tests/test_dvb_transponder_edit_v539.cpp)
+target_include_directories(dvbstreamer5_tp_editor_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME dvb_transponder_uri_edit COMMAND dvbstreamer5_tp_editor_test)
+
 # V537: standalone healthy-origin load balancing / failover emulator.
 add_executable(dvbstreamer5_cluster_routing_test tests/test_cluster_routing_v537.cpp)
 target_include_directories(dvbstreamer5_cluster_routing_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
