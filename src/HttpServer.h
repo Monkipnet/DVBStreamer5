@@ -88,6 +88,7 @@ private:
     std::string handleCamClientSettings(const std::string& body);
     std::string handleDvbTune(const std::string& body, bool scan);
     std::string handleDvbAddChannels(const std::string& body);
+    std::string handleDvbTransponderEdit(const std::string& body);
     bool handleHttpStream(tcp::socket& socket, const std::string& target);
     bool serveHlsFile(const tcp::socket& socket, const std::string& target,
                       http::response<http::string_body>& res,
