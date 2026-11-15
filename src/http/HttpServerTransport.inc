@@ -190,7 +190,7 @@ void HttpServer::handleSession(
     try {
         http::request_parser<http::string_body> parser;
         parser.header_limit(16U*1024U);
-        parser.body_limit(64ULL*1024ULL*1024ULL); // provisional upper bound
+        parser.body_limit(512ULL*1024ULL*1024ULL); // provisional ceiling, not allocated
         parser.eager(false);
         const auto started=std::chrono::steady_clock::now();
         while(!parser.is_header_done()){
@@ -200,12 +200,29 @@ void HttpServer::handleSession(
         }
         const std::string requestPath(parser.get().target());
         const std::string requestMethod=std::string(parser.get().method_string());
+        const bool authenticatedHeader =
+            isPanelSessionAuthorized(parser.get()) || isAuthorized(parser.get());
+        const bool largePrivilegedUpload =
+            requestMethod=="POST" &&
+            (requestPath.rfind("/api/upload-backup-file",0)==0 ||
+             requestPath=="/api/config/import" ||
+             requestPath=="/api/tickers/import-docx");
+        if(largePrivilegedUpload && !authenticatedHeader){
+            http::response<http::string_body> denied{
+                http::status::unauthorized,parser.get().version()};
+            denied.set(http::field::content_type,"application/json");
+            denied.body()=R"({"error":"Authentication required before upload"})";
+            denied.prepare_payload();
+            http::write(socket,denied);
+            return;
+        }
         const auto maxBody=dvbstreamer5::http_security::maxRequestBodyBytes(
-            requestPath,requestMethod);
+            requestPath,requestMethod,authenticatedHeader);
         parser.body_limit(maxBody);
         parser.eager(true);
         const auto bodyDeadline=started+std::chrono::seconds(
-            requestPath.rfind("/api/upload-backup-file",0)==0 ? 60 : 15);
+            requestPath.rfind("/api/upload-backup-file",0)==0 ? 300 :
+            (largePrivilegedUpload ? 60 : 15));
         while(!parser.is_done()){
             if(std::chrono::steady_clock::now()>bodyDeadline)
                 throw std::runtime_error("HTTP body deadline exceeded");
