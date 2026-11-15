@@ -42,6 +42,8 @@ inline std::string addClusterWebUi(std::string html) {
 .cluster-peersetting small{display:block;color:#a4b8ca}
 .cluster-config-form{display:grid;gap:8px;margin-top:16px}
 .cluster-config-form label{font-size:12px;color:#b6d3ed}
+.cluster-config-form .cluster-tls-option{display:flex;align-items:center;justify-content:flex-start;gap:9px;cursor:pointer;line-height:1.4}
+.cluster-config-form input[type="checkbox"]#clusterPeerVerifyTls{display:inline-block;width:18px;height:18px;min-width:18px;margin:0;flex:0 0 18px;accent-color:#268aff}
 .cluster-config-form input,#clusterLocalToken{display:block;width:100%;min-width:0;box-sizing:border-box;padding:9px;background:#101a28;border:1px solid #4f6582;border-radius:8px;color:#eef8ff}
 .cluster-config-hint{font-size:12px;line-height:1.5;color:#aabfd1;margin:10px 0}
 html[data-dashboard-theme="light"] .cluster-heading,html[data-dashboard-theme="light"] .cluster-channel-title{color:#243b55}
@@ -294,7 +296,7 @@ async function openClusterSettings(selectedUrl=''){
       'Upišite adresu udaljenog HTTP(S) medijskog poslužitelja dostupnu gledateljima. Ako je prazna, koristi se adresa za nadzor.')+'</p>'+
       '<label>'+clusterText('Ключ удалённого сервера','Remote server token','Ključ udaljenog poslužitelja')+'</label>'+
       '<input id="clusterPeerToken" type="password" maxlength="64" autocomplete="new-password" placeholder="'+clusterText('64 шестнадцатеричных символа','64 hexadecimal digits','64 heksadekadske znamenke')+'">'+
-      '<label><input type="checkbox" id="clusterPeerVerifyTls" '+(!selected||selected.verify_tls!==false?'checked':'')+'> '+
+      '<label class="cluster-tls-option"><input type="checkbox" id="clusterPeerVerifyTls" '+(!selected||selected.verify_tls!==false?'checked':'')+'> '+
       clusterText('Проверять сертификат TLS','Verify TLS certificate','Provjeri TLS certifikat')+'</label>'+
       '<p class="cluster-config-hint">'+clusterText(
       'Отключайте только для доверенных серверов с самоподписанным сертификатом. Без проверки возможна подмена узла и перехват ключа.',
@@ -348,6 +350,16 @@ async function addClusterPeer(){
   const token=document.getElementById('clusterPeerToken')?.value?.trim();
   const viewer_url=document.getElementById('clusterPeerViewerUrl')?.value?.trim()||'';
   const verify_tls=!!document.getElementById('clusterPeerVerifyTls')?.checked;
+  // Disabling verification applies only to HTTPS certificates, never to
+  // plaintext HTTP carrying the shared cluster access token.
+  if(/^http:\/\//i.test(url) && !/^http:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)\d{1,3}\.\d{1,3}(?::\d{1,5})?\/?$/i.test(url)){
+    uiError(clusterText(
+      'Для публичного домена используйте HTTPS. Отключение проверки TLS разрешает самоподписанный сертификат, но не обычный HTTP.',
+      'Use HTTPS for a public domain. Disabling TLS verification allows a self-signed certificate, not plaintext HTTP.',
+      'Za javnu domenu koristite HTTPS. Isključivanje TLS provjere dopušta samopotpisani certifikat, ali ne obični HTTP.'
+    ));
+    return;
+  }
   if(!name||!url||(!token&&!clusterEditingOriginalUrl)){
     uiError(clusterText('Укажите имя, адрес и ключ','Enter name, URL and token','Unesite naziv, adresu i ključ'));
     return;
