@@ -88,16 +88,30 @@ std::string HttpServer::clusterPeerChange(const std::string& body,bool remove) {
     dvbstreamer5::cluster::Config config;
     if(!dvbstreamer5::cluster::ensure(configManager.configDirectory(),config))
         return R"({"error":"Cannot read private cluster configuration"})";
+    // V541: editing an existing node uses its original URL as immutable
+    // identity. A changed URL must not silently append a second node.
+    const std::string originalUrl=input.get("original_url","").asString();
+    if(!originalUrl.empty() && !dvbstreamer5::cluster::validOrigin(originalUrl))
+        return R"({"error":"Invalid original cluster peer address"})";
     auto found=std::find_if(config.peers.begin(),config.peers.end(),
-        [&](const auto& peer){return peer.url==url;});
+        [&](const auto& peer){return peer.url==(originalUrl.empty()?url:originalUrl);});
     if(remove){
         if(found==config.peers.end())return R"({"error":"Unknown peer"})";
         config.peers.erase(found);
     }else{
-        if(!input["name"].isString()||!input["token"].isString())
+        if(!input["name"].isString() ||
+           (!input["token"].isString() && originalUrl.empty()))
             return R"({"error":"Peer name and access token are required"})";
+        if(!originalUrl.empty() && found==config.peers.end())
+            return R"({"error":"Unknown peer"})";
+        const auto duplicate=std::find_if(config.peers.begin(),config.peers.end(),
+            [&](const auto& candidate){return candidate.url==url;});
+        if(duplicate!=config.peers.end() && duplicate!=found)
+            return R"({"error":"Cluster peer address already exists"})";
+        std::string token=input.get("token","").asString();
+        if(token.empty() && found!=config.peers.end())token=found->token;
         dvbstreamer5::cluster::Peer peer{
-            input["name"].asString(),url,input["token"].asString(),
+            input["name"].asString(),url,token,
             input.get("viewer_url","").asString()};
         if(!peer.viewerUrl.empty() && peer.viewerUrl.back()=='/')
             peer.viewerUrl.pop_back();
