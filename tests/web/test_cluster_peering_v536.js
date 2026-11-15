@@ -50,7 +50,8 @@ const simulated=[
 ];
 class Node {
  constructor(tag='div'){this.tag=tag;this.children=[];this.className='';this.textContent='';
- this.title='';this.hidden=false;this.open=false;this.dataset={};this.listeners={};}
+ this.title='';this.hidden=false;this.open=false;this.dataset={};this.listeners={};this.attrs={};}
+ setAttribute(key,value){this.attrs[key]=value;}
  append(...nodes){this.children.push(...nodes)}
  appendChild(child){this.children.push(child)}
  replaceChildren(...nodes){this.children=[...nodes]}
@@ -120,7 +121,7 @@ async function main() {
  assert.equal(home.open,false,'Server spoiler must start collapsed');
  assert.ok(home.findByClass('cluster-server-indicator')[0].textContent.includes('2/2'));
  assert.equal(home.findByClass('cluster-channel').length,2);
- assert.ok(home.findByClass('cluster-channel-metrics')[1].textContent.includes('BACKUP'));
+ assert.ok(home.findByClass('cluster-channel-metrics')[1].textContent.includes('РЕЗЕРВ'));
  assert.equal(group('iptv').findByClass('cluster-channel').length,2);
  assert.ok(group('svettranscoding').findByClass('cluster-server-indicator')[0].className.includes('offline'));
  assert.ok(group('svettranscoding').findByClass('cluster-note').length===1);
@@ -143,7 +144,7 @@ async function main() {
  nextSimulated[0].channels[0]={...nextSimulated[0].channels[0],using_backup:true};
  nextSimulated[1].online=false;nextSimulated[1].channels=[];
  await context.refreshClusterStatus(true);
- assert.ok(group('home2').findByClass('cluster-channel-metrics')[0].textContent.includes('BACKUP'));
+ assert.ok(group('home2').findByClass('cluster-channel-metrics')[0].textContent.includes('РЕЗЕРВ'));
  assert.ok(group('iptv').findByClass('cluster-server-indicator')[0].className.includes('offline'));
  nextSimulated=simulated;
  await context.refreshClusterStatus(true);
@@ -158,6 +159,8 @@ async function main() {
    assert.equal(groups().length,3);
    const expected={ru:'Кластер серверов',en:'Server cluster',hr:'Klaster poslužitelja'};
    assert.ok(nodes.clusterDashboardTitle.textContent.startsWith(expected[lang]));
+   const status=group('home2').findByClass('cluster-channel-metrics')[1].textContent;
+   assert.ok(status.includes(lang==='ru'?'РЕЗЕРВ':lang==='hr'?'REZERVA':'BACKUP'));
  }
  assert.ok(calls.every(url=>url==='/api/cluster/status'));
  console.log('PASS: V536 3 simulated servers + MPEG-TS packets, ONLINE/OFFLINE/BACKUP, recover, sorting, spoilers, search and RU/EN/HR');
