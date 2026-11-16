@@ -42,11 +42,40 @@ int main() {
                 "Media stalled without CAMD errors");
     p.nowMs = 210000; p.lastEncryptedInputMs = 209000;
     p.lastChildOutputMs = 209000; p.lastCamdErrorMs = 209000;
+    ok &= check(recoveryReason(p) == RecoveryReason::CamdBlackout,
+                "Prolonged CAMD blackout must eventually recover one child");
+    // Before 180 seconds of no-clear-PES and uptime, do not reconnect
+    // multiple services to the same overloaded reader.
+    p.nowMs = 170000; p.lastEncryptedInputMs = 169000;
+    p.lastChildOutputMs = 169000; p.lastCamdErrorMs = 169000;
     ok &= check(recoveryReason(p) == RecoveryReason::None,
-                "Persistent CAMD errors must not trigger another login storm");
+                "Recent errors with a short blackout must stay connected");
+    // A recent valid PES is stronger evidence than a CAMD error.
+    p.nowMs = 210000; p.lastEncryptedInputMs = 209000;
+    p.lastChildOutputMs = 209000; p.lastCamdErrorMs = 209000;
+    p.lastClearMediaPesMs = 205000;
+    ok &= check(recoveryReason(p) == RecoveryReason::None,
+                "Recent clear PES must prevent blackout reset");
+    p.lastClearMediaPesMs = 0;
     p.lastCamdErrorMs = 0;
     ok &= check(recoveryReason(p) == RecoveryReason::MediaStalled,
                 "When CAMD errors cease, normal media recovery resumes");
+    p.childExited = true;
+    p.lastCamdErrorMs = 209000;
+    ok &= check(recoveryReason(p) == RecoveryReason::ChildExited,
+                "Child exit must always override CAMD blackout");
+    p.childExited = false;
+    p.lastEncryptedInputMs = 190000;
+    ok &= check(recoveryReason(p) == RecoveryReason::None,
+                "No incoming encrypted data: do not force CAMD recovery");
+    p.lastEncryptedInputMs = 209000;
+    ok &= check(camdBlackoutJitterMs("stream-105") ==
+                    camdBlackoutJitterMs("stream-105") &&
+                camdBlackoutJitterMs("stream-105") <= 27000,
+                "Blackout reconnect jitter must be bounded and deterministic");
+    ok &= check(recoveryReasonName(RecoveryReason::CamdBlackout) ==
+                    std::string("camd_blackout"),
+                "Blackout diagnostics should be key-free");
     ok &= check(retryJitterMs("stream-105") == retryJitterMs("stream-105") &&
                 retryJitterMs("stream-105") <= 1800,
                 "Per-stream retry jitter is deterministic and bounded");

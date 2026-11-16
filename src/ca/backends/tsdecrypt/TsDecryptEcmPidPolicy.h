@@ -16,7 +16,16 @@ static inline int dvb5_should_rotate_ecm_pid(
     // and transport failures. A real recovery can still stay on its PID.
     if (last_rotation_time && (now < last_rotation_time ||
         now - last_rotation_time < 15)) return 0;
-    if (reply != 0) return 1; // Transport errors still permit retry, throttled.
+    // A Newcamd transport timeout says nothing about the selected ECM PID.
+    // Switching away from a recently proven PID on every timeout adds reader
+    // work during upstream overload and can lose a previously valid mapping.
+    // Never suppress rotation for an unproven/stale PID: it still needs AUTO
+    // discovery after the CW evidence window has expired.
+    if (reply == -1 && current_pid && current_pid == last_success_pid &&
+        has_valid_cw && last_success_time &&
+        now >= last_success_time && now - last_success_time <= 30)
+        return 0;
+    if (reply != 0) return 1; // Stale/unproven PID: allow bounded AUTO retry.
     if (!current_pid || current_pid != last_success_pid ||
         !has_valid_cw || !last_success_time || now < last_success_time ||
         now - last_success_time > 30)

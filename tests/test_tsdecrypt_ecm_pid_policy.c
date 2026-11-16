@@ -13,7 +13,13 @@ int main(void) {
     assert(dvb5_should_rotate_ecm_pid(0, 3, 0, 1, 6742, 7181, 1, 990, 0, now));
     assert(dvb5_should_rotate_ecm_pid(0, 3, 0, 1, 6742, 0, 0, 0, 0, now));
     assert(dvb5_should_rotate_ecm_pid(0, 3, 0, 1, 6742, 6742, 1, 969, 0, now));
-    assert(dvb5_should_rotate_ecm_pid(0, 3, -1, 1, 6742, 6742, 1, 990, 0, now));
+    // A transport timeout does NOT prove a different ECM PID is needed.
+    assert(!dvb5_should_rotate_ecm_pid(0, 3, -1, 1, 6742, 6742, 1, 990, 0, now));
+    assert(!dvb5_should_rotate_ecm_pid(0, 3, -1, 1, 6742, 6742, 1, 970, 0, now));
+    // Unproven/stale PID can still rotate on a transport failure.
+    assert(dvb5_should_rotate_ecm_pid(0, 3, -1, 1, 6742, 6742, 1, 969, 0, now));
+    assert(dvb5_should_rotate_ecm_pid(0, 3, -1, 1, 6742, 7181, 1, 990, 0, now));
+    assert(dvb5_should_rotate_ecm_pid(0, 3, -1, 1, 6742, 6742, 0, 990, 0, now));
     // Rotations (including CAMD transport failures) are rate-limited.
     assert(!dvb5_should_rotate_ecm_pid(0, 3, 0, 99, 6742, 7181, 1, 990, 990, now));
     assert(!dvb5_should_rotate_ecm_pid(0, 3, -1, 99, 6742, 7181, 1, 990, 986, now));

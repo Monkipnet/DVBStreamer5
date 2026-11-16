@@ -81,6 +81,7 @@ struct Service {
     std::atomic<bool> exited{false};
     std::atomic<bool> recovering{false};
     std::atomic<uint64_t> restartCount{0};
+    std::atomic<uint64_t> camdBlackoutRestarts{0};
     std::atomic<uint64_t> childStartedMs{0}, lastEncryptedInputMs{0};
     std::atomic<uint64_t> lastChildOutputMs{0}, lastClearPesMs{0};
     std::atomic<uint64_t> inputDrops{0};
@@ -486,6 +487,8 @@ struct Service {
             }
 
             recovering.store(true);
+            if (reason == dvbstreamer5::ca::tsdecrypt_detail::RecoveryReason::CamdBlackout)
+                camdBlackoutRestarts.fetch_add(1);
             const uint64_t n = restartCount.fetch_add(1) + 1;
             std::fprintf(stderr,
                 "TSDECRYPT RECOVERY stream=%s reason=%s attempt=%llu "
@@ -500,7 +503,9 @@ struct Service {
 
             const uint64_t pauseMs =
                 dvbstreamer5::ca::tsdecrypt_detail::retryDelayMs(consecutiveRestarts) +
-                dvbstreamer5::ca::tsdecrypt_detail::retryJitterMs(id.c_str());
+                (reason == dvbstreamer5::ca::tsdecrypt_detail::RecoveryReason::CamdBlackout
+                    ? dvbstreamer5::ca::tsdecrypt_detail::camdBlackoutJitterMs(id.c_str())
+                    : dvbstreamer5::ca::tsdecrypt_detail::retryJitterMs(id.c_str()));
             consecutiveRestarts = std::min<uint64_t>(consecutiveRestarts + 1, 8);
             const uint64_t until = monotonicMs() + pauseMs;
             while (!stopping.load() && monotonicMs() < until)
@@ -768,7 +773,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
                 "video_pes_encrypted_pid=%llu audio_pes_encrypted_pid=%llu "
                 "output_null=%llu input_drops=%llu output_drops=%llu "
-                "restarts=%llu recovering=%u "
+                "restarts=%llu camd_blackout_restarts=%llu recovering=%u "
                 "camd_connect_attempts=%llu camd_connected=%llu "
                 "camd_connect_errors=%llu camd_reconnects=%llu "
                 "camd_no_cw=%llu camd_ecm_queue_overflows=%llu "
@@ -797,6 +802,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->inputDrops.load()),
                 static_cast<unsigned long long>(service->outputDrops.load()),
                 static_cast<unsigned long long>(service->restartCount.load()),
+                static_cast<unsigned long long>(service->camdBlackoutRestarts.load()),
                 service->recovering.load() ? 1U : 0U,
                 static_cast<unsigned long long>(service->camdConnectAttempts.load()),
                 static_cast<unsigned long long>(service->camdConnected.load()),
@@ -871,6 +877,8 @@ const char* statusJson(void* self) {
         item["status"] = entry.second->recovering.load() ? "RECOVERING" :
             (entry.second->exited.load() ? "EXITED" : "ACTIVE");
         item["restart_count"] = Json::UInt64(entry.second->restartCount.load());
+        item["camd_blackout_restarts"] =
+            Json::UInt64(entry.second->camdBlackoutRestarts.load());
         item["input_drops"] = Json::UInt64(entry.second->inputDrops.load());
         item["output_drops"] = Json::UInt64(entry.second->outputDrops.load());
         item["camd_connect_attempts"] = Json::UInt64(entry.second->camdConnectAttempts.load());
