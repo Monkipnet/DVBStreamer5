@@ -88,7 +88,7 @@ assert.ok(cmake.includes('dvbstreamer5_cluster_routing_test'));
 for(const marker of [
  'resolveHttpMpegTsTarget(configManager.config.streams, target, httpMpegTsId)',
  'resolveHlsTarget(configManager.config.streams, target, hlsId, hlsFile)',
- 'handleHttpStream(socket, target)',
+ 'handleHttpStream(socket, target,clientIpForRequest(socket,req))',
  'sendHlsFileZeroCopy'
  ])assert.ok(transport.includes(marker),'Media path regression: '+marker);
 console.log('PASS V537 middleware API route, viewer auth, IP filtering, HTTP redirects, tri-locale controls and legacy media guards');
