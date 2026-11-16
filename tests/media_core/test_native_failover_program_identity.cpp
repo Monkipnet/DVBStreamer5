@@ -205,6 +205,73 @@ int main() {
         check(restored.serviceId==800 && restored.pmtPid==0x1300 &&
               restored.videoPid==0x0400 && restored.audioPid==0x0401,
               "downstream remapper did not resume audio after primary return");
+        // V550: nine independent IP/SRT channels must not be held at 3/9
+        // because the backup uses an A/V PID that the primary assigns to
+        // another track. Every channel has its own single-program TS.
+        for (int index=0; index<9; ++index) {
+            const bool conflict=index>=3;
+            const auto backupInput=muxProgram(
+                static_cast<std::uint16_t>(100+index),0x1000,0x0200,
+                conflict ? video : std::uint16_t{0x0201},"srt-backup");
+            RemapConfig trial=cfg;
+            trial.inputServiceId=0;
+            trial.allowMissingOutputMedia=true;
+            trial.outputServiceId=static_cast<std::uint16_t>(700+index);
+            trial.allowPidConflictFallback=false;
+            Remapper strictBackup;
+            check(strictBackup.initialize(trial,error),"strict conflict test init");
+            std::vector<Packet> ignored;
+            bool aborted=false;
+            for(const auto& packet:backupInput){
+                if(!strictBackup.process(packet,ignored,error)){
+                    aborted=true;break;
+                }
+            }
+            check(aborted==conflict,
+                "emulator must reproduce exactly six PID collisions");
+            trial.allowPidConflictFallback=true;
+            Remapper recoveredBackup;
+            check(recoveredBackup.initialize(trial,error),"recovering backup init");
+            std::vector<Packet> repaired;
+            for(const auto& packet:backupInput)
+                check(recoveredBackup.process(packet,repaired,error),
+                      "network backup relay must survive PID conflict");
+            recoveredBackup.tick(repaired);
+            NativeFailoverProgramIdentity identityAfterRecovery;
+            identityAfterRecovery.observe(repaired);
+            const auto recovered=identityAfterRecovery.snapshot();
+            check(recovered.serviceId==trial.outputServiceId &&
+                  recovered.pmtPid==pmt,
+                  "backup lost configured output SID/PMT");
+            check(recovered.videoPid==(conflict ? std::uint16_t{0x0200} : video) &&
+                  recovered.audioPid==(conflict ? video : audio),
+                  "backup PMT must advertise actual media PIDs");
+            bool sawVideo=false,sawAudio=false;
+            for(const auto& packet:repaired){
+                if(pidOf(packet)==recovered.videoPid)sawVideo=true;
+                if(pidOf(packet)==recovered.audioPid)sawAudio=true;
+            }
+            check(sawVideo&&sawAudio,
+                  "recovered backup must contain usable video/audio packets");
+            // Source PID changes after reconnect: remapper must re-establish
+            // the primary-compatible output PID mapping, including PMT.
+            if (conflict) {
+                const auto restoredBackup=muxProgram(
+                    static_cast<std::uint16_t>(100+index),0x1000,
+                    0x0100,0x0101,"srt-backup");
+                std::vector<Packet> recoveredOutput;
+                for(const auto& packet:restoredBackup)
+                    check(recoveredBackup.process(packet,recoveredOutput,error),
+                          "remapper failed to restore pinned output PIDs");
+                recoveredBackup.tick(recoveredOutput);
+                NativeFailoverProgramIdentity afterReconnect;
+                afterReconnect.observe(recoveredOutput);
+                const auto again=afterReconnect.snapshot();
+                check(again.videoPid==video && again.audioPid==audio,
+                    "backup PID mapping must recover when conflict disappears");
+            }
+        }
+        std::cout<<"PASS: 9 independent IP/SRT channels, 6 PID conflicts recovered\n";
         std::cout<<"PASS: three-tile primary/backup SRT PMT transitions and recovery\n";
         return 0;
     } catch(const std::exception& e) {
