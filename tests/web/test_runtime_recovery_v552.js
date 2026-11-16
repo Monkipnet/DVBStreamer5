@@ -14,7 +14,9 @@ const standalone=read('packaging/universal/run-installer.sh');
 assert(fs.statSync('install_dvbstreamer5_binary.sh').mode & 0o111,
  'legacy installer must retain its executable Git mode');
 const version=read('src/AppVersion.h');
-assert(version.includes('"10.8.555"'));
+const patchVersion = Number(version.match(/kProgramVersion = "10\.8\.(\d+)"/)?.[1]);
+assert(Number.isInteger(patchVersion) && patchVersion >= 552,
+ 'V552 recovery regression must support later patch releases');
 assert(header.includes('std::atomic<std::int64_t> inputStallSinceMs{0}'));
 assert(manager.includes('if (bufferedNetworkInput && inputHealth.stalled)'));
 assert(manager.includes('state->inputStallSinceMs.store(0, std::memory_order_release)'));

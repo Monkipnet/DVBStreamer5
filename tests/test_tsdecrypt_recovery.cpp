@@ -76,6 +76,22 @@ int main() {
     ok &= check(recoveryReasonName(RecoveryReason::CamdBlackout) ==
                     std::string("camd_blackout"),
                 "Blackout diagnostics should be key-free");
+    // Synthetic five-channel incident: stagger reader reconnects instead
+    // of immediately restarting all TSDecrypt child processes at once.
+    const char* ids[] = {
+        "sat-1794213237299-113-4", "sat-1794213237299-122-3",
+        "sat-1794213237299-132-2", "sat-1794213401098-108-0",
+        "sat-1794213530603-118-3"
+    };
+    uint64_t minJitter = 28000, maxJitter = 0;
+    for (const char* id : ids) {
+        const uint64_t jitter = camdBlackoutJitterMs(id);
+        if (jitter < minJitter) minJitter = jitter;
+        if (jitter > maxJitter) maxJitter = jitter;
+        ok &= check(jitter <= 27000, "Per-SID CAMD jitter exceeded limit");
+    }
+    ok &= check(maxJitter > minJitter,
+                "Five shared-reader services must not all reconnect together");
     ok &= check(retryJitterMs("stream-105") == retryJitterMs("stream-105") &&
                 retryJitterMs("stream-105") <= 1800,
                 "Per-stream retry jitter is deterministic and bounded");
