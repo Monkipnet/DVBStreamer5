@@ -1691,6 +1691,10 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
         relay.remapConfig.inputServiceId = 0; // backup program auto-select
         relay.remapConfig.inputAudioPid = 0;   // backup audio PID independent
         relay.remapConfig.allowMissingOutputMedia = true;
+        // V550: on different backup SRT/UDP/HTTP PID layout, preserve live
+        // backup media rather than continuously stop/restart the relay.
+        // This never changes strict primary/DVB PID remapping.
+        relay.remapConfig.allowPidConflictFallback = true;
         relay.remapConfig.outputServiceId = outputSid;
         relay.remapConfig.preserveSourceServiceId = false;
         relay.remapConfig.outputPmtPid = primary.hasProgram()
