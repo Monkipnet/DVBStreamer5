@@ -18,6 +18,10 @@ struct RemapConfig {
     std::uint16_t outputPmtPid = 0; // 0=source; backup uses primary's PMT PID
     // A backup or downstream live-IP remap may omit a previously expected track.
     bool allowMissingOutputMedia = false;
+    // Backup-only recovery: if pinned output media PIDs collide with an
+    // elementary PID from the backup PMT, temporarily preserve source PIDs.
+    // Do not use for primary streams or strict DVB remaps.
+    bool allowPidConflictFallback = false;
     std::uint16_t inputAudioPid = 0; // optional explicit input track
     bool preserveSourceServiceId = false; // for track-only filtering
     std::string serviceName;
@@ -102,6 +106,9 @@ private:
     std::uint16_t pmtPid_ = 0x1fff;
     std::uint16_t inputVideoPid_ = 0;
     std::uint16_t inputAudioPid_ = 0;
+    std::uint16_t effectiveOutputVideoPid_ = 0;
+    std::uint16_t effectiveOutputAudioPid_ = 0;
+    bool pidConflictFallbackActive_ = false;
     // A changed upstream PMT may preserve PID numbers while switching codecs
     // or removing audio. Mark the first payload of each new media generation
     // with a TS adaptation-only discontinuity packet so live VLC decoders
