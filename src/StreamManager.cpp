@@ -30,6 +30,7 @@
 #include "media/HttpTsEpollDispatcher.h"
 #include "media/TransportStream.h"
 #include "media/NativeFailoverHealth.h"
+#include "media/NativeFailoverSourcePolicy.h"
 #include "media/InputLivenessPolicy.h"
 #include "media/RtpMpegTs.h"
 
@@ -762,14 +763,31 @@ bool StreamManager::startStream(const StreamConfig& streamConfig, std::string* e
     }
     // V348: reuse one public HTTP MPEG-TS hub across input transitions.
     // Private preview keeps its own fresh, per-source hub.
-    const bool configuredFailover = !streamConfig.backupInputUri.empty() &&
-        streamConfig.backupInputUri != streamConfig.inputUri;
+    // V551: monitorFailoverStreams() builds the backup generation by setting
+    // next.inputUri=next.backupInputUri. At that point the two URLs are equal,
+    // but the failover registry explicitly marks this as an active backup.
+    // The old URI-inequality check dropped shared HTTP/HLS/clock/primary-PMT
+    // state and skipped V550 backup PID recovery on every retry.
+    const bool configuredFailover =
+        dvbstreamer5::media::network::hasConfiguredFailover(
+            streamConfig.inputUri,streamConfig.backupInputUri,
+            state->usingBackup);
     bool automaticSourceSwitch = false;
     {
         std::lock_guard<std::mutex> lock(failoverMutex);
         const auto it = failoverEntries.find(streamConfig.id);
         automaticSourceSwitch =
             it != failoverEntries.end() && it->second.switching;
+    }
+    if (state->usingBackup) {
+        std::cerr << "NATIVE BACKUP GENERATION CONFIG"
+                  << " stream_id=" << streamConfig.id
+                  << " backup_state=1"
+                  << " source_uri_matches_backup="
+                  << (streamConfig.inputUri==streamConfig.backupInputUri?1:0)
+                  << " configured_failover=" << (configuredFailover?1:0)
+                  << " primary_program_preserved=" << (configuredFailover?1:0)
+                  << std::endl;
     }
     if (configuredFailover) {
         std::lock_guard<std::mutex> lock(managerMutex);
