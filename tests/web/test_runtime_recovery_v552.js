@@ -11,8 +11,10 @@ const udp=read('src/media/PcrVbrUdpOutputWorker.cpp');
 const service=read('scripts/make_portable_linux_bundle.sh');
 const legacy=read('packaging/dvbstreamer5.service');
 const standalone=read('packaging/universal/run-installer.sh');
+assert(fs.statSync('install_dvbstreamer5_binary.sh').mode & 0o111,
+ 'legacy installer must retain its executable Git mode');
 const version=read('src/AppVersion.h');
-assert(version.includes('"10.8.554"'));
+assert(version.includes('"10.8.555"'));
 assert(header.includes('std::atomic<std::int64_t> inputStallSinceMs{0}'));
 assert(manager.includes('if (bufferedNetworkInput && inputHealth.stalled)'));
 assert(manager.includes('state->inputStallSinceMs.store(0, std::memory_order_release)'));
