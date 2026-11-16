@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <iostream>
 
 namespace dvbstreamer5::media::mpegts {
 namespace {
@@ -128,6 +129,9 @@ bool Remapper::initialize(const RemapConfig& config, std::string& error) {
     pmtPid_ = 0x1fff;
     inputVideoPid_ = 0;
     inputAudioPid_ = 0;
+    effectiveOutputVideoPid_ = 0;
+    effectiveOutputAudioPid_ = 0;
+    pidConflictFallbackActive_ = false;
     pendingVideoDiscontinuityInputPid_ = 0;
     pendingAudioDiscontinuityInputPid_ = 0;
     excludedInputAudioPids_.fill(false);
@@ -593,20 +597,47 @@ bool Remapper::processPmtSection(
         return false;
     }
     // Do not remap or advertise a track absent from the backup PMT.
-    const std::uint16_t targetVideoPid = inputVideo ? config_.outputVideoPid : 0;
-    const std::uint16_t targetAudioPid = inputAudio ? config_.outputAudioPid : 0;
+    std::uint16_t targetVideoPid = inputVideo ? config_.outputVideoPid : 0;
+    std::uint16_t targetAudioPid = inputAudio ? config_.outputAudioPid : 0;
     if ((inputVideo != 0 && inputVideo < 0x20) ||
         (inputAudio != 0 && inputAudio < 0x20)) {
         error = "native remap encountered an invalid elementary stream PID";
         return false;
     }
-    if ((targetVideoPid != 0 && allowed[targetVideoPid] &&
+    const bool mediaPidCollision =
+        (targetVideoPid != 0 && allowed[targetVideoPid] &&
             targetVideoPid != inputVideo) ||
         (targetAudioPid != 0 && allowed[targetAudioPid] &&
-            targetAudioPid != inputAudio)) {
+            targetAudioPid != inputAudio);
+    if (mediaPidCollision && !config_.allowPidConflictFallback) {
         error = "native remap output PID conflicts with another selected-program PID";
         return false;
     }
+    // A backup with a different PMT layout may legitimately use the primary
+    // A/V PID for another elementary stream. Never emit two streams under
+    // that PID. For BACKUP only, pass the source media PIDs through instead
+    // of permanently stopping the relay. PMT and TS payload must always
+    // reflect the same effective mapping. When a non-conflicting PMT returns,
+    // the pinned primary output PIDs are restored automatically.
+    if (mediaPidCollision) {
+        targetVideoPid = 0;
+        targetAudioPid = 0;
+        if (!pidConflictFallbackActive_) {
+            std::cerr << "NATIVE BACKUP PID COLLISION fallback=passthrough"
+                      << " source_video_pid=" << inputVideo
+                      << " source_audio_pid=" << inputAudio
+                      << " requested_video_pid=" << config_.outputVideoPid
+                      << " requested_audio_pid=" << config_.outputAudioPid
+                      << std::endl;
+        }
+    } else if (pidConflictFallbackActive_) {
+        std::cerr << "NATIVE BACKUP PID COLLISION recovered=1"
+                  << " output_video_pid=" << targetVideoPid
+                  << " output_audio_pid=" << targetAudioPid << std::endl;
+    }
+    pidConflictFallbackActive_ = mediaPidCollision;
+    effectiveOutputVideoPid_ = targetVideoPid;
+    effectiveOutputAudioPid_ = targetAudioPid;
 
     inputVideoPid_ = inputVideo;
     inputAudioPid_ = inputAudio;
@@ -920,13 +951,13 @@ bool Remapper::processValidated(
 
     Packet packet = input;
     std::uint16_t mappedPid = info.pid;
-    if (info.pid != 0x1fff && config_.outputVideoPid != 0 &&
+    if (info.pid != 0x1fff && effectiveOutputVideoPid_ != 0 &&
         info.pid == inputVideoPid_) {
-        mappedPid = config_.outputVideoPid;
+        mappedPid = effectiveOutputVideoPid_;
     }
-    if (info.pid != 0x1fff && config_.outputAudioPid != 0 &&
+    if (info.pid != 0x1fff && effectiveOutputAudioPid_ != 0 &&
         info.pid == inputAudioPid_) {
-        mappedPid = config_.outputAudioPid;
+        mappedPid = effectiveOutputAudioPid_;
     }
     if (info.pid != mappedPid) {
         rewritePid(packet.data(), packet.size(), mappedPid);
