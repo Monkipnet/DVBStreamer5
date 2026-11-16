@@ -67,7 +67,7 @@ assert.ok(store.includes('mode 0600'));
 assert.ok(store.includes('auto_failover'));
 assert.ok(store.includes('balance_viewers'));
 assert.ok(store.includes('viewer_url'));
-assert.ok(store.includes('validOrigin(peer.viewerUrl)'));
+assert.ok(store.includes('validOrigin(peer.viewerUrl,!peer.verifyTlsPeer)'));
 // GUI texts must be present in Russian, English, Croatian.
 for(const marker of [
  'id="clusterAutoFailover"','id="clusterBalanceViewers"',
