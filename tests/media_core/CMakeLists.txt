@@ -136,6 +136,15 @@ add_executable(native_failover_program_identity_test
 target_include_directories(native_failover_program_identity_test PRIVATE ../../src)
 add_test(NAME native_failover_program_identity COMMAND native_failover_program_identity_test)
 
+# V551: validate real failover classification after the backup input URI
+# replaces primary input URI (a previous omission disabled V550 recovery).
+add_executable(native_failover_source_policy_v551_test
+    test_native_failover_source_policy_v551.cpp)
+target_include_directories(native_failover_source_policy_v551_test PRIVATE ../../src)
+add_test(NAME native_failover_source_policy_v551
+    COMMAND native_failover_source_policy_v551_test)
+
+
 add_executable(source_pcr_packet_pacing_test
     test_source_pcr_packet_pacing.cpp
     ../../src/media/CbrTsPacer.cpp
