@@ -142,6 +142,13 @@ jobs:
           /tmp/dvb-owner-test
           node tests/web/test_dvb_external_owners.js
 
+      - name: Emulate active backup URI identity and 9/9 independent SRT channels
+        run: |
+          node tests/web/test_failover_source_policy_v551.js
+          cmake -S tests/media_core -B build-test-media-v551 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-test-media-v551 --target native_failover_source_policy_v551_test native_failover_program_identity_test --parallel 2
+          ctest --test-dir build-test-media-v551 -R 'native_failover_(source_policy_v551|program_identity)' --output-on-failure
+
       - name: Verify active DVB transponder/LOCK and HLS media evidence
         run: |
           node tests/web/test_dvb_live_transponder_v509.js
