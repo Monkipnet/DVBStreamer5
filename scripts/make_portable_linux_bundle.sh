@@ -424,7 +424,9 @@ Environment=DVBSTREAMER5_CA_PLUGIN_DIR=$INSTALL_DIR/ca-plugins
 ExecStart=$INSTALL_DIR/run.sh
 Restart=on-failure
 RestartSec=3
-TimeoutStopSec=35
+TimeoutStopSec=20
+KillMode=control-group
+SendSIGKILL=yes
 LimitNOFILE=65536
 
 [Install]

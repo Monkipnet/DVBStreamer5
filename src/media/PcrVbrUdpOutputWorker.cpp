@@ -85,14 +85,19 @@ bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
         if(clock_.observe(packet,nextIndex_)){
             // Source has explicitly restarted its PCR clock. Old media cannot
             // be scheduled against the new timeline.
-            droppedBytes_+=packets_.size()*188ULL;
+            const auto discardedPackets=packets_.size();
+            droppedBytes_+=discardedPackets*188ULL;
             packets_.clear();
             frontIndex_=nextIndex_;
             firstQueued_=Clock::now();
             restartClock_=true;
             std::cerr<<"NATIVE UDP VBR PCR RESET stream_id="<<streamId_
                      <<" output_index="<<index_
-                     <<" cause=pcr_discontinuity_or_invalid_jump"<<std::endl;
+                     <<" cause="<<clock_.lastResetCause()
+                     <<" pcr_jump_ms="<<clock_.lastResetDeltaMs()
+                     <<" dropped_packets="<<discardedPackets
+                     <<" dropped_bytes="<<discardedPackets*188ULL
+                     <<std::endl;
         }
         packets_.push_back(packet);
         ++nextIndex_;

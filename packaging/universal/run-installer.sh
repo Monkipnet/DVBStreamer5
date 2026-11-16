@@ -214,7 +214,9 @@ WorkingDirectory=$INSTALL_DIR
 ExecStart=$INSTALL_DIR/dvbstreamer5-run
 Restart=on-failure
 RestartSec=3
-TimeoutStopSec=35
+TimeoutStopSec=20
+KillMode=control-group
+SendSIGKILL=yes
 LimitNOFILE=65536
 
 [Install]

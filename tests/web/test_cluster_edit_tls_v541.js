@@ -11,7 +11,7 @@ const script=ui.slice(ui.indexOf('static const char* script='));
 const js=script.slice(script.indexOf('<script>')+8,script.indexOf('</script>'));
 new vm.Script(js);
 for(const marker of [
- "openClusterSettings(key)","cluster-server-spoiler","details.open=!details.open",
+ "openClusterSettings(key)","cluster-server-spoiler","details.addEventListener('toggle'",
  "clusterEditingOriginalUrl","original_url:clusterEditingOriginalUrl",
  "data-cluster-edit","selected?.name","selected?.url","selected?.viewer_url",
  "Сохранить сервер","Save server","Spremi poslužitelj",

@@ -42,7 +42,22 @@ public:
         // steps are valid on clean high-frequency PCR feeds (T49/T17).
         // Never discard the queued transport packets for a short step:
         // ignore only this timing anchor and retain the previous timeline.
+        // A small backward PCR jitter is not a source-clock discontinuity.
+        // Ignore only this anchor, preserving queued packets and pacing.
+        // Genuine discontinuity flags and large jumps still force reset.
+        if(!discontinuity && pcr<last.pcr &&
+           last.pcr-pcr<kHz/1000ULL){
+            ++shortStepsIgnored_;
+            return false;
+        }
         if(discontinuity || ticks>kHz*2ULL){
+            lastResetCause_=discontinuity ? "discontinuity_flag" :
+                (pcr<last.pcr ? "backward_jump" : "forward_jump");
+            lastResetDeltaMs_=pcr<last.pcr ?
+                -static_cast<std::int64_t>(
+                    static_cast<unsigned __int128>(last.pcr-pcr)*1000ULL/kHz) :
+                static_cast<std::int64_t>(
+                    static_cast<unsigned __int128>(ticks)*1000ULL/kHz);
             anchors_.clear();
             anchors_.push_back({index,0,pcr});
             ++resets_;
@@ -86,6 +101,8 @@ public:
         return true;
     }
     std::uint64_t resets()const noexcept{return resets_;}
+    const char* lastResetCause()const noexcept{return lastResetCause_;}
+    std::int64_t lastResetDeltaMs()const noexcept{return lastResetDeltaMs_;}
     std::uint64_t shortStepsIgnored()const noexcept{return shortStepsIgnored_;}
     std::uint16_t referencePid()const noexcept{return referencePid_;}
 private:
@@ -94,6 +111,8 @@ private:
     bool havePid_=false;
     std::uint64_t resets_=0;
     std::uint64_t shortStepsIgnored_=0;
+    const char* lastResetCause_="none";
+    std::int64_t lastResetDeltaMs_=0;
 };
 
 } // namespace dvbstreamer5::media::mpegts

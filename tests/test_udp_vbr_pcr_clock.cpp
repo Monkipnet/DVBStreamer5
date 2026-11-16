@@ -1,6 +1,7 @@
 #include "media/PcrVbrSourceClock.h"
 #include <cstdlib>
 #include <iostream>
+#include <string>
 using dvbstreamer5::media::mpegts::Packet;
 using dvbstreamer5::media::mpegts::PcrVbrSourceClock;
 static void check(bool ok,const char* message){
@@ -56,9 +57,17 @@ int main(){
     std::int64_t restored=0;
     check(clock.timeNs(320,restored)&&restored>e,
         "PCR timeline failed to recover after skipped anchors");
+    // Source-PCR may jitter backwards by a fraction of a millisecond.
+    // Neither a silent clock jump nor output-queue flush is warranted.
+    check(!clock.observe(pkt(4309200),321),
+        "sub-ms backward PCR jitter caused a false output gap");
+    check(clock.resets()==beforeResets && clock.ready(),
+        "sub-ms backward PCR jitter reset the pacing clock");
     // An explicit MPEG-TS discontinuity must still reset the clock.
     check(clock.observe(pkt(27000000,true),400),"PCR reset ignored");
     check(!clock.ready(),"PCR reset should discard stale clock anchors");
+    check(std::string(clock.lastResetCause())=="discontinuity_flag",
+        "discontinuity flag missing from PCR reset diagnostics");
     clock.observe(pkt(28350000),500);
     check(clock.ready(),"PCR recovery failed");
     // Dense DVB PCR schedule exceeds the 512-anchor retention limit.

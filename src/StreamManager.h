@@ -266,6 +266,10 @@ struct StreamState {
     bool usingBackup = false;
     // Written by the 1-s stream monitor, polled by a separate failover worker.
     std::atomic<bool> inputStalled{false};
+    // V552: monotonic start of continuous network/media silence.
+    // Atomic because the 1-s stream monitor writes it and independent
+    // Auto Start recovery workers read it. Zero means input is healthy.
+    std::atomic<std::int64_t> inputStallSinceMs{0};
     std::string statusMessage = "stopped";
     std::string activeInputUri;
     StreamConfig config;

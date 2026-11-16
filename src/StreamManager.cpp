@@ -2481,6 +2481,7 @@ void StreamManager::monitorAutoStartRecovery(unsigned workerIndex) {
             if (isOperatorStopped(id) || isStopPending(id)) continue;
             bool active = false;
             bool stable = false;
+            bool stalledLongEnough = false;
             std::string previousFailure;
             {
                 std::lock_guard<std::mutex> lock(managerMutex);
@@ -2490,11 +2491,22 @@ void StreamManager::monitorAutoStartRecovery(unsigned workerIndex) {
                     active = state.active.load(std::memory_order_acquire);
                     stable = active && state.running.load(std::memory_order_acquire) &&
                         now - state.startedAt >= std::chrono::minutes(2);
-                    if (!active && state.nativeRelay)
+                    const auto stallSince = state.inputStallSinceMs.load(
+                        std::memory_order_acquire);
+                    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now.time_since_epoch()).count();
+                    stalledLongEnough = active &&
+                        state.running.load(std::memory_order_acquire) &&
+                        state.inputStalled.load(std::memory_order_acquire) &&
+                        stallSince > 0 && nowMs >= stallSince &&
+                        nowMs - stallSince >= 120000;
+                    if (stalledLongEnough)
+                        previousFailure = "network_media_silent_over_120s";
+                    else if (!active && state.nativeRelay)
                         previousFailure = state.nativeRelay->lastError();
                 }
             }
-            if (active) {
+            if (active && !stalledLongEnough) {
                 if (stable) {
                     std::lock_guard<std::mutex> lock(autoRecoveryMutex_);
                     autoRecoveryAttempts_.erase(id);
@@ -2509,8 +2521,20 @@ void StreamManager::monitorAutoStartRecovery(unsigned workerIndex) {
             // Do not wait behind an operator stop or an ongoing failover.
             std::unique_lock<std::mutex> actionLock(failoverActionMutex, std::try_to_lock);
             if (!actionLock.owns_lock()) continue;
-            if (isOperatorStopped(id) || isStopPending(id) || isStreamActive(id))
+            if (isOperatorStopped(id) || isStopPending(id) ||
+                (!stalledLongEnough && isStreamActive(id)))
                 continue;
+            if (stalledLongEnough) {
+                // Re-check under the manager mutex: progress or an operator
+                // action may have raced the earlier watchdog snapshot.
+                std::lock_guard<std::mutex> lock(managerMutex);
+                const auto it = streams.find(id);
+                if (it == streams.end() || !it->second ||
+                    !it->second->active.load(std::memory_order_acquire) ||
+                    !it->second->inputStalled.load(std::memory_order_acquire) ||
+                    it->second->inputStallSinceMs.load(std::memory_order_acquire) == 0)
+                    continue;
+            }
             {
                 std::lock_guard<std::mutex> lock(failoverMutex);
                 if (failoverEntries.count(id)) continue;
@@ -2536,8 +2560,21 @@ void StreamManager::monitorAutoStartRecovery(unsigned workerIndex) {
             std::string error;
             bool started = false;
             try {
-                started = startStream(cfg, &error);
-                if (!started && isStreamActive(id)) started = true;
+                if (stalledLongEnough) {
+                    // A live relay may never exit after the upstream source
+                    // disappears. Recreate its input worker/socket, not the
+                    // entire service or neighboring transponder tiles.
+                    std::cerr << "AUTO START RECOVERY STALLED INPUT stream_id="
+                              << id << " action=restart_single_network_tile"
+                              << std::endl;
+                    (void)stopStream(id);
+                }
+                if (!isOperatorStopped(id) && !isStopPending(id))
+                    started = startStream(cfg, &error);
+                else
+                    error = "operator stop superseded recovery";
+                if (!started && isStreamActive(id) &&
+                    !isOperatorStopped(id)) started = true;
             } catch (const std::exception& ex) {
                 error = ex.what();
             } catch (...) {
@@ -2678,6 +2715,20 @@ void StreamManager::monitorNativeStream(StreamState* state) {
         const auto inputHealth = inputLiveness.observe(
             usefulInput, relay->sourceInputBytes(),
             std::chrono::steady_clock::now());
+        // V552: track the *continuous* outage rather than tile uptime.
+        // Do not restart DVB/transponder viewers on missing selected PES:
+        // other services can still own the shared tuner. Network inputs
+        // have their own independently recoverable sockets.
+        if (bufferedNetworkInput && inputHealth.stalled) {
+            const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            std::int64_t expected = 0;
+            (void)state->inputStallSinceMs.compare_exchange_strong(
+                expected, static_cast<std::int64_t>(nowMs),
+                std::memory_order_acq_rel);
+        } else {
+            state->inputStallSinceMs.store(0, std::memory_order_release);
+        }
         const bool inputAdvanced = inputHealth.mediaAdvanced;
         const bool recoveredFromInputLoss =
             inputAdvanced && telegramInputUnavailable;

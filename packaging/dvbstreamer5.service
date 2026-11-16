@@ -15,6 +15,9 @@ Environment=DVBSTREAMER5_OSCAM_BINARY=/opt/DVBStreamer5/oscam-mini/oscam-mini
 ExecStart=/opt/DVBStreamer5/bin/DVBStreamer5
 Restart=on-failure
 RestartSec=2
+TimeoutStopSec=20
+KillMode=control-group
+SendSIGKILL=yes
 LimitNOFILE=65536
 UMask=0022
 
