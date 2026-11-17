@@ -378,7 +378,7 @@ if [[ -d "$INSTALL_DIR/oscam-mini/config" ]]; then
 fi
 
 log "Installing application runtime under $INSTALL_DIR"
-for item in bin lib web ca-plugins etc tls scripts run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
+for item in bin lib web ca-plugins etc tls run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS scripts; do
     [[ -e "$BUNDLE_DIR/$item" ]] || continue
     rm -rf -- "$INSTALL_DIR/$item"
     cp -a -- "$BUNDLE_DIR/$item" "$INSTALL_DIR/$item"
