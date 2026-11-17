@@ -65,8 +65,8 @@ class TestYandexEpgPlugin(unittest.TestCase):
         data = plugin.parse_html(
             page, self.url + "?date=2026-11-17")
         rows = next(iter(data.programmes.values()))
-        self.assertEqual(rows[1][0] - rows[0][0], 25*60)
-        self.assertEqual(rows[2][0] - rows[1][0], 40*60)
+        self.assertEqual(rows[1][0] - rows[0][0], 25*60, repr(rows))
+        self.assertEqual(rows[2][0] - rows[1][0], 40*60, repr(rows))
 
     def test_last_good_not_lost(self):
         with tempfile.TemporaryDirectory() as root:
@@ -74,7 +74,8 @@ class TestYandexEpgPlugin(unittest.TestCase):
             sample = b"<?xml version='1.0'?><tv></tv>"
             state.replace(sample)
             self.assertEqual(state.last_good, sample)
-            self.assertEqual(open(state.output_path, "rb").read(), sample)
+            with open(state.output_path, "rb") as stored:
+                self.assertEqual(stored.read(), sample)
 
     def test_no_schedule_refuses(self):
         with self.assertRaisesRegex(ValueError, "no valid"):

@@ -157,8 +157,17 @@ class GuideParser(HTMLParser):
         except (ValueError, OverflowError):
             return
         items = self.programmes.setdefault(self.ident, [])
-        if items and when < items[-1][0] - 12 * 3600 and not self.row["datetime"]:
-            when += 86400  # midnight crossing on an undated one-day page
+        if items and not self.row["datetime"]:
+            # The source may omit data-date. Derive the next occurrence
+            # of HH:MM from the previous event's LOCAL day, not a stale
+            # page date; this handles 23:55 -> 00:20 across midnight.
+            last = items[-1][0]
+            day_utc = last - ((last + self.offset * 60) % 86400)
+            candidate = day_utc + int(match.group(1)) * 3600 + int(match.group(2)) * 60
+            if candidate <= last:
+                candidate += 86400
+            if 0 < candidate - last <= 12 * 3600:
+                when = candidate
         if items and when <= items[-1][0]:
             return
         if len(items) < MAX_EVENTS:

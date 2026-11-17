@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.569 — Yandex TV EPG as a separate plugin
+# DVBStreamer5 V10.8.570 — Yandex TV EPG as a separate plugin
 
 Standalone Python 3.6+ HTML-to-XMLTV process. Does **not** load into the
 main DVBStreamer5 executable and cannot call tuner, CA, OSCam or
