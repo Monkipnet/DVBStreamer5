@@ -3,6 +3,7 @@
 // refactor cannot change anonymous-namespace visibility, static state, or linkage.
 // Keep the include order synchronized with src/http/README.md.
 #include "media/NativeTickerOverlay.h"
+#include "EpgUdpOutput.h"
 #include "http/HttpServerCommon.inc"
 #include "http/HttpServerTickerImport.inc"
 #include "http/ClusterViewerRouting.h"

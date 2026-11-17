@@ -260,6 +260,7 @@ jobs:
             dvbstreamer5_tsdecrypt_recovery_test \
             dvbstreamer5_oscam_ecm_latency_test \
             dvbstreamer5_oscam_newcamd_grace_test \
+            dvbstreamer5_epg_udp_eit_test \
             dvbstreamer5_tsdecrypt_ecm_pid_policy_test \
             dvbstreamer5_tsdecrypt_pid_learning_test \
             dvbstreamer5_tsdecrypt_pid_store_test \

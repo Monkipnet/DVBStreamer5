@@ -472,6 +472,14 @@ add_executable(dvbstreamer5_tsdecrypt_telemetry_test
 add_test(NAME tsdecrypt_safe_telemetry
     COMMAND dvbstreamer5_tsdecrypt_telemetry_test)
 
+# V568: deterministic EIT Actual/Other, SID/TSID/ONID and CRC.
+add_executable(dvbstreamer5_epg_udp_eit_test
+    tests/test_epg_udp_eit.cpp src/DvbEitOutput.cpp)
+target_include_directories(dvbstreamer5_epg_udp_eit_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(dvbstreamer5_epg_udp_eit_test PRIVATE dvbstreamer5_jsoncpp)
+add_test(NAME epg_udp_eit_wisi COMMAND dvbstreamer5_epg_udp_eit_test)
+
 # V10.8.563: bounded, opt-in iCAM Newcamd grace with expiry regression tests.
 add_executable(dvbstreamer5_oscam_newcamd_grace_test
     tests/test_oscam_newcamd_grace.c)
