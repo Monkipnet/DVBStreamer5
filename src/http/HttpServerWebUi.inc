@@ -905,6 +905,7 @@ html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-
 <button class="system-menu-item" onclick="openTickerModal();closeSystemMenu()" data-ui-ru="Бегущая строка" data-ui-en="Scrolling ticker" data-ui-hr="Pokretni tekst">Бегущая строка</button>
 <button class="system-menu-item" onclick="openMptsModal();closeSystemMenu()">MPTS</button>
 <button class="system-menu-item" onclick="openXmltvModal();closeSystemMenu()" data-ui-ru="Источники XMLTV" data-ui-en="XMLTV sources" data-ui-hr="XMLTV izvori">Источники XMLTV</button>
+<button class="system-menu-item" onclick="openWisiEpgUdpModal();closeSystemMenu()" data-ui-ru="EPG UDP для WISI" data-ui-en="WISI EPG UDP" data-ui-hr="EPG UDP za WISI">EPG UDP для WISI</button>
 <button class="system-menu-item" onclick="openGlobalRestartScheduleModal();closeSystemMenu()" data-ui-ru="Расписание перезапуска потоков" data-ui-en="Stream restart schedule" data-ui-hr="Raspored ponovnog pokretanja tokova">Расписание перезапуска потоков</button>
 </div>
 </details>
@@ -4855,6 +4856,16 @@ function syncXmltvModalFields() {
     if (enabled) source.enabled = enabled.checked;
   });
 }
+function addLicensedYandexXmltvSource() {
+  syncXmltvModalFields();
+  const id='xmltv-yandex-'+Date.now().toString(36);
+  xmltvModalSources.push({
+    id, name:'Яндекс ТВ (разрешённый XMLTV)', url:'', enabled:false,
+    refresh_period:'daily', refresh_time:'03:00', refresh_weekday:1
+  });
+  renderXmltvModal();
+}
+
 function stopXmltvRefreshPolling() {
   ++xmltvRefreshPollToken;
   if (xmltvRefreshPollTimer !== null) clearTimeout(xmltvRefreshPollTimer);
@@ -4874,11 +4885,145 @@ function renderXmltvModal() {
     '</div><div class="modal-actions">' +
     '<button class="button-secondary" type="button" onclick="addXmltvSource()">' +
     uiBiText('+ Добавить XMLTV','Add XMLTV source') + '</button>' +
+    '<button class="button-secondary" type="button" onclick="addLicensedYandexXmltvSource()">' +
+    (language==='ru'?'+ Яндекс ТВ (XMLTV)':language==='hr'?'+ Yandex TV (licencirani XMLTV)':
+      '+ Yandex TV (licensed XMLTV)') + '</button>' +
+    '<small class="field-help">' +
+    (language==='ru'?'Для Яндекс ТВ укажите разрешённый правообладателем URL XMLTV: публичный API сайта закрыт, прямое копирование расписания без разрешения не поддерживается.':
+     language==='hr'?'Za Yandex TV unesite dopušteni licencirani XMLTV URL. Javni API nije dostupan.':
+     'For Yandex TV enter an authorized XMLTV feed URL. The public API is closed and unlicensed scraping is not provided.') +
+    '</small>' +
     '<button class="button-secondary" type="button" onclick="closeModal()">' +
     t('cancel') + '</button>' +
     '<button id="xmltvSaveButton" class="button-primary" type="button" onclick="saveXmltvSources()">' +
     t('save') + '</button></div>');
 }
+// V567 — independent EIT UDP outputs for WISI Chameleon, both actual and
+// Barker "other" tables. Source resolution uses the existing per-tile EPG.
+let wisiEpgUdpOutputs = [];
+function wisiText(ru,en,hr) {
+  return language==='ru'?ru:language==='hr'?hr:en;
+}
+function wisiEpgSync() {
+  const cards=[...document.querySelectorAll('[data-wisi-output]')];
+  if(!cards.length)return;
+  wisiEpgUdpOutputs=cards.map(card=>{
+    const get=key=>card.querySelector('[data-wisi-field="'+key+'"]');
+    return {
+      id:get('id')?.value||'',
+      name:get('name')?.value||'',
+      enabled:!!get('enabled')?.checked,
+      output_host:get('host')?.value.trim()||'',
+      output_port:Number(get('port')?.value||0),
+      interface_address:get('iface')?.value.trim()||'',
+      mode:get('mode')?.value||'actual',
+      services:[...card.querySelectorAll('[data-wisi-service]')]
+        .filter(row=>row.querySelector('[data-wisi-check]')?.checked)
+        .map(row=>({
+          stream_id:row.dataset.wisiService||'',
+          service_id:Number(row.querySelector('[data-wisi-sid]')?.value||1),
+          transport_stream_id:Number(row.querySelector('[data-wisi-tsid]')?.value||1),
+          original_network_id:Number(row.querySelector('[data-wisi-onid]')?.value||1)
+        }))
+    };
+  });
+}
+function wisiEpgRender() {
+  const text=wisiText;
+  const streams=Array.isArray(state.streams)?state.streams:[];
+  const row=(output,index)=>{
+    const chosen=new Map((output.services||[]).map(s=>[String(s.stream_id),s]));
+    const ifaceOptions=['<option value="">Auto</option>'].concat(
+      (state.interfaces||[]).filter(x=>x.address).map(i=>
+        '<option value="'+escapeHtmlValue(i.address)+'" '+
+        (i.address===output.interface_address?'selected':'')+'>'+
+        escapeHtmlValue((i.name||'')+' '+i.address)+'</option>')).join('');
+    return '<details data-wisi-output style="border:1px solid #486079;border-radius:9px;padding:10px;margin:8px 0" open>'+
+      '<summary><strong>'+escapeHtmlValue(output.name||output.id)+'</strong> — '+
+      escapeHtmlValue(output.output_host||'')+':'+Number(output.output_port||0)+'</summary>'+
+      '<input type="hidden" data-wisi-field="id" value="'+escapeHtmlValue(output.id||'')+'"/>'+
+      '<div class="form-grid">'+
+      '<label class="checkbox-inline"><input type="checkbox" data-wisi-field="enabled" '+(output.enabled?'checked':'')+'>'+
+       text('Включить UDP EPG','Enable UDP EPG','Uključi UDP EPG')+'</label>'+
+      '<div class="form-row"><label>'+text('Имя','Name','Naziv')+'</label><input data-wisi-field="name" value="'+escapeHtmlValue(output.name||'')+'"/></div>'+
+      '<div class="form-row"><label>'+text('IP назначения','Destination IP','Odredišna IP adresa')+'</label><input data-wisi-field="host" value="'+escapeHtmlValue(output.output_host||'')+'"/></div>'+
+      '<div class="form-row"><label>'+text('UDP порт','UDP port','UDP port')+'</label><input type="number" min="1" max="65535" data-wisi-field="port" value="'+Number(output.output_port||5002)+'"/></div>'+
+      '<div class="form-row"><label>'+text('Интерфейс','Interface','Sučelje')+'</label><select data-wisi-field="iface">'+ifaceOptions+'</select></div>'+
+      '<div class="form-row"><label>'+text('Режим таблиц EIT','EIT table mode','Način EIT tablica')+'</label>'+
+      '<select data-wisi-field="mode">'+
+      '<option value="actual" '+(output.mode==='actual'?'selected':'')+'>'+text('Actual (0x4E/0x50)','Actual (0x4E/0x50)','Actual (0x4E/0x50)')+'</option>'+
+      '<option value="barker" '+(output.mode==='barker'?'selected':'')+'>'+text('Barker / Other (0x4F/0x60)','Barker / Other (0x4F/0x60)','Barker / Other (0x4F/0x60)')+'</option></select></div>'+
+      '</div>'+
+      '<small class="field-help">'+text('Источник EPG выбирается в самой плитке: DVB EIT или XMLTV. SID/TSID/ONID должны совпадать с выходным транспортным потоком WISI.',
+        'EPG source is selected per tile (DVB EIT or XMLTV). SID/TSID/ONID must match the target WISI transport stream.',
+        'EPG izvor se bira na kanalu (DVB EIT ili XMLTV). SID/TSID/ONID moraju odgovarati izlaznom WISI toku.')+'</small>'+
+      '<div style="max-height:260px;overflow:auto">'+streams.map(s=>{
+        const c=chosen.get(String(s.id));
+        return '<div data-wisi-service="'+escapeHtmlValue(s.id||'')+'" style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:5px 0">'+
+          '<label style="min-width:130px;flex:2"><input type="checkbox" data-wisi-check '+(c?'checked':'')+'/> '+
+          escapeHtmlValue(s.name||s.id)+'</label>'+
+          'SID <input data-wisi-sid type="number" min="1" max="65535" style="width:75px" value="'+Number(c?.service_id||s.service_id||1)+'"/>'+
+          'TSID <input data-wisi-tsid type="number" min="1" max="65535" style="width:75px" value="'+Number(c?.transport_stream_id||1)+'"/>'+
+          'ONID <input data-wisi-onid type="number" min="1" max="65535" style="width:75px" value="'+Number(c?.original_network_id||1)+'"/></div>';
+      }).join('')+'</div>'+
+      '<button class="button-danger" type="button" onclick="wisiEpgRemove('+index+')">'+
+        text('Удалить выход','Delete output','Izbriši izlaz')+'</button>'+
+      '</details>';
+  };
+  openModal('<h2>'+text('EPG UDP для WISI Chameleon','WISI Chameleon EPG UDP','EPG UDP za WISI Chameleon')+'</h2>'+
+    '<small class="field-help">'+text(
+     'Отдельный UDP MPEG-TS с PID 0x0012 (только EIT). Два варианта: Actual и Barker/Other. Выберите плитки и их выходные SID/TSID/ONID.',
+     'Independent UDP MPEG-TS with EIT PID 0x0012 only. Actual and Barker/Other modes. Select tiles and WISI output SID/TSID/ONID.',
+     'Samostalan UDP MPEG-TS samo s EIT PID 0x0012. Actual i Barker/Other. Odaberite kanale i SID/TSID/ONID.')+
+    '</small><div style="max-height:66vh;overflow:auto">'+
+    wisiEpgUdpOutputs.map(row).join('')+'</div>'+
+    '<div class="modal-actions">'+
+    '<button class="button-secondary" type="button" onclick="wisiEpgAdd()">+ '+text('Выход','Output','Izlaz')+'</button>'+
+    '<button class="button-secondary" type="button" onclick="closeModal()">'+t('cancel')+'</button>'+
+    '<button class="button-primary" type="button" onclick="wisiEpgSave()">'+t('save')+'</button></div>');
+}
+async function openWisiEpgUdpModal() {
+  try {
+    const data=await fetchJson('/api/epg-udp/status',{cache:'no-store'});
+    wisiEpgUdpOutputs=Array.isArray(data.outputs)?data.outputs:[];
+    wisiEpgRender();
+  }catch(e){uiError(e?.message||e);}
+}
+function wisiEpgAdd() {
+  wisiEpgSync();
+  if(wisiEpgUdpOutputs.length>=8)return;
+  wisiEpgUdpOutputs.push({
+    id:'wisi-epg-'+Date.now().toString(36),name:'WISI EPG',enabled:false,
+    output_host:'239.255.40.1',output_port:5002,interface_address:'',
+    mode:'actual',services:[]
+  });
+  wisiEpgRender();
+}
+function wisiEpgRemove(index) {
+  wisiEpgSync(); wisiEpgUdpOutputs.splice(index,1); wisiEpgRender();
+}
+async function wisiEpgSave() {
+  wisiEpgSync();
+  if(wisiEpgUdpOutputs.some(o=>!o.services.length ||
+    !o.output_host || o.output_port<1 || o.output_port>65535 ||
+    o.services.some(s=>[s.service_id,s.transport_stream_id,s.original_network_id]
+      .some(x=>!Number.isInteger(x)||x<1||x>65535)))) {
+    uiError(wisiText('Укажите IP, порт, корректные SID/TSID/ONID и хотя бы одну плитку.',
+      'Enter IP, port, valid SID/TSID/ONID and at least one tile.',
+      'Unesite IP, port, SID/TSID/ONID i barem jedan kanal.'));
+    return;
+  }
+  try {
+    const result=await fetchJson('/api/epg-udp/save',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({outputs:wisiEpgUdpOutputs})
+    });
+    if(result.result!=='ok')throw Error(result.error||'EPG UDP save error');
+    wisiEpgUdpOutputs=result.status?.outputs||wisiEpgUdpOutputs;
+    wisiEpgRender();
+  }catch(e){uiError(e?.message||e);}
+}
+
 async function openXmltvModal() {
   stopXmltvRefreshPolling();
   try {

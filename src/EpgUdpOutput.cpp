@@ -128,8 +128,13 @@ void EpgUdpOutputManager::run(std::vector<EpgUdpOutputConfig> outputs) {
         for (auto& target : targets) {
             std::vector<Packet> packets;
             for (auto& generator : target->generators) {
-                // Empty packet input: standalone DVB EIT only, no video/audio.
-                generator->process(packets);
+                // Each generator owns PID 0x12 in its input vector. Do not
+                // pass the previous service's packets into the next generator,
+                // or its EIT filter would remove all earlier services.
+                std::vector<Packet> servicePackets;
+                generator->process(servicePackets);
+                packets.insert(packets.end(),
+                               servicePackets.begin(), servicePackets.end());
             }
             for (std::size_t begin=0; begin<packets.size(); begin+=kPacketsPerDatagram) {
                 for (std::size_t i=0; i<kPacketsPerDatagram; ++i) {
