@@ -112,7 +112,7 @@ trap cleanup EXIT
 
 STAGE="$TMP/bundle"
 mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/web" "$STAGE/ca-plugins" \
-         "$STAGE/oscam-mini" "$STAGE/etc/ssl/certs" "$STAGE/data"
+         "$STAGE/oscam-mini" "$STAGE/etc/ssl/certs" "$STAGE/data" "$STAGE/scripts"
 
 install -m 0755 "$BINARY" "$STAGE/bin/$APP"
 if [[ "$INCLUDE_TSDECRYPT" == no && -n "$TSDECRYPT_BINARY" ]]; then
@@ -142,6 +142,9 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/dist/${APP}-${VERSION}-linux-x86_64}"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 
 install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_update.sh" "$STAGE/updater.sh"
+# V561: ship the Python 3.6-compatible, key-free OSCam latency analyzer.
+install -m 0755 "$PROJECT_ROOT/scripts/diagnose_oscam_ecm_latency.py" \
+    "$STAGE/scripts/diagnose_oscam_ecm_latency.py"
 # TLS certificate modules are available from the web UI on an installed bundle.
 # No certificate/key or ACME account is ever copied into the portable archive.
 install -d -m 0755 "$STAGE/tls/modules"
@@ -375,7 +378,7 @@ if [[ -d "$INSTALL_DIR/oscam-mini/config" ]]; then
 fi
 
 log "Installing application runtime under $INSTALL_DIR"
-for item in bin lib web ca-plugins etc tls run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
+for item in bin lib web ca-plugins etc tls scripts run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS; do
     [[ -e "$BUNDLE_DIR/$item" ]] || continue
     rm -rf -- "$INSTALL_DIR/$item"
     cp -a -- "$BUNDLE_DIR/$item" "$INSTALL_DIR/$item"
