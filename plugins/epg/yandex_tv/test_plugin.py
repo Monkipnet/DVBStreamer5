@@ -201,5 +201,23 @@ class TestYandexEpgPlugin(unittest.TestCase):
                 thread.join(timeout=2)
 
 
+    def test_isolated_systemd_configuration_path(self):
+        base = os.path.dirname(__file__)
+        with open(os.path.join(base, "epg-yandex-tv.service"),
+                  encoding="utf-8") as stream:
+            service = stream.read()
+        with open(os.path.join(base, "install_plugin.sh"),
+                  encoding="utf-8") as stream:
+            installer = stream.read()
+        self.assertIn("DynamicUser=yes", service)
+        self.assertIn("--config /etc/epg-yandex-tv/config.json", service)
+        self.assertNotIn("--config /etc/dvbstreamer5/", service)
+        self.assertIn('install -d -m 0755 "$CFG_DIR"', installer)
+        self.assertIn('install -m 0644 -- "$LEGACY" "$CFG"', installer)
+        self.assertIn('Preserving existing plugin config', installer)
+        self.assertNotIn("systemctl restart dvbstreamer5", installer)
+        self.assertNotIn("systemctl restart oscam-mini", installer)
+
+
 if __name__ == "__main__":
     unittest.main()

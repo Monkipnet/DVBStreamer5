@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.573 — Yandex TV EPG as a separate plugin
+# DVBStreamer5 V10.8.574 — Yandex TV EPG as a separate plugin
 
 Standalone Python 3.6+ HTML-to-XMLTV process. Does **not** load into the
 main DVBStreamer5 executable and cannot call tuner, CA, OSCam or
@@ -10,7 +10,7 @@ transcoder functions. Portable ships it at
    может останавливать сервисы, а плагин сам по себе этого не делает.
 2. Установите только EPG-плагин:
    \`sudo bash /opt/DVBStreamer5/scripts/epg-yandex-tv/install_plugin.sh\`
-3. Отредактируйте \`/etc/dvbstreamer5/epg-yandex-tv.json\`.
+3. Отредактируйте \`/etc/epg-yandex-tv/config.json\`.
    Включайте \`enabled=true\` и \`permission_confirmed=true\` только
    если у вас есть разрешение на использование и ретрансляцию телепрограммы.
    По умолчанию всё отключено.
@@ -80,3 +80,34 @@ RU: в настройках XMLTV включайте источник тольк
 запуска отдельного EPG-плагина; затем привяжите созданные каналы к плиткам.
 EN: the plugin remains disabled until separately configured.
 HR: dodatak ostaje isključen dok ga administrator zasebno ne konfigurira.
+
+
+## V574 — исправление чтения конфигурации (RU)
+
+Основной DVBStreamer5 защищает \`/etc/dvbstreamer5\` правами 0700,
+поэтому отдельный сервис с \`DynamicUser=yes\` не может прочитать
+хранящийся в нём файл. Исправлено: плагин использует
+\`/etc/epg-yandex-tv/config.json\`. Установщик один раз переносит
+имеющиеся настройки из предыдущего пути, не изменяя и не удаляя
+исходный файл; новая конфигурация при обновлениях сохраняется.
+Права основного каталога не меняются. Данные плагина — только
+публичные адреса каналов и настройки, без секретов.
+
+\`sudo systemctl enable --now epg-yandex-tv.service\` запускает ТОЛЬКО
+EPG-сервис. Успешный ответ \`/health\` подтверждает HTTP-сервер.
+Поле \`ready=true\` появится только после загрузки корректной программы.
+При \`enabled=false\` или отсутствии разрешения на использование данных
+сервис не начнёт парсинг.
+
+## EN
+The main private \`/etc/dvbstreamer5\` directory cannot be read by the
+plugin's isolated DynamicUser. The plugin uses public-URL-only
+\`/etc/epg-yandex-tv/config.json\` (0755 parent, 0644 file).
+Installer migrates old settings once; neither DVBStreamer5 nor OSCam is
+restarted. Do not store secrets in the plugin config.
+
+## HR
+Glavni direktorij \`/etc/dvbstreamer5\` zaštićen je pristupom 0700.
+Odvojeni EPG servis koristi \`/etc/epg-yandex-tv/config.json\`.
+Instalacijski skript prenosi postojeće postavke bez mijenjanja
+glavnog servisa ili OSCam-a. Ne pohranjujte lozinke u konfiguraciju.
