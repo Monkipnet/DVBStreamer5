@@ -145,10 +145,6 @@ install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_update.sh" "$STAGE/updater.s
 # V561: ship the Python 3.6-compatible, key-free OSCam latency analyzer.
 install -m 0755 "$PROJECT_ROOT/scripts/diagnose_oscam_ecm_latency.py" \
     "$STAGE/scripts/diagnose_oscam_ecm_latency.py"
-# V569: isolated, separately installed HTML EPG plugin; do not modify
-# the installer file manifest or any core/CAM binary.
-install -d -m 0755 "$STAGE/scripts/epg-yandex-tv"
-cp -a -- "$PROJECT_ROOT/plugins/epg/yandex_tv/." "$STAGE/scripts/epg-yandex-tv/"
 # TLS certificate modules are available from the web UI on an installed bundle.
 # No certificate/key or ACME account is ever copied into the portable archive.
 install -d -m 0755 "$STAGE/tls/modules"
