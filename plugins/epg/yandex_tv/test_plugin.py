@@ -219,6 +219,52 @@ class TestYandexEpgPlugin(unittest.TestCase):
         self.assertNotIn("systemctl restart oscam-mini", installer)
 
 
+    def test_64_channel_limit_and_invalid_max_channels(self):
+        config = dict(self.config)
+        config["channel_pages"] = []
+        config["max_channels"] = 64
+        plugin.validate_config(config)
+        links = "".join(
+            "<a href='/channel/ch-%d'>Channel %d</a>" % (i, i)
+            for i in range(70))
+        self.assertEqual(len(plugin.discover_pages(links, 64)), 64)
+        self.assertEqual(plugin.MAX_CHANNELS, 64)
+        for bad in (0, 65, "64", True):
+            config["max_channels"] = bad
+            with self.assertRaisesRegex(ValueError, "max_channels"):
+                plugin.validate_config(config)
+
+    def test_health_statuses_for_empty_schedule_and_stale_cache(self):
+        import json
+        import threading
+        from urllib.request import urlopen
+        with tempfile.TemporaryDirectory() as folder:
+            state = plugin.GuideState(os.path.join(folder, "epg.xml"))
+            server = plugin.LoopbackHttpServer(("127.0.0.1", 0),
+                                               plugin.Handler)
+            server.state = state
+            server.configured = True
+            server.cache_ttl_seconds = 3600
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = "http://127.0.0.1:%s/health" % server.server_port
+            def status():
+                return json.loads(urlopen(base).read().decode())["status"]
+            try:
+                self.assertEqual(status(), "pending")
+                state.last_error = "no valid HTML schedule: markup or dates unavailable"
+                self.assertEqual(status(), "empty_schedule")
+                state.replace(b"<?xml version='1.0'?><tv></tv>")
+                self.assertEqual(status(), "ready")
+                state.last_error = "HTTP status 503"
+                self.assertEqual(status(), "stale")
+                server.configured = False
+                self.assertEqual(status(), "disabled")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_disabled_permission_idle_does_not_enable_download(self):
         for field in ("enabled", "permission_confirmed"):
             cfg = dict(self.config)
