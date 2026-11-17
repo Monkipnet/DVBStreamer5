@@ -150,7 +150,13 @@ bool singleServicePat(const std::uint8_t* sec, std::size_t len,
 DvbEitOutput::DvbEitOutput(Snapshot snapshot)
     : snapshot_(std::move(snapshot)) {}
 
+DvbEitOutput::DvbEitOutput(Snapshot snapshot, std::uint16_t sid,
+                           std::uint16_t tsid, std::uint16_t onid, bool other)
+    : snapshot_(std::move(snapshot)), fixedService_(true),
+      otherTransport_(other), serviceId_(sid), tsid_(tsid), onid_(onid) {}
+
 void DvbEitOutput::inspectAndUpdateTables(Packet& packet) {
+    if (fixedService_) return;
     if (packet[0] != 0x47U || (packet[1] & 0x40U) == 0U) return;
     const auto pid = static_cast<std::uint16_t>(((packet[1] & 31U) << 8U) | packet[2]);
     if (pid != 0x00U && pid != 0x11U) return;
@@ -297,9 +303,10 @@ void DvbEitOutput::buildSchedule() {
         const auto bytes = selected
             ? eventBytes(*selected, sectionNumber == 0U)
             : std::vector<std::uint8_t>{};
-        const auto sec = makeEit(0x4eU, serviceId_, tsid_, onid_, version_,
+        const auto sec = makeEit(otherTransport_ ? 0x4fU : 0x4eU,
+            serviceId_, tsid_, onid_, version_,
             static_cast<std::uint8_t>(sectionNumber),
-            1U, 1U, 0x4eU, bytes);
+            1U, 1U, otherTransport_ ? 0x4fU : 0x4eU, bytes);
         std::deque<Packet> temp;
         enqueueSection(sec, temp);
         presentFollowing_.insert(presentFollowing_.end(), temp.begin(), temp.end());
@@ -309,11 +316,12 @@ void DvbEitOutput::buildSchedule() {
     // segmentation and 0x50..0x5f table IDs. Delay emission across relay ticks
     // rather than creating a burst that would overflow the bounded CBR queue.
     const std::size_t count = events.size();
-    const auto lastTable = static_cast<std::uint8_t>(0x50U + (count - 1U) / 256U);
+    const auto tableBase = otherTransport_ ? 0x60U : 0x50U;
+    const auto lastTable = static_cast<std::uint8_t>(tableBase + (count - 1U) / 256U);
     for (std::size_t i = 0; i < count; ++i) {
         const auto data = eventBytes(events[i]);
         if (data.empty()) continue;
-        const auto table = static_cast<std::uint8_t>(0x50U + i / 256U);
+        const auto table = static_cast<std::uint8_t>(tableBase + i / 256U);
         const auto section = static_cast<std::uint8_t>(i % 256U);
         const auto last = static_cast<std::uint8_t>(
             std::min<std::size_t>(255U, count - (i / 256U) * 256U - 1U));

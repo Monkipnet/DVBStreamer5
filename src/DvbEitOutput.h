@@ -14,6 +14,10 @@ class DvbEitOutput {
 public:
     using Snapshot = std::function<Json::Value()>;
     explicit DvbEitOutput(Snapshot snapshot);
+    // Standalone UDP EIT stream: explicit WISI SID/TSID/ONID.
+    // "other" sets EIT p/f 0x4f and schedule 0x60..0x6f (Barker).
+    DvbEitOutput(Snapshot snapshot, std::uint16_t sid,
+                 std::uint16_t tsid, std::uint16_t onid, bool other);
     void process(std::vector<dvbstreamer5::media::mpegts::Packet>& packets);
 
 private:
@@ -23,6 +27,8 @@ private:
     void enqueueSection(const std::vector<std::uint8_t>& section,
                         std::deque<Packet>& queue);
     Snapshot snapshot_;
+    bool fixedService_ = false;
+    bool otherTransport_ = false;
     std::uint16_t serviceId_ = 0;
     std::uint16_t tsid_ = 0;
     std::uint16_t onid_ = 0;

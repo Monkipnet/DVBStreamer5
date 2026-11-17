@@ -192,6 +192,29 @@ struct XmltvSourceConfig {
     static XmltvSourceConfig fromJson(const Json::Value& root);
 };
 
+// V565: independent DVB EIT-only UDP carousel for WISI Chameleon.
+struct EpgUdpServiceConfig {
+    std::string streamId;
+    uint32_t serviceId = 1;  // Effective SID in the WISI output
+    uint32_t transportStreamId = 1;
+    uint32_t originalNetworkId = 1;
+    Json::Value toJson() const;
+    static EpgUdpServiceConfig fromJson(const Json::Value& root);
+};
+
+struct EpgUdpOutputConfig {
+    std::string id;
+    std::string name;
+    bool enabled = false;
+    std::string outputHost = "239.255.40.1";
+    int outputPort = 5002;
+    std::string interfaceAddress;
+    std::string mode = "actual";  // actual EIT, or barker EIT other
+    std::vector<EpgUdpServiceConfig> services;
+    Json::Value toJson() const;
+    static EpgUdpOutputConfig fromJson(const Json::Value& root);
+};
+
 struct StreamRestartSchedule {
     bool enabled = false;
     // ISO weekday numbers: Mon=1 ... Sun=7, server-local clock.
@@ -231,6 +254,7 @@ struct AppConfig {
     std::vector<StreamConfig> streams;
     std::vector<MptsOutputConfig> mptsOutputs;
     std::vector<XmltvSourceConfig> xmltvSources;
+    std::vector<EpgUdpOutputConfig> epgUdpOutputs;
     std::vector<CamClientConfig> camClients;
 
     Json::Value toJson() const;

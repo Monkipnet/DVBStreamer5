@@ -754,6 +754,58 @@ XmltvSourceConfig XmltvSourceConfig::fromJson(const Json::Value& root) {
     return result;
 }
 
+Json::Value EpgUdpServiceConfig::toJson() const {
+    Json::Value out(Json::objectValue);
+    out["stream_id"] = streamId;
+    out["service_id"] = serviceId;
+    out["transport_stream_id"] = transportStreamId;
+    out["original_network_id"] = originalNetworkId;
+    return out;
+}
+EpgUdpServiceConfig EpgUdpServiceConfig::fromJson(const Json::Value& root) {
+    EpgUdpServiceConfig out;
+    if (!root.isObject()) return out;
+    out.streamId = root.get("stream_id", "").asString().substr(0, 128);
+    out.serviceId = std::clamp(root.get("service_id", 1).asUInt(), 1U, 65535U);
+    out.transportStreamId = std::clamp(root.get("transport_stream_id", 1).asUInt(), 1U, 65535U);
+    out.originalNetworkId = std::clamp(root.get("original_network_id", 1).asUInt(), 1U, 65535U);
+    return out;
+}
+Json::Value EpgUdpOutputConfig::toJson() const {
+    Json::Value out(Json::objectValue);
+    out["id"] = id;
+    out["name"] = name;
+    out["enabled"] = enabled;
+    out["output_host"] = outputHost;
+    out["output_port"] = outputPort;
+    out["interface_address"] = interfaceAddress;
+    out["mode"] = mode;
+    Json::Value arr(Json::arrayValue);
+    for (const auto& item : services) arr.append(item.toJson());
+    out["services"] = arr;
+    return out;
+}
+EpgUdpOutputConfig EpgUdpOutputConfig::fromJson(const Json::Value& root) {
+    EpgUdpOutputConfig out;
+    if (!root.isObject()) return out;
+    out.id = root.get("id", "").asString().substr(0, 64);
+    out.name = root.get("name", "").asString().substr(0, 128);
+    out.enabled = root.get("enabled", false).asBool();
+    out.outputHost = root.get("output_host", "239.255.40.1").asString().substr(0, 255);
+    out.outputPort = std::clamp(root.get("output_port", 5002).asInt(), 1, 65535);
+    out.interfaceAddress = root.get("interface_address", "").asString().substr(0, 128);
+    out.mode = root.get("mode", "actual").asString() == "barker" ? "barker" : "actual";
+    const Json::Value& services = root["services"];
+    if (services.isArray()) {
+        for (const auto& item : services) {
+            if (out.services.size() >= 64) break;
+            const auto service = EpgUdpServiceConfig::fromJson(item);
+            if (!service.streamId.empty()) out.services.push_back(service);
+        }
+    }
+    return out;
+}
+
 Json::Value StreamRestartSchedule::toJson() const {
     Json::Value result(Json::objectValue);
     result["enabled"] = enabled;
@@ -837,6 +889,9 @@ Json::Value AppConfig::toJson() const {
     Json::Value xmltvList(Json::arrayValue);
     for (const auto& source : xmltvSources) xmltvList.append(source.toJson());
     root["xmltv_sources"] = xmltvList;
+    Json::Value epgUdpList(Json::arrayValue);
+    for (const auto& output : epgUdpOutputs) epgUdpList.append(output.toJson());
+    root["epg_udp_outputs"] = epgUdpList;
     return root;
 }
 
@@ -899,6 +954,15 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
             auto source = XmltvSourceConfig::fromJson(item);
             if (!source.id.empty() && ids.insert(source.id).second)
                 config.xmltvSources.push_back(std::move(source));
+        }
+    }
+    if (root["epg_udp_outputs"].isArray()) {
+        std::set<std::string> seen;
+        for (const auto& item : root["epg_udp_outputs"]) {
+            if (!item.isObject() || config.epgUdpOutputs.size() >= 8) break;
+            auto output = EpgUdpOutputConfig::fromJson(item);
+            if (!output.id.empty() && seen.insert(output.id).second)
+                config.epgUdpOutputs.push_back(std::move(output));
         }
     }
     if (root.isMember("mpts_outputs") && root["mpts_outputs"].isArray()) {
