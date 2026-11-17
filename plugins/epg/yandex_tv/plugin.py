@@ -82,7 +82,9 @@ class GuideParser(HTMLParser):
 
     def __init__(self, url, ident="", name="", offset=180):
         HTMLParser.__init__(self, convert_charrefs=True)
-        self.ident, self.name, self.offset = ident, name, offset
+        # HTMLParser changes self.offset while scanning HTML columns.
+        # Keep our timezone separate from its internal parser position.
+        self.ident, self.name, self.timezone_minutes = ident, name, offset
         self.date = default_day(url, offset)
         self.stack, self.heading, self.row, self.anchor = [], None, None, None
         self.h3, self.nodes = False, 0
@@ -152,7 +154,7 @@ class GuideParser(HTMLParser):
             return
         try:
             when = timestamp(self.row["date"], int(match.group(1)),
-                             int(match.group(2)), self.offset,
+                             int(match.group(2)), self.timezone_minutes,
                              self.row["datetime"])
         except (ValueError, OverflowError):
             return
@@ -162,7 +164,7 @@ class GuideParser(HTMLParser):
             # of HH:MM from the previous event's LOCAL day, not a stale
             # page date; this handles 23:55 -> 00:20 across midnight.
             last = items[-1][0]
-            day_utc = last - ((last + self.offset * 60) % 86400)
+            day_utc = last - ((last + self.timezone_minutes * 60) % 86400)
             candidate = day_utc + int(match.group(1)) * 3600 + int(match.group(2)) * 60
             if candidate <= last:
                 candidate += 86400

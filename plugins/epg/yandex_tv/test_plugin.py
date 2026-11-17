@@ -65,6 +65,7 @@ class TestYandexEpgPlugin(unittest.TestCase):
         data = plugin.parse_html(
             page, self.url + "?date=2026-11-17")
         rows = next(iter(data.programmes.values()))
+        self.assertEqual(rows[0][0], plugin.timestamp("2026-11-17", 23, 55, 180))
         self.assertEqual(rows[1][0] - rows[0][0], 25*60, repr(rows))
         self.assertEqual(rows[2][0] - rows[1][0], 40*60, repr(rows))
 
