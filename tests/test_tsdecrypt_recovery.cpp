@@ -74,9 +74,16 @@ int main() {
     ok &= check(recoveryReason(p) == RecoveryReason::None,
                 "Any renewed clear PES cancels early blackout recovery");
     p.lastClearMediaPesMs = 0;
+    // Simulate a new channel that has never produced clear PES.
+    p.nowMs = 170000; p.lastEncryptedInputMs = 169000;
+    p.lastChildOutputMs = 169000; p.lastCamdErrorMs = 169000;
     ok &= check(recoveryReason(p) == RecoveryReason::None,
                 "Cold service must retain 180-second start grace");
-    p.lastClearMediaPesMs = 0;
+    // Immediately after 180 seconds a cold CAMD blackout may recover.
+    p.nowMs = 182000; p.lastEncryptedInputMs = 181000;
+    p.lastChildOutputMs = 181000; p.lastCamdErrorMs = 181000;
+    ok &= check(recoveryReason(p) == RecoveryReason::CamdBlackout,
+                "Cold CAMD blackout must eventually recover after 180 seconds");
     p.lastCamdErrorMs = 0;
     ok &= check(recoveryReason(p) == RecoveryReason::MediaStalled,
                 "When CAMD errors cease, normal media recovery resumes");
