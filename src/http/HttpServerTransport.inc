@@ -1192,6 +1192,10 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/backup-files") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listBackupFiles();
+            } else if (target == "/api/epg-udp/status") {
+                res.set(http::field::content_type, "application/json");
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer, streamManager.epgUdpStatus());
             } else if (target == "/api/xmltv/status") {
                 res.set(http::field::content_type, "application/json");
                 Json::StreamWriterBuilder writer;
@@ -1530,6 +1534,74 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/oscam-mini/action") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = OscamMiniManager::instance().serviceActionJson(req.body());
+            } else if (target == "/api/epg-udp/save") {
+                res.set(http::field::content_type, "application/json");
+                Json::Value result(Json::objectValue), payload;
+                Json::CharReaderBuilder parser;
+                std::string parseError;
+                std::istringstream input(req.body());
+                if (req.body().size() > 128U * 1024U ||
+                    !Json::parseFromStream(parser, input, &payload, &parseError) ||
+                    !payload["outputs"].isArray() || payload["outputs"].size() > 8U) {
+                    res.result(http::status::bad_request);
+                    result["result"] = "error";
+                    result["error"] = "Expected EPG UDP outputs array (maximum 8)";
+                } else {
+                    std::vector<EpgUdpOutputConfig> outputs;
+                    std::set<std::string> ids;
+                    std::string error;
+                    std::set<std::string> streams;
+                    for (const auto& ch : configManager.config.streams)
+                        streams.insert(ch.id);
+                    for (const auto& entry : payload["outputs"]) {
+                        if (!entry.isObject()) { error = "Output must be an object"; break; }
+                        auto cfg = EpgUdpOutputConfig::fromJson(entry);
+                        if (cfg.id.empty() || cfg.id.size() > 64U ||
+                            !std::all_of(cfg.id.begin(), cfg.id.end(), [](unsigned char c) {
+                                return std::isalnum(c) || c == '-' || c == '_';
+                            }) || !ids.insert(cfg.id).second) {
+                            error = "Invalid or duplicate output ID"; break;
+                        }
+                        if (!EpgUdpOutputManager::validDestination(cfg.outputHost) ||
+                            cfg.outputPort < 1 || cfg.outputPort > 65535 ||
+                            (!cfg.interfaceAddress.empty() &&
+                             !EpgUdpOutputManager::validInterface(cfg.interfaceAddress))) {
+                            error = "Expected IPv4 unicast/multicast and valid interface IP"; break;
+                        }
+                        if (cfg.services.empty()) {
+                            error = "Select at least one EPG tile"; break;
+                        }
+                        std::set<std::string> uniqueServices;
+                        for (const auto& svc : cfg.services) {
+                            if (!streams.count(svc.streamId) ||
+                                !uniqueServices.insert(svc.streamId).second) {
+                                error = "Invalid or duplicate stream in EPG UDP output";
+                                break;
+                            }
+                        }
+                        if (!error.empty()) break;
+                        outputs.push_back(std::move(cfg));
+                    }
+                    if (error.empty()) {
+                        const auto previous = configManager.config.epgUdpOutputs;
+                        configManager.config.epgUdpOutputs = std::move(outputs);
+                        if (!configManager.save()) {
+                            configManager.config.epgUdpOutputs = previous;
+                            error = "Cannot persist EPG UDP settings";
+                        } else {
+                            streamManager.configureEpgUdpOutputs();
+                            result["result"] = "ok";
+                            result["status"] = streamManager.epgUdpStatus();
+                        }
+                    }
+                    if (!error.empty()) {
+                        res.result(http::status::bad_request);
+                        result["result"] = "error";
+                        result["error"] = error;
+                    }
+                }
+                Json::StreamWriterBuilder writer;
+                res.body() = Json::writeString(writer, result);
             } else if (target == "/api/xmltv/save" ||
                        target == "/api/xmltv/refresh") {
                 res.set(http::field::content_type, "application/json");

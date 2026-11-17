@@ -18,6 +18,7 @@
 #include "media/MpegTsRemapper.h"
 #include "ExternalXmltv.h"
 #include "DvbEitOutput.h"
+#include "EpgUdpOutput.h"
 #include "DvbSubtitlePassthrough.h"
 #include "RestartScheduleClock.h"
 #include "AutoStartRecoveryPolicy.h"
@@ -516,11 +517,14 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
 StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     : configManager(cfg), telegramNotifier(notifier),
       mptsOutputManager(std::make_unique<MptsOutputManager>()),
-      externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources)) {
+      externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources)),
+      epgUdpOutputManager_(std::make_unique<EpgUdpOutputManager>(
+          [this](const std::string& id) { return epgSnapshot(id); })) {
     // V397: 4 epoll pollers replace one detached writer thread per viewer.
     httpEpollDispatcher_=std::make_unique<
         dvbstreamer5::media::network::HttpTsEpollDispatcher>(4);
     configureMptsOutputs();
+    configureEpgUdpOutputs();
     // Periodic cache writes stay off the native MPEG-TS processing thread.
     epgPersistThread_ = std::thread([this] {
         while (!epgPersistStop_.load(std::memory_order_acquire)) {
@@ -548,6 +552,7 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
 }
 
 StreamManager::~StreamManager() {
+    epgUdpOutputManager_.reset(); // no EPG callbacks during media teardown
     autoRecoveryStop_.store(true, std::memory_order_release);
     for (auto& worker : autoRecoveryThreads_) if (worker.joinable()) worker.join();
     failoverMonitorStop.store(true, std::memory_order_release);
@@ -3897,6 +3902,16 @@ void StreamManager::persistAllDvbEpg() {
     // Copies were taken under the mutex; disk access is outside it.
     for (const auto& [key, collector] : items)
         if (collector) (void)collector->persistToDisk(key);
+}
+
+void StreamManager::configureEpgUdpOutputs() {
+    if (epgUdpOutputManager_)
+        epgUdpOutputManager_->configure(configManager.config.epgUdpOutputs);
+}
+
+Json::Value StreamManager::epgUdpStatus() const {
+    return epgUdpOutputManager_
+        ? epgUdpOutputManager_->status() : Json::Value(Json::objectValue);
 }
 
 void StreamManager::configureExternalXmltvSources() {

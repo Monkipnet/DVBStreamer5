@@ -341,6 +341,7 @@ struct StreamState {
 };
 
 class ExternalXmltvManager;
+class EpgUdpOutputManager;
 namespace dvbstreamer5::media::network { class HttpTsEpollDispatcher; }
 
 class StreamManager {
@@ -409,6 +410,8 @@ public:
     // Passive NIT details from the already-running shared DVB full-TS reader.
     dvbstreamer5::media::network::DvbNitInfo dvbNitInfo(int adapter, int frontend) const;
     void persistAllDvbEpg();
+    void configureEpgUdpOutputs(); // independent EIT UDP source; never restarts tiles
+    Json::Value epgUdpStatus() const;
     void configureExternalXmltvSources();
     bool refreshExternalXmltv(const std::string& sourceId);
     Json::Value externalXmltvStatus() const;
@@ -439,6 +442,7 @@ private:
     TelegramNotifier& telegramNotifier;
     std::unique_ptr<MptsOutputManager> mptsOutputManager;
     std::unique_ptr<ExternalXmltvManager> externalXmltvManager_;
+    std::unique_ptr<EpgUdpOutputManager> epgUdpOutputManager_;
     std::atomic<bool> epgPersistStop_{false};
     std::thread epgPersistThread_;
     std::mutex epgPersistMutex_;
