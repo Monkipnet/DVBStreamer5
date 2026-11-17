@@ -258,6 +258,7 @@ jobs:
           cmake --build build-main-ci --parallel 2 --target \
             dvbstreamer5_tsdecrypt_telemetry_test \
             dvbstreamer5_tsdecrypt_recovery_test \
+            dvbstreamer5_oscam_ecm_latency_test \
             dvbstreamer5_tsdecrypt_ecm_pid_policy_test \
             dvbstreamer5_tsdecrypt_pid_learning_test \
             dvbstreamer5_tsdecrypt_pid_store_test \

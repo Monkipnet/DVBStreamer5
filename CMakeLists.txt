@@ -472,6 +472,18 @@ add_executable(dvbstreamer5_tsdecrypt_telemetry_test
 add_test(NAME tsdecrypt_safe_telemetry
     COMMAND dvbstreamer5_tsdecrypt_telemetry_test)
 
+# V10.8.560: opt-in Newcamd reader ECM latency telemetry, no CW/ECM payloads.
+add_executable(dvbstreamer5_oscam_ecm_latency_test
+    tests/test_oscam_ecm_latency.c)
+add_test(NAME oscam_ecm_latency
+    COMMAND dvbstreamer5_oscam_ecm_latency_test)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME oscam_ecm_latency_analyzer
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/test_oscam_ecm_latency_analyzer.py)
+endif()
+
 # V10.8.463: deterministic recovery policy for opt-in external TSDecrypt.
 add_executable(dvbstreamer5_tsdecrypt_recovery_test
     tests/test_tsdecrypt_recovery.cpp)

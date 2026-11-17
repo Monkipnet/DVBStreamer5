@@ -1018,6 +1018,12 @@ typedef struct ecm_request_t
 	int8_t          rc;
 	uint8_t         rcEx;
 	struct timeb    tps;                // incoming time stamp
+	// DVBStreamer5 V560: opt-in, metadata-only Newcamd ECM latency tracing.
+	// A diagnostic sequence ID and monotonic timestamps never contain ECM/CW.
+	uint64_t        dvb5_diag_id;
+	uint64_t        dvb5_diag_received_ms;
+	uint64_t        dvb5_diag_queued_ms;
+	uint64_t        dvb5_diag_sent_ms;
 	int8_t          btun;               // mark er as betatunneled
 	uint16_t            reader_avail;               // count of available readers for ecm
 	uint16_t            readers;                    // count of available used readers for ecm

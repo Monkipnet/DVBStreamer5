@@ -18,6 +18,7 @@
 #include "oscam-work.h"
 #include "reader-common.h"
 #include "oscam-config.h"
+#include "oscam-ecm-latency.h"
 
 extern CS_MUTEX_LOCK system_lock;
 extern CS_MUTEX_LOCK ecmcache_lock;
@@ -660,6 +661,29 @@ void casc_check_dcw(struct s_reader *reader, int32_t idx, int32_t rc, uchar *cw)
 	struct s_client *cl = reader->client;
 
 	if(!check_client(cl)) { return; }
+
+	// The selected proxy task is a copy of the ingress ECM. Its ID follows
+	// the actual on-wire request, including replies arriving after the
+	// original 5-second OSCam client deadline.
+	if(cl->ecmtask && idx >= 0 && idx < cfg.max_pending)
+	{
+		const ECM_REQUEST *sent = &cl->ecmtask[idx];
+		if(sent->dvb5_diag_id && sent->dvb5_diag_sent_ms)
+		{
+			const uint64_t arrived_ms = dvb5_ecm_latency_now_ms();
+			const unsigned int late = sent->parent &&
+				(sent->parent->rc == E_TIMEOUT ||
+				 sent->parent->readers_timeout_check) ? 1U : 0U;
+			cs_log("DVB5 ECM LATENCY stage=upstream_reply id=%llu reader=%s caid=%04X sid=%04X upstream_ms=%llu total_ms=%llu result=%s late=%u",
+				(unsigned long long)sent->dvb5_diag_id, reader->label,
+				sent->caid, sent->srvid,
+				(unsigned long long)dvb5_ecm_latency_delta_ms(
+					sent->dvb5_diag_sent_ms, arrived_ms),
+				(unsigned long long)dvb5_ecm_latency_delta_ms(
+					sent->dvb5_diag_received_ms, arrived_ms),
+				rc == 1 ? "found" : rc == 2 ? "invalid" : "not_found", late);
+		}
+	}
 
 	for(i = 0; i < cfg.max_pending; i++)
 	{
