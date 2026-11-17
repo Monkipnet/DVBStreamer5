@@ -416,11 +416,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         state = self.server.state
         query = parse_qs(parsed.query)
+        refresh_queued = False
         if parsed.path == "/refresh" or query.get("refresh", ["0"])[0] in (
                 "1", "true", "yes"):
-            state.request_refresh()
+            refresh_queued = state.request_refresh()
         elif parsed.path not in ("/health", "/refresh"):
-            state.request_refresh(self.server.cache_ttl_seconds)
+            refresh_queued = state.request_refresh(self.server.cache_ttl_seconds)
         with state.lock:
             data = state.last_good
             status = {
@@ -428,11 +429,12 @@ class Handler(BaseHTTPRequestHandler):
                 "last_attempt": state.last_attempt,
                 "last_success": state.last_success,
                 "channel_count": state.channels, "event_count": state.programmes,
-                "refresh_requested": state.last_refresh_request
+                "refresh_requested": state.last_refresh_request,
+                "refresh_queued": refresh_queued
             }
         if parsed.path in ("/health", "/refresh"):
             body = json.dumps(status).encode("utf-8")
-            code = 202 if parsed.path == "/refresh" else 200
+            code = 202 if parsed.path == "/refresh" and refresh_queued else 200
             mime = "application/json"
         else:
             body = data or b"EPG not available"
