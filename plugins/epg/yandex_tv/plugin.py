@@ -23,7 +23,7 @@ from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 LOG = logging.getLogger("epg-yandex-tv")
 HOST, PORT = "127.0.0.1", 19785
-MAX_HTML, MAX_CHANNELS, MAX_EVENTS = 4 * 1024 * 1024, 32, 512
+MAX_HTML, MAX_CHANNELS, MAX_EVENTS = 4 * 1024 * 1024, 64, 512
 CAPTCHA = ("smartcaptcha", "captcha.yandex", "showcaptcha", "g-recaptcha")
 HHMM = re.compile(r"^\s*(\d\d):(\d\d)")
 ISO = re.compile(
@@ -289,9 +289,12 @@ def validate_config(config):
     ttl = config.get("cache_ttl_seconds", 3600)
     if type(ttl) is not int or not 60 <= ttl <= 86400:
         raise ValueError("cache_ttl_seconds must be 60..86400")
+    limit = config.get("max_channels", 16)
+    if type(limit) is not int or not 1 <= limit <= MAX_CHANNELS:
+        raise ValueError("max_channels must be 1..64")
     pages = config.get("channel_pages", [])
     if not isinstance(pages, list) or len(pages) > MAX_CHANNELS:
-        raise ValueError("channel_pages must contain up to 32 channels")
+        raise ValueError("channel_pages must contain up to 64 channels")
     for page in pages:
         if (not isinstance(page, dict) or
                 not allowed_url(page.get("url", "")) or
@@ -325,8 +328,6 @@ def build_xmltv(config, downloader=fetch_html, sleeper=time.sleep, now=None):
         collect(guide)
         if config.get("crawl_links", True):
             limit = config.get("max_channels", 16)
-            if type(limit) is not int or not 1 <= limit <= MAX_CHANNELS:
-                limit = 16
             pages = discover_pages_from_links(guide.links, limit, index_url)
 
     for i, page in enumerate(pages):
@@ -444,7 +445,20 @@ class Handler(BaseHTTPRequestHandler):
             # A cached guide must not leak when fetching/distributing data
             # has been disabled by the operator.
             data = state.last_good if configured else None
+            if not configured:
+                condition = "disabled"
+            elif data and state.last_error:
+                condition = "stale"
+            elif data:
+                condition = "ready"
+            elif "no valid HTML schedule" in state.last_error:
+                condition = "empty_schedule"
+            elif state.last_error:
+                condition = "unavailable"
+            else:
+                condition = "pending"
             status = {
+                "status": condition,
                 "configured": configured,
                 "configuration_error": config_error,
                 "ready": bool(data),
