@@ -56,6 +56,26 @@ int main() {
     p.lastClearMediaPesMs = 205000;
     ok &= check(recoveryReason(p) == RecoveryReason::None,
                 "Recent clear PES must prevent blackout reset");
+    // V558: a previously healthy stream should not remain frozen for
+    // three minutes when CAMD errors continue and clear PES has stopped.
+    p.startedMs = 1000;
+    p.lastClearMediaPesMs = 100000;
+    p.lastCamdErrorMs = 188000;
+    p.lastEncryptedInputMs = 188500;
+    p.lastChildOutputMs = 188500;
+    p.nowMs = 189000;
+    ok &= check(recoveryReason(p) == RecoveryReason::None,
+                "Recent clear PES: do not restart before 90 seconds");
+    p.lastEncryptedInputMs = 190000; p.lastChildOutputMs = 190000;
+    p.lastCamdErrorMs = 190000; p.nowMs = 190000;
+    ok &= check(recoveryReason(p) == RecoveryReason::CamdBlackout,
+                "After 90 seconds of proven-media blackout restart only child");
+    p.lastClearMediaPesMs = 189500;
+    ok &= check(recoveryReason(p) == RecoveryReason::None,
+                "Any renewed clear PES cancels early blackout recovery");
+    p.lastClearMediaPesMs = 0;
+    ok &= check(recoveryReason(p) == RecoveryReason::None,
+                "Cold service must retain 180-second start grace");
     p.lastClearMediaPesMs = 0;
     p.lastCamdErrorMs = 0;
     ok &= check(recoveryReason(p) == RecoveryReason::MediaStalled,
@@ -95,6 +115,17 @@ int main() {
     ok &= check(retryJitterMs("stream-105") == retryJitterMs("stream-105") &&
                 retryJitterMs("stream-105") <= 1800,
                 "Per-stream retry jitter is deterministic and bounded");
+
+    CamdReaderRestartGate gate;
+    ok &= check(gate.tryAcquire("icam", 100000),
+                "First blackout on reader must receive ticket");
+    ok &= check(!gate.tryAcquire("icam", 100000) &&
+                !gate.tryAcquire("icam", 129999),
+                "Same-reader services must share 30s reconnect budget");
+    ok &= check(gate.tryAcquire("other-reader", 100000),
+                "Unrelated reader must not be blocked");
+    ok &= check(gate.tryAcquire("icam", 130000),
+                "Reader must recover a fresh slot after cooldown");
     if (ok) std::cout << "PASS TSDecrypt recovery policy\n";
     return ok ? 0 : 1;
 }

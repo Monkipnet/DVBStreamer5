@@ -1,5 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <map>
+#include <mutex>
+#include <string>
 
 namespace dvbstreamer5::ca::tsdecrypt_detail {
 
@@ -48,9 +51,17 @@ inline RecoveryReason recoveryReason(const RecoveryProbe& p) noexcept {
     if (recentCamdError) {
         const uint64_t lastEvidence = p.lastClearMediaPesMs ?
             p.lastClearMediaPesMs : p.startedMs;
-        if (p.nowMs - p.startedMs >= 180000 &&
+        // V558: after proven clear media, a 90-second sustained blackout
+        // is enough to re-probe this ONE child. Never-proven/cold channels
+        // keep the conservative 180-second grace. The source must still
+        // supply scrambled media and the child must still produce TS.
+        const bool hadClearMedia =
+            p.lastClearMediaPesMs >= p.startedMs &&
+            p.lastClearMediaPesMs != 0;
+        const uint64_t graceMs = hadClearMedia ? 90000ULL : 180000ULL;
+        if (p.nowMs - p.startedMs >= graceMs &&
             lastEvidence <= p.nowMs &&
-            p.nowMs - lastEvidence >= 180000)
+            p.nowMs - lastEvidence >= graceMs)
             return RecoveryReason::CamdBlackout;
         return RecoveryReason::None;
     }
@@ -90,6 +101,25 @@ inline uint64_t retryJitterMs(const char* streamId) noexcept {
 inline uint64_t camdBlackoutJitterMs(const char* streamId) noexcept {
     return retryJitterMs(streamId) * 15ULL;
 }
+
+// V558: a shared OSCam reader may be serving multiple TSDecrypt children.
+// During a reader-wide failure, let at most one child per configured reader
+ // initiate a CAMD blackout reconnect in each 30-second window, without
+ // blocking unrelated readers. This is in-process metadata only; neither
+ // ECM, CW nor credentials are retained.
+class CamdReaderRestartGate {
+public:
+    bool tryAcquire(const std::string& readerKey, uint64_t nowMs) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        uint64_t& nextAllowed = nextAllowedMs_[readerKey];
+        if (nowMs < nextAllowed) return false;
+        nextAllowed = nowMs + 30000ULL;
+        return true;
+    }
+private:
+    std::mutex mutex_;
+    std::map<std::string, uint64_t> nextAllowedMs_;
+};
 
 inline const char* recoveryReasonName(RecoveryReason reason) noexcept {
     switch (reason) {

@@ -37,6 +37,7 @@
 namespace {
 constexpr size_t kPacket = 188;
 constexpr size_t kMaxQueueBytes = 4 * 1024 * 1024;
+dvbstreamer5::ca::tsdecrypt_detail::CamdReaderRestartGate gCamdRestartGate;
 
 // Prefer the executable shipped beside DVBStreamer5. An explicit absolute
 // override is useful for isolated A/B testing; host locations are fallbacks.
@@ -486,6 +487,11 @@ struct Service {
                 continue;
             }
 
+            // V558: do not reconnect ten TSDecrypt children against a
+            // single overloaded OSCam reader at the same time.
+            if (reason == dvbstreamer5::ca::tsdecrypt_detail::RecoveryReason::CamdBlackout &&
+                !gCamdRestartGate.tryAcquire(readerKey, now))
+                continue;
             recovering.store(true);
             if (reason == dvbstreamer5::ca::tsdecrypt_detail::RecoveryReason::CamdBlackout)
                 camdBlackoutRestarts.fetch_add(1);
