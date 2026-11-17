@@ -219,5 +219,50 @@ class TestYandexEpgPlugin(unittest.TestCase):
         self.assertNotIn("systemctl restart oscam-mini", installer)
 
 
+    def test_disabled_permission_idle_does_not_enable_download(self):
+        for field in ("enabled", "permission_confirmed"):
+            cfg = dict(self.config)
+            cfg[field] = False
+            self.assertTrue(plugin.activation_issue(cfg))
+            with self.assertRaises(ValueError):
+                plugin.build_xmltv(
+                    cfg, downloader=lambda _: self.fail("network fetch not permitted"),
+                    sleeper=lambda _: self.fail("sleep should not be called"))
+        self.assertEqual(plugin.activation_issue(self.config), "")
+
+    def test_disabled_loopback_health_never_serves_old_cache_or_refresh(self):
+        import json
+        import threading
+        from urllib.request import urlopen
+        from urllib.error import HTTPError
+        with tempfile.TemporaryDirectory() as folder:
+            state = plugin.GuideState(os.path.join(folder, "epg.xml"))
+            state.replace(b'<?xml version="1.0"?><tv><channel id="cached"/></tv>')
+            server = plugin.LoopbackHttpServer(("127.0.0.1", 0), plugin.Handler)
+            server.state = state
+            server.configured = False
+            server.configuration_error = "EPG plugin disabled (enabled=false)"
+            server.cache_ttl_seconds = 3600
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = "http://127.0.0.1:%s" % server.server_port
+            try:
+                status = json.loads(urlopen(base + "/health").read().decode())
+                self.assertFalse(status["ready"])
+                self.assertFalse(status["configured"])
+                self.assertIn("enabled=false", status["configuration_error"])
+                self.assertEqual(status["channel_count"], 0)
+                self.assertEqual(urlopen(base + "/refresh").status, 200)
+                self.assertFalse(state.wake.is_set())
+                with self.assertRaises(HTTPError) as result:
+                    urlopen(base + "/epg.xml?refresh=1")
+                self.assertEqual(result.exception.code, 503)
+                self.assertFalse(state.wake.is_set())
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+
 if __name__ == "__main__":
     unittest.main()

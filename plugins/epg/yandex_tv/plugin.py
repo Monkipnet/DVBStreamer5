@@ -254,11 +254,26 @@ def discover_pages(markup, limit, base_url="https://tv.yandex.by/"):
     return discover_pages_from_links(parsed.links, limit, base_url)
 
 
-def validate_config(config):
-    if not isinstance(config, dict) or config.get("enabled") is not True:
-        raise ValueError("EPG plugin disabled (enabled=false)")
+def activation_issue(config):
+    """Fail closed without forcing systemd into an endless restart loop.
+
+    A disabled/unapproved guide is not downloaded OR served, even if a
+    previous XMLTV cache exists. Explicit activation still requires a
+    service restart, so merely editing JSON cannot start a background crawl.
+    """
+    if not isinstance(config, dict):
+        return "invalid plugin configuration"
+    if config.get("enabled") is not True:
+        return "EPG plugin disabled (enabled=false)"
     if config.get("permission_confirmed") is not True:
-        raise ValueError("data-use permission not confirmed")
+        return "data-use permission not confirmed"
+    return ""
+
+
+def validate_config(config):
+    issue = activation_issue(config)
+    if issue:
+        raise ValueError(issue)
     offset = config.get("timezone_minutes", 180)
     if type(offset) is not int or not -720 <= offset <= 840:
         raise ValueError("timezone_minutes must be -720..840")
@@ -415,21 +430,30 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         state = self.server.state
+        configured = getattr(self.server, "configured", True)
+        config_error = getattr(self.server, "configuration_error", "")
         query = parse_qs(parsed.query)
         refresh_queued = False
-        if parsed.path == "/refresh" or query.get("refresh", ["0"])[0] in (
-                "1", "true", "yes"):
-            refresh_queued = state.request_refresh()
-        elif parsed.path not in ("/health", "/refresh"):
-            refresh_queued = state.request_refresh(self.server.cache_ttl_seconds)
+        if configured:
+            if parsed.path == "/refresh" or query.get("refresh", ["0"])[0] in (
+                    "1", "true", "yes"):
+                refresh_queued = state.request_refresh()
+            elif parsed.path not in ("/health", "/refresh"):
+                refresh_queued = state.request_refresh(self.server.cache_ttl_seconds)
         with state.lock:
-            data = state.last_good
+            # A cached guide must not leak when fetching/distributing data
+            # has been disabled by the operator.
+            data = state.last_good if configured else None
             status = {
-                "ready": bool(data), "last_error": state.last_error,
-                "last_attempt": state.last_attempt,
-                "last_success": state.last_success,
-                "channel_count": state.channels, "event_count": state.programmes,
-                "refresh_requested": state.last_refresh_request,
+                "configured": configured,
+                "configuration_error": config_error,
+                "ready": bool(data),
+                "last_error": state.last_error if configured else config_error,
+                "last_attempt": state.last_attempt if configured else 0,
+                "last_success": state.last_success if configured else 0,
+                "channel_count": state.channels if configured else 0,
+                "event_count": state.programmes if configured else 0,
+                "refresh_requested": state.last_refresh_request if configured else 0,
                 "refresh_queued": refresh_queued
             }
         if parsed.path in ("/health", "/refresh"):
@@ -453,12 +477,16 @@ class Handler(BaseHTTPRequestHandler):
 def serve(config_path, output_path):
     with open(config_path, encoding="utf-8") as file:
         config = json.load(file)
-    validate_config(config)
+    issue = activation_issue(config)
+    if not issue:
+        validate_config(config)  # Invalid active settings still fail closed.
     state = GuideState(output_path)
     server = LoopbackHttpServer((HOST, PORT), Handler)
     server.state = state
-    server.cache_ttl_seconds = config.get("cache_ttl_seconds", 3600)
-    hours = config.get("refresh_hours", 6)
+    server.configured = not bool(issue)
+    server.configuration_error = issue
+    server.cache_ttl_seconds = config.get("cache_ttl_seconds", 3600) if isinstance(config, dict) else 3600
+    hours = config.get("refresh_hours", 6) if isinstance(config, dict) else 6
     if type(hours) is not int or not 1 <= hours <= 24:
         hours = 6
 
@@ -478,8 +506,13 @@ def serve(config_path, output_path):
             state.wake.wait(hours * 3600)
             state.wake.clear()
 
-    threading.Thread(target=update_loop, daemon=True).start()
-    LOG.info("Serving EPG on http://127.0.0.1:19785/epg.xml")
+    if issue:
+        LOG.warning("EPG idle: %s; no HTTP fetches, refreshes or cached XMLTV serving", issue)
+        LOG.warning("Edit %s and restart ONLY epg-yandex-tv.service to activate",
+                    config_path)
+    else:
+        threading.Thread(target=update_loop, daemon=True).start()
+    LOG.info("Serving local EPG status on http://127.0.0.1:19785/health")
     server.serve_forever()
 
 

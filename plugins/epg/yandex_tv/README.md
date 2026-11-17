@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.574 — Yandex TV EPG as a separate plugin
+# DVBStreamer5 V10.8.575 — Yandex TV EPG as a separate plugin
 
 Standalone Python 3.6+ HTML-to-XMLTV process. Does **not** load into the
 main DVBStreamer5 executable and cannot call tuner, CA, OSCam or
@@ -111,3 +111,21 @@ Glavni direktorij \`/etc/dvbstreamer5\` zaštićen je pristupom 0700.
 Odvojeni EPG servis koristi \`/etc/epg-yandex-tv/config.json\`.
 Instalacijski skript prenosi postojeće postavke bez mijenjanja
 glavnog servisa ili OSCam-a. Ne pohranjujte lozinke u konfiguraciju.
+
+
+## V575: отключённый плагин без цикла падений
+
+При `enabled=false` или `permission_confirmed=false` отдельный EPG-сервис
+остаётся запущенным в режиме ожидания, но **не делает HTTP-запросов к
+Яндексу, не обновляет XMLTV и не выдаёт ранее сохранённую программу**.
+`GET /health` возвращает `configured:false`, `ready:false` и
+`configuration_error`. `GET /epg.xml` выдаёт HTTP 503, запрос
+`/refresh` не запускает загрузку. После законного разрешённого
+включения настроек требуется перезапустить **только**
+`epg-yandex-tv.service`. Основной DVBStreamer5 и OSCam не затрагиваются.
+
+EN: Disabled/unapproved plugin stays idle; no remote requests and no
+cached XMLTV redistribution. Restart this plugin only after activation.
+
+HR: Isključeni dodatak ostaje u stanju mirovanja bez mrežnih zahtjeva
+i bez dijeljenja predmemoriranog XMLTV-a. Ponovo pokrenite samo dodatak.
