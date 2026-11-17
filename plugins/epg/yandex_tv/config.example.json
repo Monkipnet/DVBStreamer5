@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "permission_confirmed": false,
+  "timezone_minutes": 180,
+  "refresh_hours": 6,
+  "max_channels": 16,
+  "channel_pages": []
+}

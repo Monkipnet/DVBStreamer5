@@ -183,6 +183,9 @@ jobs:
           node tests/web/test_restart_ondemand_v531.js
           node tests/web/test_runtime_recovery_v552.js
 
+      - name: Test separate Yandex TV HTML-to-XMLTV plugin (offline)
+        run: python3 -m unittest discover -s plugins/epg/yandex_tv -p 'test_*.py' -v
+
       - name: Verify per-channel WISI Chameleon encoder profile UI
         run: node tests/web/test_wisi_chameleon_profile_ui.js
 

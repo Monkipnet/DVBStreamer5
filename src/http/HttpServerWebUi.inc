@@ -4856,11 +4856,19 @@ function syncXmltvModalFields() {
     if (enabled) source.enabled = enabled.checked;
   });
 }
+// V569: separate localhost XMLTV plugin; no scraper or new dependencies in the core.
 function addLicensedYandexXmltvSource() {
   syncXmltvModalFields();
-  const id='xmltv-yandex-'+Date.now().toString(36);
+  const url='http://127.0.0.1:19785/epg.xml';
+  if (xmltvModalSources.some(src=>src.url===url)) {
+    uiError(language==='ru'?'Плагин Яндекс ТВ уже добавлен':
+      language==='hr'?'Dodatak Yandex TV je već dodan':
+      'Yandex TV plugin already added');
+    return;
+  }
   xmltvModalSources.push({
-    id, name:'Яндекс ТВ (разрешённый XMLTV)', url:'', enabled:false,
+    id:'xmltv-yandex-'+Date.now().toString(36),
+    name:'Yandex TV plugin', url, enabled:false,
     refresh_period:'daily', refresh_time:'03:00', refresh_weekday:1
   });
   renderXmltvModal();
@@ -4886,12 +4894,12 @@ function renderXmltvModal() {
     '<button class="button-secondary" type="button" onclick="addXmltvSource()">' +
     uiBiText('+ Добавить XMLTV','Add XMLTV source') + '</button>' +
     '<button class="button-secondary" type="button" onclick="addLicensedYandexXmltvSource()">' +
-    (language==='ru'?'+ Яндекс ТВ (XMLTV)':language==='hr'?'+ Yandex TV (licencirani XMLTV)':
-      '+ Yandex TV (licensed XMLTV)') + '</button>' +
+    (language==='ru'?'+ Плагин Яндекс ТВ':language==='hr'?'+ Dodatak Yandex TV':
+      '+ Yandex TV plugin') + '</button>' +
     '<small class="field-help">' +
-    (language==='ru'?'Для Яндекс ТВ укажите разрешённый правообладателем URL XMLTV: публичный API сайта закрыт, прямое копирование расписания без разрешения не поддерживается.':
-     language==='hr'?'Za Yandex TV unesite dopušteni licencirani XMLTV URL. Javni API nije dostupan.':
-     'For Yandex TV enter an authorized XMLTV feed URL. The public API is closed and unlicensed scraping is not provided.') +
+    (language==='ru'?'Отдельный сервис-плагин: установите epg-yandex-tv.service и настройте разрешённые страницы каналов. После этого включите добавленный XMLTV-источник галочкой.':
+     language==='hr'?'Zaseban dodatak: instalirajte epg-yandex-tv.service i konfigurirajte dopuštene kanale. Zatim uključite XMLTV izvor.':
+     'Separate service plugin: install epg-yandex-tv.service and configure permitted channel pages, then enable the XMLTV source.') +
     '</small>' +
     '<button class="button-secondary" type="button" onclick="closeModal()">' +
     t('cancel') + '</button>' +
