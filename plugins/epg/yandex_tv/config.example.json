@@ -3,6 +3,10 @@
   "permission_confirmed": false,
   "timezone_minutes": 180,
   "refresh_hours": 6,
+  "cache_ttl_seconds": 3600,
+  "crawl_links": true,
+  "crawl_delay": 2.0,
+  "index_url": "https://tv.yandex.by/",
   "max_channels": 16,
   "channel_pages": []
 }
