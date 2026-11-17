@@ -50,6 +50,10 @@ restart oscam-mini in a maintenance window.
 No default OSCam-mini config or credentials are overwritten.
 
 ## Tests
+CTest builds the regression target even in Release mode; assertions must
+remain active under -DNDEBUG. A deterministic fixture asserts that the five
+observed home2 delays (5060, 5826, 5835, 5870 and 6108ms) all fail under
+the 5000ms baseline and fit within the opt-in 6500ms deadline.
 `oscam_newcamd_grace` checks scope, malformed env values, max
 bound, overflow, 5000ms baseline and reader expiry boundaries.
 Main GitHub Actions builds the actual OSCam-mini source and runs CTest

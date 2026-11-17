@@ -1,4 +1,8 @@
 #include "../third_party/oscam-mini/oscam-newcamd-grace.h"
+// CMake Release sets NDEBUG; enforce real assertions in CI.
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -27,6 +31,13 @@ int main(void)
 	assert(dvb5_newcamd_reader_expiry_seconds(5000) == 6);
 	assert(dvb5_newcamd_reader_expiry_seconds(6500) == 8);
 	assert(dvb5_newcamd_reader_expiry_seconds(6108) == 7);
+	// home2 observed these five real late-FOUND durations:
+	const uint32_t late_ms[] = {5060, 5826, 5835, 5870, 6108};
+	for(size_t i = 0; i < sizeof(late_ms) / sizeof(late_ms[0]); ++i)
+	{
+		assert(late_ms[i] > dvb5_newcamd_effective_timeout_ms(5000, 0));
+		assert(late_ms[i] < dvb5_newcamd_effective_timeout_ms(5000, 1500));
+	}
 	puts("PASS Newcamd iCAM bounded grace scope, parser, deadline and reader expiry");
 	return 0;
 }
