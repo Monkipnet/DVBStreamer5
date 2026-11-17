@@ -23,6 +23,7 @@
 #include "oscam-string.h"
 #include "oscam-work.h"
 #include "oscam-ecm-latency.h"
+#include "oscam-newcamd-grace.h"
 #include "reader-common.h"
 
 extern CS_MUTEX_LOCK ecmcache_lock;
@@ -235,7 +236,12 @@ static void *cw_process(void)
 			if(!er->readers_timeout_check)  //ecm stays in cache at least ctimeout+2seconds!
 			{
 				tbc = er->tps;
-				time_to_check_ctimeout = add_ms_to_timeb_diff(&tbc, lb_auto_timeout(er, cfg.ctimeout));
+				// A selected iCAM Newcamd proxy may have a bounded additional
+				// wait. Other readers keep their original LB timeout logic.
+				const uint32_t client_deadline_ms = er->dvb5_newcamd_grace_ms
+					? dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, er->dvb5_newcamd_grace_ms)
+					: lb_auto_timeout(er, cfg.ctimeout);
+				time_to_check_ctimeout = add_ms_to_timeb_diff(&tbc, client_deadline_ms);
 				if(comp_timeb(&t_now, &tbc) >= 0)
 				{
 					add_job(er->client, ACTION_CLIENT_TIMEOUT, (void *)er, 0);
@@ -1198,6 +1204,16 @@ void request_cw_from_readers(ECM_REQUEST *er, uint8_t stop_stage)
 			cs_log_dbg(D_TRACE | D_CSP, "request_cw stage=%d to reader %s ecm hash=%s", er->stage, rdr ? rdr->label : "", ecmd5);
 
 			ea->status |= REQUEST_SENT;
+			// Apply grace only once a real upstream Newcamd reader is
+			// selected for an incoming Newcamd iCAM ECM. No global timeout
+			// change; the default remains zero.
+			if(!er->dvb5_newcamd_grace_ms && er->client && rdr)
+			{
+				er->dvb5_newcamd_grace_ms = dvb5_newcamd_grace_for_route(
+					er->caid, get_module(er->client)->num == R_NEWCAMD,
+					rdr->typ == R_NEWCAMD,
+					getenv("DVBSTREAMER5_OSCAM_NEWCAMD_GRACE_MS"));
+			}
 			cs_ftime(&ea->time_request_sent);
 			if(er->dvb5_diag_id && !er->dvb5_diag_queued_ms)
 				er->dvb5_diag_queued_ms = dvb5_ecm_latency_now_ms();
@@ -1542,7 +1558,8 @@ int32_t write_ecm_answer(struct s_reader *reader, ECM_REQUEST *er, int8_t rc, ui
 	if(!reader || !er || !er->tps.time) { return 0; }
 
 	// drop too late answers, to avoid seg fault --> only answer until tps.time+((cfg.ctimeout+500)/1000+1) is accepted
-	time_t timeout = time(NULL) - ((cfg.ctimeout+500)/1000+1);
+	time_t timeout = time(NULL) - dvb5_newcamd_reader_expiry_seconds(
+		dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, er->dvb5_newcamd_grace_ms));
 	if(er->tps.time < timeout)   //< and NOT <=
 		{ return 0; }
 
@@ -1559,7 +1576,8 @@ int32_t write_ecm_answer(struct s_reader *reader, ECM_REQUEST *er, int8_t rc, ui
 		er_reader_cp->rc = rc;
 		er_reader_cp->idx = 0;
 
-		timeout = time(NULL) - ((cfg.ctimeout+500)/1000+1);
+		timeout = time(NULL) - dvb5_newcamd_reader_expiry_seconds(
+			dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, er->dvb5_newcamd_grace_ms));
 		if(er->tps.time < timeout)
 			{ return 0; }
 	}

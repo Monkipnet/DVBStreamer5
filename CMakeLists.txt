@@ -472,6 +472,12 @@ add_executable(dvbstreamer5_tsdecrypt_telemetry_test
 add_test(NAME tsdecrypt_safe_telemetry
     COMMAND dvbstreamer5_tsdecrypt_telemetry_test)
 
+# V10.8.563: bounded, opt-in iCAM Newcamd grace with expiry regression tests.
+add_executable(dvbstreamer5_oscam_newcamd_grace_test
+    tests/test_oscam_newcamd_grace.c)
+add_test(NAME oscam_newcamd_grace
+    COMMAND dvbstreamer5_oscam_newcamd_grace_test)
+
 # V10.8.560: opt-in Newcamd reader ECM latency telemetry, no CW/ECM payloads.
 add_executable(dvbstreamer5_oscam_ecm_latency_test
     tests/test_oscam_ecm_latency.c)

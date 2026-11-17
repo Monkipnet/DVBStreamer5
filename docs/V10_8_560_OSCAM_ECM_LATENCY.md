@@ -27,10 +27,12 @@ There are no CW/ECM bytes or hashes, usernames, passwords, IPs, protocol
 headers or Newcamd credentials in the new logs. Existing OSCam debug modes
 may independently log sensitive data: do not enable them.
 
-The timestamps are monotonic, with the actual send event taken immediately
-before handing the ECM to the Newcamd TCP socket; upstream_ms therefore
-includes local TCP/kernel delivery plus remote processing. It is **not**
-a pure remote compute-time measurement. No new network requests are made.
+The timestamps are monotonic. From V563, send_call_ms measures the local
+Newcamd send invocation, and the upstream_ms clock starts after the send
+invocation completes. It still includes local TCP/kernel delivery and remote
+processing and is **not** a pure remote compute-time measurement. Previous
+V560-V562 upstream_ms values started before the send call. No new network
+requests are made.
 A late reply is observed only if it reaches OSCam's standard
 `casc_check_dcw` path. OSCam's ordinary deadlines, CW processing, reader
 policies and PID selection are unchanged.

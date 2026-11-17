@@ -1018,6 +1018,8 @@ typedef struct ecm_request_t
 	int8_t          rc;
 	uint8_t         rcEx;
 	struct timeb    tps;                // incoming time stamp
+	// V563: opt-in, CAID 098D Newcamd-only bounded reader grace (max 1500ms).
+	uint16_t        dvb5_newcamd_grace_ms;
 	// DVBStreamer5 V560: opt-in, metadata-only Newcamd ECM latency tracing.
 	// A diagnostic sequence ID and monotonic timestamps never contain ECM/CW.
 	uint64_t        dvb5_diag_id;

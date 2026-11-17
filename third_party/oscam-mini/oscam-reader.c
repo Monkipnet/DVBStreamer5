@@ -19,6 +19,7 @@
 #include "reader-common.h"
 #include "oscam-config.h"
 #include "oscam-ecm-latency.h"
+#include "oscam-newcamd-grace.h"
 
 extern CS_MUTEX_LOCK system_lock;
 extern CS_MUTEX_LOCK ecmcache_lock;
@@ -706,7 +707,8 @@ void casc_check_dcw(struct s_reader *reader, int32_t idx, int32_t rc, uchar *cw)
 			ecm->rc = E_FOUND;
 		}
 
-		if(ecm->rc >= E_NOCARD && (t - (uint32_t)ecm->tps.time > ((cfg.ctimeout + 500) / 1000) + 1))  // drop timeouts
+		if(ecm->rc >= E_NOCARD && (t - (uint32_t)ecm->tps.time > dvb5_newcamd_reader_expiry_seconds(
+			dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, ecm->dvb5_newcamd_grace_ms))))  // drop timeouts
 		{
 			ecm->rc = E_FOUND;
 		}
@@ -988,7 +990,8 @@ int32_t casc_process_ecm(struct s_reader *reader, ECM_REQUEST *er)
 	for(i = 0; i < cfg.max_pending; i++)
 	{
 		ecm = &cl->ecmtask[i];
-		if((ecm->rc >= E_NOCARD) && (t - (uint32_t)ecm->tps.time > ((cfg.ctimeout + 500) / 1000) + 1))  // drop timeouts
+		if((ecm->rc >= E_NOCARD) && (t - (uint32_t)ecm->tps.time > dvb5_newcamd_reader_expiry_seconds(
+			dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, ecm->dvb5_newcamd_grace_ms))))  // drop timeouts
 		{
 			ecm->rc = E_FOUND;
 		}
@@ -1078,7 +1081,8 @@ void reader_get_ecm(struct s_reader *reader, ECM_REQUEST *er)
 	cs_readlock(__func__, &ecmcache_lock);
 	for(ecm = ecmcwcache; ecm; ecm = ecm->next)
 	{
-		timeout = time(NULL) - ((cfg.ctimeout+500)/1000+1);
+		timeout = time(NULL) - dvb5_newcamd_reader_expiry_seconds(
+			dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, ecm->dvb5_newcamd_grace_ms));
 		if(ecm->tps.time <= timeout)
 			{ break; }
 
