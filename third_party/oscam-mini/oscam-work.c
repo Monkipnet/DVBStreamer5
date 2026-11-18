@@ -4,6 +4,7 @@
 #include "module-cacheex.h"
 #include "oscam-client.h"
 #include "oscam-ecm.h"
+#include "oscam-ecm-latency.h"
 #include "oscam-emm.h"
 #include "oscam-lock.h"
 #include "oscam-net.h"
@@ -262,10 +263,30 @@ void *work_thread(void *ptr)
 				{
 					if(cl->ecmtask[i].idx == idx)
 					{
+						const ECM_REQUEST *matched = &cl->ecmtask[i];
+						if(reader->typ == R_NEWCAMD && matched->dvb5_diag_id)
+						{
+							cs_log("DVB5 ECM LATENCY stage=upstream_rx_matched id=%llu reader=%s caid=%04X sid=%04X msgid=%u result=%s age_ms=%llu",
+								(unsigned long long)matched->dvb5_diag_id,
+								reader->label, matched->caid, matched->srvid,
+								(unsigned int)idx,
+								rc == 1 ? "found" : rc == 2 ? "invalid" : "not_found",
+								(unsigned long long)dvb5_ecm_latency_delta_ms(
+									matched->dvb5_diag_sent_ms, dvb5_ecm_latency_now_ms()));
+						}
 						cl->pending--;
 						casc_check_dcw(reader, i, rc, dcw);
 						n++;
 					}
+				}
+				if(n == 0 && reader->typ == R_NEWCAMD && dvb5_ecm_latency_enabled())
+				{
+					// A valid Newcamd response arrived, but its message ID did not
+					// match an outstanding slot. Do not log payloads or CWs.
+					cs_log("DVB5 ECM LATENCY stage=upstream_rx_unmatched reader=%s msgid=%u result=%s pending=%d",
+						reader->label, (unsigned int)idx,
+						rc == 1 ? "found" : rc == 2 ? "invalid" : "not_found",
+						cl->pending);
 				}
 				break;
 			case ACTION_READER_RESET:

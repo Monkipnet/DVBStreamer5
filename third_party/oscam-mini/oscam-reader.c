@@ -1105,6 +1105,13 @@ void reader_get_ecm(struct s_reader *reader, ECM_REQUEST *er)
 		cs_readlock(__func__, &ea->ecmanswer_lock);
 		if(ea->rc < E_99)
 		{
+			if(er->dvb5_diag_id)
+			{
+				cs_log("DVB5 ECM LATENCY stage=ecm_pending_duplicate id=%llu origin_id=%llu reader=%s caid=%04X sid=%04X mode=cached",
+					(unsigned long long)er->dvb5_diag_id,
+					(unsigned long long)(ea->er ? ea->er->dvb5_diag_id : 0),
+					reader->label, er->caid, er->srvid);
+			}
 			cs_readunlock(__func__, &ea->ecmanswer_lock);
 			cs_log_dbg(D_LB, "{client %s, caid %04X, prid %06X, srvid %04X} [reader_get_ecm] ecm already sent to reader %s (%s)", (check_client(er->client) ? er->client->account->usr : "-"), er->caid, er->prid, er->srvid, reader ? reader->label : "-", ea->rc==E_FOUND?"OK":"NOK");
 
@@ -1114,6 +1121,13 @@ void reader_get_ecm(struct s_reader *reader, ECM_REQUEST *er)
 		}
 		else
 		{
+			if(er->dvb5_diag_id)
+			{
+				cs_log("DVB5 ECM LATENCY stage=ecm_pending_duplicate id=%llu origin_id=%llu reader=%s caid=%04X sid=%04X mode=pending",
+					(unsigned long long)er->dvb5_diag_id,
+					(unsigned long long)(ea->er ? ea->er->dvb5_diag_id : 0),
+					reader->label, er->caid, er->srvid);
+			}
 			ea_prev = ea->pending;
 			ea->pending = ea_er;
 			ea->pending->pending_next = ea_prev;
