@@ -22,7 +22,6 @@
 #include "oscam-lock.h"
 #include "oscam-string.h"
 #include "oscam-work.h"
-#include "oscam-ecm-latency.h"
 #include "oscam-newcamd-grace.h"
 #include "reader-common.h"
 
@@ -73,15 +72,6 @@ void ecm_timeout(ECM_REQUEST *er)
 				}
 			}
 
-			// The 5s threshold is a local client deadline, not evidence that
-			// the remote reader rejected this ECM. Trace it separately.
-			if(er->dvb5_diag_id)
-			{
-				cs_log("DVB5 ECM LATENCY stage=client_timeout id=%llu caid=%04X sid=%04X elapsed_ms=%llu",
-					(unsigned long long)er->dvb5_diag_id, er->caid, er->srvid,
-					(unsigned long long)dvb5_ecm_latency_delta_ms(
-						er->dvb5_diag_received_ms, dvb5_ecm_latency_now_ms()));
-			}
 			//send timeout to client!
 			cs_log_dbg(D_LB, "{client %s, caid %04X, prid %06X, srvid %04X} client timeout! ", (check_client(er->client) ? er->client->account->usr : "-"), er->caid, er->prid, er->srvid);
 			er->rc = E_TIMEOUT;
@@ -1215,8 +1205,6 @@ void request_cw_from_readers(ECM_REQUEST *er, uint8_t stop_stage)
 					getenv("DVBSTREAMER5_OSCAM_NEWCAMD_GRACE_MS"));
 			}
 			cs_ftime(&ea->time_request_sent);
-			if(er->dvb5_diag_id && !er->dvb5_diag_queued_ms)
-				er->dvb5_diag_queued_ms = dvb5_ecm_latency_now_ms();
 
 			er->reader_requested++;
 

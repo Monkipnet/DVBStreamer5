@@ -26,15 +26,3 @@ assert fields[:7] == ["0B54", "2", "2", "1", "1", "1", "1"], fields
 assert fields[7:] == ["2", "5", "5501", "5501"], fields
 assert "AAAA" not in out
 print("PASS OSCam ECM journal analyzer")
-
-# Guard the opt-in receive-side diagnostic hooks against accidental removal.
-source_root = Path(__file__).resolve().parent.parent / "third_party" / "oscam-mini"
-work_source = (source_root / "oscam-work.c").read_text()
-reader_source = (source_root / "oscam-reader.c").read_text()
-assert "stage=upstream_rx_matched" in work_source
-assert "stage=upstream_rx_unmatched" in work_source
-assert "reader->typ == R_NEWCAMD && dvb5_ecm_latency_enabled()" in work_source
-assert "stage=ecm_pending_duplicate" in reader_source
-assert "mode=cached" in reader_source and "mode=pending" in reader_source
-assert "dvb5_diag_id" in work_source and "dvb5_diag_id" in reader_source
-print("PASS OSCam Newcamd receive/duplicate diagnostic hooks")

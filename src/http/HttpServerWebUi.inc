@@ -857,6 +857,22 @@ html[data-dashboard-theme="light"] .modal-content .modal-close{color:#fff}
 html[data-dashboard-theme="light"] .quality-head :is(.quality-title,.quality-title small,.quality-refresh,.quality-output-select,.quality-legend,.quality-legend .value,.quality-legend .unit){color:#2c455f}
 html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-output-chart-head,.quality-output-chart-head strong,.quality-output-chart-head span){color:#223a55}
 
+/* Responsive multilingual controls and dialogs (RU/EN/HR/DE). */
+.language-picker{display:inline-flex;align-items:center;gap:6px;min-width:0;flex:0 0 auto;font-size:.75rem;white-space:nowrap}
+.language-picker select{min-width:140px;max-width:190px;min-height:34px;border-radius:9px;padding:6px 8px;border:1px solid rgba(125,209,255,.3);background:#1b2635;color:#f2f6ff;font:inherit;cursor:pointer}
+.language-picker select:focus-visible{outline:2px solid #59b7ff;outline-offset:2px}
+html[data-dashboard-theme="light"] .language-picker select{background:#fff;color:#23415e;border-color:#b8ccdf}
+.header-right{min-width:0;max-width:100%;justify-content:flex-end}
+.header-left,.header-right,.header-monitor,.system-menu{min-width:0}
+.system-menu-list{max-width:min(92vw,350px);min-width:min(240px,92vw);overflow-wrap:anywhere}
+.modal-content,.modal-content :is(.form-grid,.form-row,.edit-section,.input-main-row,.row-inline,.modal-actions){min-width:0;max-width:100%;box-sizing:border-box}
+.modal-content :is(h1,h2,h3,h4,label,summary,.field-help,.form-hint,button){overflow-wrap:break-word}
+.modal-content :is(input,select,textarea){min-width:0;max-width:100%;box-sizing:border-box}
+.modal-content :is(table,.network-table){max-width:100%}
+.modal-content :is(.table-wrap,.table-scroll,.network-table-wrap){max-width:100%;overflow-x:auto}
+.stream-modal .input-main-row{grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))}
+@media(max-width:900px){.header-right{flex-wrap:wrap}.stream-modal .form-grid>.form-row:not(.full){grid-column:span 12}}
+@media(max-width:560px){.language-picker{flex:1 1 auto;justify-content:flex-end}.language-picker select{min-width:120px;max-width:100%}.modal{padding:8px}.modal-content{padding:14px;border-radius:14px}.stream-modal .input-main-row{grid-template-columns:minmax(0,1fr)}}
 </style>
 </head>
 <body>
@@ -894,7 +910,7 @@ html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-
         onclick="clearTileSearch()">×</button>
 </div>
 <div class="header-right">
-<button class="button-secondary" onclick="toggleLanguage()" id="languageButton">RU</button>
+<label class="language-picker" for="languageSelect"><span id="languagePickerLabel">Language</span><select id="languageSelect" aria-labelledby="languagePickerLabel" onchange="selectInterfaceLanguage(this.value)"><option value="en">English · EN</option><option value="ru">Русский · RU</option><option value="hr">Hrvatski · HR</option><option value="de">Deutsch · DE</option></select></label>
 <details class="system-menu" id="systemMenu">
 <summary class="button-secondary" data-i18n="system">Menu</summary>
 <div class="system-menu-list">
@@ -1244,8 +1260,16 @@ Object.assign(translations.ru, {
   playlistChannels:'\u041a\u0430\u043d\u0430\u043b\u044b \u0434\u043b\u044f \u043f\u043b\u0435\u0439\u043b\u0438\u0441\u0442\u0430',
   playlistSelected:'\u0412\u044b\u0431\u0440\u0430\u043d\u043e'
 });
+// German localization with explicit translations and English fallback for technical terms.
+translations.de = Object.assign({}, translations.en, {"subtitle":"Überwachung von Übertragungen und Streams","total":"Gesamt:","active":"Aktiv:","network":"Netzwerk","system":"Menü","user":"Benutzer","addStream":"+ Stream hinzufügen","addChannel":"+ Kanal hinzufügen","interfacesNotFound":"Keine Schnittstellen gefunden","output":"Ausgabe","activeInput":"Aktiver Eingang","primary":"Primär","backup":"Reserve","sid":"SID","bitrateIn":"Eingangsbitrate","payloadOut":"Nutzdaten-Ausgabe","bitrateOut":"CBR-Ausgabe","vbrOut":"Ausgangsbitrate","status":"Status","online":"Online","backupOnline":"Reserve","offline":"Offline","start":"Starten","stop":"Stoppen","edit":"Bearbeiten","chart":"Diagramm","delete":"Stream löschen","removeConfirm":"Stream löschen","restartProgram":"Programm vollständig neu starten","restartConfirm":"DVBStreamer5-Dienst vollständig neu starten?","restarting":"Dienst wird neu gestartet...","networkLoad":"Netzwerkschnittstellen-Auslastung","interface":"Schnittstelle","incoming":"Eingehend","outgoing":"Ausgehend","udpInputFilter":"Eingehendes UDP filtern","close":"Schließen","about":"Über","product":"Produkt","version":"Version","name":"Name","country":"Land","contactEmail":"Kontakt-E-Mail","donate":"Spenden","donateQr":"Spenden-QR-Code","donateWallet":"Telegram-Wallet","cancel":"Abbrechen","save":"Speichern","userTitle":"Benutzer","telegram":"Telegram API","quality":"Streamqualität","playlist":"VLC-Wiedergabeliste","subscribers":"Abonnenten","streams":"Streams","filtering":"IP-Filter aktivieren","addSubscriber":"Abonnenten hinzufügen","primaryIp":"Primäre IP","backupIp":"Reserve-IP","addedAt":"Hinzugefügt am","subscriberName":"Name des Abonnenten","noSubscribers":"Keine Abonnenten vorhanden","noStreams":"Keine Streams konfiguriert","enabled":"Aktiviert","disabled":"Deaktiviert","exportSubscribers":"TXT exportieren","session":"Sitzung","activeSession":"Online","offlineSession":"Offline","resetSession":"Zurücksetzen","uptime":"Laufzeit","connectedFor":"Verbunden seit","systemLoad":"Systemauslastung","logout":"Abmelden","graphicsAdapters":"Grafikadapter","noGpu":"Keine GPU gefunden","unavailable":"N/V","memoryUsed":"Speicher","satelliteCard":"Satellitenkarte","satelliteInputs":"DVB-Adapter","satelliteNotSet":"Satellit nicht angegeben","networkStreams":"IPTV / Netzwerkstreams","cardActive":"aktiv","logicalCores":"Logische CPU-Kerne","gpuEngines":"GPU-Einheiten","appUsage":"DVBStreamer5-Auslastung","totalUsage":"Gesamtsystem","busyLevels":"Auslastung: Grün 0–39 %, Gelb 40–69 %, Orange 70–89 %, Rot 90–100 %","core":"Kern","coreTraces":"CPU-Kernlinien","engineTraces":"GPU-Linien","cpuHostShare":"der CPU-Kapazität","showCharts":"Diagramme anzeigen","chartWindow":"Letzte 6 Minuten · Aktualisierung alle 3 Sekunden","chartNow":"Jetzt","gpuMemory":"GPU-Speicher","connectionMonitoring":"Nicht registrierte Verbindungen","monitoringHint":"HTTP-, HLS- und SRT-Sitzungen sichtbar. UDP-Empfänger lassen sich nicht erkennen.","clientIp":"Client-IP","protocol":"Protokoll","connections":"Verbindungen","actions":"Aktionen","addFromConnection":"Hinzufügen","blockClient":"Blockieren","blockedIps":"Blockierte IPs","unblockClient":"Entsperren","noUnknownConnections":"Keine nicht registrierten Verbindungen","streamNumber":"Stream","playlistSelectAll":"Alle auswählen","playlistDeselectAll":"Auswahl aufheben","playlistDownload":"VLC-Wiedergabeliste herunterladen","playlistNoSelection":"Mindestens einen Kanal auswählen","playlistNoPlayableLinks":"Keine VLC-Wiedergabelisten-Links vorhanden","playlistChannels":"Kanäle der Wiedergabeliste","playlistSelected":"Ausgewählt"});
+const uiEnToDe = new Map(Object.entries({"Broadcast":"Übertragung","Configuration":"Konfiguration","Test":"Test","Replacement file":"Ersatzdatei","Backup":"Reserve","Primary":"Primär","Save":"Speichern","Cancel":"Abbrechen","Close":"Schließen","Edit":"Bearbeiten","Delete":"Löschen","Apply":"Anwenden","Reset":"Zurücksetzen","Enable":"Aktivieren","Disable":"Deaktivieren","Enabled":"Aktiviert","Disabled":"Deaktiviert","Status":"Status","Start":"Starten","Stop":"Stoppen","Loading...":"Wird geladen...","No streams configured":"Keine Streams konfiguriert","Stream quality":"Streamqualität","Stream":"Stream","Streams":"Streams","Network":"Netzwerk","System":"System","Menu":"Menü","User":"Benutzer","Users":"Benutzer","About":"Über","Language":"Sprache","Search":"Suche","Output":"Ausgabe","Output interface":"Ausgangsschnittstelle","Output formats":"Ausgabeformate","Player URL":"Player-URL","Transcoding":"Transkodierung","Stream settings":"Stream-Einstellungen","Add channel — DVB-S/S2":"Kanal hinzufügen — DVB-S/S2","HTTP preview":"HTTP-Vorschau","Input":"Eingang","Settings":"Einstellungen","Advanced settings":"Erweiterte Einstellungen","Connection":"Verbindung","Connections":"Verbindungen","Subscribers":"Abonnenten","Add subscriber":"Abonnenten hinzufügen","Add stream":"Stream hinzufügen","No matching channels":"Keine passenden Kanäle","Clear search":"Suche löschen","Search channel, device, IP, domain or subnet":"Kanal, Gerät, IP, Domain oder Subnetz suchen","No interfaces found":"Keine Schnittstellen gefunden","Online":"Online","Offline":"Offline","Active":"Aktiv","Inactive":"Inaktiv","Error":"Fehler","Warning":"Warnung","Success":"Erfolg","Full program restart":"Programm vollständig neu starten","System load":"Systemauslastung","Network interface load":"Netzwerkschnittstellen-Auslastung","Last successful update: ":"Letzte erfolgreiche Aktualisierung: ","Tile display":"Kachelanzeige","Show all (default)":"Alle anzeigen (Standard)","Dark theme":"Dunkles Design","Light theme":"Helles Design","Close notification":"Benachrichtigung schließen","Loading":"Wird geladen"}));
+function translateEnglishToGerman(value) {
+  const source = String(value ?? '');
+  const parts = source.match(/^(\s*)([\s\S]*?)(\s*)$/);
+  return parts ? parts[1] + (uiEnToDe.get(parts[2]) || parts[2]) + parts[3] : source;
+}
 function normalizeLanguage(value) {
-  return ['ru', 'en', 'hr'].includes(value) ? value : 'en';
+  return ['ru', 'en', 'hr', 'de'].includes(value) ? value : 'en';
 }
 let language = normalizeLanguage(localStorage.getItem('dvbstreamer5-language') || 'en');
 // DVBStreamer5: runtime localization for UI fragments that are generated dynamically.
@@ -3495,7 +3519,7 @@ function translateUiText(value) {
   const source = String(value ?? '');
   if (language === 'ru') return source;
   const english = translateRuToEn(source);
-  return language === 'hr' ? translateEnglishToCroatian(english) : english;
+  return language === 'hr' ? translateEnglishToCroatian(english) : language === 'de' ? translateEnglishToGerman(english) : english;
 }
 
 function tileRuntimeStatus(value) {
@@ -3522,7 +3546,7 @@ function localizeUiTextNode(node) {
 
 function localizeUiAttributes(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE || ['SCRIPT','STYLE'].includes(element.tagName) ||
-      element.id === 'languageButton') return;
+      element.id === 'languageSelect' || element.id === 'languagePickerLabel') return;
   let originals = uiOriginalAttrs.get(element);
   if (!originals) { originals = new Map(); uiOriginalAttrs.set(element, originals); }
   for (const name of uiLocalizedAttributes) {
@@ -3567,13 +3591,13 @@ const donateAddress = 'UQD1uQn5WxhzKLXjL0KOVuJDcRU65pYzgt6pm_gzJM-vT-cN';
 const donateQrPath = 'M4 4h7v1H4zM12 4h1v1H12zM14 4h3v1H14zM25 4h3v1H25zM30 4h7v1H30zM4 5h1v1H4zM10 5h1v1H10zM13 5h1v1H13zM15 5h1v1H15zM17 5h2v1H17zM20 5h3v1H20zM26 5h1v1H26zM28 5h1v1H28zM30 5h1v1H30zM36 5h1v1H36zM4 6h1v1H4zM6 6h3v1H6zM10 6h1v1H10zM12 6h3v1H12zM16 6h1v1H16zM18 6h2v1H18zM22 6h1v1H22zM25 6h2v1H25zM28 6h1v1H28zM30 6h1v1H30zM32 6h3v1H32zM36 6h1v1H36zM4 7h1v1H4zM6 7h3v1H6zM10 7h1v1H10zM14 7h1v1H14zM16 7h1v1H16zM18 7h1v1H18zM20 7h1v1H20zM22 7h1v1H22zM24 7h2v1H24zM27 7h2v1H27zM30 7h1v1H30zM32 7h3v1H32zM36 7h1v1H36zM4 8h1v1H4zM6 8h3v1H6zM10 8h1v1H10zM14 8h11v1H14zM26 8h2v1H26zM30 8h1v1H30zM32 8h3v1H32zM36 8h1v1H36zM4 9h1v1H4zM10 9h1v1H10zM12 9h1v1H12zM15 9h1v1H15zM20 9h1v1H20zM22 9h1v1H22zM24 9h1v1H24zM26 9h1v1H26zM30 9h1v1H30zM36 9h1v1H36zM4 10h7v1H4zM12 10h1v1H12zM14 10h1v1H14zM16 10h1v1H16zM18 10h1v1H18zM20 10h1v1H20zM22 10h1v1H22zM24 10h1v1H24zM26 10h1v1H26zM28 10h1v1H28zM30 10h7v1H30zM13 11h1v1H13zM16 11h1v1H16zM22 11h1v1H22zM27 11h2v1H27zM4 12h1v1H4zM6 12h1v1H6zM10 12h2v1H10zM14 12h2v1H14zM17 12h1v1H17zM19 12h1v1H19zM21 12h1v1H21zM23 12h1v1H23zM25 12h1v1H25zM27 12h2v1H27zM31 12h1v1H31zM34 12h1v1H34zM36 12h1v1H36zM4 13h2v1H4zM9 13h1v1H9zM11 13h3v1H11zM16 13h1v1H16zM18 13h2v1H18zM24 13h3v1H24zM28 13h3v1H28zM35 13h2v1H35zM5 14h2v1H5zM10 14h1v1H10zM15 14h1v1H15zM17 14h7v1H17zM25 14h1v1H25zM27 14h2v1H27zM30 14h2v1H30zM34 14h1v1H34zM36 14h1v1H36zM6 15h3v1H6zM11 15h1v1H11zM16 15h1v1H16zM18 15h3v1H18zM22 15h3v1H22zM26 15h2v1H26zM29 15h5v1H29zM35 15h2v1H35zM6 16h1v1H6zM8 16h1v1H8zM10 16h1v1H10zM17 16h6v1H17zM24 16h1v1H24zM30 16h2v1H30zM33 16h2v1H33zM36 16h1v1H36zM4 17h3v1H4zM8 17h2v1H8zM13 17h1v1H13zM15 17h1v1H15zM18 17h1v1H18zM20 17h3v1H20zM24 17h2v1H24zM27 17h5v1H27zM33 17h1v1H33zM35 17h1v1H35zM4 18h2v1H4zM8 18h3v1H8zM12 18h2v1H12zM15 18h2v1H15zM18 18h1v1H18zM20 18h1v1H20zM22 18h1v1H22zM24 18h4v1H24zM30 18h1v1H30zM33 18h2v1H33zM36 18h1v1H36zM5 19h1v1H5zM8 19h2v1H8zM11 19h1v1H11zM13 19h1v1H13zM18 19h3v1H18zM23 19h2v1H23zM28 19h2v1H28zM31 19h2v1H31zM35 19h1v1H35zM6 20h1v1H6zM9 20h2v1H9zM13 20h1v1H13zM15 20h3v1H15zM21 20h1v1H21zM24 20h1v1H24zM30 20h2v1H30zM36 20h1v1H36zM4 21h1v1H4zM7 21h3v1H7zM14 21h1v1H14zM16 21h2v1H16zM19 21h1v1H19zM21 21h1v1H21zM24 21h1v1H24zM27 21h3v1H27zM31 21h1v1H31zM33 21h1v1H33zM36 21h1v1H36zM8 22h1v1H8zM10 22h1v1H10zM13 22h1v1H13zM15 22h1v1H15zM17 22h1v1H17zM19 22h1v1H19zM23 22h1v1H23zM26 22h4v1H26zM32 22h3v1H32zM36 22h1v1H36zM6 23h1v1H6zM8 23h2v1H8zM14 23h2v1H14zM18 23h1v1H18zM20 23h2v1H20zM23 23h1v1H23zM26 23h1v1H26zM30 23h1v1H30zM36 23h1v1H36zM5 24h2v1H5zM8 24h1v1H8zM10 24h2v1H10zM13 24h2v1H13zM16 24h2v1H16zM19 24h1v1H19zM21 24h1v1H21zM25 24h1v1H25zM28 24h1v1H28zM30 24h1v1H30zM32 24h1v1H32zM35 24h1v1H35zM5 25h2v1H5zM8 25h1v1H8zM17 25h2v1H17zM25 25h1v1H25zM27 25h1v1H27zM31 25h1v1H31zM33 25h1v1H33zM35 25h1v1H35zM4 26h2v1H4zM9 26h2v1H9zM12 26h1v1H12zM14 26h1v1H14zM16 26h1v1H16zM18 26h2v1H18zM21 26h1v1H21zM23 26h1v1H23zM26 26h2v1H26zM30 26h1v1H30zM32 26h2v1H32zM36 26h1v1H36zM7 27h1v1H7zM11 27h1v1H11zM13 27h1v1H13zM15 27h2v1H15zM18 27h1v1H18zM28 27h6v1H28zM4 28h4v1H4zM10 28h2v1H10zM13 28h1v1H13zM17 28h3v1H17zM23 28h3v1H23zM28 28h5v1H28zM35 28h2v1H35zM12 29h3v1H12zM18 29h1v1H18zM20 29h1v1H20zM24 29h2v1H24zM28 29h1v1H28zM32 29h1v1H32zM35 29h2v1H35zM4 30h7v1H4zM12 30h1v1H12zM14 30h1v1H14zM16 30h2v1H16zM19 30h6v1H19zM28 30h1v1H28zM30 30h1v1H30zM32 30h1v1H32zM34 30h1v1H34zM36 30h1v1H36zM4 31h1v1H4zM10 31h1v1H10zM16 31h4v1H16zM22 31h1v1H22zM27 31h2v1H27zM32 31h2v1H32zM35 31h1v1H35zM4 32h1v1H4zM6 32h3v1H6zM10 32h1v1H10zM13 32h2v1H13zM16 32h1v1H16zM19 32h14v1H19zM35 32h1v1H35zM4 33h1v1H4zM6 33h3v1H6zM10 33h1v1H10zM15 33h1v1H15zM18 33h1v1H18zM20 33h1v1H20zM22 33h1v1H22zM24 33h2v1H24zM29 33h1v1H29zM31 33h1v1H31zM35 33h2v1H35zM4 34h1v1H4zM6 34h3v1H6zM10 34h1v1H10zM12 34h1v1H12zM15 34h3v1H15zM20 34h1v1H20zM22 34h1v1H22zM24 34h2v1H24zM27 34h1v1H27zM32 34h5v1H32zM4 35h1v1H4zM10 35h1v1H10zM13 35h1v1H13zM16 35h1v1H16zM19 35h2v1H19zM22 35h3v1H22zM30 35h2v1H30zM33 35h1v1H33zM4 36h7v1H4zM12 36h2v1H12zM15 36h1v1H15zM17 36h2v1H17zM21 36h1v1H21zM26 36h1v1H26zM28 36h2v1H28zM32 36h2v1H32zM36 36h1v1H36z';
 function t(key, values={}) {
   let value = translations[language]?.[key] ||
-    (language === 'hr' ? translateEnglishToCroatian(translations.en[key] || key) : translations.en[key]) || key;
+    (language === 'hr' ? translateEnglishToCroatian(translations.en[key] || key) : language === 'de' ? translateEnglishToGerman(translations.en[key] || key) : translations.en[key]) || key;
   Object.entries(values).forEach(([name, replacement]) => { value = value.replace(`{${name}}`, replacement); });
   return value;
 }
 function uiBiText(ru, en) {
   return language === 'ru' ? ru :
-    (language === 'hr' ? translateEnglishToCroatian(en) : en);
+    (language === 'hr' ? translateEnglishToCroatian(en) : language === 'de' ? translateEnglishToGerman(en) : en);
 }
 function uiEscapeAttr(value) {
   return String(value ?? '')
@@ -3583,10 +3607,10 @@ function uiEscapeAttr(value) {
     .replace(/>/g, '&gt;');
 }
 function uiBiAttrs(ru, en) {
-  return `data-ui-ru="${uiEscapeAttr(ru)}" data-ui-en="${uiEscapeAttr(en)}" data-ui-hr="${uiEscapeAttr(translateEnglishToCroatian(en))}"`;
+  return `data-ui-ru="${uiEscapeAttr(ru)}" data-ui-en="${uiEscapeAttr(en)}" data-ui-hr="${uiEscapeAttr(translateEnglishToCroatian(en))}" data-ui-de="${uiEscapeAttr(translateEnglishToGerman(en))}"`;
 }
 function uiBiPlaceholderAttrs(ru, en) {
-  return `data-placeholder-ru="${uiEscapeAttr(ru)}" data-placeholder-en="${uiEscapeAttr(en)}" data-placeholder-hr="${uiEscapeAttr(translateEnglishToCroatian(en))}" placeholder="${uiEscapeAttr(uiBiText(ru,en))}"`;
+  return `data-placeholder-ru="${uiEscapeAttr(ru)}" data-placeholder-en="${uiEscapeAttr(en)}" data-placeholder-hr="${uiEscapeAttr(translateEnglishToCroatian(en))}" data-placeholder-de="${uiEscapeAttr(translateEnglishToGerman(en))}" placeholder="${uiEscapeAttr(uiBiText(ru,en))}"`;
 }
 function applyExplicitBilingual(root=document) {
   if (!root) return;
@@ -3595,31 +3619,30 @@ function applyExplicitBilingual(root=document) {
   root.querySelectorAll?.('[data-ui-ru][data-ui-en]').forEach(el => nodes.push(el));
   for (const element of nodes) {
     element.textContent = language === 'ru' ? element.dataset.uiRu :
-      (language === 'hr' ? element.dataset.uiHr || translateEnglishToCroatian(element.dataset.uiEn) : element.dataset.uiEn);
+      (language === 'hr' ? element.dataset.uiHr || translateEnglishToCroatian(element.dataset.uiEn) : language === 'de' ? element.dataset.uiDe || translateEnglishToGerman(element.dataset.uiEn) : element.dataset.uiEn);
   }
   const inputs = [];
   if (root.nodeType === Node.ELEMENT_NODE && root.matches?.('[data-placeholder-ru][data-placeholder-en]')) inputs.push(root);
   root.querySelectorAll?.('[data-placeholder-ru][data-placeholder-en]').forEach(el => inputs.push(el));
   for (const element of inputs) {
     element.placeholder = language === 'ru' ? element.dataset.placeholderRu :
-      (language === 'hr' ? element.dataset.placeholderHr || translateEnglishToCroatian(element.dataset.placeholderEn) : element.dataset.placeholderEn);
+      (language === 'hr' ? element.dataset.placeholderHr || translateEnglishToCroatian(element.dataset.placeholderEn) : language === 'de' ? element.dataset.placeholderDe || translateEnglishToGerman(element.dataset.placeholderEn) : element.dataset.placeholderEn);
   }
 }
 function applyLanguage() {
   document.documentElement.lang = language;
   document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = t(element.dataset.i18n); });
-  const button = document.getElementById('languageButton');
-  if (button) {
-    button.textContent = language === 'en' ? 'RU' : language === 'ru' ? 'HR' : 'EN';
-    button.title = language === 'hr' ? 'Promijeni jezik: engleski' :
-      (language === 'ru' ? 'Сменить язык: хорватский' : 'Change language: Russian');
-    button.setAttribute('aria-label', button.title);
-  }
+  const picker = document.getElementById('languageSelect');
+  if (picker) picker.value = language;
+  const pickerLabel = document.getElementById('languagePickerLabel');
+  if (pickerLabel) pickerLabel.textContent =
+    language === 'ru' ? 'Язык' : language === 'hr' ? 'Jezik' :
+    language === 'de' ? 'Sprache' : 'Language';
   applyExplicitBilingual(document.body);
   applyRuntimeLocalization(document.body);
   const updateClose=document.getElementById('binaryUpdateClose');
   if(updateClose){
-    const closeLabel=language==='ru'?'Закрыть уведомление':language==='hr'?'Zatvori obavijest':'Close notification';
+    const closeLabel=language==='ru'?'Закрыть уведомление':language==='hr'?'Zatvori obavijest':language==='de'?'Benachrichtigung schließen':'Close notification';
     updateClose.setAttribute('aria-label',closeLabel);
     updateClose.title=closeLabel;
     updateClose.textContent=''; // The close glyph is CSS-only, never translated.
@@ -3629,20 +3652,23 @@ function applyLanguage() {
   const searchBox=document.querySelector('.header-tile-search');
   const searchLabel=language==='ru'?'Поиск канала, устройства, IP, домена или подсети':
     language==='hr'?'Traži kanal, uređaj, IP, domenu ili podmrežu':
+    language==='de'?'Kanal, Gerät, IP, Domain oder Subnetz suchen':
     'Search channel, device, IP, domain or subnet';
   const clearLabel=language==='ru'?'Очистить поиск':
-    language==='hr'?'Očisti pretragu':'Clear search';
+    language==='hr'?'Očisti pretragu':language==='de'?'Suche löschen':'Clear search';
   if(searchInput){searchInput.setAttribute('aria-label',searchLabel);searchInput.placeholder=searchLabel;}
   if(searchBox)searchBox.setAttribute('aria-label',searchLabel);
   if(searchClear){searchClear.setAttribute('aria-label',clearLabel);searchClear.title=clearLabel;}
   const searchEmpty=document.getElementById('tileSearchEmpty');
   if(searchEmpty)searchEmpty.textContent=language==='ru'?'Каналы не найдены':
-    language==='hr'?'Nema pronađenih kanala':'No matching channels';
+    language==='hr'?'Nema pronađenih kanala':language==='de'?'Keine passenden Kanäle':'No matching channels';
   // Apply the theme label last so new bilingual controls are localized too.
   updateDashboardThemeButton();
 }
-function toggleLanguage() {
-  language = language === 'en' ? 'ru' : language === 'ru' ? 'hr' : 'en';
+function selectInterfaceLanguage(nextLanguage) {
+  const selected = normalizeLanguage(nextLanguage);
+  if (selected === language) return;
+  language = selected;
   localStorage.setItem('dvbstreamer5-language', language);
   applyLanguage();
   render(true);
@@ -4781,7 +4807,7 @@ function populateXmltvSelectedName() {
 function xmltvRuntimeText(src) {
   const updated = Number(src.last_success || 0)
     ? new Date(Number(src.last_success) * 1000).toLocaleString(
-      language === 'ru' ? 'ru-RU' : language === 'hr' ? 'hr-HR' : 'en-GB')
+      language === 'ru' ? 'ru-RU' : language === 'hr' ? 'hr-HR' : language === 'de' ? 'de-DE' : 'en-GB')
     : '—';
   const prefix = uiBiText('Последнее успешное обновление: ', 'Last successful update: ');
   let state = '';
@@ -6163,14 +6189,14 @@ function formatEpgClock(timestamp) {
   const value = Number(timestamp || 0);
   if (!value) return '—';
   return new Date(value * 1000).toLocaleTimeString(
-    language === 'ru' ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : 'en-GB'),
+    language === 'ru' ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : language === 'de' ? 'de-DE' : 'en-GB'),
     {hour:'2-digit', minute:'2-digit'});
 }
 function formatEpgDate(timestamp) {
   const value = Number(timestamp || 0);
   if (!value) return '—';
   return new Date(value * 1000).toLocaleDateString(
-    language === 'ru' ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : 'en-GB'),
+    language === 'ru' ? 'ru-RU' : (language === 'hr' ? 'hr-HR' : language === 'de' ? 'de-DE' : 'en-GB'),
     {day:'2-digit', month:'2-digit'});
 }
 function epgTileText(event, enabled=true, active=true) {
@@ -6525,7 +6551,7 @@ function applyTileSearch() {
   if(empty){
     empty.hidden=!filtering||visible>0;
     if(!empty.hidden)empty.textContent=language==='ru'?'Каналы не найдены':
-      language==='hr'?'Nema pronađenih kanala':'No matching channels';
+      language==='hr'?'Nema pronađenih kanala':language==='de'?'Keine passenden Kanäle':'No matching channels';
   }
 }
 

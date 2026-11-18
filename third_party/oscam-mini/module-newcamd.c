@@ -16,10 +16,8 @@
 #include "oscam-reader.h"
 #include "oscam-string.h"
 #include "oscam-time.h"
-#include "oscam-ecm-latency.h"
 #include "oscam-newcamd-grace.h"
 
-static volatile uint64_t dvb5_ecm_diag_sequence = 0;
 
 const int32_t CWS_NETMSGSIZE = 500;  //csp 0.8.9 (default: 400). This is CWS_NETMSGSIZE. The old default was 240
 
@@ -1150,13 +1148,6 @@ static void newcamd_process_ecm(struct s_client *cl, uchar *buf, int32_t len)
 			{ er->caid = cfg.ncd_ptab.ports[pi].ncd->ncd_ftab.filts[0].caid; }
 	}
 	memcpy(er->ecm, buf + 2, er->ecmlen);
-	if(dvb5_ecm_latency_enabled())
-	{
-		er->dvb5_diag_id = __sync_add_and_fetch(&dvb5_ecm_diag_sequence, 1);
-		er->dvb5_diag_received_ms = dvb5_ecm_latency_now_ms();
-		cs_log("DVB5 ECM LATENCY stage=ingress id=%llu caid=%04X sid=%04X",
-			(unsigned long long)er->dvb5_diag_id, er->caid, er->srvid);
-	}
 	get_cw(cl, er);
 }
 
@@ -1470,26 +1461,7 @@ static int32_t newcamd_send_ecm(struct s_client *client, ECM_REQUEST *er)
 	client->ncd_header[9] = er->prid >> 8;
 	client->ncd_header[10] = er->prid & 0xFF;
 
-	// Start the upstream clock immediately before handing the ECM to TCP.
-	const uint64_t start_ms = er->dvb5_diag_id ? dvb5_ecm_latency_now_ms() : 0;
 	int32_t rc = ((newcamd_send(buf, er->ecmlen, er->srvid) < 1) ? (-1) : 0);
-	if(er->dvb5_diag_id)
-	{
-		const uint64_t after_send_ms = dvb5_ecm_latency_now_ms();
-		// This is a successful send-call completion timestamp, not proof
-		// of delivery to the remote reader. The reader reply is separate.
-		er->dvb5_diag_sent_ms = rc == 0 ? after_send_ms : 0;
-		cs_log("DVB5 ECM LATENCY stage=upstream_sent id=%llu reader=%s caid=%04X sid=%04X prequeue_ms=%llu queue_ms=%llu send_call_ms=%llu deadline_ms=%u send=%s",
-			(unsigned long long)er->dvb5_diag_id, rdr->label,
-			er->caid, er->srvid,
-			(unsigned long long)dvb5_ecm_latency_delta_ms(
-				er->dvb5_diag_received_ms, er->dvb5_diag_queued_ms),
-			(unsigned long long)dvb5_ecm_latency_delta_ms(
-				er->dvb5_diag_queued_ms, start_ms),
-			(unsigned long long)dvb5_ecm_latency_delta_ms(start_ms, after_send_ms),
-			dvb5_newcamd_effective_timeout_ms(cfg.ctimeout, er->dvb5_newcamd_grace_ms),
-			rc == 0 ? "ok" : "failed");
-	}
 	NULLFREE(buf);
 	return (rc);
 }
