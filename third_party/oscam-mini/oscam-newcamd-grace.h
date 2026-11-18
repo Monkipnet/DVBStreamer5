@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Fail-closed parsing: accept decimal 1..1500 only. unset/invalid => 0.
+// Fail-closed parsing: accept decimal 1..3000 only. unset/invalid => 0.
 static inline uint16_t dvb5_newcamd_grace_parse(const char *value)
 {
 	if(!value || !*value) { return 0; }
@@ -16,7 +16,7 @@ static inline uint16_t dvb5_newcamd_grace_parse(const char *value)
 		if(*p < '0' || *p > '9') { return 0; }
 	}
 	const unsigned long ms = strtoul(value, NULL, 10);
-	return (ms >= 1 && ms <= 1500) ? (uint16_t)ms : 0;
+	return (ms >= 1 && ms <= 3000) ? (uint16_t)ms : 0;
 }
 
 static inline uint16_t dvb5_newcamd_grace_for_route(
@@ -39,7 +39,7 @@ static inline uint32_t dvb5_newcamd_effective_timeout_ms(
 static inline uint32_t dvb5_newcamd_reader_expiry_seconds(uint32_t timeout_ms)
 {
 	// Retain OSCam's historic second-resolution safety margin, but base
-	// it on the request's effective deadline so 5–6.5s replies survive.
+	// it on the request's effective deadline so opt-in extended waits survive.
 	return (uint32_t)(((uint64_t)timeout_ms + 500ULL) / 1000ULL + 1ULL);
 }
 
