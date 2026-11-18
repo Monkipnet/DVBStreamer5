@@ -517,7 +517,7 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
 StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     : configManager(cfg), telegramNotifier(notifier),
       mptsOutputManager(std::make_unique<MptsOutputManager>()),
-      externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources)),
+      externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources, cfg.config.streams)),
       epgUdpOutputManager_(std::make_unique<EpgUdpOutputManager>(
           [this](const std::string& id) { return epgSnapshot(id); })) {
     // V397: 4 epoll pollers replace one detached writer thread per viewer.
@@ -3916,7 +3916,8 @@ Json::Value StreamManager::epgUdpStatus() const {
 
 void StreamManager::configureExternalXmltvSources() {
     if (externalXmltvManager_)
-        externalXmltvManager_->configure(configManager.config.xmltvSources);
+        externalXmltvManager_->configure(configManager.config.xmltvSources,
+                                        configManager.config.streams);
 }
 
 bool StreamManager::refreshExternalXmltv(const std::string& id) {

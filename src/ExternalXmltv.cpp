@@ -194,7 +194,8 @@ std::string xmlValue(xmlTextReaderPtr reader) {
 } // namespace
 
 bool ExternalXmltvManager::restoreCache(
-    const XmltvSourceConfig& settings, Source& data) {
+    const XmltvSourceConfig& settings, Source& data,
+    const std::set<std::string>& wanted) {
     dvbstreamer5::epgcache::Reader reader(dvbstreamer5::epgcache::pathFor("xmltv", settings.id));
     if (!reader.valid()) return false;
     Json::Value header;
@@ -219,7 +220,8 @@ bool ExternalXmltvManager::restoreCache(
                 next.channels.emplace(id, name.substr(0, 1536));
         } else if (type == "event" && count < kMaxEvents) {
             const std::string channel = item.get("channel", "").asString();
-            if (channel.empty() || channel.size() > 256) continue;
+            if (channel.empty() || channel.size() > 256 ||
+                wanted.find(channel) == wanted.end()) continue;
             Event event;
             event.start = item.get("start", 0).asInt64();
             event.stop = item.get("stop", 0).asInt64();
@@ -281,9 +283,10 @@ bool ExternalXmltvManager::persistCache(
 }
 
 ExternalXmltvManager::ExternalXmltvManager(
-    const std::vector<XmltvSourceConfig>& sources) {
+    const std::vector<XmltvSourceConfig>& sources,
+    const std::vector<StreamConfig>& streams) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    configure(sources);
+    configure(sources, streams);
     thread_ = std::thread(&ExternalXmltvManager::run, this);
 }
 
@@ -298,29 +301,52 @@ ExternalXmltvManager::~ExternalXmltvManager() {
 }
 
 void ExternalXmltvManager::configure(
-    const std::vector<XmltvSourceConfig>& sources) {
+    const std::vector<XmltvSourceConfig>& sources,
+    const std::vector<StreamConfig>& streams) {
+    // Determine only XMLTV channels referenced by EPG-enabled tiles.
+    // Auto-source lookup can search any configured provider, so keep a
+    // per-channel wanted set; individual providers still cap their own data.
+    std::set<std::string> wanted;
+    for (const auto& stream : streams) {
+        if (stream.epgEnabled && stream.epgMode != "dvb" &&
+            !stream.xmltvChannelId.empty())
+            wanted.insert(stream.xmltvChannelId);
+    }
     std::lock_guard<std::mutex> lock(mutex_);
-    std::map<std::string, Source> next;
+    const bool selectionChanged = wanted != wantedChannels_;
+    wantedChannels_.swap(wanted);
+    std::map<std::string, Source> previous;
+    previous.swap(sources_);
     for (const auto& cfg : sources) {
-        if (cfg.id.empty() || next.size() >= 32) continue;
+        if (cfg.id.empty() || sources_.size() >= 32) continue;
         Source data;
-        const auto it = sources_.find(cfg.id);
-        if (it != sources_.end() && it->second.settings.url == cfg.url) {
-            data = it->second;
+        const auto it = previous.find(cfg.id);
+        if (it != previous.end() && it->second.settings.url == cfg.url) {
+            // Move the old guide instead of duplicating every event and
+            // description when a tile or XMLTV setting is saved.
+            data = std::move(it->second);
             if (data.settings.refreshTime != cfg.refreshTime ||
                 data.settings.refreshPeriod != cfg.refreshPeriod ||
                 data.settings.refreshWeekday != cfg.refreshWeekday)
                 data.lastSuccessDay = -1;
+            for (auto programme = data.programmes.begin();
+                 programme != data.programmes.end();) {
+                if (!wantedChannels_.count(programme->first))
+                    programme = data.programmes.erase(programme);
+                else ++programme;
+            }
+            // Newly assigned EPG channels may not be in the old filtered
+            // disk cache. Queue one complete streaming refresh to populate.
+            if (selectionChanged && cfg.enabled) data.queued = true;
         } else {
-            // Before any network traffic, rehydrate the last successfully
-            // downloaded XMLTV guide. URL changes invalidate old records.
-            (void)restoreCache(cfg, data);
+            // Restore only the selected subset from the compressed disk
+            // cache; metadata still lists all XMLTV channel names.
+            (void)restoreCache(cfg, data, wantedChannels_);
             data.queued = cfg.enabled;
         }
         data.settings = cfg;
-        next.emplace(cfg.id, std::move(data));
+        sources_.emplace(cfg.id, std::move(data));
     }
-    sources_.swap(next);
     wake_.notify_all();
 }
 
@@ -411,7 +437,8 @@ bool ExternalXmltvManager::download(const std::string& url,
 }
 
 bool ExternalXmltvManager::parse(
-    std::FILE* input, Source& data, std::string& error) {
+    std::FILE* input, Source& data, std::string& error,
+    const std::set<std::string>& wanted) {
     if (!input) { error = "XMLTV temporary file is missing"; return false; }
     // Dup is essential: gzclose() belongs to libxml2 while the original
     // descriptor is owned by the scoped tmpfile and closed after parsing.
@@ -503,13 +530,17 @@ bool ExternalXmltvManager::parse(
                     if (data.channels.size() < kMaxChannels &&
                         !data.channels.count(programmeId))
                         data.channels.emplace(programmeId, programmeId);
-                    auto& programmes = data.programmes[programmeId];
-                    if (totalEvents < kMaxEvents &&
-                        programmes.size() < kMaxEventsPerChannel) {
-                        programmes.push_back(std::move(event));
-                        ++totalEvents;
-                    } else {
-                        ++data.truncatedEvents;
+                    // Keep the provider's channel catalog but not programme
+                    // objects for thousands of unused IPTV channels.
+                    if (wanted.count(programmeId)) {
+                        auto& programmes = data.programmes[programmeId];
+                        if (totalEvents < kMaxEvents &&
+                            programmes.size() < kMaxEventsPerChannel) {
+                            programmes.push_back(std::move(event));
+                            ++totalEvents;
+                        } else {
+                            ++data.truncatedEvents;
+                        }
                     }
                 }
                 inProgramme = false;
@@ -588,6 +619,11 @@ void ExternalXmltvManager::run() {
         std::string error;
         Source loaded;
         loaded.settings = selected;
+        std::set<std::string> selectedChannels;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            selectedChannels = wantedChannels_;
+        }
         std::unique_ptr<std::FILE, decltype(&std::fclose)> temp(
             std::tmpfile(), &std::fclose);
         if (!temp) {
@@ -596,7 +632,7 @@ void ExternalXmltvManager::run() {
         }
         bool success = static_cast<bool>(temp);
         if (success) success = download(selected.url, temp.get(), error);
-        if (success) success = parse(temp.get(), loaded, error);
+        if (success) success = parse(temp.get(), loaded, error, selectedChannels);
         temp.reset(); // delete temporary file immediately after XML parsing
         const std::int64_t finished = nowSeconds();
         if (success) {
@@ -617,6 +653,16 @@ void ExternalXmltvManager::run() {
             source.refreshCompleted = std::max(
                 source.refreshCompleted, selectedRefreshId);
             if (success) {
+                // Selection may change while the streaming download runs.
+                // Never publish events that are no longer referenced.
+                for (auto itEvent = loaded.programmes.begin();
+                     itEvent != loaded.programmes.end();) {
+                    if (!wantedChannels_.count(itEvent->first))
+                        itEvent = loaded.programmes.erase(itEvent);
+                    else ++itEvent;
+                }
+                if (wantedChannels_ != selectedChannels && source.settings.enabled)
+                    source.queued = true;
                 source.channels.swap(loaded.channels);
                 source.programmes.swap(loaded.programmes);
                 source.truncatedEvents = loaded.truncatedEvents;

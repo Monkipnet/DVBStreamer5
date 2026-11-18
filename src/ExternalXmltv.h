@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,12 +20,14 @@
 // network errors never clear last-good EPG or interrupt live media.
 class ExternalXmltvManager {
 public:
-    explicit ExternalXmltvManager(const std::vector<XmltvSourceConfig>& sources);
+    explicit ExternalXmltvManager(const std::vector<XmltvSourceConfig>& sources,
+                                  const std::vector<StreamConfig>& streams);
     ~ExternalXmltvManager();
     ExternalXmltvManager(const ExternalXmltvManager&) = delete;
     ExternalXmltvManager& operator=(const ExternalXmltvManager&) = delete;
 
-    void configure(const std::vector<XmltvSourceConfig>& sources);
+    void configure(const std::vector<XmltvSourceConfig>& sources,
+                   const std::vector<StreamConfig>& streams);
     bool refresh(const std::string& sourceId); // empty = all
     Json::Value status() const;
     Json::Value channels() const;
@@ -56,13 +59,18 @@ private:
     // Network bytes are spooled directly into an automatically unlinked temp file.
     // Neither curl nor libxml2 materializes the whole XMLTV document in memory.
     static bool download(const std::string& url, std::FILE* output, std::string& error);
-    static bool parse(std::FILE* input, Source& result, std::string& error);
-    static bool restoreCache(const XmltvSourceConfig& settings, Source& result);
+    static bool parse(std::FILE* input, Source& result, std::string& error,
+                      const std::set<std::string>& wanted);
+    static bool restoreCache(const XmltvSourceConfig& settings, Source& result,
+                             const std::set<std::string>& wanted);
     static bool persistCache(const XmltvSourceConfig& settings, const Source& data);
     void run();
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     std::map<std::string, Source> sources_;
+    // Only EPG programmes referenced by configured tiles are retained in RAM.
+    // Channel names are kept for the XMLTV channel selection UI.
+    std::set<std::string> wantedChannels_;
     std::thread thread_;
     bool stop_ = false;
 };

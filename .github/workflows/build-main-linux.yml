@@ -291,6 +291,7 @@ jobs:
           node tests/web/test_pcr_cpu_optimization_ui.js
           node tests/web/test_cbr_profile_ui.js
           node tests/web/test_locale_de_layout_v580.js
+          python3 tests/test_xmltv_memory_policy.py
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Restore pinned iCAM TSDecrypt source and executable cache
