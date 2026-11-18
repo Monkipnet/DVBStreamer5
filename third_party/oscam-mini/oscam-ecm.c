@@ -1205,8 +1205,8 @@ void request_cw_from_readers(ECM_REQUEST *er, uint8_t stop_stage)
 
 			ea->status |= REQUEST_SENT;
 			// Apply grace only once a real upstream Newcamd reader is
-			// selected for an incoming Newcamd iCAM ECM. No global timeout
-			// change; the default remains zero.
+			// selected for an incoming Newcamd iCAM ECM. Default is a
+			// route-scoped 3000ms grace; other CAIDs/readers are unchanged.
 			if(!er->dvb5_newcamd_grace_ms && er->client && rdr)
 			{
 				er->dvb5_newcamd_grace_ms = dvb5_newcamd_grace_for_route(

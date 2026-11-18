@@ -1,12 +1,12 @@
 #ifndef DVBSTREAMER5_OSCAM_NEWCAMD_GRACE_H
 #define DVBSTREAMER5_OSCAM_NEWCAMD_GRACE_H
 
-// V563: bounded, opt-in Newcamd iCAM response grace.
+// V580: default 3000ms grace for the 098D Newcamd-to-Newcamd iCAM route.
 // No CW/ECM transformation, replay, retry, caching or reader reconnect.
 #include <stdint.h>
 #include <stdlib.h>
 
-// Fail-closed parsing: accept decimal 1..3000 only. unset/invalid => 0.
+// Explicit override: decimal 0..3000; zero disables grace. Invalid => 0.
 static inline uint16_t dvb5_newcamd_grace_parse(const char *value)
 {
 	if(!value || !*value) { return 0; }
@@ -16,7 +16,7 @@ static inline uint16_t dvb5_newcamd_grace_parse(const char *value)
 		if(*p < '0' || *p > '9') { return 0; }
 	}
 	const unsigned long ms = strtoul(value, NULL, 10);
-	return (ms >= 1 && ms <= 3000) ? (uint16_t)ms : 0;
+	return (ms <= 3000) ? (uint16_t)ms : 0;
 }
 
 static inline uint16_t dvb5_newcamd_grace_for_route(
@@ -25,7 +25,9 @@ static inline uint16_t dvb5_newcamd_grace_for_route(
 {
 	if(caid != 0x098D || !inbound_newcamd || !outbound_newcamd)
 		{ return 0; }
-	return dvb5_newcamd_grace_parse(value);
+	// Missing environment override uses the stable home2 8-second policy
+	// with the standard 5000ms clienttimeout. Explicit 0 disables it.
+	return value == NULL ? 3000 : dvb5_newcamd_grace_parse(value);
 }
 
 static inline uint32_t dvb5_newcamd_effective_timeout_ms(
