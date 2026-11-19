@@ -13,7 +13,7 @@ assert.match(config, /service\.xmltvChannelId\.empty\(\)/);
 assert.match(http, /validExternal/);
 assert.match(http, /streamManager\.configureExternalXmltvSources\(\)/);
 assert.match(xmltv, /service\.xmltvChannelId/);
-assert.match(xmltv, /wanted\.insert\(service\.xmltvChannelId\)/);
+assert.match(xmltv, /wantedBySource\[service\.xmltvSourceId\]\.insert\(service\.xmltvChannelId\)/);
 assert.match(mgr, /externalXmltvManager_->snapshot\(service\.xmltvSourceId,/);
 assert.match(udp, /\[this, service\] \{ return snapshot_\(service\); \}/);
 assert.match(ui, /function wisiEpgAddExternal/);

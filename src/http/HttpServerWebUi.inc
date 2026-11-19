@@ -889,6 +889,30 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
   align-items:center;gap:5px;font-size:.75rem}
 .wisi-xmltv-ids input[type="number"]{max-width:75px;min-width:60px;box-sizing:border-box}
 @media(max-width:560px){.wisi-xmltv-fields{grid-template-columns:minmax(0,1fr)}}
+
+/* Virtual WISI EPG tiles are configuration-only, never media streams. */
+.wisi-config-output{border:1px solid rgba(72,96,121,.65);border-radius:9px;padding:10px;margin:8px 0}
+.wisi-config-output>summary{cursor:pointer;padding:5px;overflow-wrap:anywhere}
+.wisi-config-output .field-help{display:block;margin:8px 0}
+.wisi-epg-group{margin-top:10px}
+.wisi-epg-tiles{padding:10px 12px}
+.wisi-epg-tile{min-width:0}
+.wisi-epg-tile .title{overflow-wrap:anywhere}
+.wisi-epg-tile .info{min-width:0}
+.wisi-epg-tile .info-row span{overflow-wrap:anywhere}
+.wisi-epg-channel-list{display:grid;gap:8px;max-height:54vh;overflow:auto;margin:10px 0}
+.wisi-epg-channel-row{display:flex;align-items:center;gap:12px;justify-content:space-between;
+  padding:10px;border:1px solid rgba(125,209,255,.2);border-radius:9px;min-width:0;flex-wrap:wrap}
+.wisi-epg-channel-main{display:grid;gap:4px;flex:1 1 230px;min-width:0;overflow-wrap:anywhere}
+.wisi-epg-channel-main small{font-size:.7rem;color:var(--muted,#9aabba)}
+.wisi-epg-channel-buttons{display:flex;gap:6px;flex-wrap:wrap}
+.wisi-epg-edit-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0}
+.wisi-epg-edit-fields label{display:grid;gap:4px;min-width:0}
+.wisi-epg-edit-fields label input,.wisi-epg-edit-fields label select{width:100%;max-width:100%;min-width:0}
+.wisi-epg-ids{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+.wisi-epg-ids label{display:grid;gap:4px;font-size:.75rem;flex:1 1 90px}
+.wisi-epg-ids input{max-width:100%;box-sizing:border-box}
+@media(max-width:560px){.wisi-epg-edit-fields{grid-template-columns:minmax(0,1fr)}}
 </style>
 </head>
 <body>
@@ -4934,148 +4958,78 @@ function wisiText(ru,en,hr,de) {
 function wisiEpgSync() {
   const cards=[...document.querySelectorAll('[data-wisi-output]')];
   if(!cards.length)return;
+  // Output settings are edited in the menu. Existing channel lists must
+  // survive menu saves unchanged; channel edits happen in the WISI tile.
+  const old=new Map(wisiEpgUdpOutputs.map(o=>[String(o.id),o]));
   wisiEpgUdpOutputs=cards.map(card=>{
     const get=key=>card.querySelector('[data-wisi-field="'+key+'"]');
+    const id=get('id')?.value||'';
     return {
-      id:get('id')?.value||'',
-      name:get('name')?.value||'',
+      id,name:get('name')?.value.trim()||'',
       enabled:!!get('enabled')?.checked,
       output_host:get('host')?.value.trim()||'',
       output_port:Number(get('port')?.value||0),
       interface_address:get('iface')?.value.trim()||'',
       mode:get('mode')?.value||'actual',
-      services:[...card.querySelectorAll('[data-wisi-service]')]
-        .filter(row=>row.querySelector('[data-wisi-check]')?.checked)
-        .map(row=>({
-          stream_id:row.dataset.wisiService||'',
-          xmltv_source_id:row.dataset.wisiExternal ? row.querySelector('[data-wisi-xmltv-source]')?.value||'' : '',
-          xmltv_channel_id:row.dataset.wisiExternal ? row.querySelector('[data-wisi-xmltv-channel]')?.value||'' : '',
-          service_id:Number(row.querySelector('[data-wisi-sid]')?.value||1),
-          transport_stream_id:Number(row.querySelector('[data-wisi-tsid]')?.value||1),
-          original_network_id:Number(row.querySelector('[data-wisi-onid]')?.value||1)
-        }))
+      services:old.get(id)?.services||[]
     };
   });
 }
 function wisiEpgRender() {
   const text=wisiText;
-  const streams=Array.isArray(state.streams)?state.streams:[];
   const row=(output,index)=>{
-    const chosen=new Map((output.services||[]).filter(s=>s.stream_id).map(s=>[String(s.stream_id),s]));
-    const external=(output.services||[]).filter(s=>!s.stream_id);
-    // Source list comes from XMLTV configuration, not from the truncated
-    // all-provider catalog. Sources without a cached guide remain selectable.
-    const sources=wisiXmltvSources.filter(src=>src&&src.id);
     const ifaceOptions=['<option value="">Auto</option>'].concat(
       (state.interfaces||[]).filter(x=>x.address).map(i=>
         '<option value="'+escapeHtmlValue(i.address)+'" '+
         (i.address===output.interface_address?'selected':'')+'>'+
         escapeHtmlValue((i.name||'')+' '+i.address)+'</option>')).join('');
-    return '<details data-wisi-output style="border:1px solid #486079;border-radius:9px;padding:10px;margin:8px 0" open>'+
+    return '<details data-wisi-output class="wisi-config-output" open>'+
       '<summary><strong>'+escapeHtmlValue(output.name||output.id)+'</strong> — '+
       escapeHtmlValue(output.output_host||'')+':'+Number(output.output_port||0)+'</summary>'+
       '<input type="hidden" data-wisi-field="id" value="'+escapeHtmlValue(output.id||'')+'"/>'+
       '<div class="form-grid">'+
       '<label class="checkbox-inline"><input type="checkbox" data-wisi-field="enabled" '+(output.enabled?'checked':'')+'>'+
        text('Включить UDP EPG','Enable UDP EPG','Uključi UDP EPG','UDP-EPG aktivieren')+'</label>'+
-      '<div class="form-row"><label>'+text('Имя','Name','Naziv','Name')+'</label><input data-wisi-field="name" value="'+escapeHtmlValue(output.name||'')+'"/></div>'+
-      '<div class="form-row"><label>'+text('IP назначения','Destination IP','Odredišna IP adresa','Ziel-IP')+'</label><input data-wisi-field="host" value="'+escapeHtmlValue(output.output_host||'')+'"/></div>'+
-      '<div class="form-row"><label>'+text('UDP порт','UDP port','UDP port','UDP-Port')+'</label><input type="number" min="1" max="65535" data-wisi-field="port" value="'+Number(output.output_port||5002)+'"/></div>'+
-      '<div class="form-row"><label>'+text('Интерфейс','Interface','Sučelje','Schnittstelle')+'</label><select data-wisi-field="iface">'+ifaceOptions+'</select></div>'+
+      '<div class="form-row"><label>'+text('Имя плитки','Tile name','Naziv pločice','Kachelname')+'</label>'+
+      '<input data-wisi-field="name" maxlength="128" value="'+escapeHtmlValue(output.name||'')+'"/></div>'+
+      '<div class="form-row"><label>'+text('IP назначения','Destination IP','Odredišna IP adresa','Ziel-IP')+'</label>'+
+      '<input data-wisi-field="host" value="'+escapeHtmlValue(output.output_host||'')+'"/></div>'+
+      '<div class="form-row"><label>'+text('UDP порт','UDP port','UDP port','UDP-Port')+'</label>'+
+      '<input type="number" min="1" max="65535" data-wisi-field="port" value="'+Number(output.output_port||5002)+'"/></div>'+
+      '<div class="form-row"><label>'+text('Интерфейс','Interface','Sučelje','Schnittstelle')+'</label>'+
+      '<select data-wisi-field="iface">'+ifaceOptions+'</select></div>'+
       '<div class="form-row"><label>'+text('Режим таблиц EIT','EIT table mode','Način EIT tablica','EIT-Tabellenmodus')+'</label>'+
       '<select data-wisi-field="mode">'+
-      '<option value="actual" '+(output.mode==='actual'?'selected':'')+'>'+text('Actual (0x4E/0x50)','Actual (0x4E/0x50)','Actual (0x4E/0x50)')+'</option>'+
-      '<option value="barker" '+(output.mode==='barker'?'selected':'')+'>'+text('Barker / Other (0x4F/0x60)','Barker / Other (0x4F/0x60)','Barker / Other (0x4F/0x60)')+'</option></select></div>'+
+      '<option value="actual" '+(output.mode==='actual'?'selected':'')+'>Actual (0x4E/0x50)</option>'+
+      '<option value="barker" '+(output.mode==='barker'?'selected':'')+'>Barker / Other (0x4F/0x60)</option></select></div>'+
       '</div>'+
-      '<small class="field-help">'+text('Источник EPG выбирается в самой плитке: DVB EIT или XMLTV. SID/TSID/ONID должны совпадать с выходным транспортным потоком WISI.',
-        'EPG source is selected per tile (DVB EIT or XMLTV). SID/TSID/ONID must match the target WISI transport stream.',
-        'EPG izvor se bira na kanalu (DVB EIT ili XMLTV). SID/TSID/ONID moraju odgovarati izlaznom WISI toku.',
-        'EPG-Quelle pro Kachel auswählen (DVB EIT oder XMLTV). SID/TSID/ONID müssen zum WISI-Ausgang passen.')+'</small>'+
-      '<div style="max-height:260px;overflow:auto">'+streams.map(s=>{
-        const c=chosen.get(String(s.id));
-        return '<div data-wisi-service="'+escapeHtmlValue(s.id||'')+'" style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:5px 0">'+
-          '<label style="min-width:130px;flex:2"><input type="checkbox" data-wisi-check '+(c?'checked':'')+'/> '+
-          escapeHtmlValue(s.name||s.id)+'</label>'+
-          'SID <input data-wisi-sid type="number" min="1" max="65535" style="width:75px" value="'+Number(c?.service_id||s.service_id||1)+'"/>'+
-          'TSID <input data-wisi-tsid type="number" min="1" max="65535" style="width:75px" value="'+Number(c?.transport_stream_id||1)+'"/>'+
-          'ONID <input data-wisi-onid type="number" min="1" max="65535" style="width:75px" value="'+Number(c?.original_network_id||1)+'"/></div>';
-      }).join('')+'</div>'+
-      '<div class="edit-section" style="margin:10px 0;min-width:0"><strong>'+text('Внешние XMLTV-каналы','External XMLTV channels','Vanjski XMLTV kanali','Externe XMLTV-Kanäle')+'</strong>'+
-      '<small class="field-help">'+text('Без IPTV-плитки. SID/TSID/ONID должны соответствовать каналу в WISI.','No IPTV tile required. SID/TSID/ONID must match WISI.','Bez IPTV kanala. SID/TSID/ONID moraju odgovarati WISI kanalu.','Keine IPTV-Kachel erforderlich. SID/TSID/ONID müssen mit WISI übereinstimmen.')+'</small>'+
-      '<div style="display:grid;gap:8px;margin-top:8px">'+external.map((svc,j)=>{
-        const source=String(svc.xmltv_source_id||'');
-        const selected=String(svc.xmltv_channel_id||'');
-        const options=sources.map(src=>{
-          const id=String(src.id);
-          return '<option value="'+escapeHtmlValue(id)+'" '+(id===source?'selected':'')+
-            (!src.enabled?' disabled':'')+'>'+escapeHtmlValue(src.name||id)+
-            (!src.enabled?' ('+text('отключён','disabled','isključen','deaktiviert')+')':'')+'</option>';
-        }).join('');
-        const selectedAvailable=sources.some(src=>String(src.id)===source);
-        const sourceOptions=selectedAvailable?options:
-          '<option value="'+escapeHtmlValue(source)+'" selected>'+escapeHtmlValue(source)+'</option>'+options;
-        return '<div data-wisi-service="" data-wisi-external="1" class="wisi-xmltv-row">'+
-          '<input type="checkbox" data-wisi-check checked aria-label="'+text('Включено','Enabled','Omogućeno','Aktiviert')+'" />'+
-          '<div class="wisi-xmltv-fields">'+
-          '<label>'+text('Источник XMLTV','XMLTV source','XMLTV izvor','XMLTV-Quelle')+
-          '<select data-wisi-xmltv-source onchange="wisiEpgExternalSourceChanged(this)">'+
-          sourceOptions+'</select></label>'+
-          '<label>'+text('Поиск по названию или ID','Search by name or ID','Pretraga po nazivu ili ID-u','Nach Name oder ID suchen')+
-          '<input data-wisi-xmltv-search type="search" autocomplete="off" '+
-          'placeholder="'+text('Название канала…','Channel name…','Naziv kanala…','Kanalname…')+'" '+
-          'oninput="wisiEpgFilterExternal(this)"/></label>'+
-          '<label class="wisi-xmltv-matches-label">'+
-          text('Каналы источника','Source channels','Kanali izvora','Kanäle der Quelle')+
-          '<select data-wisi-xmltv-matches size="5" onchange="wisiEpgChooseExternal(this)">'+
-          wisiEpgMatchOptions(source,'',selected)+'</select></label>'+
-          '<label>'+text('XMLTV ID канала','XMLTV channel ID','XMLTV ID kanala','XMLTV-Kanal-ID')+
-          '<input data-wisi-xmltv-channel maxlength="256" value="'+escapeHtmlValue(selected)+
-          '" placeholder="channel-id" /></label></div>'+
-          '<div class="wisi-xmltv-ids">'+
-          'SID <input data-wisi-sid type="number" min="1" max="65535" style="width:72px" value="'+Number(svc.service_id||1)+'"/>'+
-          'TSID <input data-wisi-tsid type="number" min="1" max="65535" style="width:72px" value="'+Number(svc.transport_stream_id||1)+'"/>'+
-          'ONID <input data-wisi-onid type="number" min="1" max="65535" style="width:72px" value="'+Number(svc.original_network_id||1)+'"/>'+
-          '<button type="button" class="button-secondary" onclick="wisiEpgReloadExternal(this)">'+
-          text('Обновить список','Refresh list','Osvježi popis','Liste aktualisieren')+'</button>'+
-          '<button type="button" class="button-danger" onclick="wisiEpgRemoveExternal('+index+','+j+')">×</button>'+
-          '</div></div>';
-      }).join('')+'</div>'+
-      '<button class="button-secondary" type="button" onclick="wisiEpgAddExternal('+index+')" '+(sources.some(src=>src.enabled)?'':'disabled')+'>'+
-      '+ '+text('Внешний EPG-канал','External EPG channel','Vanjski EPG kanal','Externer EPG-Kanal')+'</button></div>'+
-      '<button class="button-danger" type="button" onclick="wisiEpgRemove('+index+')">'+
-        text('Удалить выход','Delete output','Izbriši izlaz','Ausgabe entfernen')+'</button>'+
-      '</details>';
+      '<small class="field-help">'+text(
+      'Каналов: ','Channels: ','Kanala: ','Kanäle: ')+Number((output.services||[]).length)+'. '+
+      text('Каналы добавляются после сохранения через «Редактировать» в отдельной плитке WISI EPG.',
+        'Save first, then add channels using Edit on the separate WISI EPG tile.',
+        'Najprije spremite, zatim dodajte kanale preko Uredi na zasebnoj WISI EPG pločici.',
+        'Zuerst speichern, dann Kanäle über Bearbeiten in der separaten WISI-EPG-Kachel hinzufügen.')+'</small>'+
+      '<button type="button" class="button-danger" onclick="wisiEpgRemove('+index+')">'+
+      text('Удалить выход','Delete output','Izbriši izlaz','Ausgabe entfernen')+'</button></details>';
   };
-  openModal('<h2>'+text('EPG UDP для WISI Chameleon','WISI Chameleon EPG UDP','EPG UDP za WISI Chameleon','EPG UDP für WISI Chameleon')+'</h2>'+
+  openModal('<h2>'+text('Плитки WISI EPG UDP','WISI EPG UDP tiles','WISI EPG UDP pločice','WISI EPG UDP-Kacheln')+'</h2>'+
     '<small class="field-help">'+text(
-     'Отдельный UDP MPEG-TS с PID 0x0012 (только EIT). Два варианта: Actual и Barker/Other. Выберите плитки и их выходные SID/TSID/ONID.',
-     'Independent UDP MPEG-TS with EIT PID 0x0012 only. Actual and Barker/Other modes. Select tiles and WISI output SID/TSID/ONID.',
-     'Samostalan UDP MPEG-TS samo s EIT PID 0x0012. Actual i Barker/Other. Odaberite kanale i SID/TSID/ONID.',
-     'Separater UDP MPEG-TS nur mit EIT PID 0x0012. Actual und Barker/Other. Kanäle und SID/TSID/ONID auswählen.')+
+     'Создайте отдельную плитку: включите EPG, укажите имя, IP, порт, интерфейс и режим таблиц. Список каналов редактируется после сохранения в плитке.',
+     'Create a separate tile: enable EPG, enter name, IP, port, interface and EIT mode. Add channels from the tile after saving.',
+     'Stvorite zasebnu pločicu: uključite EPG, unesite naziv, IP, port, sučelje i EIT način. Kanale dodajte u pločici nakon spremanja.',
+     'Separate Kachel erstellen: EPG aktivieren, Name, IP, Port, Schnittstelle und EIT-Modus wählen. Kanäle nach dem Speichern in der Kachel hinzufügen.')+
     '</small><div style="max-height:66vh;overflow:auto">'+
     wisiEpgUdpOutputs.map(row).join('')+'</div>'+
     '<div class="modal-actions">'+
-    '<button class="button-secondary" type="button" onclick="wisiEpgAdd()">+ '+text('Выход','Output','Izlaz','Ausgabe')+'</button>'+
+    '<button class="button-secondary" type="button" onclick="wisiEpgAdd()">+ '+
+    text('Выход','Output','Izlaz','Ausgabe')+'</button>'+
     '<button class="button-secondary" type="button" onclick="closeModal()">'+t('cancel')+'</button>'+
     '<button class="button-primary" type="button" onclick="wisiEpgSave()">'+t('save')+'</button></div>');
-  const activeSources=[...new Set(wisiEpgUdpOutputs.flatMap(o=>
-      (o.services||[]).filter(x=>!x.stream_id).map(x=>x.xmltv_source_id))
-      .filter(Boolean))];
-  // Other catalogs are fetched lazily on search / source switch.
-  for (const src of activeSources.slice(0,2))
-    void wisiEpgLoadSource(src);
 }
 async function openWisiEpgUdpModal() {
   try {
     const data=await fetchJson('/api/epg-udp/status',{cache:'no-store'});
     wisiEpgUdpOutputs=Array.isArray(data.outputs)?data.outputs:[];
-    try {
-      const status=await fetchJson('/api/xmltv/status',{cache:'no-store'});
-      wisiXmltvSources=Array.isArray(status.sources)?status.sources:[];
-    } catch(e) {
-      wisiXmltvSources=Array.isArray(state.xmltv_sources)?state.xmltv_sources:[];
-    }
-    wisiXmltvCatalogBySource.clear();
     wisiEpgRender();
   }catch(e){uiError(e?.message||e);}
 }
@@ -5090,25 +5044,22 @@ function wisiEpgAdd() {
   wisiEpgRender();
 }
 function wisiEpgRemove(index) {
-  wisiEpgSync(); wisiEpgUdpOutputs.splice(index,1); wisiEpgRender();
-}
-function wisiEpgAddExternal(index) {
   wisiEpgSync();
-  const item=wisiEpgUdpOutputs[index];
-  const source=wisiXmltvSources.find(src=>src&&src.enabled&&src.id);
-  if(!item || item.services.length>=64 || !source)return;
-  item.services.push({stream_id:'',xmltv_source_id:source.id,
-    xmltv_channel_id:'',service_id:1,transport_stream_id:1,original_network_id:1});
+  const output=wisiEpgUdpOutputs[index];
+  if(!output)return;
+  if(!window.confirm(wisiText(
+    'Удалить WISI EPG-плитку и все её привязки каналов?',
+    'Delete this WISI EPG tile and all channel mappings?',
+    'Izbrisati WISI EPG pločicu i sva pridruživanja kanala?',
+    'WISI-EPG-Kachel und alle Kanalzuordnungen löschen?')))return;
+  wisiEpgUdpOutputs.splice(index,1);
   wisiEpgRender();
 }
-function wisiEpgRemoveExternal(index,externalIndex) {
-  wisiEpgSync();
-  const item=wisiEpgUdpOutputs[index];
-  if(!item)return;
-  const svc=item.services.filter(s=>!s.stream_id);
-  const remove=svc[externalIndex];
-  if(remove)item.services.splice(item.services.indexOf(remove),1);
-  wisiEpgRender();
+function wisiEpgAddExternal(outputId) {
+  wisiEpgEditChannel(outputId,-1);
+}
+function wisiEpgRemoveExternal(outputId,index) {
+  void wisiEpgDeleteChannel(outputId,index);
 }
 function wisiEpgMatchOptions(sourceId, query, selectedId) {
   const candidates=wisiXmltvCatalogBySource.get(sourceId)||[];
@@ -5195,30 +5146,225 @@ function wisiEpgReloadExternal(button) {
     '[data-wisi-xmltv-source]')?.value;
   if(sourceId)void wisiEpgLoadSource(sourceId,true);
 }
+// WISI EPG virtual-tile channel editor: all mutations use the existing
+// persisted /api/epg-udp/save configuration, never a media StreamConfig.
+let wisiEpgChannelEditContext=null;
+async function wisiEpgOpenTileEditor(outputId) {
+  try {
+    const [status,sources]=await Promise.all([
+      fetchJson('/api/epg-udp/status',{cache:'no-store'}),
+      fetchJson('/api/xmltv/status',{cache:'no-store'})
+    ]);
+    wisiEpgUdpOutputs=Array.isArray(status.outputs)?status.outputs:[];
+    wisiXmltvSources=Array.isArray(sources.sources)?sources.sources:[];
+    wisiEpgShowChannelList(outputId);
+  } catch(error) { uiError(error?.message||error); }
+}
+function wisiEpgShowChannelList(outputId) {
+  const output=wisiEpgUdpOutputs.find(x=>x.id===outputId);
+  if(!output) { uiError(wisiText('Выход WISI EPG не найден.',
+    'WISI EPG output not found.','WISI EPG izlaz nije pronađen.',
+    'WISI-EPG-Ausgabe nicht gefunden.'));return; }
+  wisiEpgChannelEditContext=null;
+  const text=wisiText;
+  const safeId=escapeHtmlValue(outputId);
+  const name=escapeHtmlValue(output.name||output.id);
+  const services=output.services||[];
+  const row=(svc,index)=>{
+    const external=!svc.stream_id;
+    const source=wisiXmltvSources.find(x=>x.id===svc.xmltv_source_id);
+    const stream=(state.streams||[]).find(x=>x.id===svc.stream_id);
+    const sourceName=external ? (source?.name||svc.xmltv_source_id||'XMLTV') :
+      text('Плитка','Tile','Pločica','Kachel');
+    const channelName=external
+      ? (wisiXmltvCatalogBySource.get(svc.xmltv_source_id)||[])
+          .find(x=>x.id===svc.xmltv_channel_id)?.name || svc.xmltv_channel_id
+      : (stream?.name||svc.stream_id);
+    return '<div class="wisi-epg-channel-row">'+
+      '<div class="wisi-epg-channel-main"><strong>'+
+      escapeHtmlValue(channelName||'—')+'</strong>'+
+      '<small>'+escapeHtmlValue(sourceName)+' · '+
+      escapeHtmlValue(external?svc.xmltv_channel_id:svc.stream_id)+'</small>'+
+      '<small>SID '+Number(svc.service_id)+' · TSID '+
+      Number(svc.transport_stream_id)+' · ONID '+Number(svc.original_network_id)+'</small></div>'+
+      '<div class="wisi-epg-channel-buttons">'+
+      '<button class="button-secondary" type="button" onclick="wisiEpgEditChannel(\''+safeId+'\','+index+')">'+
+      text('Редактировать','Edit','Uredi','Bearbeiten')+'</button>'+
+      '<button class="button-danger" type="button" onclick="wisiEpgRemoveExternal(\''+safeId+'\','+index+')">'+
+      text('Удалить','Delete','Izbriši','Löschen')+'</button></div></div>';
+  };
+  const enabledSources=wisiXmltvSources.filter(src=>src&&src.enabled&&src.id);
+  openModal('<h2>'+text('Каналы WISI EPG','WISI EPG channels',
+      'WISI EPG kanali','WISI EPG-Kanäle')+' — '+name+'</h2>'+
+    '<small class="field-help">'+text(
+      'Выход: ','Output: ','Izlaz: ','Ausgabe: ')+
+    escapeHtmlValue(output.output_host)+':'+Number(output.output_port)+' · '+
+    escapeHtmlValue(output.mode)+' · PID 18. '+
+    text('Добавляйте каналы из настроенных источников XMLTV без создания медиапотока.',
+      'Add channels from configured XMLTV sources without creating a media stream.',
+      'Dodajte kanale iz konfiguriranih XMLTV izvora bez stvaranja medijskog toka.',
+      'Kanäle aus konfigurierten XMLTV-Quellen ohne Medienstream hinzufügen.')+'</small>'+
+    '<div class="wisi-epg-channel-list">'+
+    (services.length ? services.map(row).join('') :
+      '<div class="mpts-empty">'+text('Каналы ещё не добавлены',
+      'No channels added','Kanali nisu dodani','Noch keine Kanäle')+'</div>')+
+    '</div><div class="modal-actions">'+
+    '<button class="button-secondary" type="button" onclick="wisiEpgAddExternal(\''+safeId+'\')" '+
+       (enabledSources.length?'':'disabled')+'>'+
+    '+ '+text('Добавить канал','Add channel','Dodaj kanal','Kanal hinzufügen')+'</button>'+
+    '<button class="button-secondary" type="button" onclick="closeModal()">'+
+       t('close')+'</button></div>');
+}
+function wisiEpgEditChannel(outputId,index) {
+  const output=wisiEpgUdpOutputs.find(o=>o.id===outputId);
+  if(!output)return;
+  const original=index<0 ? null : (output.services||[])[index];
+  if(index>=0&&!original)return;
+  const external=!original?.stream_id;
+  const text=wisiText;
+  const sourceId=original?.xmltv_source_id ||
+    wisiXmltvSources.find(src=>src&&src.enabled&&src.id)?.id || '';
+  wisiEpgChannelEditContext={outputId,index};
+  const sourceOptions=wisiXmltvSources.map(src=>
+    '<option value="'+escapeHtmlValue(src.id)+'" '+
+    (src.id===sourceId?'selected':'')+(src.enabled?'':' disabled')+'>'+
+    escapeHtmlValue(src.name||src.id)+'</option>').join('');
+  const externalFields=
+    '<div data-wisi-external="1" class="wisi-xmltv-fields wisi-epg-edit-fields">'+
+    '<label>'+text('Источник XMLTV','XMLTV source','XMLTV izvor','XMLTV-Quelle')+
+    '<select data-wisi-xmltv-source onchange="wisiEpgExternalSourceChanged(this)">'+
+    sourceOptions+'</select></label>'+
+    '<label>'+text('Поиск по названию или ID','Search by name or ID',
+      'Pretraga po nazivu ili ID-u','Nach Name oder ID suchen')+
+    '<input type="search" data-wisi-xmltv-search oninput="wisiEpgFilterExternal(this)" '+
+    'placeholder="'+text('Название канала…','Channel name…','Naziv kanala…','Kanalname…')+'"/></label>'+
+    '<label class="wisi-xmltv-matches-label">'+
+    text('Каналы источника','Source channels','Kanali izvora','Kanäle der Quelle')+
+    '<select data-wisi-xmltv-matches size="5" onchange="wisiEpgChooseExternal(this)">'+
+    wisiEpgMatchOptions(sourceId,'',original?.xmltv_channel_id||'')+
+    '</select></label>'+
+    '<label>'+text('XMLTV ID канала','XMLTV channel ID','XMLTV ID kanala','XMLTV-Kanal-ID')+
+    '<input maxlength="256" data-wisi-xmltv-channel value="'+
+    escapeHtmlValue(original?.xmltv_channel_id||'')+'" placeholder="channel-id"/></label>'+
+    '<button class="button-secondary" type="button" onclick="wisiEpgReloadExternal(this)">'+
+      text('Обновить список','Refresh list','Osvježi popis','Liste aktualisieren')+'</button></div>';
+  const existingStream=(state.streams||[]).find(x=>x.id===original?.stream_id);
+  const tileFields='<div class="field-help">'+
+    text('EPG существующей плитки','Existing tile EPG',
+      'EPG postojeće pločice','EPG bestehender Kachel')+': '+
+    escapeHtmlValue(existingStream?.name||original?.stream_id||'')+'</div>';
+  openModal('<h2>'+text(index<0?'Добавить EPG-канал':'Редактировать EPG-канал',
+    index<0?'Add EPG channel':'Edit EPG channel',
+    index<0?'Dodaj EPG kanal':'Uredi EPG kanal',
+    index<0?'EPG-Kanal hinzufügen':'EPG-Kanal bearbeiten')+'</h2>'+
+    '<div data-wisi-channel-editor>'+
+    (external?externalFields:tileFields)+
+    '<div class="wisi-epg-ids">'+
+    '<label>SID<input data-wisi-sid type="number" min="1" max="65535" value="'+
+      Number(original?.service_id||1)+'"/></label>'+
+    '<label>TSID<input data-wisi-tsid type="number" min="1" max="65535" value="'+
+      Number(original?.transport_stream_id||1)+'"/></label>'+
+    '<label>ONID<input data-wisi-onid type="number" min="1" max="65535" value="'+
+      Number(original?.original_network_id||1)+'"/></label></div></div>'+
+    '<div class="modal-actions">'+
+    '<button class="button-secondary" type="button" onclick="wisiEpgShowChannelList(\''+
+      escapeHtmlValue(outputId)+'\')">'+text('Назад к каналам','Back to channels',
+      'Natrag na kanale','Zurück zu Kanälen')+'</button>'+
+    '<button class="button-primary" type="button" onclick="wisiEpgSaveChannel()">'+
+      text('Сохранить канал','Save channel','Spremi kanal','Kanal speichern')+'</button></div>');
+  if(external&&sourceId)void wisiEpgLoadSource(sourceId);
+}
+async function wisiEpgSaveChannel() {
+  const editor=document.querySelector('[data-wisi-channel-editor]');
+  const context=wisiEpgChannelEditContext;
+  if(!editor||!context)return;
+  const output=wisiEpgUdpOutputs.find(o=>o.id===context.outputId);
+  if(!output)return;
+  const original=context.index<0?null:output.services[context.index];
+  const num=key=>Number(editor.querySelector('[data-wisi-'+key+']')?.value||0);
+  const sid=num('sid'),tsid=num('tsid'),onid=num('onid');
+  if([sid,tsid,onid].some(v=>!Number.isInteger(v)||v<1||v>65535)){
+    uiError(wisiText('SID/TSID/ONID должны быть от 1 до 65535.',
+      'SID/TSID/ONID must be from 1 to 65535.',
+      'SID/TSID/ONID moraju biti od 1 do 65535.',
+      'SID/TSID/ONID müssen zwischen 1 und 65535 liegen.'));
+    return;
+  }
+  const service={stream_id:original?.stream_id||'',xmltv_source_id:'',
+    xmltv_channel_id:'',service_id:sid,transport_stream_id:tsid,
+    original_network_id:onid};
+  if(!service.stream_id){
+    service.xmltv_source_id=editor.querySelector('[data-wisi-xmltv-source]')?.value||'';
+    service.xmltv_channel_id=editor.querySelector('[data-wisi-xmltv-channel]')?.value.trim()||'';
+    if(!service.xmltv_channel_id||!wisiXmltvSources.some(src=>
+       src.id===service.xmltv_source_id&&src.enabled)){
+      uiError(wisiText('Выберите включённый XMLTV-источник и канал (или укажите ID).',
+        'Select an enabled XMLTV source and channel (or enter its ID).',
+        'Odaberite uključeni XMLTV izvor i kanal (ili unesite ID).',
+        'Aktivierte XMLTV-Quelle und Kanal wählen (oder ID eingeben).'));
+      return;
+    }
+  }
+  const outputs=wisiEpgUdpOutputs.map(o=>({...o,services:[...(o.services||[])]}));
+  const target=outputs.find(o=>o.id===context.outputId);
+  if(!target)return;
+  if(context.index<0){
+    if(target.services.length>=64){uiError('Maximum 64 EPG channels');return;}
+    target.services.push(service);
+  } else target.services[context.index]=service;
+  try {
+    await wisiEpgCommitOutputs(outputs);
+    wisiEpgShowChannelList(context.outputId);
+  } catch(e){uiError(e?.message||e);}
+}
+async function wisiEpgDeleteChannel(outputId,index) {
+  const output=wisiEpgUdpOutputs.find(o=>o.id===outputId);
+  if(!output||!output.services?.[index])return;
+  if(!window.confirm(wisiText('Удалить этот EPG-канал?',
+    'Delete this EPG channel?','Izbrisati ovaj EPG kanal?',
+    'Diesen EPG-Kanal löschen?')))return;
+  const outputs=wisiEpgUdpOutputs.map(o=>({...o,services:[...(o.services||[])]}));
+  const target=outputs.find(o=>o.id===outputId);
+  target.services.splice(index,1);
+  try {
+    await wisiEpgCommitOutputs(outputs);
+    wisiEpgShowChannelList(outputId);
+  } catch(e){uiError(e?.message||e);}
+}
+function wisiEpgSummary(outputs) {
+  return (outputs||[]).map(o=>({
+    id:o.id,name:o.name,enabled:!!o.enabled,
+    output_host:o.output_host,output_port:o.output_port,
+    interface_address:o.interface_address,mode:o.mode,
+    channel_count:(o.services||[]).length
+  }));
+}
+async function wisiEpgCommitOutputs(outputs) {
+  const result=await fetchJson('/api/epg-udp/save',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({outputs})
+  });
+  if(result.result!=='ok')throw Error(result.error||'EPG UDP save error');
+  wisiEpgUdpOutputs=result.status?.outputs||outputs;
+  state.epg_udp_outputs=wisiEpgSummary(wisiEpgUdpOutputs);
+  render(true);
+  return wisiEpgUdpOutputs;
+}
 async function wisiEpgSave() {
   wisiEpgSync();
-  if(wisiEpgUdpOutputs.some(o=>!o.services.length ||
-    !o.output_host || o.output_port<1 || o.output_port>65535 ||
-    o.services.some(s=>[s.service_id,s.transport_stream_id,s.original_network_id]
-      .some(x=>!Number.isInteger(x)||x<1||x>65535) ||
-      (!s.stream_id && (!s.xmltv_source_id || !s.xmltv_channel_id))))) {
-    uiError(wisiText('Укажите IP, порт, SID/TSID/ONID и хотя бы один канал.',
-      'Enter IP, port, valid SID/TSID/ONID and at least one channel.',
-      'Unesite IP, port, SID/TSID/ONID i barem jedan kanal.',
-      'IP, Port, SID/TSID/ONID und mindestens einen Kanal angeben.'));
+  if(wisiEpgUdpOutputs.some(o=>!o.output_host ||
+      o.output_port<1 || o.output_port>65535 || !o.name.trim())) {
+    uiError(wisiText('Укажите имя, IP назначения и корректный UDP-порт.',
+      'Enter a name, destination IP and valid UDP port.',
+      'Unesite naziv, odredišnu IP adresu i ispravan UDP port.',
+      'Name, Ziel-IP und gültigen UDP-Port angeben.'));
     return;
   }
   try {
-    const result=await fetchJson('/api/epg-udp/save',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({outputs:wisiEpgUdpOutputs})
-    });
-    if(result.result!=='ok')throw Error(result.error||'EPG UDP save error');
-    wisiEpgUdpOutputs=result.status?.outputs||wisiEpgUdpOutputs;
-    wisiEpgRender();
+    await wisiEpgCommitOutputs(wisiEpgUdpOutputs);
+    closeModal();
   }catch(e){uiError(e?.message||e);}
 }
-
 async function openXmltvModal() {
   stopXmltvRefreshPolling();
   try {
@@ -5617,7 +5763,11 @@ function streamTileStructureSignature(stream) {
 function tilesStructureSignature() {
   return JSON.stringify({
     language,
-    streams: (state.streams || []).map(streamTileStructureSignature)
+    streams: (state.streams || []).map(streamTileStructureSignature),
+    // WISI virtual tiles are independent of stream counts and media actions.
+    wisi_epg: (state.epg_udp_outputs || []).map(o=>[
+      o.id,o.name,o.enabled,o.output_host,o.output_port,
+      o.interface_address,o.mode,o.channel_count])
   });
 }
 function streamDvbCardKey(stream) {
@@ -6707,8 +6857,18 @@ function applyTileSearch() {
       else details.open=dvbCardGroupOpen[details.dataset.cardKey]===true;
     }
   }
-  for(const section of tiles.querySelectorAll('.non-dvb-tile-group'))
+  for(const section of tiles.querySelectorAll('.non-dvb-tile-group:not(.wisi-epg-group)'))
     section.hidden=filtering&&!section.querySelector('.tile[data-stream-id]:not([hidden])');
+  for(const epgTile of tiles.querySelectorAll('.wisi-epg-tile')){
+    const text=[epgTile.dataset.wisiOutputName,epgTile.dataset.wisiOutputId,
+      epgTile.dataset.wisiOutputEndpoint,epgTile.dataset.wisiOutputMode,
+      'wisi epg xmltv eit pid 18'].join(' ');
+    const matched=!filtering||normalizeTileSearch(text).includes(tileSearchQuery);
+    epgTile.hidden=!matched;
+    if(matched)++visible;
+  }
+  for(const section of tiles.querySelectorAll('.wisi-epg-group'))
+    section.hidden=filtering&&!section.querySelector('.wisi-epg-tile:not([hidden])');
   if(empty){
     empty.hidden=!filtering||visible>0;
     if(!empty.hidden)empty.textContent=language==='ru'?'Каналы не найдены':
@@ -6731,6 +6891,57 @@ function updateLiveTiles() {
   updateDvbCardGroupCounts(tiles);
   updateInputSubgroupCounts(tiles);
   applyTileSearch();
+}
+function renderWisiEpgTiles(tiles) {
+  const outputs=Array.isArray(state.epg_udp_outputs)?state.epg_udp_outputs:[];
+  if(!outputs.length)return;
+  const text=wisiText;
+  const section=document.createElement('section');
+  section.className='non-dvb-tile-group wisi-epg-group';
+  const heading=document.createElement('h2');
+  heading.className='non-dvb-tile-heading';
+  heading.textContent=text('WISI EPG — отдельные плитки',
+    'WISI EPG — separate tiles','WISI EPG — zasebne pločice',
+    'WISI EPG — separate Kacheln')+' ('+outputs.length+')';
+  const grid=document.createElement('div');
+  grid.className='tile-grid wisi-epg-tiles';
+  section.append(heading,grid);
+  tiles.appendChild(section);
+  for(const out of outputs){
+    if(!out||!out.id)continue;
+    const tile=document.createElement('div');
+    const channels=Math.max(0,Number(out.channel_count)||0);
+    const active=!!out.enabled&&channels>0;
+    tile.className='tile wisi-epg-tile'+(active?' active':'');
+    tile.dataset.wisiOutputId=String(out.id);
+    tile.dataset.wisiOutputName=String(out.name||out.id);
+    tile.dataset.wisiOutputEndpoint=String(out.output_host||'')+':'+Number(out.output_port||0);
+    tile.dataset.wisiOutputMode=String(out.mode||'actual');
+    const status=!out.enabled?text('Выключено','Disabled','Isključeno','Deaktiviert'):
+      !channels?text('Ожидание каналов','Awaiting channels','Čeka kanale','Wartet auf Kanäle'):
+      text('Настроено','Configured','Konfigurirano','Konfiguriert');
+    tile.innerHTML=
+      '<div class="top"><div class="tile-heading"><div class="title">'+
+      escapeHtmlValue(out.name||out.id)+'</div>'+
+      '<div class="status-line"><div class="status-pill '+(active?'active':'stopped')+'">'+
+      status+'</div></div></div></div>'+
+      '<div class="tile-actions"><div class="badge">WISI EPG · PID 18</div></div>'+
+      '<div class="info">'+
+      '<div class="info-row"><strong>UDP</strong><span>'+
+      escapeHtmlValue(out.output_host||'')+':'+Number(out.output_port||0)+'</span></div>'+
+      '<div class="info-row"><strong>'+text('Таблицы','Tables','Tablice','Tabellen')+
+      '</strong><span>'+escapeHtmlValue((out.mode||'actual')==='barker'?'Barker / Other':'Actual')+'</span></div>'+
+      '<div class="info-row"><strong>'+text('Интерфейс','Interface','Sučelje','Schnittstelle')+
+      '</strong><span>'+escapeHtmlValue(out.interface_address||'Auto')+'</span></div>'+
+      '<div class="info-row"><strong>'+text('Каналов EPG','EPG channels','EPG kanali','EPG-Kanäle')+
+      '</strong><span>'+channels+'</span></div>'+
+      '</div><div class="controls"><button type="button" class="button-secondary" data-wisi-edit>'+
+      text('Редактировать','Edit','Uredi','Bearbeiten')+'</button></div>';
+    tile.querySelector('[data-wisi-edit]').addEventListener('click',()=>{
+      void wisiEpgOpenTileEditor(String(out.id));
+    });
+    grid.appendChild(tile);
+  }
 }
 function render(force=false) {
   const tiles = document.getElementById('tiles');
@@ -6876,6 +7087,7 @@ function render(force=false) {
     updateStreamTile(tile, stream);
     applyTileVisibility(tile);
   });
+  renderWisiEpgTiles(tiles);
   lastTileStructureSignature = signature;
   updateLiveTiles();
 }

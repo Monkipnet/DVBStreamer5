@@ -1136,6 +1136,22 @@ std::string HttpServer::currentState() {
     for (const auto& source : configManager.config.xmltvSources)
         xmltvConfig.append(source.toJson());
     root["xmltv_sources"] = xmltvConfig;
+    // Lightweight virtual EPG tile summaries. Do not serialize 64 services
+    // per output into the frequently polled /api/state response.
+    Json::Value wisiEpgTiles(Json::arrayValue);
+    for (const auto& output : configManager.config.epgUdpOutputs) {
+        Json::Value tile;
+        tile["id"] = output.id;
+        tile["name"] = output.name;
+        tile["enabled"] = output.enabled;
+        tile["output_host"] = output.outputHost;
+        tile["output_port"] = output.outputPort;
+        tile["interface_address"] = output.interfaceAddress;
+        tile["mode"] = output.mode;
+        tile["channel_count"] = Json::UInt(output.services.size());
+        wisiEpgTiles.append(std::move(tile));
+    }
+    root["epg_udp_outputs"] = std::move(wisiEpgTiles);
     Json::Value camClients(Json::arrayValue);
     for (const auto& client : configManager.config.camClients) camClients.append(client.toJson());
     root["cam_clients"] = camClients;

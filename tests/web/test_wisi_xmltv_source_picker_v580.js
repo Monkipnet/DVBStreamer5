@@ -15,10 +15,10 @@ assert.match(page,/data-wisi-xmltv-matches/);
 assert.match(page,/data-wisi-xmltv-channel maxlength="256"/);
 assert.match(page,/function wisiEpgExternalSourceChanged/);
 assert.match(page,/\/api\/xmltv\/channels\?source_id=/);
-assert.match(page,/wisiXmltvSources=Array\.isArray\(status\.sources\)/);
+assert.match(page,/wisiXmltvSources=Array\.isArray\(sources\.sources\)/);
 assert.doesNotMatch(page,/addLicensedYandexXmltvSource|Yandex TV|Яндекс ТВ|epg-yandex-tv/);
 assert.match(page,/wisiXmltvCatalogBySource\.size >= 2/);
-assert.match(page,/activeSources\.slice\(0,2\)/);
+assert.match(page,/if\(external&&sourceId\)void wisiEpgLoadSource\(sourceId\)/);
 assert.match(page,/!wisiXmltvCatalogBySource\.has\(source\)/);
 assert.doesNotMatch(page,/let wisiXmltvCatalog = \[\]/);
 assert.match(head,/channels\(const std::string& sourceId = \{\}\) const/);
@@ -52,13 +52,11 @@ html=vm.runInContext("wisiEpgMatchOptions('source-a','a-14998','')",ctx);
 assert.ok(html.includes('value="a-14998"'),'ID lookup must find late entries');
 
 const add=getFunction('wisiEpgAddExternal','wisiEpgRemoveExternal');
-const ctx2={wisiEpgUdpOutputs:[{services:[]}],
-  wisiXmltvSources:[{id:'source-b',name:'Beta guide',enabled:true}],
-  wisiEpgSync:()=>{},wisiEpgRender:()=>{}};
+const ctx2={selected:null,wisiEpgEditChannel:(id,index)=>{ctx2.selected={id,index};}};
 vm.createContext(ctx2);
-vm.runInContext(add+'\nwisiEpgAddExternal(0)',ctx2);
-assert.strictEqual(ctx2.wisiEpgUdpOutputs[0].services[0].xmltv_source_id,'source-b');
-assert.strictEqual(ctx2.wisiEpgUdpOutputs[0].services[0].xmltv_channel_id,'',
-  'Channel must be selected by the user, not silently picked');
+vm.runInContext(add+"\nwisiEpgAddExternal('wisi-output-1')",ctx2);
+assert.strictEqual(ctx2.selected.id,'wisi-output-1');
+assert.strictEqual(ctx2.selected.index,-1,
+  'New XMLTV channel must open an empty editor after the tile exists');
 assert.match(fs.readFileSync('src/AppVersion.h','utf8'),/kProgramVersion = "10\.8\.580"/);
 console.log('PASS WISI XMLTV source picker: 2 x 15,000 channels, search/name/ID, manual entry, four locales, JS syntax');

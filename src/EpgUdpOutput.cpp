@@ -71,7 +71,8 @@ void EpgUdpOutputManager::configure(const std::vector<EpgUdpOutputConfig>& outpu
         stop_ = false;
     }
     bool active = false;
-    for (const auto& output : outputs) if (output.enabled) active = true;
+    for (const auto& output : outputs)
+        if (output.enabled && !output.services.empty()) active = true;
     if (active) thread_ = std::thread([this, outputs] { run(outputs); });
 }
 Json::Value EpgUdpOutputManager::status() const {

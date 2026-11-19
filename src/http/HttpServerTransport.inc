@@ -1582,9 +1582,9 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                              !EpgUdpOutputManager::validInterface(cfg.interfaceAddress))) {
                             error = "Expected IPv4 unicast/multicast and valid interface IP"; break;
                         }
-                        if (cfg.services.empty()) {
-                            error = "Select at least one EPG tile"; break;
-                        }
+                        // A newly created WISI EPG tile may have zero
+                        // services. Channel assignment happens later from
+                        // the tile editor. The EIT sender stays idle then.
                         std::set<std::string> uniqueServices;
                         for (const auto& svc : cfg.services) {
                             const bool external = svc.streamId.empty();

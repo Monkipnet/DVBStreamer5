@@ -16,8 +16,9 @@ assert 'inProgramme = wanted.count(programmeId) != 0;' in s
 assert 'if (inProgramme) {' in s
 assert 'if (data.channels.empty() && totalEvents == 0)' in s
 assert 'wantedChannels_' not in h
-assert 'stream.epgEnabled && stream.epgMode != "dvb"' in s
-assert 'wanted.count(programmeId)' in s
+assert 'stream.epgMode == "dvb"' in s
+assert 'stream.epgEnabled' in s
+assert 'inProgramme = wanted.count(programmeId) != 0;' in s
 assert 'wanted.find(channel) == wanted.end()' in s
 assert 'data = std::move(it->second);' in s
 assert 'data = it->second;' not in s
