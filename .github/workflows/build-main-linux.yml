@@ -291,6 +291,7 @@ jobs:
           node tests/web/test_pcr_cpu_optimization_ui.js
           node tests/web/test_cbr_profile_ui.js
           node tests/web/test_locale_de_layout_v580.js
+          node tests/web/test_language_picker_search_v581.js
           python3 tests/test_xmltv_memory_policy.py
           node tests/web/test_wisi_external_epg_v580.js
           node tests/web/test_wisi_xmltv_source_picker_v580.js

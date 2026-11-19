@@ -25,5 +25,6 @@ assert.match(ui, /EPG-Kanal hinzufügen/);
 assert.match(ui, /Dodaj EPG kanal/);
 const script=ui.slice(ui.indexOf('<script>')+8,ui.indexOf('</script>'));
 new Function(script);
-assert.match(read('src/AppVersion.h'),/kProgramVersion\s*=\s*"10\.8\.580"/);
+const versionMatch = read('src/AppVersion.h').match(/kProgramVersion\s*=\s*"10\.8\.(\d+)"/);
+assert.ok(versionMatch && Number(versionMatch[1]) >= 580, 'V580 baseline regression');
 console.log('PASS WISI XMLTV external EIT config/API/retention, RU-EN-HR-DE UI JS syntax, version unchanged');

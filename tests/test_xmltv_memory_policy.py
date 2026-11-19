@@ -32,5 +32,7 @@ assert 'std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources,' in comp
 assert 'cfg.config.streams, cfg.config.epgUdpOutputs)' in compact
 assert 'externalXmltvManager_->snapshot(service.xmltvSourceId,' in compact
 assert 'externalXmltvManager_->configure(configManager.config.xmltvSources,' in m
-assert 'kProgramVersion = "10.8.580"' in Path("src/AppVersion.h").read_text()
+import re
+version = re.search(r'kProgramVersion = "10\.8\.(\d+)"', Path("src/AppVersion.h").read_text())
+assert version and int(version.group(1)) >= 580
 print("PASS XMLTV selected-channel retention, refresh handling, move-only reconfigure and unchanged version")

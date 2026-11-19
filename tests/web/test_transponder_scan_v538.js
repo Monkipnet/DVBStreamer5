@@ -32,7 +32,7 @@ assert.ok(web.includes("loadSatelliteAdapters(true,initialTransponderTune).then"
 assert.ok(web.includes("modalGeneration!==satelliteModalGeneration"));
 assert.ok(web.includes("if(!suppressInitialSignal)updateSatelliteSignal()"));
 assert.ok(web.includes("if(!transponderScanPreparing)updateSatelliteSignal()"));
-assert.ok(web.includes("searchInput.placeholder=searchLabel"));
+assert.ok(web.includes("searchInput.placeholder=searchInput.getAttribute('data-placeholder-'+language)||searchLabel"));
 for(const label of [
  'Поиск канала, устройства, IP, домена или подсети',
  'Search channel, device, IP, domain or subnet',

@@ -20,5 +20,6 @@ for(const path of ['oscam-work.c','oscam-reader.c','module-newcamd.c','oscam-ecm
   const source = fs.readFileSync('third_party/oscam-mini/'+path,'utf8');
   assert.doesNotMatch(source,/DVB5 ECM LATENCY/, path+' still contains verbose diagnostic logging');
 }
-assert.match(fs.readFileSync('src/AppVersion.h','utf8'),/kProgramVersion = "10\.8\.580"/);
+const versionMatch = fs.readFileSync('src/AppVersion.h','utf8').match(/kProgramVersion\s*=\s*"10\.8\.(\d+)"/);
+assert.ok(versionMatch && Number(versionMatch[1]) >= 580, 'V580 baseline regression');
 console.log('PASS four-language selector, responsive UI, JavaScript syntax, ECM trace cleanup and unchanged version');

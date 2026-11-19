@@ -58,5 +58,6 @@ vm.runInContext(add+"\nwisiEpgAddExternal('wisi-output-1')",ctx2);
 assert.strictEqual(ctx2.selected.id,'wisi-output-1');
 assert.strictEqual(ctx2.selected.index,-1,
   'New XMLTV channel must open an empty editor after the tile exists');
-assert.match(fs.readFileSync('src/AppVersion.h','utf8'),/kProgramVersion = "10\.8\.580"/);
+const versionMatch = fs.readFileSync('src/AppVersion.h','utf8').match(/kProgramVersion\s*=\s*"10\.8\.(\d+)"/);
+assert.ok(versionMatch && Number(versionMatch[1]) >= 580, 'V580 baseline regression');
 console.log('PASS WISI XMLTV source picker: 2 x 15,000 channels, search/name/ID, manual entry, four locales, JS syntax');

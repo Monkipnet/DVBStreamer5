@@ -858,8 +858,9 @@ html[data-dashboard-theme="light"] .quality-head :is(.quality-title,.quality-tit
 html[data-dashboard-theme="light"] :is(.quality-stats,.quality-details,.quality-output-chart-head,.quality-output-chart-head strong,.quality-output-chart-head span){color:#223a55}
 
 /* Responsive multilingual controls and dialogs (RU/EN/HR/DE). */
-.language-picker{display:inline-flex;align-items:center;gap:6px;min-width:0;flex:0 0 auto;font-size:.75rem;white-space:nowrap}
-.language-picker select{min-width:140px;max-width:190px;min-height:34px;border-radius:9px;padding:6px 8px;border:1px solid rgba(125,209,255,.3);background:#1b2635;color:#f2f6ff;font:inherit;cursor:pointer}
+.language-picker{display:inline-flex;align-items:center;gap:0;min-width:0;flex:0 0 auto;font-size:.75rem;white-space:nowrap}
+.language-picker .language-picker-label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.language-picker select{width:68px;min-width:68px;max-width:68px;min-height:30px;border-radius:8px;padding:4px 6px;border:1px solid rgba(125,209,255,.3);background:#1b2635;color:#f2f6ff;font:inherit;cursor:pointer}
 .language-picker select:focus-visible{outline:2px solid #59b7ff;outline-offset:2px}
 html[data-dashboard-theme="light"] .language-picker select{background:#fff;color:#23415e;border-color:#b8ccdf}
 .header-right{min-width:0;max-width:100%;justify-content:flex-end}
@@ -872,7 +873,7 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
 .modal-content :is(.table-wrap,.table-scroll,.network-table-wrap){max-width:100%;overflow-x:auto}
 .stream-modal .input-main-row{grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))}
 @media(max-width:900px){.header-right{flex-wrap:wrap}.stream-modal .form-grid>.form-row:not(.full){grid-column:span 12}}
-@media(max-width:560px){.language-picker{flex:1 1 auto;justify-content:flex-end}.language-picker select{min-width:120px;max-width:100%}.modal{padding:8px}.modal-content{padding:14px;border-radius:14px}.stream-modal .input-main-row{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:560px){.language-picker{flex:0 0 auto}.language-picker select{width:68px;min-width:68px;max-width:68px}.modal{padding:8px}.modal-content{padding:14px;border-radius:14px}.stream-modal .input-main-row{grid-template-columns:minmax(0,1fr)}}
 
 /* WISI external EPG: keep source picker and name-search usable with
    large provider catalogs, without building thousands of DOM options. */
@@ -938,10 +939,11 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
 <div class="header-tile-search" role="search" aria-label="Поиск каналов">
 <span class="header-tile-search-icon" aria-hidden="true">⌕</span>
 <input type="search" id="tileSearchInput" autocomplete="off" spellcheck="false"
-       placeholder="Поиск канала, устройства, IP, домена или подсети"
-       data-placeholder-ru="Поиск канала, устройства, IP, домена или подсети"
-       data-placeholder-en="Search channel, device, IP, domain or subnet"
-       data-placeholder-hr="Traži kanal, uređaj, IP, domenu ili podmrežu"
+       placeholder="Например: Мир 24, 239.1.1.1"
+       data-placeholder-ru="Например: Мир 24, 239.1.1.1"
+       data-placeholder-en="e.g. Sport TV, 239.1.1.1"
+       data-placeholder-hr="Npr. Sport TV, 239.1.1.1"
+       data-placeholder-de="Z. B. Sport TV, 239.1.1.1"
        aria-label="Поиск канала, устройства, IP, домена или подсети"
        oninput="setTileSearch(this.value)"
        onkeydown="if(event.key==='Escape'){event.preventDefault();clearTileSearch()}">
@@ -950,7 +952,7 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
         onclick="clearTileSearch()">×</button>
 </div>
 <div class="header-right">
-<label class="language-picker" for="languageSelect"><span id="languagePickerLabel">Language</span><select id="languageSelect" aria-labelledby="languagePickerLabel" onchange="selectInterfaceLanguage(this.value)"><option value="en">English · EN</option><option value="ru">Русский · RU</option><option value="hr">Hrvatski · HR</option><option value="de">Deutsch · DE</option></select></label>
+<label class="language-picker" for="languageSelect"><span class="language-picker-label" id="languagePickerLabel">Language</span><select id="languageSelect" aria-labelledby="languagePickerLabel" onchange="selectInterfaceLanguage(this.value)"><option value="en">EN</option><option value="ru">RU</option><option value="hr">HR</option><option value="de">DE</option></select></label>
 <details class="system-menu" id="systemMenu">
 <summary class="button-secondary" data-i18n="system">Menu</summary>
 <div class="system-menu-list">
@@ -3586,11 +3588,16 @@ function localizeUiTextNode(node) {
 
 function localizeUiAttributes(element) {
   if (!element || element.nodeType !== Node.ELEMENT_NODE || ['SCRIPT','STYLE'].includes(element.tagName) ||
-      element.id === 'languageSelect' || element.id === 'languagePickerLabel') return;
+      element.id === 'languageSelect' || element.id === 'languagePickerLabel' ||
+      element.id === 'tileSearchInput' || element.id === 'tileSearchClear' ||
+      element.classList?.contains('header-tile-search')) return;
   let originals = uiOriginalAttrs.get(element);
   if (!originals) { originals = new Map(); uiOriginalAttrs.set(element, originals); }
   for (const name of uiLocalizedAttributes) {
     if (!element.hasAttribute(name)) continue;
+    // Explicit four-language placeholders must not be reverted by the runtime observer.
+    if (name === 'placeholder' && element.hasAttribute('data-placeholder-ru') &&
+        element.hasAttribute('data-placeholder-en')) continue;
     const current = element.getAttribute(name) || '';
     if (!originals.has(name)) originals.set(name, current);
     const source = originals.get(name);
@@ -3696,7 +3703,7 @@ function applyLanguage() {
     'Search channel, device, IP, domain or subnet';
   const clearLabel=language==='ru'?'Очистить поиск':
     language==='hr'?'Očisti pretragu':language==='de'?'Suche löschen':'Clear search';
-  if(searchInput){searchInput.setAttribute('aria-label',searchLabel);searchInput.placeholder=searchLabel;}
+  if(searchInput){searchInput.setAttribute('aria-label',searchLabel);searchInput.placeholder=searchInput.getAttribute('data-placeholder-'+language)||searchLabel;}
   if(searchBox)searchBox.setAttribute('aria-label',searchLabel);
   if(searchClear){searchClear.setAttribute('aria-label',clearLabel);searchClear.title=clearLabel;}
   const searchEmpty=document.getElementById('tileSearchEmpty');

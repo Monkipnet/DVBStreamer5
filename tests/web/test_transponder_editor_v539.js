@@ -41,7 +41,7 @@ for(const marker of [
  "id=\"satSaveTransponderButton\"",
  "onclick=\"saveExistingTransponderTune()\"",
  "oninput=\"setTileSearch(this.value)\"",
- "searchInput.placeholder=searchLabel"
+ "searchInput.placeholder=searchInput.getAttribute('data-placeholder-'+language)||searchLabel"
 ])assert.ok(source.includes(marker),'Missing UI contract: '+marker);
 for(const label of [
  'Редактировать транспондер после остановки каналов',

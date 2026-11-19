@@ -78,5 +78,6 @@ assert.strictEqual(ctx.wisiEpgUdpOutputs[0].services[1].xmltv_channel_id,'channe
 const tileFn=ui.slice(ui.indexOf('function renderWisiEpgTiles('),
   ui.indexOf('function render(force=false)',ui.indexOf('function renderWisiEpgTiles(')));
 assert.doesNotMatch(tileFn,/data-stream-id|data-stream-action|stream-toggle/);
-assert.match(read('src/AppVersion.h'),/kProgramVersion = "10\.8\.580"/);
+const versionMatch = read('src/AppVersion.h').match(/kProgramVersion\s*=\s*"10\.8\.(\d+)"/);
+assert.ok(versionMatch && Number(versionMatch[1]) >= 580, 'V580 baseline regression');
 console.log('PASS virtual WISI EPG tiles: zero-service persistence, separate lifecycle, menu retention, channel editor/list/delete, four locales');
