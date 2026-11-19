@@ -12,7 +12,7 @@ const script=page.slice(page.indexOf('<script>')+8,page.indexOf('</script>'));
 new Function(script);
 assert.match(page,/data-wisi-xmltv-search/);
 assert.match(page,/data-wisi-xmltv-matches/);
-assert.match(page,/data-wisi-xmltv-channel maxlength="256"/);
+assert.match(page,/maxlength="256" data-wisi-xmltv-channel/);
 assert.match(page,/function wisiEpgExternalSourceChanged/);
 assert.match(page,/\/api\/xmltv\/channels\?source_id=/);
 assert.match(page,/wisiXmltvSources=Array\.isArray\(sources\.sources\)/);
