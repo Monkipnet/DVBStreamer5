@@ -49,6 +49,20 @@ int main() {
     assert(isEnvelope(wisi));
     assert(wisi["tile"]["enabled"].asBool()==false);
     assert(wisi["tile"]["auto_start"].asBool()==false);
+    Json::Value mpts(Json::objectValue);
+    mpts["id"]="mpts-old";
+    mpts["name"]="Test MPTS";
+    mpts["auto_start"]=true;
+    mpts["interface_address"]="192.168.1.20";
+    mpts["output_host"]="239.10.10.10";
+    mpts["output_port"]=5000;
+    mpts["services"].append(Json::Value(Json::objectValue));
+    auto mptsEnvelope=envelope("mpts",mpts);
+    assert(isEnvelope(mptsEnvelope));
+    assert(mptsEnvelope["tile"]["id"].asString().empty());
+    assert(mptsEnvelope["tile"]["auto_start"].asBool()==false);
+    assert(mptsEnvelope["tile"]["interface_address"].asString().empty());
+    assert(mptsEnvelope["tile"]["services"].size()==1);
     assert(!isEnvelope(Json::Value(Json::objectValue)));
     std::cout<<"PASS V588 tile clipboard: no secrets, WISI stopped, DVB URI intact\n";
 }

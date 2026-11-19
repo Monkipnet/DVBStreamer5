@@ -303,6 +303,7 @@ jobs:
           node tests/web/test_wisi_epg_cbr_config_v586.js
           node tests/web/test_wisi_epg_hover_v586.js
           node tests/web/test_tile_clipboard_v588.js
+          node tests/web/test_tile_clipboard_v589.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Restore pinned iCAM TSDecrypt source and executable cache

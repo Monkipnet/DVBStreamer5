@@ -92,6 +92,15 @@ inline Json::Value scrubWisi(Json::Value tile, Json::Value& warnings) {
     warn(warnings, "WISI EPG remains stopped; verify multicast IP/port and XMLTV mappings");
     return tile;
 }
+inline Json::Value scrubMpts(Json::Value tile, Json::Value& warnings) {
+    if (!tile.isObject()) return Json::Value(Json::nullValue);
+    tile["id"] = "";
+    tile["auto_start"] = false;
+    tile["interface_address"] = "";
+    warn(warnings, "MPTS remains stopped. Reassign channels to local stream IDs before starting");
+    warn(warnings, "Verify destination multicast IP, port, SID/PMT mapping and output interface");
+    return tile;
+}
 inline Json::Value envelope(const std::string& kind, Json::Value tile) {
     Json::Value output(Json::objectValue), warnings(Json::arrayValue);
     output["schema"] = kSchema;
@@ -99,6 +108,7 @@ inline Json::Value envelope(const std::string& kind, Json::Value tile) {
     output["kind"] = kind;
     if (kind == "stream") output["tile"] = scrubStream(std::move(tile), warnings);
     else if (kind == "wisi_epg") output["tile"] = scrubWisi(std::move(tile), warnings);
+    else if (kind == "mpts") output["tile"] = scrubMpts(std::move(tile), warnings);
     else output["tile"] = Json::nullValue;
     output["warnings"] = warnings;
     return output;
@@ -108,6 +118,6 @@ inline bool isEnvelope(const Json::Value& root) {
         root.get("format_version", 0).asInt() != kFormat ||
         !root["tile"].isObject()) return false;
     const auto kind = root.get("kind", "").asString();
-    return kind == "stream" || kind == "wisi_epg";
+    return kind == "stream" || kind == "wisi_epg" || kind == "mpts";
 }
 } // namespace dvbstreamer5::http::tile_clipboard

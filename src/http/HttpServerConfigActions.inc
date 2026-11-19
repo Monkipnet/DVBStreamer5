@@ -17,6 +17,14 @@ std::string HttpServer::handleTileClipboardExport(
             result = envelope(kind, it->toJson());
             result["result"] = "ok";
         }
+    } else if (!id.empty() && id.size() <= 128U && kind == "mpts") {
+        const auto it = std::find_if(configManager.config.mptsOutputs.begin(),
+            configManager.config.mptsOutputs.end(),
+            [&](const MptsOutputConfig& output) { return output.id == id; });
+        if (it != configManager.config.mptsOutputs.end()) {
+            result = envelope(kind, it->toJson());
+            result["result"] = "ok";
+        }
     } else if (!id.empty() && id.size() <= 64U && kind == "wisi_epg") {
         const auto it = std::find_if(configManager.config.epgUdpOutputs.begin(),
             configManager.config.epgUdpOutputs.end(),
@@ -64,7 +72,9 @@ std::string HttpServer::handleTileClipboardPaste(const std::string& body) {
     const std::string kind = item["kind"].asString();
     Json::Value warnings(Json::arrayValue);
     Json::Value safe = kind == "stream"
-        ? scrubStream(item["tile"], warnings) : scrubWisi(item["tile"], warnings);
+        ? scrubStream(item["tile"], warnings)
+        : kind == "mpts" ? scrubMpts(item["tile"], warnings)
+                         : scrubWisi(item["tile"], warnings);
     if (!safe.isObject()) return reject("Invalid tile settings");
     reply["kind"] = kind;
     reply["preview"] = preview;
@@ -142,6 +152,55 @@ std::string HttpServer::handleTileClipboardPaste(const std::string& body) {
             }
             streamManager.configureAutoStartRecovery();
             refreshHttpPorts();
+        }
+    } else if (kind == "mpts") {
+        if (!safe["name"].isString() || safe["name"].asString().empty() ||
+            safe["name"].asString().size() > 128U ||
+            !safe["output_host"].isString() ||
+            !safe["output_port"].isInt() ||
+            !safe["services"].isArray() || safe["services"].size() > 120U)
+            return reject("Invalid MPTS output settings");
+        MptsOutputConfig output = MptsOutputConfig::fromJson(safe);
+        if (output.services.empty())
+            return reject("MPTS requires at least one source service");
+        if (configManager.config.mptsOutputs.size() >= 64U)
+            return reject("Maximum 64 MPTS outputs");
+        in_addr address{};
+        if (::inet_pton(AF_INET, output.outputHost.c_str(), &address) != 1 ||
+            safe["output_port"].asInt() <= 0 ||
+            safe["output_port"].asInt() > 65535)
+            return reject("Invalid MPTS destination IP or port");
+        output.id = nextId("mpts-copy-", configManager.config.mptsOutputs);
+        if (output.id.empty()) return reject("Unable to allocate MPTS output ID");
+        output.autoStart = false;
+        output.interfaceAddress.clear();
+        // Keep the original stream ID mapping in a stopped output. IDs may be
+        // absent on target; the operator can rebind channels in MPTS editor.
+        std::set<std::string> targetIds;
+        for (const auto& s : configManager.config.streams)
+            targetIds.insert(s.id);
+        unsigned missing = 0;
+        for (const auto& s : output.services)
+            if (!targetIds.count(s.streamId)) ++missing;
+        if (missing)
+            warn(warnings, std::to_string(missing) +
+                " MPTS services have no matching stream ID on this server; reassign before start");
+        if (output.services.empty())
+            warn(warnings, "MPTS has no services; assign channels before start");
+        reply["name"] = output.name;
+        reply["id"] = output.id;
+        reply["channel_count"] = Json::UInt(output.services.size());
+        reply["warnings"] = warnings;
+        if (!preview) {
+            const auto previous = configManager.config.mptsOutputs;
+            configManager.config.mptsOutputs.push_back(output);
+            if (!configManager.save()) {
+                configManager.config.mptsOutputs = previous;
+                return reject("Failed to save new MPTS output");
+            }
+            // Existing MPTS outputs with unchanged configuration retain their
+            // running state; the newly imported output never auto-starts.
+            streamManager.configureMptsOutputs();
         }
     } else {
         if (!safe["name"].isString() ||
@@ -817,7 +876,25 @@ std::string HttpServer::handleMptsAction(const std::string& body) {
         const std::string action = toLower(request.get("action", "").asString());
         std::string error;
         bool ok = false;
-        if (action == "start") {
+        // Clipboard-imported MPTS may refer to channel IDs on another
+        // server. Do not start an incomplete transport until remapped.
+        const auto cfg = std::find_if(configManager.config.mptsOutputs.begin(),
+            configManager.config.mptsOutputs.end(),
+            [&](const MptsOutputConfig& output) { return output.id == id; });
+        bool missingStreams = false;
+        if ((action == "start" || action == "restart") &&
+            cfg != configManager.config.mptsOutputs.end()) {
+            for (const auto& service : cfg->services)
+                if (std::none_of(configManager.config.streams.begin(),
+                    configManager.config.streams.end(),
+                    [&](const StreamConfig& s) { return s.id == service.streamId; })) {
+                    missingStreams = true;
+                    break;
+                }
+        }
+        if (missingStreams) {
+            error = "MPTS contains channels from another server; reassign in editor";
+        } else if (action == "start") {
             ok = streamManager.startMptsOutput(id, &error);
         } else if (action == "stop") {
             ok = streamManager.stopMptsOutput(id);
