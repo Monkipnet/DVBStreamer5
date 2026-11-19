@@ -780,6 +780,7 @@ Json::Value EpgUdpOutputConfig::toJson() const {
     out["id"] = id;
     out["name"] = name;
     out["enabled"] = enabled;
+    out["auto_start"] = autoStart;
     out["output_host"] = outputHost;
     out["output_port"] = outputPort;
     out["interface_address"] = interfaceAddress;
@@ -795,6 +796,9 @@ EpgUdpOutputConfig EpgUdpOutputConfig::fromJson(const Json::Value& root) {
     out.id = root.get("id", "").asString().substr(0, 64);
     out.name = root.get("name", "").asString().substr(0, 128);
     out.enabled = root.get("enabled", false).asBool();
+    // Legacy enabled=true implies autostart until the operator explicitly
+    // changes the new checkbox; the flags are independent thereafter.
+    out.autoStart = root.get("auto_start", root.get("enabled", false)).asBool();
     out.outputHost = root.get("output_host", "239.255.40.1").asString().substr(0, 255);
     out.outputPort = std::clamp(root.get("output_port", 5002).asInt(), 1, 65535);
     out.interfaceAddress = root.get("interface_address", "").asString().substr(0, 128);
@@ -967,6 +971,9 @@ AppConfig AppConfig::fromJson(const Json::Value& root) {
         for (const auto& item : root["epg_udp_outputs"]) {
             if (!item.isObject() || config.epgUdpOutputs.size() >= 8) break;
             auto output = EpgUdpOutputConfig::fromJson(item);
+            // On application startup only autostart controls EPG activation.
+            // Manual Start/Stop must not alter behavior after a restart.
+            output.enabled = output.autoStart;
             if (!output.id.empty() && seen.insert(output.id).second)
                 config.epgUdpOutputs.push_back(std::move(output));
         }

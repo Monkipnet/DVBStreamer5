@@ -1194,8 +1194,14 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 res.body() = listBackupFiles();
             } else if (target == "/api/epg-udp/status") {
                 res.set(http::field::content_type, "application/json");
+                // Autostart-only updates must not restart active UDP senders.
+                // Status therefore reads current config, not a worker snapshot.
+                Json::Value status(Json::objectValue), outputs(Json::arrayValue);
+                for (const auto& output : configManager.config.epgUdpOutputs)
+                    outputs.append(output.toJson());
+                status["outputs"] = std::move(outputs);
                 Json::StreamWriterBuilder writer;
-                res.body() = Json::writeString(writer, streamManager.epgUdpStatus());
+                res.body() = Json::writeString(writer, status);
             } else if (target == "/api/xmltv/status") {
                 res.set(http::field::content_type, "application/json");
                 Json::StreamWriterBuilder writer;
@@ -1548,6 +1554,62 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/oscam-mini/action") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = OscamMiniManager::instance().serviceActionJson(req.body());
+            } else if (target == "/api/epg-udp/action") {
+                // Runtime Start/Stop and persistent autostart are independent.
+                // Update one output by ID while preserving all channel mappings.
+                res.set(http::field::content_type, "application/json");
+                Json::Value result(Json::objectValue), payload;
+                Json::CharReaderBuilder parser;
+                std::string parseError;
+                std::istringstream input(req.body());
+                if (req.body().size() > 4096U ||
+                    !Json::parseFromStream(parser, input, &payload, &parseError) ||
+                    !payload.isObject() || !payload["id"].isString() ||
+                    !payload["action"].isString()) {
+                    res.result(http::status::bad_request);
+                    result["result"] = "error";
+                    result["error"] = "Invalid WISI EPG action";
+                } else {
+                    const std::string id = payload["id"].asString();
+                    const std::string action = payload["action"].asString();
+                    auto& outputs = configManager.config.epgUdpOutputs;
+                    auto it = std::find_if(outputs.begin(), outputs.end(),
+                        [&](const EpgUdpOutputConfig& o) { return o.id == id; });
+                    if (it == outputs.end()) {
+                        res.result(http::status::not_found);
+                        result["result"] = "error";
+                        result["error"] = "WISI EPG output not found";
+                    } else if (action != "start" && action != "stop" &&
+                               (action != "autostart" || !payload["auto_start"].isBool())) {
+                        res.result(http::status::bad_request);
+                        result["result"] = "error";
+                        result["error"] = "Expected start, stop or autostart with boolean auto_start";
+                    } else {
+                        const bool previousEnabled = it->enabled;
+                        const bool previousAutoStart = it->autoStart;
+                        if (action == "start") it->enabled = true;
+                        else if (action == "stop") it->enabled = false;
+                        else it->autoStart = payload["auto_start"].asBool();
+                        if (!configManager.save()) {
+                            it->enabled = previousEnabled;
+                            it->autoStart = previousAutoStart;
+                            res.result(http::status::internal_server_error);
+                            result["result"] = "error";
+                            result["error"] = "Cannot save WISI EPG state";
+                        } else {
+                            if (action != "autostart")
+                                streamManager.configureEpgUdpOutputs();
+                            Json::Value current(Json::arrayValue);
+                            for (const auto& output : outputs)
+                                current.append(output.toJson());
+                            result["result"] = "ok";
+                            result["status"]["outputs"] = std::move(current);
+                        }
+                    }
+                }
+                Json::StreamWriterBuilder writer;
+                writer["indentation"] = "";
+                res.body() = Json::writeString(writer, result);
             } else if (target == "/api/epg-udp/save") {
                 res.set(http::field::content_type, "application/json");
                 Json::Value result(Json::objectValue), payload;

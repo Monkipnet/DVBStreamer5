@@ -207,7 +207,8 @@ struct EpgUdpServiceConfig {
 struct EpgUdpOutputConfig {
     std::string id;
     std::string name;
-    bool enabled = false;
+    bool enabled = false;  // runtime EIT UDP state
+    bool autoStart = false; // restart policy independent of manual start/stop
     std::string outputHost = "239.255.40.1";
     int outputPort = 5002;
     std::string interfaceAddress;

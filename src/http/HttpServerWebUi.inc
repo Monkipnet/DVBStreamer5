@@ -901,6 +901,11 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
 .wisi-epg-tile .title{overflow-wrap:anywhere}
 .wisi-epg-tile .info{min-width:0}
 .wisi-epg-tile .info-row span{overflow-wrap:anywhere}
+.wisi-epg-tile .controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.wisi-epg-tile .controls .wisi-epg-auto-start{display:inline-flex;align-items:center;
+  gap:6px;font-size:.75rem;white-space:nowrap;cursor:pointer;user-select:none}
+.wisi-epg-tile .controls .wisi-epg-auto-start input{margin:0;accent-color:#31b77a}
+.wisi-epg-tile .controls .wisi-epg-auto-start input:focus-visible{outline:2px solid #59b7ff;outline-offset:2px}
 .wisi-epg-channel-list{display:grid;gap:8px;max-height:54vh;overflow:auto;margin:10px 0}
 .wisi-epg-channel-row{display:flex;align-items:center;gap:12px;justify-content:space-between;
   padding:10px;border:1px solid rgba(125,209,255,.2);border-radius:9px;min-width:0;flex-wrap:wrap}
@@ -4974,6 +4979,7 @@ function wisiEpgSync() {
     return {
       id,name:get('name')?.value.trim()||'',
       enabled:!!get('enabled')?.checked,
+      auto_start:old.get(id)?.auto_start ?? !!old.get(id)?.enabled,
       output_host:get('host')?.value.trim()||'',
       output_port:Number(get('port')?.value||0),
       interface_address:get('iface')?.value.trim()||'',
@@ -5044,7 +5050,7 @@ function wisiEpgAdd() {
   wisiEpgSync();
   if(wisiEpgUdpOutputs.length>=8)return;
   wisiEpgUdpOutputs.push({
-    id:'wisi-epg-'+Date.now().toString(36),name:'WISI EPG',enabled:false,
+    id:'wisi-epg-'+Date.now().toString(36),name:'WISI EPG',enabled:false,auto_start:false,
     output_host:'239.255.40.1',output_port:5002,interface_address:'',
     mode:'actual',services:[]
   });
@@ -5340,7 +5346,7 @@ async function wisiEpgDeleteChannel(outputId,index) {
 }
 function wisiEpgSummary(outputs) {
   return (outputs||[]).map(o=>({
-    id:o.id,name:o.name,enabled:!!o.enabled,
+    id:o.id,name:o.name,enabled:!!o.enabled,auto_start:!!o.auto_start,
     output_host:o.output_host,output_port:o.output_port,
     interface_address:o.interface_address,mode:o.mode,
     channel_count:(o.services||[]).length
@@ -5773,7 +5779,7 @@ function tilesStructureSignature() {
     streams: (state.streams || []).map(streamTileStructureSignature),
     // WISI virtual tiles are independent of stream counts and media actions.
     wisi_epg: (state.epg_udp_outputs || []).map(o=>[
-      o.id,o.name,o.enabled,o.output_host,o.output_port,
+      o.id,o.name,o.enabled,o.auto_start,o.output_host,o.output_port,
       o.interface_address,o.mode,o.channel_count])
   });
 }
@@ -6899,6 +6905,31 @@ function updateLiveTiles() {
   updateInputSubgroupCounts(tiles);
   applyTileSearch();
 }
+// These controls act on WISI EIT UDP outputs, never media stream actions.
+const wisiEpgPendingActions = new Set();
+async function wisiEpgTileAction(outputId, action, autoStart=null, control=null) {
+  if (wisiEpgPendingActions.has(outputId)) return;
+  wisiEpgPendingActions.add(outputId);
+  if(control) control.disabled=true;
+  try {
+    const result=await fetchJson('/api/epg-udp/action',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:outputId,action,auto_start:autoStart})
+    });
+    if(result.result!=='ok') throw Error(result.error||'WISI EPG action failed');
+    if(Array.isArray(result.status?.outputs)){
+      wisiEpgUdpOutputs=result.status.outputs;
+      state.epg_udp_outputs=wisiEpgSummary(wisiEpgUdpOutputs);
+    }
+    render(true);
+  } catch(error) {
+    if(action==='autostart'&&control)control.checked=!autoStart;
+    uiError(error?.message||error);
+  } finally {
+    wisiEpgPendingActions.delete(outputId);
+    if(control)control.disabled=false;
+  }
+}
 function renderWisiEpgTiles(tiles) {
   const outputs=Array.isArray(state.epg_udp_outputs)?state.epg_udp_outputs:[];
   if(!outputs.length)return;
@@ -6918,15 +6949,16 @@ function renderWisiEpgTiles(tiles) {
     if(!out||!out.id)continue;
     const tile=document.createElement('div');
     const channels=Math.max(0,Number(out.channel_count)||0);
-    const active=!!out.enabled&&channels>0;
+    const running=!!out.enabled;
+    const active=running&&channels>0;
     tile.className='tile wisi-epg-tile'+(active?' active':'');
     tile.dataset.wisiOutputId=String(out.id);
     tile.dataset.wisiOutputName=String(out.name||out.id);
     tile.dataset.wisiOutputEndpoint=String(out.output_host||'')+':'+Number(out.output_port||0);
     tile.dataset.wisiOutputMode=String(out.mode||'actual');
-    const status=!out.enabled?text('Выключено','Disabled','Isključeno','Deaktiviert'):
+    const status=!running?text('Остановлено','Stopped','Zaustavljeno','Gestoppt'):
       !channels?text('Ожидание каналов','Awaiting channels','Čeka kanale','Wartet auf Kanäle'):
-      text('Настроено','Configured','Konfigurirano','Konfiguriert');
+      text('Запущено','Running','Pokrenuto','Gestartet');
     tile.innerHTML=
       '<div class="top"><div class="tile-heading"><div class="title">'+
       escapeHtmlValue(out.name||out.id)+'</div>'+
@@ -6942,8 +6974,21 @@ function renderWisiEpgTiles(tiles) {
       '</strong><span>'+escapeHtmlValue(out.interface_address||'Auto')+'</span></div>'+
       '<div class="info-row"><strong>'+text('Каналов EPG','EPG channels','EPG kanali','EPG-Kanäle')+
       '</strong><span>'+channels+'</span></div>'+
-      '</div><div class="controls"><button type="button" class="button-secondary" data-wisi-edit>'+
-      text('Редактировать','Edit','Uredi','Bearbeiten')+'</button></div>';
+      '</div><div class="controls">'+
+      '<button type="button" data-wisi-toggle class="'+(running?'stop-button':'start-button')+'">'+
+      (running?text('Стоп','Stop','Zaustavi','Stopp'):text('Старт','Start','Pokreni','Start'))+'</button>'+
+      '<button type="button" data-wisi-edit>'+
+      text('Ред.','Edit','Uredi','Bearb.')+'</button>'+
+      '<label class="wisi-epg-auto-start"><input type="checkbox" data-wisi-auto-start '+
+      (out.auto_start?'checked':'')+'>'+
+      text('Автостарт','Autostart','Automatsko pokretanje','Autostart')+
+      '</label></div>';
+    tile.querySelector('[data-wisi-toggle]').addEventListener('click',event=>{
+      void wisiEpgTileAction(String(out.id),running?'stop':'start',null,event.currentTarget);
+    });
+    tile.querySelector('[data-wisi-auto-start]').addEventListener('change',event=>{
+      void wisiEpgTileAction(String(out.id),'autostart',event.currentTarget.checked,event.currentTarget);
+    });
     tile.querySelector('[data-wisi-edit]').addEventListener('click',()=>{
       void wisiEpgOpenTileEditor(String(out.id));
     });

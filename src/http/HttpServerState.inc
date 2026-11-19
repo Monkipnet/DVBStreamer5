@@ -1144,6 +1144,7 @@ std::string HttpServer::currentState() {
         tile["id"] = output.id;
         tile["name"] = output.name;
         tile["enabled"] = output.enabled;
+        tile["auto_start"] = output.autoStart;
         tile["output_host"] = output.outputHost;
         tile["output_port"] = output.outputPort;
         tile["interface_address"] = output.interfaceAddress;
