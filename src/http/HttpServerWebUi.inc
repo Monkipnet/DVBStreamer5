@@ -5026,6 +5026,7 @@ function wisiEpgSync() {
       output_port:Number(get('port')?.value||0),
       interface_address:get('iface')?.value.trim()||'',
       mode:get('mode')?.value||'actual',
+      bitrate_kbps:Number(get('bitrate')?.value||3000),
       services:old.get(id)?.services||[]
     };
   });
@@ -5057,6 +5058,10 @@ function wisiEpgRender() {
       '<select data-wisi-field="mode">'+
       '<option value="actual" '+(output.mode==='actual'?'selected':'')+'>Actual (0x4E/0x50)</option>'+
       '<option value="barker" '+(output.mode==='barker'?'selected':'')+'>Barker / Other (0x4F/0x60)</option></select></div>'+
+      '<div class="form-row"><label>'+text('Постоянный битрейт TS, кбит/с',
+       'Constant TS bitrate, kbps','Stalna brzina TS-a, kb/s','Konstante TS-Bitrate, kbit/s')+'</label>'+
+      '<input type="number" min="512" max="12000" step="1" data-wisi-field="bitrate" value="'+
+       Number(output.bitrate_kbps||3000)+'"/></div>'+
       '</div>'+
       '<small class="field-help">'+text(
       'Каналов: ','Channels: ','Kanala: ','Kanäle: ')+Number((output.services||[]).length)+'. '+
@@ -5094,7 +5099,7 @@ function wisiEpgAdd() {
   wisiEpgUdpOutputs.push({
     id:'wisi-epg-'+Date.now().toString(36),name:'WISI EPG',enabled:false,auto_start:false,
     output_host:'239.255.40.1',output_port:5002,interface_address:'',
-    mode:'actual',services:[]
+    mode:'actual',bitrate_kbps:3000,services:[]
   });
   wisiEpgRender();
 }
@@ -5391,6 +5396,7 @@ function wisiEpgSummary(outputs) {
     id:o.id,name:o.name,enabled:!!o.enabled,auto_start:!!o.auto_start,
     output_host:o.output_host,output_port:o.output_port,
     interface_address:o.interface_address,mode:o.mode,
+    bitrate_kbps:o.bitrate_kbps,
     channel_count:(o.services||[]).length
   }));
 }
@@ -5408,11 +5414,12 @@ async function wisiEpgCommitOutputs(outputs) {
 async function wisiEpgSave() {
   wisiEpgSync();
   if(wisiEpgUdpOutputs.some(o=>!o.output_host ||
-      o.output_port<1 || o.output_port>65535 || !o.name.trim())) {
-    uiError(wisiText('Укажите имя, IP назначения и корректный UDP-порт.',
-      'Enter a name, destination IP and valid UDP port.',
-      'Unesite naziv, odredišnu IP adresu i ispravan UDP port.',
-      'Name, Ziel-IP und gültigen UDP-Port angeben.'));
+      o.output_port<1 || o.output_port>65535 || !o.name.trim() ||
+      !Number.isInteger(o.bitrate_kbps) || o.bitrate_kbps<512 || o.bitrate_kbps>12000)) {
+    uiError(wisiText('Укажите имя, IP, UDP-порт и битрейт 512–12000 кбит/с.',
+      'Enter a name, IP, UDP port and bitrate 512–12000 kbps.',
+      'Unesite naziv, IP, UDP port i brzinu 512–12000 kb/s.',
+      'Name, IP, UDP-Port und Bitrate 512–12000 kbit/s angeben.'));
     return;
   }
   try {
@@ -5822,7 +5829,7 @@ function tilesStructureSignature() {
     // WISI virtual tiles are independent of stream counts and media actions.
     wisi_epg: (state.epg_udp_outputs || []).map(o=>[
       o.id,o.name,o.enabled,o.auto_start,o.output_host,o.output_port,
-      o.interface_address,o.mode,o.channel_count])
+      o.interface_address,o.mode,o.bitrate_kbps,o.channel_count])
   });
 }
 function streamDvbCardKey(stream) {
@@ -7118,6 +7125,8 @@ function renderWisiEpgTiles(tiles) {
       '</strong><span>'+escapeHtmlValue(out.interface_address||'Auto')+'</span></div>'+
       '<div class="info-row"><strong>'+text('Каналов EPG','EPG channels','EPG kanali','EPG-Kanäle')+
       '</strong><span>'+channels+'</span></div>'+
+      '<div class="info-row"><strong>'+text('Битрейт CBR','CBR bitrate','CBR brzina','CBR-Bitrate')+
+      '</strong><span>'+Number(out.bitrate_kbps||3000)+' kbps</span></div>'+
       '</div><div class="controls">'+
       '<button type="button" data-wisi-toggle class="'+(running?'stop-button':'start-button')+'">'+
       (running?text('Стоп','Stop','Zaustavi','Stopp'):text('Старт','Start','Pokreni','Start'))+'</button>'+

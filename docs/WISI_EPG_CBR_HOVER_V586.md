@@ -1,4 +1,4 @@
-# DVBStreamer5 V10.8.586 — WISI EPG CBR and hover preview
+# DVBStreamer5 V10.8.587 — WISI EPG CBR and hover preview
 
 ## RU — постоянный битрейт WISI
 

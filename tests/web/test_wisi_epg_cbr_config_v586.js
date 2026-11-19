@@ -25,5 +25,7 @@ assert.match(sender,/wake_\.wait_until\(lock, deadline/);
 assert.match(sender,/Packet packet = nullPacket\(\)/);
 assert.match(sender,/target->pending\.size\(\) \+ packets\.size\(\) >\s*kMaxBufferedPackets/);
 assert.match(sender,/target->continuity\+\+ & 0x0fU/);
-assert.match(read('src/AppVersion.h'),/kProgramVersion = "10\.8\.586"/);
+const version=read('src/AppVersion.h');
+const current=version.match(/kProgramVersion = "10\.8\.(\d+)"/);
+assert.ok(current&&Number(current[1])>=586,'Requires at least V586');
 console.log('PASS V586 WISI EPG UDP CBR pacing, queue bounds, four locales');

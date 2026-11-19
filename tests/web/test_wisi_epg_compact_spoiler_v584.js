@@ -35,5 +35,6 @@ assert.match(filter,/for\(const group of tiles\.querySelectorAll\('\.wisi-epg-gr
 assert.match(filter,/if\(filtering&&hasMatches\)group\.open=true/);
 assert.match(filter,/group\.open=inputSubgroupOpen\['wisi-epg'\]!==false/);
 const version=fs.readFileSync('src/AppVersion.h','utf8');
-assert.match(version,/kProgramVersion = "10\.8\.585"/);
+const current=version.match(/kProgramVersion = "10\.8\.(\d+)"/);
+assert.ok(current&&Number(current[1])>=585,'Requires at least V585');
 console.log('PASS V584: compact 184px WISI tiles, bottom controls, centered spoiler arrow, search and persistence');
