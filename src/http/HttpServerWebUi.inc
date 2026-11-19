@@ -895,17 +895,49 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
 .wisi-config-output{border:1px solid rgba(72,96,121,.65);border-radius:9px;padding:10px;margin:8px 0}
 .wisi-config-output>summary{cursor:pointer;padding:5px;overflow-wrap:anywhere}
 .wisi-config-output .field-help{display:block;margin:8px 0}
-.wisi-epg-group{margin-top:10px}
-.wisi-epg-tiles{padding:10px 12px}
-.wisi-epg-tile{min-width:0}
+/* V584: WISI EPG spoiler behaves like DVB transponder accordion. */
+.wisi-epg-group{margin-top:10px;overflow:hidden}
+.wisi-epg-group>summary{list-style:none;display:grid;
+  grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);
+  align-items:center;gap:8px;min-height:52px;padding:5px 10px;
+  cursor:pointer;user-select:none;color:#d8e9f9}
+.wisi-epg-group>summary::-webkit-details-marker{display:none}
+.wisi-epg-group>summary::marker{content:""}
+.wisi-epg-group>summary:hover{background:rgba(57,145,227,.08)}
+.wisi-epg-group>summary:focus-visible{outline:2px solid #5ebcff;outline-offset:-2px}
+.wisi-epg-title{min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;font-size:.78rem}
+.wisi-epg-spoiler-space{grid-column:2;justify-self:center;display:flex;
+  align-items:center;justify-content:center;width:52px;min-height:40px;
+  color:#7dd1ff;pointer-events:none;user-select:none}
+.wisi-epg-spoiler-space:after{content:"▼";font-size:26px;line-height:1}
+.wisi-epg-group[open] .wisi-epg-spoiler-space:after{content:"▲"}
+.wisi-epg-count{grid-column:3;justify-self:end;color:#9fe7b3;
+  font-size:.72rem;font-variant-numeric:tabular-nums}
+.wisi-epg-tiles{padding:10px 12px;border-top:1px solid rgba(255,255,255,.07)}
+/* Unlike 252px media cards, WISI EPG cards use their own compact geometry. */
+.wisi-epg-tile{min-width:0;height:184px;min-height:184px;
+  padding:7px 10px 8px 14px;gap:3px}
 .wisi-epg-tile .title{overflow-wrap:anywhere}
-.wisi-epg-tile .info{min-width:0}
-.wisi-epg-tile .info-row span{overflow-wrap:anywhere}
-.wisi-epg-tile .controls{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
-.wisi-epg-tile .controls .wisi-epg-auto-start{display:inline-flex;align-items:center;
-  gap:6px;font-size:.75rem;white-space:nowrap;cursor:pointer;user-select:none}
-.wisi-epg-tile .controls .wisi-epg-auto-start input{margin:0;accent-color:#31b77a}
+.wisi-epg-tile .info{min-width:0;gap:2px}
+.wisi-epg-tile .info-row{line-height:13px}
+.wisi-epg-tile .info-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wisi-epg-tile .controls{margin-top:auto;flex:0 0 auto;display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;align-items:center}
+.wisi-epg-tile .controls button{min-width:0;min-height:25px}
+.wisi-epg-tile .controls .wisi-epg-auto-start{grid-column:1/-1;display:inline-flex;
+  align-items:center;gap:6px;min-width:0;font-size:.7rem;
+  white-space:nowrap;cursor:pointer;user-select:none}
+.wisi-epg-tile .controls .wisi-epg-auto-start input{margin:0;accent-color:#31b77a;flex:none}
 .wisi-epg-tile .controls .wisi-epg-auto-start input:focus-visible{outline:2px solid #59b7ff;outline-offset:2px}
+@media(max-width:560px){
+  .wisi-epg-group>summary{grid-template-columns:minmax(0,1fr) 42px minmax(0,1fr);gap:4px;padding:6px}
+  .wisi-epg-spoiler-space{width:40px}
+  .wisi-epg-tiles{padding:8px}
+}
+html[data-dashboard-theme="light"] .wisi-epg-group>summary{color:#253c55}
+html[data-dashboard-theme="light"] .wisi-epg-group>summary:hover{background:#e9f4ff}
+html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 .wisi-epg-channel-list{display:grid;gap:8px;max-height:54vh;overflow:auto;margin:10px 0}
 .wisi-epg-channel-row{display:flex;align-items:center;gap:12px;justify-content:space-between;
   padding:10px;border:1px solid rgba(125,209,255,.2);border-radius:9px;min-width:0;flex-wrap:wrap}
@@ -6880,8 +6912,12 @@ function applyTileSearch() {
     epgTile.hidden=!matched;
     if(matched)++visible;
   }
-  for(const section of tiles.querySelectorAll('.wisi-epg-group'))
-    section.hidden=filtering&&!section.querySelector('.wisi-epg-tile:not([hidden])');
+  for(const group of tiles.querySelectorAll('.wisi-epg-group')){
+    const hasMatches=!!group.querySelector('.wisi-epg-tile:not([hidden])');
+    group.hidden=filtering&&!hasMatches;
+    if(filtering&&hasMatches)group.open=true;
+    else if(!filtering)group.open=inputSubgroupOpen['wisi-epg']!==false;
+  }
   if(empty){
     empty.hidden=!filtering||visible>0;
     if(!empty.hidden)empty.textContent=language==='ru'?'Каналы не найдены':
@@ -6934,17 +6970,33 @@ function renderWisiEpgTiles(tiles) {
   const outputs=Array.isArray(state.epg_udp_outputs)?state.epg_udp_outputs:[];
   if(!outputs.length)return;
   const text=wisiText;
-  const section=document.createElement('section');
-  section.className='non-dvb-tile-group wisi-epg-group';
-  const heading=document.createElement('h2');
-  heading.className='non-dvb-tile-heading';
-  heading.textContent=text('WISI EPG — отдельные плитки',
-    'WISI EPG — separate tiles','WISI EPG — zasebne pločice',
-    'WISI EPG — separate Kacheln')+' ('+outputs.length+')';
+  const group=document.createElement('details');
+  group.className='non-dvb-tile-group wisi-epg-group';
+  group.dataset.subgroupKey='wisi-epg';
+  group.open=inputSubgroupOpen['wisi-epg']!==false;
+  const summary=document.createElement('summary');
+  const heading=document.createElement('strong');
+  heading.className='wisi-epg-title';
+  heading.textContent='WISI EPG';
+  const arrow=document.createElement('span');
+  arrow.className='wisi-epg-spoiler-space';
+  arrow.setAttribute('aria-hidden','true');
+  const count=document.createElement('span');
+  count.className='wisi-epg-count';
+  count.textContent=outputs.filter(o=>o&&o.enabled&&Number(o.channel_count)>0).length+'/'+
+    outputs.length;
+  count.title=text('Активных EPG-выходов','Active EPG outputs',
+    'Aktivni EPG izlazi','Aktive EPG-Ausgänge');
+  summary.append(heading,arrow,count);
+  group.appendChild(summary);
+  group.addEventListener('toggle',()=>{
+    if(tileSearchQuery)return;
+    rememberInputSubgroup('wisi-epg',group.open);
+  });
   const grid=document.createElement('div');
   grid.className='tile-grid wisi-epg-tiles';
-  section.append(heading,grid);
-  tiles.appendChild(section);
+  group.appendChild(grid);
+  tiles.appendChild(group);
   for(const out of outputs){
     if(!out||!out.id)continue;
     const tile=document.createElement('div');

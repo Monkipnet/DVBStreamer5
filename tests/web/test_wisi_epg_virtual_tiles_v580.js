@@ -38,7 +38,8 @@ assert.doesNotMatch(ui,/!o\.services\.length/);
 assert.match(ui,/Каналы добавляются после сохранения через/);
 assert.match(ui,/EPG-Kanal bearbeiten/);
 assert.match(ui,/Dodaj kanal/);
-assert.match(ui,/WISI EPG — отдельные плитки/);
+assert.match(ui,/heading\.textContent='WISI EPG'/);
+assert.doesNotMatch(ui,/WISI EPG — отдельные плитки/);
 
 // Emulate a configuration-menu save. A preexisting 2-service output is
 // edited without channel fields in the menu; no channels may be lost.
