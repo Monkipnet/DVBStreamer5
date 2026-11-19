@@ -305,33 +305,46 @@ void ExternalXmltvManager::configure(
     const std::vector<XmltvSourceConfig>& sources,
     const std::vector<StreamConfig>& streams,
     const std::vector<EpgUdpOutputConfig>& epgOutputs) {
-    // Determine only XMLTV channels referenced by EPG-enabled tiles.
-    // Auto-source lookup can search any configured provider, so keep a
-    // per-channel wanted set; individual providers still cap their own data.
-    std::set<std::string> wanted;
+    // Retain events only for channel+provider mappings that are actually
+    // referenced. A tile with "Any source" intentionally retains its channel
+    // across enabled providers, preserving the existing lookup behaviour.
+    std::map<std::string, std::set<std::string>> wantedBySource;
+    for (const auto& source : sources) {
+        if (!source.id.empty()) wantedBySource.try_emplace(source.id);
+    }
     for (const auto& stream : streams) {
-        if (stream.epgEnabled && stream.epgMode != "dvb" &&
-            !stream.xmltvChannelId.empty())
-            wanted.insert(stream.xmltvChannelId);
+        if (!stream.epgEnabled || stream.epgMode == "dvb" ||
+            stream.xmltvChannelId.empty()) continue;
+        if (stream.xmltvSourceId.empty()) {
+            for (const auto& source : sources)
+                if (source.enabled && !source.id.empty())
+                    wantedBySource[source.id].insert(stream.xmltvChannelId);
+        } else if (wantedBySource.count(stream.xmltvSourceId)) {
+            wantedBySource[stream.xmltvSourceId].insert(stream.xmltvChannelId);
+        }
     }
     for (const auto& output : epgOutputs)
         if (output.enabled)
             for (const auto& service : output.services)
                 if (service.streamId.empty() && !service.xmltvSourceId.empty() &&
-                    !service.xmltvChannelId.empty())
-                    wanted.insert(service.xmltvChannelId);
+                    !service.xmltvChannelId.empty() &&
+                    wantedBySource.count(service.xmltvSourceId))
+                    wantedBySource[service.xmltvSourceId].insert(service.xmltvChannelId);
     std::lock_guard<std::mutex> lock(mutex_);
-    const bool selectionChanged = wanted != wantedChannels_;
-    wantedChannels_.swap(wanted);
+    auto oldWanted = std::move(wantedChannelsBySource_);
+    wantedChannelsBySource_ = std::move(wantedBySource);
     std::map<std::string, Source> previous;
     previous.swap(sources_);
     for (const auto& cfg : sources) {
         if (cfg.id.empty() || sources_.size() >= 32) continue;
+        const auto& wanted = wantedChannelsBySource_.at(cfg.id);
+        const auto oldSelection = oldWanted.find(cfg.id);
+        const bool selectionChanged = oldSelection == oldWanted.end() ||
+            oldSelection->second != wanted;
         Source data;
         const auto it = previous.find(cfg.id);
         if (it != previous.end() && it->second.settings.url == cfg.url) {
-            // Move the old guide instead of duplicating every event and
-            // description when a tile or XMLTV setting is saved.
+            // Move existing EPG instead of copying every title/description.
             data = std::move(it->second);
             if (data.settings.refreshTime != cfg.refreshTime ||
                 data.settings.refreshPeriod != cfg.refreshPeriod ||
@@ -339,17 +352,14 @@ void ExternalXmltvManager::configure(
                 data.lastSuccessDay = -1;
             for (auto programme = data.programmes.begin();
                  programme != data.programmes.end();) {
-                if (!wantedChannels_.count(programme->first))
+                if (!wanted.count(programme->first))
                     programme = data.programmes.erase(programme);
                 else ++programme;
             }
-            // Newly assigned EPG channels may not be in the old filtered
-            // disk cache. Queue one complete streaming refresh to populate.
+            // Refresh only the source whose assigned channels changed.
             if (selectionChanged && cfg.enabled) data.queued = true;
         } else {
-            // Restore only the selected subset from the compressed disk
-            // cache; metadata still lists all XMLTV channel names.
-            (void)restoreCache(cfg, data, wantedChannels_);
+            (void)restoreCache(cfg, data, wanted);
             data.queued = cfg.enabled;
         }
         data.settings = cfg;
@@ -502,14 +512,24 @@ bool ExternalXmltvManager::parse(
                 }
             } else if (tag == "programme") {
                 programmeId = xmlProperty(reader, "channel");
-                const std::string start = xmlProperty(reader, "start");
-                const std::string stop = xmlProperty(reader, "stop");
                 event = {};
-                inProgramme = !programmeId.empty() &&
-                    programmeId.size() <= 256 &&
-                    xmltvTime(start, event.start) &&
-                    xmltvTime(stop, event.stop) &&
-                    event.stop > event.start;
+                // Keep the channel ID selectable even for XMLTV sources with
+                // <programme> entries but no separate <channel> metadata.
+                if (!programmeId.empty() && programmeId.size() <= 256 &&
+                    data.channels.size() < kMaxChannels)
+                    data.channels.emplace(programmeId, programmeId);
+                // Do not read XMLTV timestamps, titles or descriptions for
+                // unassigned channels. Large feeds can have millions of
+                // programmes, but only a few are relevant to IPTV/WISI.
+                inProgramme = wanted.count(programmeId) != 0;
+                if (inProgramme) {
+                    const std::string start = xmlProperty(reader, "start");
+                    const std::string stop = xmlProperty(reader, "stop");
+                    inProgramme = xmltvTime(start, event.start) &&
+                        xmltvTime(stop, event.stop) &&
+                        event.stop > event.start &&
+                        event.stop >= startWindow && event.start <= endWindow;
+                }
             } else if (tag == "display-name" && inChannel && channelName.empty()) {
                 channelName = xmlValue(reader);
             } else if (tag == "title" && inProgramme && event.title.empty()) {
@@ -533,22 +553,13 @@ bool ExternalXmltvManager::parse(
                 }
                 if (inProgramme && !event.title.empty() &&
                     event.stop >= startWindow && event.start <= endWindow) {
-                    // Some providers omit <channel> definitions entirely.
-                    // Keep the programme ID selectable even if EPG is capped.
-                    if (data.channels.size() < kMaxChannels &&
-                        !data.channels.count(programmeId))
-                        data.channels.emplace(programmeId, programmeId);
-                    // Keep the provider's channel catalog but not programme
-                    // objects for thousands of unused IPTV channels.
-                    if (wanted.count(programmeId)) {
-                        auto& programmes = data.programmes[programmeId];
-                        if (totalEvents < kMaxEvents &&
-                            programmes.size() < kMaxEventsPerChannel) {
-                            programmes.push_back(std::move(event));
-                            ++totalEvents;
-                        } else {
-                            ++data.truncatedEvents;
-                        }
+                    auto& programmes = data.programmes[programmeId];
+                    if (totalEvents < kMaxEvents &&
+                        programmes.size() < kMaxEventsPerChannel) {
+                        programmes.push_back(std::move(event));
+                        ++totalEvents;
+                    } else {
+                        ++data.truncatedEvents;
                     }
                 }
                 inProgramme = false;
@@ -569,7 +580,7 @@ bool ExternalXmltvManager::parse(
         if (error.empty()) error = "Malformed XMLTV XML document";
         return false;
     }
-    if (totalChannels == 0 && totalEvents == 0) {
+    if (data.channels.empty() && totalEvents == 0) {
         error = "XMLTV has no channels or programmes";
         return false;
     }
@@ -630,7 +641,9 @@ void ExternalXmltvManager::run() {
         std::set<std::string> selectedChannels;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            selectedChannels = wantedChannels_;
+            const auto wanted = wantedChannelsBySource_.find(selected.id);
+            if (wanted != wantedChannelsBySource_.end())
+                selectedChannels = wanted->second;
         }
         std::unique_ptr<std::FILE, decltype(&std::fclose)> temp(
             std::tmpfile(), &std::fclose);
@@ -663,13 +676,17 @@ void ExternalXmltvManager::run() {
             if (success) {
                 // Selection may change while the streaming download runs.
                 // Never publish events that are no longer referenced.
+                const auto wanted = wantedChannelsBySource_.find(selected.id);
+                const std::set<std::string> emptyWanted;
+                const auto& active = wanted == wantedChannelsBySource_.end()
+                    ? emptyWanted : wanted->second;
                 for (auto itEvent = loaded.programmes.begin();
                      itEvent != loaded.programmes.end();) {
-                    if (!wantedChannels_.count(itEvent->first))
+                    if (!active.count(itEvent->first))
                         itEvent = loaded.programmes.erase(itEvent);
                     else ++itEvent;
                 }
-                if (wantedChannels_ != selectedChannels && source.settings.enabled)
+                if (active != selectedChannels && source.settings.enabled)
                     source.queued = true;
                 source.channels.swap(loaded.channels);
                 source.programmes.swap(loaded.programmes);

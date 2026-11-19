@@ -4,7 +4,18 @@ from pathlib import Path
 s = Path("src/ExternalXmltv.cpp").read_text()
 h = Path("src/ExternalXmltv.h").read_text()
 m = Path("src/StreamManager.cpp").read_text()
-assert 'wantedChannels_' in h
+assert 'wantedChannelsBySource_' in h
+assert 'std::map<std::string, std::set<std::string>> wantedBySource;' in s
+assert 'wantedBySource[source.id].insert(stream.xmltvChannelId)' in s
+assert 'wantedBySource[stream.xmltvSourceId].insert(stream.xmltvChannelId)' in s
+assert 'wantedBySource[service.xmltvSourceId].insert(service.xmltvChannelId)' in s
+assert 'auto oldWanted = std::move(wantedChannelsBySource_);' in s
+assert 'const auto& wanted = wantedChannelsBySource_.at(cfg.id);' in s
+assert 'const auto wanted = wantedChannelsBySource_.find(selected.id);' in s
+assert 'inProgramme = wanted.count(programmeId) != 0;' in s
+assert 'if (inProgramme) {' in s
+assert 'if (data.channels.empty() && totalEvents == 0)' in s
+assert 'wantedChannels_' not in h
 assert 'stream.epgEnabled && stream.epgMode != "dvb"' in s
 assert 'wanted.count(programmeId)' in s
 assert 'wanted.find(channel) == wanted.end()' in s

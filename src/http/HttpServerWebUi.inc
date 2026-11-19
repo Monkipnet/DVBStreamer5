@@ -4898,24 +4898,6 @@ function syncXmltvModalFields() {
     if (enabled) source.enabled = enabled.checked;
   });
 }
-// V569: separate localhost XMLTV plugin; no scraper or new dependencies in the core.
-function addLicensedYandexXmltvSource() {
-  syncXmltvModalFields();
-  const url='http://127.0.0.1:19785/epg.xml';
-  if (xmltvModalSources.some(src=>src.url===url)) {
-    uiError(language==='ru'?'Плагин Яндекс ТВ уже добавлен':
-      language==='hr'?'Dodatak Yandex TV je već dodan':
-      'Yandex TV plugin already added');
-    return;
-  }
-  xmltvModalSources.push({
-    id:'xmltv-yandex-'+Date.now().toString(36),
-    name:'Yandex TV plugin', url, enabled:false,
-    refresh_period:'daily', refresh_time:'03:00', refresh_weekday:1
-  });
-  renderXmltvModal();
-}
-
 function stopXmltvRefreshPolling() {
   ++xmltvRefreshPollToken;
   if (xmltvRefreshPollTimer !== null) clearTimeout(xmltvRefreshPollTimer);
@@ -4935,14 +4917,6 @@ function renderXmltvModal() {
     '</div><div class="modal-actions">' +
     '<button class="button-secondary" type="button" onclick="addXmltvSource()">' +
     uiBiText('+ Добавить XMLTV','Add XMLTV source') + '</button>' +
-    '<button class="button-secondary" type="button" onclick="addLicensedYandexXmltvSource()">' +
-    (language==='ru'?'+ Плагин Яндекс ТВ':language==='hr'?'+ Dodatak Yandex TV':
-      '+ Yandex TV plugin') + '</button>' +
-    '<small class="field-help">' +
-    (language==='ru'?'Отдельный сервис-плагин: установите epg-yandex-tv.service и настройте разрешённые страницы каналов. После этого включите добавленный XMLTV-источник галочкой.':
-     language==='hr'?'Zaseban dodatak: instalirajte epg-yandex-tv.service i konfigurirajte dopuštene kanale. Zatim uključite XMLTV izvor.':
-     'Separate service plugin: install epg-yandex-tv.service and configure permitted channel pages, then enable the XMLTV source.') +
-    '</small>' +
     '<button class="button-secondary" type="button" onclick="closeModal()">' +
     t('cancel') + '</button>' +
     '<button id="xmltvSaveButton" class="button-primary" type="button" onclick="saveXmltvSources()">' +
@@ -5084,8 +5058,11 @@ function wisiEpgRender() {
     '<button class="button-secondary" type="button" onclick="wisiEpgAdd()">+ '+text('Выход','Output','Izlaz','Ausgabe')+'</button>'+
     '<button class="button-secondary" type="button" onclick="closeModal()">'+t('cancel')+'</button>'+
     '<button class="button-primary" type="button" onclick="wisiEpgSave()">'+t('save')+'</button></div>');
-  for (const src of new Set(wisiEpgUdpOutputs.flatMap(o=>
-      (o.services||[]).filter(x=>!x.stream_id).map(x=>x.xmltv_source_id)).filter(Boolean)))
+  const activeSources=[...new Set(wisiEpgUdpOutputs.flatMap(o=>
+      (o.services||[]).filter(x=>!x.stream_id).map(x=>x.xmltv_source_id))
+      .filter(Boolean))];
+  // Other catalogs are fetched lazily on search / source switch.
+  for (const src of activeSources.slice(0,2))
     void wisiEpgLoadSource(src);
 }
 async function openWisiEpgUdpModal() {
@@ -5153,6 +5130,11 @@ function wisiEpgFilterExternal(searchInput) {
   const id=row.querySelector('[data-wisi-xmltv-channel]')?.value||'';
   const matches=row.querySelector('[data-wisi-xmltv-matches]');
   if(matches)matches.innerHTML=wisiEpgMatchOptions(source,searchInput.value,id);
+  // Load a source only when its search is used, limiting browser heap for
+  // installations configured with many XMLTV providers.
+  if(source && !wisiXmltvCatalogBySource.has(source) &&
+     !wisiXmltvRequests.has(source))
+    void wisiEpgLoadSource(source);
 }
 function wisiEpgChooseExternal(select) {
   const row=select?.closest('[data-wisi-external]');
@@ -5184,6 +5166,11 @@ async function wisiEpgLoadSource(sourceId, force=false) {
   }
   try {
     const data=await request;
+    // Keep at most two full channel catalogs in the browser at a time.
+    // The server retains only channel metadata and selected EPG events.
+    wisiXmltvCatalogBySource.delete(sourceId);
+    while(wisiXmltvCatalogBySource.size >= 2)
+      wisiXmltvCatalogBySource.delete(wisiXmltvCatalogBySource.keys().next().value);
     wisiXmltvCatalogBySource.set(sourceId,Array.isArray(data)?data:[]);
     wisiEpgUpdateMatches(sourceId);
   } catch(error) {

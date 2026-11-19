@@ -70,9 +70,10 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     std::map<std::string, Source> sources_;
-    // Only EPG programmes referenced by configured tiles are retained in RAM.
-    // Channel names are kept for the XMLTV channel selection UI.
-    std::set<std::string> wantedChannels_;
+    // Per-source programme retention: same XMLTV channel ID may exist in
+    // multiple providers; only the assigned provider needs the events.
+    // Channel metadata is retained for the source/channel picker.
+    std::map<std::string, std::set<std::string>> wantedChannelsBySource_;
     std::thread thread_;
     bool stop_ = false;
 };
