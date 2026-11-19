@@ -45,6 +45,7 @@ inline std::size_t maxRequestBodyBytes(const std::string& target,
     if(target.rfind("/api/upload-backup-file",0)==0)
         return panelAuthenticated?512U*1024U*1024U:4096U;
     if(target=="/api/config/import")return panelAuthenticated?16U*1024U*1024U:4096U;
+    if(target=="/api/tile-clipboard/paste")return panelAuthenticated?128U*1024U:4096U;
     if(target=="/api/tickers/import-docx")return panelAuthenticated?3U*1024U*1024U:4096U;
     return 1024U*1024U;
 }

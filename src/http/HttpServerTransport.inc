@@ -207,6 +207,7 @@ void HttpServer::handleSession(
             requestMethod=="POST" &&
             (requestPath.rfind("/api/upload-backup-file",0)==0 ||
              requestPath=="/api/config/import" ||
+             requestPath=="/api/tile-clipboard/paste" ||
              requestPath=="/api/tickers/import-docx");
         // Rate-limit Basic Auth attempts even when a large upload is
         // rejected before its body is read.
@@ -1218,6 +1219,27 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body() = Json::writeString(writer,
                         streamManager.epgUdpPreview(outputId));
                 }
+            } else if (target.rfind("/api/tile-clipboard/export?kind=", 0) == 0) {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                // Only an authenticated panel administrator may copy tiles.
+                if (apiKeyAttempt ||
+                    !(isAuthorized(req) || isPanelSessionAuthorized(req))) {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"result":"error","error":"Admin session required"})";
+                } else {
+                    const std::string query = target.substr(
+                        std::string("/api/tile-clipboard/export?kind=").size());
+                    const auto idPos = query.find("&id=");
+                    if (idPos == std::string::npos) {
+                        res.result(http::status::bad_request);
+                        res.body() = R"({"result":"error","error":"Invalid tile request"})";
+                    } else {
+                        const auto kind = query.substr(0, idPos);
+                        const auto id = urlDecode(query.substr(idPos + 4U));
+                        res.body() = handleTileClipboardExport(kind, id);
+                    }
+                }
             } else if (target == "/api/epg-udp/status") {
                 res.set(http::field::content_type, "application/json");
                 // Autostart-only updates must not restart active UDP senders.
@@ -1788,6 +1810,16 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 }
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer, result);
+            } else if (target == "/api/tile-clipboard/paste") {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                if (apiKeyAttempt ||
+                    !(isAuthorized(req) || isPanelSessionAuthorized(req))) {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"result":"error","error":"Admin session required"})";
+                } else {
+                    res.body() = handleTileClipboardPaste(req.body());
+                }
             } else if (target == "/api/config/export") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = handleConfigExport(req.body());

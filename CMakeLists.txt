@@ -489,6 +489,13 @@ target_link_libraries(dvbstreamer5_epg_udp_cbr_test PRIVATE
     dvbstreamer5_jsoncpp Threads::Threads)
 add_test(NAME epg_udp_cbr_wisi COMMAND dvbstreamer5_epg_udp_cbr_test)
 
+# V588: sanitized single-tile clipboard emulation, no production media devices.
+add_executable(dvbstreamer5_tile_clipboard_test tests/test_tile_clipboard_transfer_v588.cpp)
+target_include_directories(dvbstreamer5_tile_clipboard_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(dvbstreamer5_tile_clipboard_test PRIVATE dvbstreamer5_jsoncpp)
+add_test(NAME tile_clipboard_safe_transfer COMMAND dvbstreamer5_tile_clipboard_test)
+
 # V10.8.563: bounded, opt-in iCAM Newcamd grace with expiry regression tests.
 add_executable(dvbstreamer5_oscam_newcamd_grace_test
     tests/test_oscam_newcamd_grace.c)

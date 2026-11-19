@@ -1,5 +1,198 @@
 #include "ExternalConfigTransfer.h"
+#include "TileClipboardTransfer.h"
 #include "AstraLegacy44.h"
+
+// V588: server-side, single-tile copy. Never send full config or credentials.
+std::string HttpServer::handleTileClipboardExport(
+    const std::string& kind, const std::string& id) {
+    using namespace dvbstreamer5::http::tile_clipboard;
+    Json::Value result(Json::objectValue);
+    result["result"] = "error";
+    result["error"] = "Tile not found";
+    if (!id.empty() && id.size() <= 256U && kind == "stream") {
+        const auto it = std::find_if(configManager.config.streams.begin(),
+            configManager.config.streams.end(),
+            [&](const StreamConfig& stream) { return stream.id == id; });
+        if (it != configManager.config.streams.end()) {
+            result = envelope(kind, it->toJson());
+            result["result"] = "ok";
+        }
+    } else if (!id.empty() && id.size() <= 64U && kind == "wisi_epg") {
+        const auto it = std::find_if(configManager.config.epgUdpOutputs.begin(),
+            configManager.config.epgUdpOutputs.end(),
+            [&](const EpgUdpOutputConfig& output) { return output.id == id; });
+        if (it != configManager.config.epgUdpOutputs.end()) {
+            result = envelope(kind, it->toJson());
+            result["result"] = "ok";
+        }
+    }
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    return Json::writeString(writer, result);
+}
+
+// Paste never calls handleSaveConfig(): that generic path reconfigures *all*
+// WISI UDP workers and may restart existing media on unrelated settings.
+std::string HttpServer::handleTileClipboardPaste(const std::string& body) {
+    using namespace dvbstreamer5::http::tile_clipboard;
+    Json::Value reply(Json::objectValue);
+    const auto finish = [&reply]() {
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        return Json::writeString(writer, reply);
+    };
+    const auto reject = [&reply, &finish](const std::string& reason) {
+        reply["result"] = "error";
+        reply["error"] = reason;
+        return finish();
+    };
+    if (body.size() > 128U * 1024U)
+        return reject("Clipboard transfer too large");
+    Json::Value request;
+    Json::CharReaderBuilder reader;
+    std::string parseError;
+    std::istringstream input(body);
+    if (!Json::parseFromStream(reader, input, &request, &parseError) ||
+        !request.isObject() || !request["item"].isObject() ||
+        !isEnvelope(request["item"]))
+        return reject("Invalid DVBStreamer5 tile clipboard format");
+    const std::string action = request.get("action", "preview").asString();
+    if (action != "preview" && action != "apply")
+        return reject("Expected preview or apply");
+    const bool preview = action == "preview";
+    const auto& item = request["item"];
+    const std::string kind = item["kind"].asString();
+    Json::Value warnings(Json::arrayValue);
+    Json::Value safe = kind == "stream"
+        ? scrubStream(item["tile"], warnings) : scrubWisi(item["tile"], warnings);
+    if (!safe.isObject()) return reject("Invalid tile settings");
+    reply["kind"] = kind;
+    reply["preview"] = preview;
+    reply["warnings"] = warnings;
+    auto nextId = [&](const std::string& prefix, const auto& existing) {
+        const auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        for (unsigned i = 0; i < 1024U; ++i) {
+            const std::string candidate = prefix + std::to_string(stamp + i);
+            if (std::none_of(existing.begin(), existing.end(), [&](const auto& cfg) {
+                return cfg.id == candidate;
+            })) return candidate;
+        }
+        return std::string{};
+    };
+    if (kind == "stream") {
+        if (!safe["name"].isString() || !safe["input_uri"].isString() ||
+            safe["name"].asString().empty() ||
+            safe["name"].asString().size() > 128U ||
+            safe["input_uri"].asString().size() > 4096U ||
+            (safe.isMember("additional_outputs") &&
+             (!safe["additional_outputs"].isArray() ||
+              safe["additional_outputs"].size() > 16U)))
+            return reject("Invalid stream name, input or outputs");
+        StreamConfig stream = StreamConfig::fromJson(safe);
+        stream.autoStart = false;
+        stream.conditionalAccessClient.clear();
+        stream.interfaceAddress.clear();
+        stream.inputInterfaceAddress.clear();
+        stream.inputInterfaceAddressConfigured = false;
+        stream.xmltvSourceId.clear();
+        stream.streamAuthMode = "inherit";
+        const std::set<std::string> outputTypes = {
+            "udp-cbr", "udp-vbr", "rtp", "http", "hls",
+            "srt", "rtsp", "rtmp", "youtube"
+        };
+        const auto validOutput = [&](const std::string& type, int port) {
+            if (!outputTypes.count(type)) return false;
+            if (type == "http" || type == "hls" || type == "youtube") return true;
+            return port > 0 && port <= 65535;
+        };
+        if ((!stream.testPattern && stream.inputUri.empty()) ||
+            !validOutput(stream.outputType, stream.outputPort))
+            return reject("Invalid stream input or output");
+        for (auto& output : stream.additionalOutputs) {
+            output.interfaceAddress.clear();
+            output.srtPassphrase.clear();
+            output.srtStreamId.clear();
+            if (!validOutput(output.outputType, output.outputPort))
+                return reject("Unsupported additional output or invalid port");
+        }
+        if (stream.inputUri.rfind("dvb://", 0) == 0 ||
+            stream.inputUri.rfind("t2mi://", 0) == 0)
+            warn(warnings, "DVB tuner mapping requires a manual review");
+        if (stream.transcodeEnabled)
+            warn(warnings, "Verify decoder/encoder availability on target");
+        if (stream.epgEnabled && !stream.xmltvChannelId.empty())
+            warn(warnings, "Verify XMLTV source/channel mapping on target");
+        stream.id = nextId("stream-copy-", configManager.config.streams);
+        if (stream.id.empty()) return reject("Unable to allocate stream ID");
+        AppConfig candidate = configManager.config;
+        candidate.streams.push_back(stream);
+        std::string portError;
+        if (!validateHttpPortsForConfig(candidate, portError))
+            return reject("Target listener conflict: " + portError);
+        reply["name"] = stream.name;
+        reply["id"] = stream.id;
+        reply["warnings"] = warnings;
+        if (!preview) {
+            const auto old = configManager.config.streams;
+            configManager.config.streams.push_back(stream);
+            if (!configManager.save()) {
+                configManager.config.streams = old;
+                return reject("Failed to save new stream tile");
+            }
+            streamManager.configureAutoStartRecovery();
+            refreshHttpPorts();
+        }
+    } else {
+        if (!safe["name"].isString() ||
+            safe["name"].asString().size() > 128U ||
+            !safe["output_host"].isString() ||
+            !safe["services"].isArray() || safe["services"].size() > 64U)
+            return reject("Invalid WISI EPG output settings");
+        if (configManager.config.epgUdpOutputs.size() >= 8U)
+            return reject("Maximum 8 WISI EPG outputs");
+        EpgUdpOutputConfig output = EpgUdpOutputConfig::fromJson(safe);
+        if (!EpgUdpOutputManager::validDestination(output.outputHost) ||
+            output.outputPort <= 0 || output.outputPort > 65535)
+            return reject("Invalid WISI EPG multicast endpoint");
+        output.enabled = false;
+        output.autoStart = false;
+        output.interfaceAddress.clear();
+        for (const auto& service : output.services) {
+            if (!service.streamId.empty() &&
+                std::none_of(configManager.config.streams.begin(),
+                    configManager.config.streams.end(),
+                    [&](const StreamConfig& stream) {
+                        return stream.id == service.streamId;
+                    })) warn(warnings, "WISI EPG channel references an unavailable stream; reassign it");
+            if (!service.xmltvSourceId.empty() &&
+                std::none_of(configManager.config.xmltvSources.begin(),
+                    configManager.config.xmltvSources.end(),
+                    [&](const XmltvSourceConfig& xmltv) {
+                        return xmltv.id == service.xmltvSourceId;
+                    })) warn(warnings, "WISI EPG references an unavailable XMLTV source; reassign it");
+        }
+        output.id = nextId("wisi-epg-copy-", configManager.config.epgUdpOutputs);
+        if (output.id.empty()) return reject("Unable to allocate WISI EPG output ID");
+        reply["name"] = output.name;
+        reply["id"] = output.id;
+        reply["channel_count"] = Json::UInt(output.services.size());
+        reply["warnings"] = warnings;
+        if (!preview) {
+            const auto old = configManager.config.epgUdpOutputs;
+            configManager.config.epgUdpOutputs.push_back(output);
+            if (!configManager.save()) {
+                configManager.config.epgUdpOutputs = old;
+                return reject("Failed to save new WISI EPG tile");
+            }
+            // A stopped output does not need to restart any running UDP worker.
+            streamManager.configureExternalXmltvSources();
+        }
+    }
+    reply["result"] = "ok";
+    reply["applied"] = !preview;
+    return finish();
+}
 
 std::string HttpServer::handleConfigExport(const std::string& body) {
     // Empty body preserves legacy full DVBStreamer5 backup semantics.

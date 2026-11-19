@@ -101,6 +101,8 @@ private:
                       const std::string& effectiveClientIp = {});
     std::string handleConfigExport(const std::string& body = {});
     std::string handleConfigImport(const std::string& body);
+    std::string handleTileClipboardExport(const std::string& kind, const std::string& id);
+    std::string handleTileClipboardPaste(const std::string& body);
     std::string handleSaveConfig(const std::string& body);
     std::string handleMptsSave(const std::string& body);
     std::string handleMptsAction(const std::string& body);

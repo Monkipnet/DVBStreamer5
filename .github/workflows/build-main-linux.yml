@@ -262,6 +262,7 @@ jobs:
             dvbstreamer5_oscam_newcamd_grace_test \
             dvbstreamer5_epg_udp_eit_test \
             dvbstreamer5_epg_udp_cbr_test \
+            dvbstreamer5_tile_clipboard_test \
             dvbstreamer5_tsdecrypt_ecm_pid_policy_test \
             dvbstreamer5_tsdecrypt_pid_learning_test \
             dvbstreamer5_tsdecrypt_pid_store_test \
@@ -301,6 +302,7 @@ jobs:
           node tests/web/test_wisi_epg_compact_spoiler_v584.js
           node tests/web/test_wisi_epg_cbr_config_v586.js
           node tests/web/test_wisi_epg_hover_v586.js
+          node tests/web/test_tile_clipboard_v588.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Restore pinned iCAM TSDecrypt source and executable cache

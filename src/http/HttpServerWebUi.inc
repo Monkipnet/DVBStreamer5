@@ -292,6 +292,13 @@ html[data-dashboard-theme="light"] .tp-scan-context select{background:#fff;color
 .epg-hover-tooltip .epg-hover-value{color:#eef5ff;overflow-wrap:anywhere}
 .epg-hover-tooltip .epg-hover-desc{color:#a1afc3;font-size:.67rem;margin-top:3px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 /* WISI EPG: per-channel Now/Next on hover, without expanding tile height. */
+/* V588: native-like tile clipboard menu and safe preview dialog. */
+.tile-clipboard-menu{position:fixed;z-index:100070;min-width:205px;max-width:min(320px,calc(100vw - 20px));padding:5px;background:#132238;color:#eaf4ff;border:1px solid #4b7097;border-radius:10px;box-shadow:0 12px 34px rgba(0,0,0,.50)}
+.tile-clipboard-menu button{display:block;width:100%;padding:9px 11px;text-align:left;background:none;color:inherit;border:0;border-radius:6px;cursor:pointer;font:inherit;font-size:.78rem}
+.tile-clipboard-menu button:hover,.tile-clipboard-menu button:focus-visible{background:rgba(55,146,225,.22);outline:0}
+.tile-clipboard-input{box-sizing:border-box;width:100%;min-height:110px;max-height:210px;resize:vertical;overflow:auto;font:11px ui-monospace,monospace;border-radius:8px;padding:9px}
+.tile-clipboard-warnings{max-height:150px;overflow:auto;color:#d7b980;font-size:.73rem;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+html[data-dashboard-theme="light"] .tile-clipboard-menu{background:#fff;color:#1b3550;border-color:#91b4d3;box-shadow:0 15px 35px rgba(30,65,95,.18)}
 .epg-hover-tooltip.wisi-epg-tooltip{width:min(420px,calc(100vw - 24px));
   max-height:min(78vh,560px);overflow:hidden}
 .wisi-epg-hover-channel{padding:6px 0;border-top:1px solid rgba(255,255,255,.10)}
@@ -7065,6 +7072,189 @@ async function wisiEpgTileAction(outputId, action, autoStart=null, control=null)
     if(control)control.disabled=false;
   }
 }
+
+// V588: portable single-tile clipboard, independent of full server backups.
+let tileClipboardFallback = '';
+let tileClipboardIncoming = null;
+let tileClipboardMenu = null;
+function tileClipboardText(ru,en,hr,de){return wisiText(ru,en,hr,de);}
+function closeTileClipboardMenu(){
+  if(tileClipboardMenu){tileClipboardMenu.remove();tileClipboardMenu=null;}
+}
+function openTileClipboardMenu(event,kind,id){
+  closeTileClipboardMenu();
+  hideEpgHover();
+  const menu=document.createElement('div');
+  menu.className='tile-clipboard-menu';
+  menu.setAttribute('role','menu');
+  const add=(label,handler)=>{
+    const button=document.createElement('button');
+    button.type='button';
+    button.setAttribute('role','menuitem');
+    button.textContent=label;
+    button.addEventListener('click',()=>{closeTileClipboardMenu();void handler();});
+    menu.appendChild(button);
+  };
+  if(kind&&id)add(tileClipboardText('Копировать плитку','Copy tile',
+    'Kopiraj pločicu','Kachel kopieren'),
+    ()=>copyTileClipboard(kind,id));
+  add(tileClipboardText('Вставить как новую плитку','Paste as new tile',
+    'Zalijepi kao novu pločicu','Als neue Kachel einfügen'),
+    ()=>openTileClipboardPaste());
+  document.body.appendChild(menu);
+  const width=menu.offsetWidth,height=menu.offsetHeight;
+  menu.style.left=Math.max(8,Math.min(event.clientX,innerWidth-width-8))+'px';
+  menu.style.top=Math.max(8,Math.min(event.clientY,innerHeight-height-8))+'px';
+  tileClipboardMenu=menu;
+  menu.querySelector('button')?.focus();
+}
+document.addEventListener('contextmenu',event=>{
+  const area=document.getElementById('tiles');
+  if(!area||!area.contains(event.target))return;
+  if(event.target.closest?.('input,textarea,select,button,a,[contenteditable]'))return;
+  const tile=event.target.closest?.('.tile[data-stream-id],.tile[data-wisi-output-id]');
+  const kind=tile?.dataset.streamId?'stream':tile?.dataset.wisiOutputId?'wisi_epg':'';
+  const id=tile?.dataset.streamId||tile?.dataset.wisiOutputId||'';
+  event.preventDefault();
+  openTileClipboardMenu(event,kind,id);
+});
+document.addEventListener('click',event=>{
+  if(tileClipboardMenu&&!tileClipboardMenu.contains(event.target))closeTileClipboardMenu();
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape')closeTileClipboardMenu();
+});
+async function copyTileClipboard(kind,id){
+  try {
+    const data=await fetchJson('/api/tile-clipboard/export?kind='+
+      encodeURIComponent(kind)+'&id='+encodeURIComponent(id),{cache:'no-store'});
+    if(data.result!=='ok'||data.schema!=='DVBStreamer5/tile')
+      throw Error(data.error||'Invalid tile export');
+    // Do not copy server-supplied runtime fields or the full config.
+    const item={schema:data.schema,format_version:data.format_version,
+      kind:data.kind,tile:data.tile,warnings:data.warnings||[]};
+    const contents=JSON.stringify(item,null,2);
+    if(contents.length>128*1024)throw Error('Tile is too large');
+    tileClipboardFallback=contents;
+    let copied=false;
+    if(navigator.clipboard?.writeText&&window.isSecureContext){
+      try{await navigator.clipboard.writeText(contents);copied=true;}catch(_){}
+    }
+    if(!copied)try{copied=fallbackCopyText(contents);}catch(_){}
+    if(copied){
+      tileClipboardNotice(tileClipboardText('Настройки плитки скопированы',
+        'Tile settings copied','Postavke pločice kopirane',
+        'Kacheleinstellungen kopiert'));
+    }else{
+      openModal('<h2>'+tileClipboardText('Копирование плитки','Copy tile',
+        'Kopiranje pločice','Kachel kopieren')+'</h2>'+
+        '<small class="field-help">'+tileClipboardText(
+          'Браузер запретил буфер обмена. Скопируйте текст вручную (Ctrl+C).',
+          'Clipboard blocked. Copy the text manually (Ctrl+C).',
+          'Međuspremnik je blokiran. Ručno kopirajte tekst (Ctrl+C).',
+          'Zwischenablage gesperrt. Text manuell kopieren (Strg+C).')+'</small>'+
+        '<textarea id="tileClipboardExportText" class="tile-clipboard-input" readonly></textarea>'+
+        '<div class="modal-actions"><button type="button" onclick="closeModal()">'+t('close')+'</button></div>');
+      const input=document.getElementById('tileClipboardExportText');
+      input.value=contents;input.focus();input.select();
+    }
+  }catch(error){uiError(error?.message||error);}
+}
+function tileClipboardNotice(message){
+  const toast=document.createElement('div');
+  toast.textContent=message;
+  toast.style.cssText='position:fixed;right:18px;bottom:18px;z-index:100091;'+
+    'padding:10px 14px;background:#183b31;color:#bfffe3;border:1px solid #3a9b74;border-radius:9px';
+  document.body.appendChild(toast);
+  window.setTimeout(()=>toast.remove(),3000);
+}
+function openTileClipboardPaste(){
+  tileClipboardIncoming=null;
+  openModal('<h2>'+tileClipboardText('Вставить плитку','Paste tile',
+    'Zalijepi pločicu','Kachel einfügen')+'</h2>'+
+    '<small class="field-help">'+tileClipboardText(
+      'Вставьте скопированный JSON (Ctrl+V). Плитка создаётся остановленной, без паролей, ключей и автозапуска.',
+      'Paste copied JSON (Ctrl+V). The tile is created stopped, without credentials, keys or autostart.',
+      'Zalijepite kopirani JSON (Ctrl+V). Pločica se stvara zaustavljena, bez lozinki, ključeva i automatskog pokretanja.',
+      'Kopiertes JSON einfügen (Strg+V). Die Kachel wird gestoppt und ohne Passwörter, Schlüssel oder Autostart erstellt.')+
+    '</small><textarea id="tileClipboardPasteText" class="tile-clipboard-input" spellcheck="false"></textarea>'+
+    '<div class="modal-actions">'+
+    '<button type="button" onclick="tileClipboardReadBrowser()">'+tileClipboardText(
+      'Прочитать буфер','Read clipboard','Pročitaj međuspremnik','Zwischenablage lesen')+'</button>'+
+    '<button type="button" class="button-primary" onclick="tileClipboardPreview()">'+tileClipboardText(
+      'Проверить','Preview','Provjeri','Prüfen')+'</button>'+
+    '<button type="button" onclick="closeModal()">'+t('cancel')+'</button></div>');
+  const input=document.getElementById('tileClipboardPasteText');
+  if(input){input.value=tileClipboardFallback;input.focus();input.select();}
+}
+async function tileClipboardReadBrowser(){
+  try{
+    if(!navigator.clipboard?.readText||!window.isSecureContext)
+      throw Error(tileClipboardText('Используйте Ctrl+V для вставки.',
+        'Use Ctrl+V to paste.','Koristite Ctrl+V za lijepljenje.',
+        'Zum Einfügen Strg+V verwenden.'));
+    const raw=await navigator.clipboard.readText();
+    const box=document.getElementById('tileClipboardPasteText');
+    if(box){box.value=raw;box.focus();}
+  }catch(error){uiError(error?.message||error);}
+}
+async function tileClipboardPreview(){
+  try{
+    const raw=document.getElementById('tileClipboardPasteText')?.value||'';
+    if(raw.length>128*1024)throw Error('Clipboard exceeds 128 KiB');
+    const item=JSON.parse(raw);
+    if(item?.schema!=='DVBStreamer5/tile'||item?.format_version!==1||
+       !['stream','wisi_epg'].includes(item?.kind)||
+       !item?.tile||Array.isArray(item.tile))
+      throw Error(tileClipboardText('Неверный формат плитки','Invalid tile format',
+        'Neispravan format pločice','Ungültiges Kachelformat'));
+    const result=await fetchJson('/api/tile-clipboard/paste',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'preview',item})
+    });
+    if(result.result!=='ok')throw Error(result.error||'Preview failed');
+    tileClipboardIncoming=item;
+    const warnings=Array.isArray(result.warnings)?result.warnings:[];
+    const title=escapeHtmlValue(result.name||item.tile.name||'');
+    const kind=result.kind==='wisi_epg'?'WISI EPG':'MPEG-TS / IPTV';
+    openModal('<h2>'+tileClipboardText('Проверка новой плитки',
+      'New tile preview','Pregled nove pločice','Vorschau der neuen Kachel')+'</h2>'+
+      '<div class="form-row"><strong>'+title+'</strong> · '+kind+'</div>'+
+      '<small class="field-help">'+tileClipboardText(
+        'Будет создана отдельная остановленная плитка. Работающие каналы сохраняются.',
+        'A separate stopped tile will be created. Running channels stay unchanged.',
+        'Stvara se zasebna zaustavljena pločica. Aktivni kanali ostaju nepromijenjeni.',
+        'Eine neue gestoppte Kachel wird erstellt. Laufende Kanäle bleiben unverändert.')+'</small>'+
+      '<div class="tile-clipboard-warnings">'+
+      escapeHtmlValue(warnings.length?warnings.join('\n'):'—')+'</div>'+
+      '<div class="modal-actions">'+
+      '<button type="button" class="button-primary" onclick="tileClipboardApply()">'+
+      tileClipboardText('Создать плитку','Create tile','Stvori pločicu','Kachel erstellen')+'</button>'+
+      '<button type="button" onclick="openTileClipboardPaste()">'+
+      tileClipboardText('Назад','Back','Natrag','Zurück')+'</button>'+
+      '<button type="button" onclick="closeModal()">'+t('cancel')+'</button></div>');
+  }catch(error){uiError(error?.message||error);}
+}
+let tileClipboardApplying=false;
+async function tileClipboardApply(){
+  if(tileClipboardApplying||!tileClipboardIncoming)return;
+  tileClipboardApplying=true;
+  try{
+    const data=await fetchJson('/api/tile-clipboard/paste',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'apply',item:tileClipboardIncoming})
+    });
+    if(data.result!=='ok'||!data.applied)throw Error(data.error||'Paste failed');
+    tileClipboardIncoming=null;
+    closeModal();
+    await fetchState();
+    tileClipboardNotice(tileClipboardText('Новая плитка создана (остановлена)',
+      'New tile created (stopped)','Nova pločica stvorena (zaustavljena)',
+      'Neue Kachel erstellt (gestoppt)'));
+  }catch(error){uiError(error?.message||error);}
+  finally{tileClipboardApplying=false;}
+}
+
 function renderWisiEpgTiles(tiles) {
   const outputs=Array.isArray(state.epg_udp_outputs)?state.epg_udp_outputs:[];
   if(!outputs.length)return;
