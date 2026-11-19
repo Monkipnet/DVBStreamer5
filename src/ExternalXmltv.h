@@ -32,7 +32,7 @@ public:
                    const std::vector<EpgUdpOutputConfig>& epgOutputs);
     bool refresh(const std::string& sourceId); // empty = all
     Json::Value status() const;
-    Json::Value channels() const;
+    Json::Value channels(const std::string& sourceId = {}) const;
     Json::Value snapshot(const std::string& sourceId,
                          const std::string& channelId, unsigned days) const;
 

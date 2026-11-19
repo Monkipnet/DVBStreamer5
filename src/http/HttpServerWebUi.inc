@@ -873,6 +873,22 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
 .stream-modal .input-main-row{grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr))}
 @media(max-width:900px){.header-right{flex-wrap:wrap}.stream-modal .form-grid>.form-row:not(.full){grid-column:span 12}}
 @media(max-width:560px){.language-picker{flex:1 1 auto;justify-content:flex-end}.language-picker select{min-width:120px;max-width:100%}.modal{padding:8px}.modal-content{padding:14px;border-radius:14px}.stream-modal .input-main-row{grid-template-columns:minmax(0,1fr)}}
+
+/* WISI external EPG: keep source picker and name-search usable with
+   large provider catalogs, without building thousands of DOM options. */
+.wisi-xmltv-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;
+  min-width:0;padding:10px;border:1px solid rgba(125,209,255,.17);border-radius:10px}
+.wisi-xmltv-fields{flex:2 1 340px;min-width:min(100%,260px);
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.wisi-xmltv-fields label{display:grid;gap:4px;min-width:0;font-size:.75rem}
+.wisi-xmltv-fields :is(input,select){width:100%;min-width:0;max-width:100%;
+  box-sizing:border-box}
+.wisi-xmltv-fields .wisi-xmltv-matches-label{grid-column:1/-1}
+.wisi-xmltv-fields [data-wisi-xmltv-matches]{min-height:95px;max-height:140px}
+.wisi-xmltv-ids{display:flex;flex:1 1 285px;min-width:0;flex-wrap:wrap;
+  align-items:center;gap:5px;font-size:.75rem}
+.wisi-xmltv-ids input[type="number"]{max-width:75px;min-width:60px;box-sizing:border-box}
+@media(max-width:560px){.wisi-xmltv-fields{grid-template-columns:minmax(0,1fr)}}
 </style>
 </head>
 <body>
@@ -4935,7 +4951,9 @@ function renderXmltvModal() {
 // V567 — independent EIT UDP outputs for WISI Chameleon, both actual and
 // Barker "other" tables. Source resolution uses the existing per-tile EPG.
 let wisiEpgUdpOutputs = [];
-let wisiXmltvCatalog = [];
+let wisiXmltvSources = [];
+const wisiXmltvCatalogBySource = new Map();
+const wisiXmltvRequests = new Map();
 function wisiText(ru,en,hr,de) {
   return language==='ru'?ru:language==='hr'?hr:language==='de'?(de||en):en;
 }
@@ -4970,9 +4988,10 @@ function wisiEpgRender() {
   const streams=Array.isArray(state.streams)?state.streams:[];
   const row=(output,index)=>{
     const chosen=new Map((output.services||[]).filter(s=>s.stream_id).map(s=>[String(s.stream_id),s]));
-    const external=(output.services||[]).filter(s=>!s.stream_id && s.xmltv_channel_id);
-    const catalog=Array.isArray(wisiXmltvCatalog)?wisiXmltvCatalog:[];
-    const sources=[...new Map(catalog.map(ch=>[String(ch.source_id||''),String(ch.source_id||'')])).entries()].filter(x=>x[0]);
+    const external=(output.services||[]).filter(s=>!s.stream_id);
+    // Source list comes from XMLTV configuration, not from the truncated
+    // all-provider catalog. Sources without a cached guide remain selectable.
+    const sources=wisiXmltvSources.filter(src=>src&&src.id);
     const ifaceOptions=['<option value="">Auto</option>'].concat(
       (state.interfaces||[]).filter(x=>x.address).map(i=>
         '<option value="'+escapeHtmlValue(i.address)+'" '+
@@ -5012,21 +5031,42 @@ function wisiEpgRender() {
       '<div style="display:grid;gap:8px;margin-top:8px">'+external.map((svc,j)=>{
         const source=String(svc.xmltv_source_id||'');
         const selected=String(svc.xmltv_channel_id||'');
-        const channelOptions=catalog.filter(ch=>String(ch.source_id)===source);
-        return '<div data-wisi-service="" data-wisi-external="1" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0">'+
-          '<input type="checkbox" data-wisi-check checked aria-label="Enabled" style="flex:none" />'+
-          '<select data-wisi-xmltv-source aria-label="XMLTV source" style="min-width:110px;max-width:180px;flex:1" onchange="wisiEpgExternalSourceChanged(this)">'+
-          sources.map(([id])=>'<option value="'+escapeHtmlValue(id)+'" '+(id===source?'selected':'')+'>'+escapeHtmlValue(id)+'</option>').join('')+'</select>'+
-          '<select data-wisi-xmltv-channel aria-label="XMLTV channel" style="min-width:135px;flex:2;max-width:100%">'+
-          channelOptions.map(ch=>'<option value="'+escapeHtmlValue(ch.id)+'" '+(String(ch.id)===selected?'selected':'')+'>'+escapeHtmlValue(ch.name||ch.id)+'</option>').join('')+
-          (channelOptions.some(ch=>String(ch.id)===selected)?'':'<option value="'+escapeHtmlValue(selected)+'" selected>'+escapeHtmlValue(selected)+'</option>')+
-          '</select>'+
+        const options=sources.map(src=>{
+          const id=String(src.id);
+          return '<option value="'+escapeHtmlValue(id)+'" '+(id===source?'selected':'')+
+            (!src.enabled?' disabled':'')+'>'+escapeHtmlValue(src.name||id)+
+            (!src.enabled?' ('+text('отключён','disabled','isključen','deaktiviert')+')':'')+'</option>';
+        }).join('');
+        const selectedAvailable=sources.some(src=>String(src.id)===source);
+        const sourceOptions=selectedAvailable?options:
+          '<option value="'+escapeHtmlValue(source)+'" selected>'+escapeHtmlValue(source)+'</option>'+options;
+        return '<div data-wisi-service="" data-wisi-external="1" class="wisi-xmltv-row">'+
+          '<input type="checkbox" data-wisi-check checked aria-label="'+text('Включено','Enabled','Omogućeno','Aktiviert')+'" />'+
+          '<div class="wisi-xmltv-fields">'+
+          '<label>'+text('Источник XMLTV','XMLTV source','XMLTV izvor','XMLTV-Quelle')+
+          '<select data-wisi-xmltv-source onchange="wisiEpgExternalSourceChanged(this)">'+
+          sourceOptions+'</select></label>'+
+          '<label>'+text('Поиск по названию или ID','Search by name or ID','Pretraga po nazivu ili ID-u','Nach Name oder ID suchen')+
+          '<input data-wisi-xmltv-search type="search" autocomplete="off" '+
+          'placeholder="'+text('Название канала…','Channel name…','Naziv kanala…','Kanalname…')+'" '+
+          'oninput="wisiEpgFilterExternal(this)"/></label>'+
+          '<label class="wisi-xmltv-matches-label">'+
+          text('Каналы источника','Source channels','Kanali izvora','Kanäle der Quelle')+
+          '<select data-wisi-xmltv-matches size="5" onchange="wisiEpgChooseExternal(this)">'+
+          wisiEpgMatchOptions(source,'',selected)+'</select></label>'+
+          '<label>'+text('XMLTV ID канала','XMLTV channel ID','XMLTV ID kanala','XMLTV-Kanal-ID')+
+          '<input data-wisi-xmltv-channel maxlength="256" value="'+escapeHtmlValue(selected)+
+          '" placeholder="channel-id" /></label></div>'+
+          '<div class="wisi-xmltv-ids">'+
           'SID <input data-wisi-sid type="number" min="1" max="65535" style="width:72px" value="'+Number(svc.service_id||1)+'"/>'+
           'TSID <input data-wisi-tsid type="number" min="1" max="65535" style="width:72px" value="'+Number(svc.transport_stream_id||1)+'"/>'+
           'ONID <input data-wisi-onid type="number" min="1" max="65535" style="width:72px" value="'+Number(svc.original_network_id||1)+'"/>'+
-          '<button type="button" class="button-danger" onclick="wisiEpgRemoveExternal('+index+','+j+')">×</button></div>';
+          '<button type="button" class="button-secondary" onclick="wisiEpgReloadExternal(this)">'+
+          text('Обновить список','Refresh list','Osvježi popis','Liste aktualisieren')+'</button>'+
+          '<button type="button" class="button-danger" onclick="wisiEpgRemoveExternal('+index+','+j+')">×</button>'+
+          '</div></div>';
       }).join('')+'</div>'+
-      '<button class="button-secondary" type="button" onclick="wisiEpgAddExternal('+index+')" '+(catalog.length?'':'disabled')+'>'+
+      '<button class="button-secondary" type="button" onclick="wisiEpgAddExternal('+index+')" '+(sources.some(src=>src.enabled)?'':'disabled')+'>'+
       '+ '+text('Внешний EPG-канал','External EPG channel','Vanjski EPG kanal','Externer EPG-Kanal')+'</button></div>'+
       '<button class="button-danger" type="button" onclick="wisiEpgRemove('+index+')">'+
         text('Удалить выход','Delete output','Izbriši izlaz','Ausgabe entfernen')+'</button>'+
@@ -5044,15 +5084,21 @@ function wisiEpgRender() {
     '<button class="button-secondary" type="button" onclick="wisiEpgAdd()">+ '+text('Выход','Output','Izlaz','Ausgabe')+'</button>'+
     '<button class="button-secondary" type="button" onclick="closeModal()">'+t('cancel')+'</button>'+
     '<button class="button-primary" type="button" onclick="wisiEpgSave()">'+t('save')+'</button></div>');
+  for (const src of new Set(wisiEpgUdpOutputs.flatMap(o=>
+      (o.services||[]).filter(x=>!x.stream_id).map(x=>x.xmltv_source_id)).filter(Boolean)))
+    void wisiEpgLoadSource(src);
 }
 async function openWisiEpgUdpModal() {
   try {
     const data=await fetchJson('/api/epg-udp/status',{cache:'no-store'});
     wisiEpgUdpOutputs=Array.isArray(data.outputs)?data.outputs:[];
     try {
-      const channels=await fetchJson('/api/xmltv/channels',{cache:'no-store'});
-      wisiXmltvCatalog=Array.isArray(channels)?channels:[];
-    } catch(e) { wisiXmltvCatalog=[]; }
+      const status=await fetchJson('/api/xmltv/status',{cache:'no-store'});
+      wisiXmltvSources=Array.isArray(status.sources)?status.sources:[];
+    } catch(e) {
+      wisiXmltvSources=Array.isArray(state.xmltv_sources)?state.xmltv_sources:[];
+    }
+    wisiXmltvCatalogBySource.clear();
     wisiEpgRender();
   }catch(e){uiError(e?.message||e);}
 }
@@ -5072,10 +5118,10 @@ function wisiEpgRemove(index) {
 function wisiEpgAddExternal(index) {
   wisiEpgSync();
   const item=wisiEpgUdpOutputs[index];
-  if(!item || item.services.length>=64 || !wisiXmltvCatalog.length)return;
-  const first=wisiXmltvCatalog[0];
-  item.services.push({stream_id:'',xmltv_source_id:first.source_id,
-    xmltv_channel_id:first.id,service_id:1,transport_stream_id:1,original_network_id:1});
+  const source=wisiXmltvSources.find(src=>src&&src.enabled&&src.id);
+  if(!item || item.services.length>=64 || !source)return;
+  item.services.push({stream_id:'',xmltv_source_id:source.id,
+    xmltv_channel_id:'',service_id:1,transport_stream_id:1,original_network_id:1});
   wisiEpgRender();
 }
 function wisiEpgRemoveExternal(index,externalIndex) {
@@ -5087,12 +5133,80 @@ function wisiEpgRemoveExternal(index,externalIndex) {
   if(remove)item.services.splice(item.services.indexOf(remove),1);
   wisiEpgRender();
 }
+function wisiEpgMatchOptions(sourceId, query, selectedId) {
+  const candidates=wisiXmltvCatalogBySource.get(sourceId)||[];
+  const needle=String(query||'').trim().toLocaleLowerCase();
+  return candidates.filter(ch=>
+    !needle || String(ch.name||'').toLocaleLowerCase().includes(needle) ||
+    String(ch.id||'').toLocaleLowerCase().includes(needle))
+    .slice(0,150).map(ch=>{
+      const id=String(ch.id||'');
+      return '<option value="'+escapeHtmlValue(id)+'" '+
+        (id===selectedId?'selected':'')+'>'+
+        escapeHtmlValue((ch.name||id)+'  ·  '+id)+'</option>';
+    }).join('');
+}
+function wisiEpgFilterExternal(searchInput) {
+  const row=searchInput?.closest('[data-wisi-external]');
+  if(!row)return;
+  const source=row.querySelector('[data-wisi-xmltv-source]')?.value||'';
+  const id=row.querySelector('[data-wisi-xmltv-channel]')?.value||'';
+  const matches=row.querySelector('[data-wisi-xmltv-matches]');
+  if(matches)matches.innerHTML=wisiEpgMatchOptions(source,searchInput.value,id);
+}
+function wisiEpgChooseExternal(select) {
+  const row=select?.closest('[data-wisi-external]');
+  const chosen=select?.selectedOptions?.[0];
+  if(!row||!chosen)return;
+  const field=row.querySelector('[data-wisi-xmltv-channel]');
+  if(field)field.value=chosen.value;
+  const search=row.querySelector('[data-wisi-xmltv-search]');
+  if(search)search.value=chosen.textContent.split('  ·  ')[0];
+}
+function wisiEpgUpdateMatches(sourceId) {
+  document.querySelectorAll('[data-wisi-external]').forEach(row=>{
+    if(row.querySelector('[data-wisi-xmltv-source]')?.value!==sourceId)return;
+    const search=row.querySelector('[data-wisi-xmltv-search]');
+    if(search)wisiEpgFilterExternal(search);
+  });
+}
+async function wisiEpgLoadSource(sourceId, force=false) {
+  if(!sourceId)return;
+  if(!force && wisiXmltvCatalogBySource.has(sourceId)) {
+    wisiEpgUpdateMatches(sourceId);
+    return;
+  }
+  let request=wisiXmltvRequests.get(sourceId);
+  if(!request) {
+    request=fetchJson('/api/xmltv/channels?source_id='+encodeURIComponent(sourceId),
+      {cache:'no-store'},30000);
+    wisiXmltvRequests.set(sourceId,request);
+  }
+  try {
+    const data=await request;
+    wisiXmltvCatalogBySource.set(sourceId,Array.isArray(data)?data:[]);
+    wisiEpgUpdateMatches(sourceId);
+  } catch(error) {
+    uiError(error?.message||error);
+  } finally {
+    if(wisiXmltvRequests.get(sourceId)===request)
+      wisiXmltvRequests.delete(sourceId);
+  }
+}
 function wisiEpgExternalSourceChanged(select) {
-  const row=select.closest('[data-wisi-external]');
-  const channel=row?.querySelector('[data-wisi-xmltv-channel]');
-  if(!channel)return;
-  const items=wisiXmltvCatalog.filter(ch=>ch.source_id===select.value);
-  channel.innerHTML=items.map(ch=>'<option value="'+escapeHtmlValue(ch.id)+'">'+escapeHtmlValue(ch.name||ch.id)+'</option>').join('');
+  const row=select?.closest('[data-wisi-external]');
+  if(!row)return;
+  const id=row.querySelector('[data-wisi-xmltv-channel]');
+  if(id)id.value='';
+  const search=row.querySelector('[data-wisi-xmltv-search]');
+  if(search)search.value='';
+  wisiEpgUpdateMatches(select.value);
+  void wisiEpgLoadSource(select.value);
+}
+function wisiEpgReloadExternal(button) {
+  const sourceId=button.closest('[data-wisi-external]')?.querySelector(
+    '[data-wisi-xmltv-source]')?.value;
+  if(sourceId)void wisiEpgLoadSource(sourceId,true);
 }
 async function wisiEpgSave() {
   wisiEpgSync();

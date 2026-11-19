@@ -1201,11 +1201,25 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 Json::StreamWriterBuilder writer;
                 res.body() = Json::writeString(writer,
                     streamManager.externalXmltvStatus());
-            } else if (target == "/api/xmltv/channels") {
+            } else if (target == "/api/xmltv/channels" ||
+                       target.rfind("/api/xmltv/channels?source_id=", 0) == 0) {
                 res.set(http::field::content_type, "application/json");
-                Json::StreamWriterBuilder writer;
-                res.body() = Json::writeString(writer,
-                    streamManager.externalXmltvChannels());
+                std::string sourceId;
+                constexpr char sourceQuery[] = "/api/xmltv/channels?source_id=";
+                if (target.size() > sizeof(sourceQuery) - 1U) {
+                    sourceId = target.substr(sizeof(sourceQuery) - 1U);
+                    const auto amp = sourceId.find('&');
+                    if (amp != std::string::npos) sourceId.resize(amp);
+                    sourceId = urlDecode(sourceId);
+                }
+                if (sourceId.size() > 128U) {
+                    res.result(http::status::bad_request);
+                    res.body() = R"({"error":"Invalid XMLTV source ID"})";
+                } else {
+                    Json::StreamWriterBuilder writer;
+                    res.body() = Json::writeString(writer,
+                        streamManager.externalXmltvChannels(sourceId));
+                }
             } else if (target.rfind("/api/media-tracks?stream_id=", 0) == 0) {
                 res.set(http::field::content_type, "application/json");
                 res.set(http::field::cache_control, "no-store");

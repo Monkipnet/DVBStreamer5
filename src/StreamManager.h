@@ -415,7 +415,7 @@ public:
     void configureExternalXmltvSources();
     bool refreshExternalXmltv(const std::string& sourceId);
     Json::Value externalXmltvStatus() const;
-    Json::Value externalXmltvChannels() const;
+    Json::Value externalXmltvChannels(const std::string& sourceId = {}) const;
     Json::Value queueMemorySnapshot() const;
 
 private:

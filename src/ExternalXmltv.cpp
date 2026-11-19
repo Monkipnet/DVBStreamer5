@@ -720,12 +720,16 @@ Json::Value ExternalXmltvManager::status() const {
     return root;
 }
 
-Json::Value ExternalXmltvManager::channels() const {
+Json::Value ExternalXmltvManager::channels(const std::string& sourceId) const {
     std::lock_guard<std::mutex> lock(mutex_);
     Json::Value root(Json::arrayValue);
     for (const auto& [id, source] : sources_) {
+        if (!sourceId.empty() && sourceId != id) continue;
         for (const auto& [channelId, name] : source.channels) {
-            if (root.size() >= 15000) break;
+            // The historical all-source endpoint keeps its overall cap.
+            // A scoped request returns the chosen provider's full catalog
+            // (up to kMaxChannels, 15,000), regardless of other sources.
+            if (root.size() >= kMaxChannels) return root;
             Json::Value item;
             item["source_id"] = id;
             item["id"] = channelId;

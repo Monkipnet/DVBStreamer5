@@ -3941,9 +3941,9 @@ Json::Value StreamManager::externalXmltvStatus() const {
         ? externalXmltvManager_->status() : Json::Value(Json::objectValue);
 }
 
-Json::Value StreamManager::externalXmltvChannels() const {
+Json::Value StreamManager::externalXmltvChannels(const std::string& sourceId) const {
     return externalXmltvManager_
-        ? externalXmltvManager_->channels() : Json::Value(Json::arrayValue);
+        ? externalXmltvManager_->channels(sourceId) : Json::Value(Json::arrayValue);
 }
 
 Json::Value StreamManager::mediaTracks(const std::string& id) const {

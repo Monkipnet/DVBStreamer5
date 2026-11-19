@@ -293,6 +293,7 @@ jobs:
           node tests/web/test_locale_de_layout_v580.js
           python3 tests/test_xmltv_memory_policy.py
           node tests/web/test_wisi_external_epg_v580.js
+          node tests/web/test_wisi_xmltv_source_picker_v580.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Restore pinned iCAM TSDecrypt source and executable cache
