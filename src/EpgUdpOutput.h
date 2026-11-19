@@ -12,7 +12,7 @@
 // All EPG is read via existing /api/epg resolution, no tuning/restarts.
 class EpgUdpOutputManager {
 public:
-    using Snapshot = std::function<Json::Value(const std::string&)>;
+    using Snapshot = std::function<Json::Value(const EpgUdpServiceConfig&)>;
     explicit EpgUdpOutputManager(Snapshot snapshot);
     ~EpgUdpOutputManager();
     EpgUdpOutputManager(const EpgUdpOutputManager&) = delete;

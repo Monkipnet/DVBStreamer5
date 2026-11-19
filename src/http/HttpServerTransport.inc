@@ -1573,9 +1573,20 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         }
                         std::set<std::string> uniqueServices;
                         for (const auto& svc : cfg.services) {
-                            if (!streams.count(svc.streamId) ||
-                                !uniqueServices.insert(svc.streamId).second) {
-                                error = "Invalid or duplicate stream in EPG UDP output";
+                            const bool external = svc.streamId.empty();
+                            const std::string key = external
+                                ? "xmltv:" + svc.xmltvSourceId + ":" + svc.xmltvChannelId
+                                : "stream:" + svc.streamId;
+                            const bool validExternal = !svc.xmltvSourceId.empty() &&
+                                !svc.xmltvChannelId.empty() &&
+                                std::any_of(configManager.config.xmltvSources.begin(),
+                                    configManager.config.xmltvSources.end(),
+                                    [&](const XmltvSourceConfig& src) {
+                                        return src.id == svc.xmltvSourceId && src.enabled;
+                                    });
+                            if ((external ? !validExternal : !streams.count(svc.streamId)) ||
+                                !uniqueServices.insert(key).second) {
+                                error = "Invalid or duplicate tile/XMLTV channel in EPG UDP output";
                                 break;
                             }
                         }
@@ -1589,6 +1600,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                             configManager.config.epgUdpOutputs = previous;
                             error = "Cannot persist EPG UDP settings";
                         } else {
+                            streamManager.configureExternalXmltvSources();
                             streamManager.configureEpgUdpOutputs();
                             result["result"] = "ok";
                             result["status"] = streamManager.epgUdpStatus();

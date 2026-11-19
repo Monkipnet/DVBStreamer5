@@ -284,9 +284,10 @@ bool ExternalXmltvManager::persistCache(
 
 ExternalXmltvManager::ExternalXmltvManager(
     const std::vector<XmltvSourceConfig>& sources,
-    const std::vector<StreamConfig>& streams) {
+    const std::vector<StreamConfig>& streams,
+    const std::vector<EpgUdpOutputConfig>& epgOutputs) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    configure(sources, streams);
+    configure(sources, streams, epgOutputs);
     thread_ = std::thread(&ExternalXmltvManager::run, this);
 }
 
@@ -302,7 +303,8 @@ ExternalXmltvManager::~ExternalXmltvManager() {
 
 void ExternalXmltvManager::configure(
     const std::vector<XmltvSourceConfig>& sources,
-    const std::vector<StreamConfig>& streams) {
+    const std::vector<StreamConfig>& streams,
+    const std::vector<EpgUdpOutputConfig>& epgOutputs) {
     // Determine only XMLTV channels referenced by EPG-enabled tiles.
     // Auto-source lookup can search any configured provider, so keep a
     // per-channel wanted set; individual providers still cap their own data.
@@ -312,6 +314,12 @@ void ExternalXmltvManager::configure(
             !stream.xmltvChannelId.empty())
             wanted.insert(stream.xmltvChannelId);
     }
+    for (const auto& output : epgOutputs)
+        if (output.enabled)
+            for (const auto& service : output.services)
+                if (service.streamId.empty() && !service.xmltvSourceId.empty() &&
+                    !service.xmltvChannelId.empty())
+                    wanted.insert(service.xmltvChannelId);
     std::lock_guard<std::mutex> lock(mutex_);
     const bool selectionChanged = wanted != wantedChannels_;
     wantedChannels_.swap(wanted);

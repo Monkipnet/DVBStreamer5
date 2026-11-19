@@ -757,6 +757,8 @@ XmltvSourceConfig XmltvSourceConfig::fromJson(const Json::Value& root) {
 Json::Value EpgUdpServiceConfig::toJson() const {
     Json::Value out(Json::objectValue);
     out["stream_id"] = streamId;
+    out["xmltv_source_id"] = xmltvSourceId;
+    out["xmltv_channel_id"] = xmltvChannelId;
     out["service_id"] = serviceId;
     out["transport_stream_id"] = transportStreamId;
     out["original_network_id"] = originalNetworkId;
@@ -766,6 +768,8 @@ EpgUdpServiceConfig EpgUdpServiceConfig::fromJson(const Json::Value& root) {
     EpgUdpServiceConfig out;
     if (!root.isObject()) return out;
     out.streamId = root.get("stream_id", "").asString().substr(0, 128);
+    out.xmltvSourceId = root.get("xmltv_source_id", "").asString().substr(0, 128);
+    out.xmltvChannelId = root.get("xmltv_channel_id", "").asString().substr(0, 256);
     out.serviceId = std::clamp(root.get("service_id", 1).asUInt(), 1U, 65535U);
     out.transportStreamId = std::clamp(root.get("transport_stream_id", 1).asUInt(), 1U, 65535U);
     out.originalNetworkId = std::clamp(root.get("original_network_id", 1).asUInt(), 1U, 65535U);
@@ -800,7 +804,9 @@ EpgUdpOutputConfig EpgUdpOutputConfig::fromJson(const Json::Value& root) {
         for (const auto& item : services) {
             if (out.services.size() >= 64) break;
             const auto service = EpgUdpServiceConfig::fromJson(item);
-            if (!service.streamId.empty()) out.services.push_back(service);
+            if (!service.streamId.empty() ||
+                (!service.xmltvSourceId.empty() && !service.xmltvChannelId.empty()))
+                out.services.push_back(service);
         }
     }
     return out;

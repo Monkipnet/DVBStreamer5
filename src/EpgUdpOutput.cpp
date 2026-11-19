@@ -103,9 +103,9 @@ void EpgUdpOutputManager::run(std::vector<EpgUdpOutputConfig> outputs) {
             }
         }
         for (const auto& service : cfg.services) {
-            if (service.streamId.empty()) continue;
+            if (service.streamId.empty() && service.xmltvChannelId.empty()) continue;
             target->generators.push_back(std::make_unique<DvbEitOutput>(
-                [this, id=service.streamId] { return snapshot_(id); },
+                [this, service] { return snapshot_(service); },
                 static_cast<uint16_t>(service.serviceId),
                 static_cast<uint16_t>(service.transportStreamId),
                 static_cast<uint16_t>(service.originalNetworkId),

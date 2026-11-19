@@ -21,13 +21,15 @@
 class ExternalXmltvManager {
 public:
     explicit ExternalXmltvManager(const std::vector<XmltvSourceConfig>& sources,
-                                  const std::vector<StreamConfig>& streams);
+                                  const std::vector<StreamConfig>& streams,
+                                  const std::vector<EpgUdpOutputConfig>& epgOutputs);
     ~ExternalXmltvManager();
     ExternalXmltvManager(const ExternalXmltvManager&) = delete;
     ExternalXmltvManager& operator=(const ExternalXmltvManager&) = delete;
 
     void configure(const std::vector<XmltvSourceConfig>& sources,
-                   const std::vector<StreamConfig>& streams);
+                   const std::vector<StreamConfig>& streams,
+                   const std::vector<EpgUdpOutputConfig>& epgOutputs);
     bool refresh(const std::string& sourceId); // empty = all
     Json::Value status() const;
     Json::Value channels() const;

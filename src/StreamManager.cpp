@@ -517,9 +517,20 @@ bool writeAbrMasterPlaylist(const StreamConfig& cfg, int primaryWidth, int prima
 StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
     : configManager(cfg), telegramNotifier(notifier),
       mptsOutputManager(std::make_unique<MptsOutputManager>()),
-      externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources, cfg.config.streams)),
+      externalXmltvManager_(std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources,
+          cfg.config.streams, cfg.config.epgUdpOutputs)),
       epgUdpOutputManager_(std::make_unique<EpgUdpOutputManager>(
-          [this](const std::string& id) { return epgSnapshot(id); })) {
+          [this](const EpgUdpServiceConfig& service) {
+              if (!service.streamId.empty()) return epgSnapshot(service.streamId);
+              Json::Value result(Json::objectValue);
+              result["enabled"] = true;
+              result["source"] = "xmltv";
+              result["events"] = externalXmltvManager_
+                  ? externalXmltvManager_->snapshot(service.xmltvSourceId,
+                      service.xmltvChannelId, 7)
+                  : Json::Value(Json::arrayValue);
+              return result;
+          })) {
     // V397: 4 epoll pollers replace one detached writer thread per viewer.
     httpEpollDispatcher_=std::make_unique<
         dvbstreamer5::media::network::HttpTsEpollDispatcher>(4);
@@ -3917,7 +3928,8 @@ Json::Value StreamManager::epgUdpStatus() const {
 void StreamManager::configureExternalXmltvSources() {
     if (externalXmltvManager_)
         externalXmltvManager_->configure(configManager.config.xmltvSources,
-                                        configManager.config.streams);
+                                        configManager.config.streams,
+                                        configManager.config.epgUdpOutputs);
 }
 
 bool StreamManager::refreshExternalXmltv(const std::string& id) {

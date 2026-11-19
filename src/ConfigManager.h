@@ -195,6 +195,8 @@ struct XmltvSourceConfig {
 // V565: independent DVB EIT-only UDP carousel for WISI Chameleon.
 struct EpgUdpServiceConfig {
     std::string streamId;
+    std::string xmltvSourceId;
+    std::string xmltvChannelId;
     uint32_t serviceId = 1;  // Effective SID in the WISI output
     uint32_t transportStreamId = 1;
     uint32_t originalNetworkId = 1;
