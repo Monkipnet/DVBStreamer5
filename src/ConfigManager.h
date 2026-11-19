@@ -213,6 +213,7 @@ struct EpgUdpOutputConfig {
     int outputPort = 5002;
     std::string interfaceAddress;
     std::string mode = "actual";  // actual EIT, or barker EIT other
+    int bitrateKbps = 3000; // constant UDP TS bitrate, NULL-padded
     std::vector<EpgUdpServiceConfig> services;
     Json::Value toJson() const;
     static EpgUdpOutputConfig fromJson(const Json::Value& root);

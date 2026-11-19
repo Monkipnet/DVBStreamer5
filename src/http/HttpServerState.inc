@@ -1149,6 +1149,7 @@ std::string HttpServer::currentState() {
         tile["output_port"] = output.outputPort;
         tile["interface_address"] = output.interfaceAddress;
         tile["mode"] = output.mode;
+        tile["bitrate_kbps"] = output.bitrateKbps;
         tile["channel_count"] = Json::UInt(output.services.size());
         wisiEpgTiles.append(std::move(tile));
     }

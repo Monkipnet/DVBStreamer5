@@ -1192,6 +1192,32 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/backup-files") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = listBackupFiles();
+            } else if (target.rfind("/api/epg-udp/preview?output_id=", 0) == 0) {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                std::string outputId = target.substr(
+                    std::string("/api/epg-udp/preview?output_id=").size());
+                const auto amp = outputId.find('&');
+                if (amp != std::string::npos) outputId.resize(amp);
+                outputId = urlDecode(outputId);
+                // Invalid/nonexistent output IDs must not enumerate anything.
+                const bool validId = !outputId.empty() && outputId.size() <= 64U &&
+                    std::all_of(outputId.begin(), outputId.end(), [](unsigned char c) {
+                        return std::isalnum(c) || c == '-' || c == '_';
+                    });
+                const bool found = validId && std::any_of(
+                    configManager.config.epgUdpOutputs.begin(),
+                    configManager.config.epgUdpOutputs.end(),
+                    [&](const EpgUdpOutputConfig& cfg) { return cfg.id == outputId; });
+                if (!found) {
+                    res.result(http::status::not_found);
+                    res.body() = R"({"error":"WISI EPG output not found"})";
+                } else {
+                    Json::StreamWriterBuilder writer;
+                    writer["indentation"] = "";
+                    res.body() = Json::writeString(writer,
+                        streamManager.epgUdpPreview(outputId));
+                }
             } else if (target == "/api/epg-udp/status") {
                 res.set(http::field::content_type, "application/json");
                 // Autostart-only updates must not restart active UDP senders.

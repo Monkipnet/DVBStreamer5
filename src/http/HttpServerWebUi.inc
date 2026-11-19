@@ -291,6 +291,16 @@ html[data-dashboard-theme="light"] .tp-scan-context select{background:#fff;color
 .epg-hover-tooltip .epg-hover-label{color:#79cfff;font-size:.68rem;font-weight:700;margin-bottom:2px}
 .epg-hover-tooltip .epg-hover-value{color:#eef5ff;overflow-wrap:anywhere}
 .epg-hover-tooltip .epg-hover-desc{color:#a1afc3;font-size:.67rem;margin-top:3px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* WISI EPG: per-channel Now/Next on hover, without expanding tile height. */
+.epg-hover-tooltip.wisi-epg-tooltip{width:min(420px,calc(100vw - 24px));
+  max-height:min(78vh,560px);overflow:hidden}
+.wisi-epg-hover-channel{padding:6px 0;border-top:1px solid rgba(255,255,255,.10)}
+.wisi-epg-hover-channel>strong{display:block;color:#8dd4ff;font-size:.75rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wisi-epg-hover-line{font-size:.71rem;margin-top:3px;overflow-wrap:anywhere}
+.wisi-epg-hover-line>span{color:#9ab1c7;margin-right:6px}
+.wisi-epg-hover-extra{border-top:1px solid rgba(255,255,255,.08);
+  padding-top:6px;color:#9ab1c7;font-size:.7rem}
 @media(hover:none){.epg-hover-tooltip{display:none!important}}
 .modal-content.epg-modal{width:min(760px,100%)}
 .epg-headline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 10px;color:#8290a5;font-size:.7rem}
@@ -6571,7 +6581,10 @@ function epgHoverEventHtml(event, label, active) {
   const description = event?.description ? `<div class="epg-hover-desc">${escapeHtmlValue(event.description)}</div>` : '';
   return `<div class="epg-hover-event"><div class="epg-hover-label">${label}</div><div class="epg-hover-value">${escapeHtmlValue(value)}</div>${description}</div>`;
 }
+let wisiEpgHoverToken = 0;
+const wisiEpgHoverCache = new Map();
 function hideEpgHover() {
+  ++wisiEpgHoverToken;
   epgHoverTile = null;
   if (epgHoverTooltip) {
     epgHoverTooltip.classList.remove('visible');
@@ -6590,6 +6603,7 @@ function showEpgHover(tile, stream=streamById(tile?.dataset.streamId)) {
     document.body.appendChild(epgHoverTooltip);
   }
   epgHoverTile = tile;
+  epgHoverTooltip.classList.remove('wisi-epg-tooltip');
   epgHoverTooltip.innerHTML =
     `<div class="epg-hover-heading">EPG · ${escapeHtmlValue(stream.name || stream.id)}</div>` +
     epgHoverEventHtml(stream.epg_now, uiBiText('Сейчас','Now'), !!stream.active) +
@@ -6607,6 +6621,84 @@ function showEpgHover(tile, stream=streamById(tile?.dataset.streamId)) {
     ? below : Math.max(12, window.innerHeight - h - 12));
   epgHoverTooltip.style.left = Math.round(x) + 'px';
   epgHoverTooltip.style.top = Math.round(y) + 'px';
+}
+// WISI EPG hover reuses the passive channel tooltip. Load only on hover;
+// the periodic /api/state payload keeps its compact no-event summaries.
+function wisiEpgHoverHtml(data) {
+  const text=wisiText;
+  const channels=Array.isArray(data?.channels)?data.channels:[];
+  const visible=channels.slice(0,4);
+  const count=Math.max(0,Number(data?.channel_count)||channels.length);
+  const programme=(event,label)=>{
+    const title=event?.title||text('Нет программы','No programme',
+      'Nema programa','Kein Programm');
+    return '<div class="wisi-epg-hover-line"><span>'+label+'</span>'+
+      escapeHtmlValue(event?.start_utc?formatEpgClock(event.start_utc)+' · ':'')+
+      escapeHtmlValue(title)+'</div>';
+  };
+  const rows=visible.map(channel=>
+    '<div class="wisi-epg-hover-channel"><strong>'+
+    escapeHtmlValue(channel.name||'SID '+Number(channel.sid||0))+'</strong>'+
+    programme(channel.now,text('Сейчас','Now','Sada','Jetzt'))+
+    programme(channel.next,text('Далее','Next','Sljedeće','Danach'))+
+    '</div>').join('');
+  const remaining=Math.max(0,count-visible.length);
+  return '<div class="epg-hover-heading">EPG · '+
+    escapeHtmlValue(data?.name||'WISI EPG')+'</div>'+
+    (rows||'<div class="wisi-epg-hover-channel">'+text(
+      'Нет назначенных каналов','No assigned channels',
+      'Nema dodijeljenih kanala','Keine zugewiesenen Kanäle')+'</div>')+
+    (remaining?'<div class="wisi-epg-hover-extra">+'+remaining+' '+
+      text('каналов','channels','kanala','Kanäle')+'</div>':'');
+}
+function wisiEpgHoverShowContent(tile, html) {
+  if(epgHoverTile!==tile||!epgHoverTooltip)return;
+  epgHoverTooltip.innerHTML=html;
+  epgHoverTooltip.classList.add('wisi-epg-tooltip','visible');
+  epgHoverTooltip.setAttribute('aria-hidden','false');
+  const rect=tile.getBoundingClientRect();
+  const w=epgHoverTooltip.offsetWidth,h=epgHoverTooltip.offsetHeight;
+  const x=Math.max(12,Math.min(window.innerWidth-w-12,
+    rect.left+(rect.width-w)/2));
+  const above=rect.top-h-9,below=rect.bottom+9;
+  const y=above>=12?above:(below+h<=window.innerHeight-12
+    ?below:Math.max(12,window.innerHeight-h-12));
+  epgHoverTooltip.style.left=Math.round(x)+'px';
+  epgHoverTooltip.style.top=Math.round(y)+'px';
+}
+async function showWisiEpgHover(tile,outputId) {
+  if(!tile||!window.matchMedia('(hover:hover)').matches)return;
+  hideEpgHover();
+  const token=++wisiEpgHoverToken;
+  if(!epgHoverTooltip){
+    epgHoverTooltip=document.createElement('div');
+    epgHoverTooltip.className='epg-hover-tooltip';
+    epgHoverTooltip.setAttribute('aria-hidden','true');
+    document.body.appendChild(epgHoverTooltip);
+  }
+  epgHoverTile=tile;
+  const cached=wisiEpgHoverCache.get(outputId);
+  if(cached&&Date.now()-cached.time<30000){
+    wisiEpgHoverShowContent(tile,wisiEpgHoverHtml(cached.data));
+    return;
+  }
+  wisiEpgHoverShowContent(tile,'<div class="epg-hover-heading">WISI EPG</div>'+
+    '<div class="wisi-epg-hover-line">'+wisiText('Загрузка EPG…',
+      'Loading EPG…','Učitavanje EPG-a…','EPG wird geladen…')+'</div>');
+  try {
+    const data=await fetchJson('/api/epg-udp/preview?output_id='+
+      encodeURIComponent(String(outputId)),{cache:'no-store'},12000);
+    wisiEpgHoverCache.set(outputId,{time:Date.now(),data});
+    if(wisiEpgHoverCache.size>32)
+      wisiEpgHoverCache.delete(wisiEpgHoverCache.keys().next().value);
+    if(token!==wisiEpgHoverToken||epgHoverTile!==tile)return;
+    wisiEpgHoverShowContent(tile,wisiEpgHoverHtml(data));
+  } catch(error) {
+    if(token!==wisiEpgHoverToken||epgHoverTile!==tile)return;
+    wisiEpgHoverShowContent(tile,'<div class="epg-hover-heading">WISI EPG</div>'+
+      '<div class="wisi-epg-hover-line">'+wisiText('EPG недоступен',
+        'EPG unavailable','EPG nije dostupan','EPG nicht verfügbar')+'</div>');
+  }
 }
 async function openEpgModal(id) {
   const stream = streamById(id);
@@ -7044,6 +7136,10 @@ function renderWisiEpgTiles(tiles) {
     tile.querySelector('[data-wisi-edit]').addEventListener('click',()=>{
       void wisiEpgOpenTileEditor(String(out.id));
     });
+    tile.addEventListener('mouseenter',()=>{
+      void showWisiEpgHover(tile,String(out.id));
+    });
+    tile.addEventListener('mouseleave',hideEpgHover);
     grid.appendChild(tile);
   }
 }

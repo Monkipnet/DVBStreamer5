@@ -480,6 +480,15 @@ target_include_directories(dvbstreamer5_epg_udp_eit_test PRIVATE
 target_link_libraries(dvbstreamer5_epg_udp_eit_test PRIVATE dvbstreamer5_jsoncpp)
 add_test(NAME epg_udp_eit_wisi COMMAND dvbstreamer5_epg_udp_eit_test)
 
+# V586: real loopback UDP smoke test: paced MPEG-TS CBR and EIT vs NULL.
+add_executable(dvbstreamer5_epg_udp_cbr_test
+    tests/test_epg_udp_cbr_v586.cpp src/DvbEitOutput.cpp src/EpgUdpOutput.cpp)
+target_include_directories(dvbstreamer5_epg_udp_cbr_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/third_party)
+target_link_libraries(dvbstreamer5_epg_udp_cbr_test PRIVATE
+    dvbstreamer5_jsoncpp Threads::Threads)
+add_test(NAME epg_udp_cbr_wisi COMMAND dvbstreamer5_epg_udp_cbr_test)
+
 # V10.8.563: bounded, opt-in iCAM Newcamd grace with expiry regression tests.
 add_executable(dvbstreamer5_oscam_newcamd_grace_test
     tests/test_oscam_newcamd_grace.c)

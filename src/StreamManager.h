@@ -412,6 +412,7 @@ public:
     void persistAllDvbEpg();
     void configureEpgUdpOutputs(); // independent EIT UDP source; never restarts tiles
     Json::Value epgUdpStatus() const;
+    Json::Value epgUdpPreview(const std::string& outputId) const;
     void configureExternalXmltvSources();
     bool refreshExternalXmltv(const std::string& sourceId);
     Json::Value externalXmltvStatus() const;

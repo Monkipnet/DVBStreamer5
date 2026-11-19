@@ -3925,6 +3925,69 @@ Json::Value StreamManager::epgUdpStatus() const {
         ? epgUdpOutputManager_->status() : Json::Value(Json::objectValue);
 }
 
+// Operator-only, on-demand WISI EPG hover preview. It never enumerates a
+// provider catalog, starts media streams, or exposes XMLTV URLs/credentials.
+// Only the first eight configured services are sampled per hover request.
+Json::Value StreamManager::epgUdpPreview(const std::string& outputId) const {
+    Json::Value result(Json::objectValue), channels(Json::arrayValue);
+    result["output_id"] = outputId;
+    result["channels"] = channels;
+    const auto found = std::find_if(configManager.config.epgUdpOutputs.begin(),
+        configManager.config.epgUdpOutputs.end(),
+        [&](const EpgUdpOutputConfig& cfg) { return cfg.id == outputId; });
+    if (found == configManager.config.epgUdpOutputs.end()) {
+        result["error"] = "WISI EPG output not found";
+        return result;
+    }
+    constexpr std::size_t kMaxHoverServices = 8;
+    result["name"] = found->name.empty() ? found->id : found->name;
+    result["channel_count"] = Json::UInt(found->services.size());
+    result["enabled"] = found->enabled;
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::size_t limit = 0;
+    for (const auto& svc : found->services) {
+        if (++limit > kMaxHoverServices) break;
+        Json::Value entry(Json::objectValue);
+        entry["sid"] = svc.serviceId;
+        // For external EPG use the assigned XMLTV ID as a safe label; do
+        // not copy any configured provider URL into the hover response.
+        entry["name"] = svc.streamId.empty() ? svc.xmltvChannelId : svc.streamId;
+        Json::Value snapshot(Json::objectValue);
+        if (!svc.streamId.empty()) {
+            for (const auto& cfg : configManager.config.streams) {
+                if (cfg.id == svc.streamId) {
+                    if (!cfg.name.empty()) entry["name"] = cfg.name;
+                    break;
+                }
+            }
+            snapshot = epgSnapshot(svc.streamId);
+        } else if (externalXmltvManager_) {
+            snapshot["events"] = externalXmltvManager_->snapshot(
+                svc.xmltvSourceId, svc.xmltvChannelId, 1);
+        }
+        // Return only two small event projections per channel. Source
+        // descriptions can be large, so exclude them from this API.
+        if (snapshot["events"].isArray()) {
+            for (const auto& event : snapshot["events"]) {
+                const auto start = event.get("start_utc", 0).asInt64();
+                const auto end = event.get("end_utc", 0).asInt64();
+                Json::Value shortEvent(Json::objectValue);
+                shortEvent["start_utc"] = Json::Int64(start);
+                shortEvent["end_utc"] = Json::Int64(end);
+                shortEvent["title"] = event.get("title", "").asString().substr(0, 180);
+                if (start <= now && now < end &&
+                    !entry.isMember("now")) entry["now"] = shortEvent;
+                else if (start > now && !entry.isMember("next"))
+                    entry["next"] = shortEvent;
+                if (entry.isMember("now") && entry.isMember("next")) break;
+            }
+        }
+        result["channels"].append(std::move(entry));
+    }
+    return result;
+}
+
 void StreamManager::configureExternalXmltvSources() {
     if (externalXmltvManager_)
         externalXmltvManager_->configure(configManager.config.xmltvSources,

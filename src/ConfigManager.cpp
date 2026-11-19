@@ -785,6 +785,7 @@ Json::Value EpgUdpOutputConfig::toJson() const {
     out["output_port"] = outputPort;
     out["interface_address"] = interfaceAddress;
     out["mode"] = mode;
+    out["bitrate_kbps"] = bitrateKbps;
     Json::Value arr(Json::arrayValue);
     for (const auto& item : services) arr.append(item.toJson());
     out["services"] = arr;
@@ -803,6 +804,8 @@ EpgUdpOutputConfig EpgUdpOutputConfig::fromJson(const Json::Value& root) {
     out.outputPort = std::clamp(root.get("output_port", 5002).asInt(), 1, 65535);
     out.interfaceAddress = root.get("interface_address", "").asString().substr(0, 128);
     out.mode = root.get("mode", "actual").asString() == "barker" ? "barker" : "actual";
+    // WISI CBR UDP input must not see zero traffic between EIT sections.
+    out.bitrateKbps = std::clamp(root.get("bitrate_kbps", 3000).asInt(), 512, 12000);
     const Json::Value& services = root["services"];
     if (services.isArray()) {
         for (const auto& item : services) {
