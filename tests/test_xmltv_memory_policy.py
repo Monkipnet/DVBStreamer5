@@ -13,7 +13,12 @@ assert 'data = it->second;' not in s
 assert 'loaded.programmes.erase(itEvent)' in s
 assert 'source.queued = true' in s
 assert 'loaded.settings = selected' in s
-assert 'std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources, cfg.config.streams)' in m
+# Source manager now receives external WISI EPG services in addition to tile streams.
+# Normalize whitespace so harmless formatting does not break this policy test.
+compact = " ".join(m.split())
+assert 'std::make_unique<ExternalXmltvManager>(cfg.config.xmltvSources,' in compact
+assert 'cfg.config.streams, cfg.config.epgUdpOutputs)' in compact
+assert 'externalXmltvManager_->snapshot(service.xmltvSourceId,' in compact
 assert 'externalXmltvManager_->configure(configManager.config.xmltvSources,' in m
 assert 'kProgramVersion = "10.8.580"' in Path("src/AppVersion.h").read_text()
 print("PASS XMLTV selected-channel retention, refresh handling, move-only reconfigure and unchanged version")
