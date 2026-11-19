@@ -69,9 +69,10 @@ assert.equal(match(b,'  '),true);
 // UI wiring, localisation and behaviour must remain in the main dashboard.
 for(const marker of [
  'id="tileSearchInput"','id="tileSearchClear"',
- 'data-placeholder-ru="Поиск канала',
- 'data-placeholder-en="Search channel',
- 'data-placeholder-hr="Traži kanal',
+ 'data-placeholder-ru="Например: Мир 24, 239.1.1.1"',
+ 'data-placeholder-en="e.g. Sport TV, 239.1.1.1"',
+ 'data-placeholder-hr="Npr. Sport TV, 239.1.1.1"',
+ 'data-placeholder-de="Z. B. Sport TV, 239.1.1.1"',
  'oninput="setTileSearch(this.value)"',
  'onclick="clearTileSearch()"',
  'tile.hidden=!matched;',

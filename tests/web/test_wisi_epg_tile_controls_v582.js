@@ -69,6 +69,7 @@ vm.runInContext(action,ctx,{timeout:2000});
  assert.deepEqual(errors,[]);
  assert.equal(control.disabled,false);
  const version=read('src/AppVersion.h');
- assert.match(version,/kProgramVersion = "10\.8\.582"/);
+ const current=version.match(/kProgramVersion = "10\.8\.(\d+)"/);
+ assert.ok(current&&Number(current[1])>=582);
  console.log('PASS V582 WISI EPG Start/Stop/Edit/autostart, legacy policy, four locales and independent EIT actions');
 })().catch(e=>{console.error(e);process.exitCode=1});
