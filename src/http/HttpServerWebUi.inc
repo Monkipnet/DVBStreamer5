@@ -896,7 +896,7 @@ html[data-dashboard-theme="light"] .language-picker select{background:#fff;color
 .wisi-config-output>summary{cursor:pointer;padding:5px;overflow-wrap:anywhere}
 .wisi-config-output .field-help{display:block;margin:8px 0}
 /* V584: WISI EPG spoiler behaves like DVB transponder accordion. */
-.wisi-epg-group{margin-top:10px;overflow:hidden}
+.wisi-epg-group{margin-top:10px;overflow:hidden;grid-column:1/-1}
 .wisi-epg-group>summary{list-style:none;display:grid;
   grid-template-columns:minmax(0,1fr) 56px minmax(0,1fr);
   align-items:center;gap:8px;min-height:52px;padding:5px 10px;
