@@ -62,8 +62,9 @@ const document={
       appendChild(el){this.children.push(el);},
       addEventListener(k,cb){this.listeners??={};this.listeners[k]=cb;},
       querySelector(selector){return this.children[0]||null;},
+      querySelectorAll(selector){return this.children;},
       remove(){const i=elements.indexOf(this);if(i>=0)elements.splice(i,1);},
-      focus(){this.focused=true;}
+      focus(){this.focused=true;document.activeElement=this;}
     };
     return obj;
   },
@@ -81,7 +82,8 @@ let activeTile=tile(false);
 const trigger={
   closest(){return activeTile;},
   attributes:{},setAttribute(k,v){this.attributes[k]=v;},
-  getBoundingClientRect(){return {left:1080,right:1104,top:500,bottom:524};}
+  getBoundingClientRect(){return {left:1080,right:1104,top:500,bottom:524};},
+  focus(){this.focused=true;document.activeElement=this;}
 };
 const makeMenu=new Function('document','window','streamById','state',
   'hideEpgHover','tileLayoutText','t','wisiEpgTileAction','wisiEpgOpenTileEditor','tileLayoutMode',
@@ -97,9 +99,22 @@ assert.deepEqual(elements[0].children.map(b=>b.dataset.streamAction),
 assert.ok(Number(elements[0].style.left.replace('px',''))<=window.innerWidth-196-8);
 assert.ok(Number(elements[0].style.top.replace('px',''))<=window.innerHeight-185-8);
 assert.equal(trigger.attributes['aria-expanded'],'true');
-funcs.closeCesboTileMenu();
+const popup=elements[0];
+const pressed=key=>popup.listeners.keydown({
+  key,preventDefault(){},stopPropagation(){}
+});
+pressed('ArrowDown');
+assert.equal(document.activeElement,popup.children[1]);
+pressed('End');
+assert.equal(document.activeElement,popup.children[4]);
+pressed('Home');
+assert.equal(document.activeElement,popup.children[0]);
+pressed('ArrowUp');
+assert.equal(document.activeElement,popup.children[4]);
+pressed('Escape');
 assert.equal(elements.length,0);
 assert.equal(trigger.attributes['aria-expanded'],'false');
+assert.equal(document.activeElement,trigger,'Escape returns focus to the tile menu button');
 // EPG output uses dedicated callback actions, not stream action handlers.
 activeTile=tile(true);
 funcs.openCesboTileMenu(trigger);
