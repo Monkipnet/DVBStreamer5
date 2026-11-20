@@ -211,6 +211,9 @@ jobs:
       - name: Verify incremental compiler and dependency cache policy
         run: node tests/web/test_incremental_build_policy.js
 
+      - name: Verify TSDecrypt is mandatory in standard portable bundles
+        run: node tests/web/test_portable_tsdecrypt_default_v597.js
+
       - name: Verify signed binary update policy and UI
         run: node tests/web/test_binary_update_policy.js
 
