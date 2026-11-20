@@ -15,7 +15,7 @@ for(const mark of [
   'function streamTerrestrialMultiplexInfo(',
   'function makeTerrestrialMultiplexGroups(',
   'function editTerrestrialAdapterGroup(',
-  'editTerrestrialAdapterGroup(group.key)',
+  "// V603: no adapter-level spoiler around terrestrial multiplexes.",
   "grid.className='tile-grid dvb-unconfigured-tiles'",
   "details.dataset.subgroupKey.startsWith('tt:')",
   "key.startsWith('tp:')||key.startsWith('tt:')",
