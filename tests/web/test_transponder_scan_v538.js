@@ -69,6 +69,7 @@ function simulator(options={}){
    state:{streams},
    window:{confirm:prompt=>{prompts.push(prompt);return options.confirm!==false;}},
    subtitleUiTriText:(ru,en,hr)=>options.language==='en'?en:options.language==='hr'?hr:ru,
+   tileLayoutText:(ru,en,hr,de)=>options.language==='en'?en:options.language==='hr'?hr:options.language==='de'?de:ru,
    makeDvbCardGroups:values=>({cards:[{key:'pci:example',
        streams:values.filter(s=>Number(s.dvb_adapter)===1&&Number(s.dvb_frontend)===0)}]}),
    makeSatelliteTransponderGroups:values=>{
