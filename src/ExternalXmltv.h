@@ -33,6 +33,8 @@ public:
     bool refresh(const std::string& sourceId); // empty = all
     Json::Value status() const;
     Json::Value channels(const std::string& sourceId = {}) const;
+    std::string channelName(const std::string& sourceId,
+                            const std::string& channelId) const;
     Json::Value snapshot(const std::string& sourceId,
                          const std::string& channelId, unsigned days) const;
 
