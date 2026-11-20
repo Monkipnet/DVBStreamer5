@@ -314,6 +314,7 @@ jobs:
           node tests/web/test_wisi_epg_compact_spoiler_v584.js
           node tests/web/test_wisi_epg_cbr_config_v586.js
           node tests/web/test_wisi_epg_hover_v586.js
+          node tests/web/test_epg_hover_channel_names_v596.js
           node tests/web/test_tile_clipboard_v588.js
           node tests/web/test_tile_clipboard_v589.js
           node tests/web/test_oscam_reader_restart_v593.js
