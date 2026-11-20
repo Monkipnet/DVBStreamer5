@@ -16,7 +16,7 @@ for(const mark of [
   'function makeTerrestrialMultiplexGroups(',
   'function editTerrestrialAdapterGroup(',
   'editTerrestrialAdapterGroup(group.key)',
-  "addInputSubgroup(grid,'tt:'+group.key+':'+mux.key",
+  "grid.className='tile-grid dvb-unconfigured-tiles'",
   "details.dataset.subgroupKey.startsWith('tt:')",
   "key.startsWith('tp:')||key.startsWith('tt:')",
   "key.startsWith('tp:')&&!key.startsWith('tt:')",
@@ -29,7 +29,7 @@ for(const mark of [
   "tileLayoutMode==='cesbo'",
   'data-cesbo-menu-toggle',
   'function closeCesboTileMenu(restoreFocus=false)',
-  "grid.className='tile-grid dvb-card-tiles terrestrial-mux-container'",
+  "addInputSubgroup(tiles,'tt:'+group.key+':'+mux.key",
   '#tiles .dvb-card-tiles.terrestrial-mux-container',
   "satReceptionType",
   "reception.value=['dvb-t','dvb-t2'].includes("
@@ -47,6 +47,16 @@ for(const mark of [
   'hasActiveFrontend('
 ])assert.ok(api.includes(mark),'Missing V602 backend safety invariant: '+mark);
 assert.ok(uri.includes('"frequency_khz","bandwidth_hz","symbol_rate"'));
+// Each terrestrial MUX is a direct sibling of the satellite transponders.
+const terrestrialRender=section('function render(force=false) {',
+  '  if(grouped.network.length) {');
+assertNonNested(terrestrialRender);
+function assertNonNested(source){
+  assert.ok(source.includes("addInputSubgroup(tiles,'tt:'"),
+    'Terrestrial MUX should be a top-level DVB-S/S2-style spoiler');
+  assert.ok(!source.includes("details.className='dvb-card-group'"),
+    'A second physical-adapter spoiler must not wrap MUX groups');
+}
 const info=section('function streamTerrestrialMultiplexInfo(',
   'function makeSatelliteTransponderGroups(');
 const terrestrial=s=>s.dvb_input===true&&/delivery_system=dvb-t2?(?:&|$)/.test(s.input_uri);
