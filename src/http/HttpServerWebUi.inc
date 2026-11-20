@@ -130,6 +130,15 @@ html[data-dashboard-theme="light"] #tileSearchEmpty{color:#506980}
 .dvb-card-group[open]>summary:before{content:'▾'}
 .dvb-card-group>summary:hover{background:rgba(57,145,227,.07)}
 .dvb-card-title{font-weight:700;font-size:.86rem;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.dvb-card-edit-title{
+  font:inherit;font-weight:700;color:inherit;border:0;background:transparent;
+  padding:3px 5px;border-radius:5px;cursor:pointer;
+}
+.dvb-card-edit-title:hover{background:rgba(72,163,250,.14);color:#7dd1ff}
+.dvb-card-edit-title:focus-visible{outline:2px solid #5ebcff;outline-offset:2px}
+.terrestrial-mux-choices{display:grid;gap:7px;margin-top:10px}
+.terrestrial-mux-choices button{text-align:left;white-space:normal}
+
 .dvb-card-device{display:none}
 .dvb-card-status{margin-left:auto;flex:none;display:flex;align-items:center;gap:12px;min-width:0;white-space:nowrap}
 .dvb-card-meters{display:flex;align-items:center;gap:6px;min-width:0;max-width:48vw;overflow-x:auto;scrollbar-width:thin}
@@ -6591,6 +6600,41 @@ function rememberInputSubgroup(key,open) {
     localStorage.setItem(inputSubgroupStorageKey,JSON.stringify(inputSubgroupOpen));
   }catch(_){ /* Groups still toggle without persistent storage. */ }
 }
+// Main-card title edits the selected terrestrial adapter. Where a physical
+// card has more than one RF/PLP multiplex, choose exactly one before asking to
+// stop streams; never silently retune the first frontend in the card.
+function editTerrestrialAdapterGroup(cardKey){
+  const card=makeDvbCardGroups(state.streams||[]).cards.find(c=>c.key===cardKey);
+  if(!card)return;
+  const groups=makeTerrestrialMultiplexGroups(card.streams).multiplexes;
+  if(!groups.length)return;
+  if(groups.length===1){
+    void beginTransponderGroupScan('tt:'+card.key+':'+groups[0].key);
+    return;
+  }
+  const title=tileLayoutText('Выберите мультиплекс DVB-T/T2',
+    'Choose a DVB-T/T2 multiplex','Odaberite DVB-T/T2 multipleks',
+    'DVB-T/T2-Multiplex auswählen');
+  const hint=tileLayoutText('Выберите точную частоту и PLP адаптера для редактирования.',
+    'Select the adapter’s exact frequency and PLP to edit.',
+    'Odaberite točnu frekvenciju i PLP adaptera za uređivanje.',
+    'Frequenz und PLP des Adapters zum Bearbeiten auswählen.');
+  openModal('<h2>'+title+'</h2><p>'+hint+'</p>'+
+    '<div id="terrestrialMuxChoices" class="terrestrial-mux-choices"></div>');
+  const container=document.getElementById('terrestrialMuxChoices');
+  if(!container)return;
+  for(const mux of groups){
+    const button=document.createElement('button');
+    button.type='button';
+    button.className='button-secondary';
+    button.textContent=mux.title;
+    button.addEventListener('click',()=>{
+      closeModal();
+      void beginTransponderGroupScan('tt:'+card.key+':'+mux.key);
+    });
+    container.appendChild(button);
+  }
+}
 function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   const details=document.createElement('details');
   details.className='input-subgroup';
@@ -6607,7 +6651,7 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
   count.className='input-subgroup-count';
   count.dataset.subgroupCount='1';
   count.textContent=streams.filter(s=>s.active).length+'/'+streams.length+' '+t('cardActive');
-  if(key.startsWith('tp:')) {
+  if(key.startsWith('tp:')||key.startsWith('tt:')) {
     details.classList.add('tp-edit-subgroup');
     // Editing is ONLY on the transponder title. Native summary handles
     // clicks on meters, status, centered arrow and empty space.
@@ -6615,10 +6659,15 @@ function addInputSubgroup(parent,key,title,streams,parents,orderedStreams) {
     editRow.type='button';
     editRow.className='tp-edit-row';
     editRow.dataset.tpEditRow='1';
-    editRow.title=subtitleUiTriText(
-      'Редактировать транспондер после остановки каналов',
-      'Edit transponder after stopping channels',
-      'Uredi transponder nakon zaustavljanja kanala');
+    editRow.title=key.startsWith('tt:')?tileLayoutText(
+      'Редактировать DVB-T/T2 мультиплекс после остановки каналов',
+      'Edit DVB-T/T2 multiplex after stopping channels',
+      'Uredi DVB-T/T2 multipleks nakon zaustavljanja kanala',
+      'DVB-T/T2-Multiplex nach Stoppen der Kanäle bearbeiten'):
+      subtitleUiTriText(
+        'Редактировать транспондер после остановки каналов',
+        'Edit transponder after stopping channels',
+        'Uredi transponder nakon zaustavljanja kanala');
     editRow.setAttribute('aria-label',editRow.title+': '+title);
     editRow.addEventListener('click',event=>{
       event.preventDefault();
@@ -6669,7 +6718,8 @@ function updateInputSubgroupCounts(tiles) {
     const count=details.querySelector('[data-subgroup-count]');
     if(count)count.textContent=active+'/'+total+' '+t('cardActive');
     // Top-level satellite TP groups show live frontend signal and quality.
-    if(details.dataset.subgroupKey.startsWith('tp:')) {
+    if(details.dataset.subgroupKey.startsWith('tp:') ||
+       details.dataset.subgroupKey.startsWith('tt:')) {
       const streams=[...details.querySelectorAll('.tile[data-stream-id]')]
         .map(tile=>byId.get(tile.dataset.streamId)).filter(Boolean);
       const container=details.querySelector('[data-tp-meters]');
