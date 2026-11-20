@@ -71,7 +71,11 @@ int main() {
     put(old/"segment00000001.ts");
     {
         std::ofstream playlist(old/"video.m3u8",std::ios::trunc);
-        playlist<<"#EXTM3U\n#EXTINF:4.0,\nsegment00000001.ts\n#EXT-X-ENDLIST\n";
+        playlist << R"(#EXTM3U
+#EXTINF:4.0,
+segment00000001.ts
+#EXT-X-ENDLIST
+)";
     }
     assert(!isStaleCompletedTemporaryHls(old));
     const auto past=fs::file_time_type::clock::now()-std::chrono::hours(48);
@@ -83,7 +87,10 @@ int main() {
     fs::remove(old/"fresh.ts");
     {
         std::ofstream playlist(old/"video.m3u8",std::ios::trunc);
-        playlist<<"#EXTM3U\n#EXTINF:4.0,\nsegment00000001.ts\n";
+        playlist << R"(#EXTM3U
+#EXTINF:4.0,
+segment00000001.ts
+)";
     }
     fs::last_write_time(old/"video.m3u8",past);
     assert(!isStaleCompletedTemporaryHls(old));
