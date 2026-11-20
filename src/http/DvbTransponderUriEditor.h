@@ -1,5 +1,5 @@
 #pragma once
-// V539: update an existing DVB-S/S2 transponder without dropping any
+// V602: update an existing DVB-S/S2 TP or DVB-T/T2 multiplex without dropping any
 // service-specific URI keys, PNR/PID filters or hand-edited metadata.
 #include <algorithm>
 #include <cctype>
@@ -48,7 +48,7 @@ inline std::string editUri(const std::string& original,
     const auto replacement=queryParts(tunedUri);
     // Do not replace pids/jitter_ms, or unknown per-channel extensions.
     static constexpr const char* keys[]={
-      "frequency_khz","symbol_rate","polarity","delivery_system",
+      "frequency_khz","bandwidth_hz","symbol_rate","polarity","delivery_system",
       "modulation","fec","diseqc_source","lnb_lof1_khz","lnb_lof2_khz",
       "lnb_slof_khz","unicable_mode","unicable_user_band",
       "unicable_frequency_khz","unicable_position","unicable_pin","stream_id"
