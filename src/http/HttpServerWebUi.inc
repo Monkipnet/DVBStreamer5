@@ -6506,7 +6506,16 @@ async function beginTransponderGroupScan(key){
     return false;
   }
   const active=group.streams.filter(s=>s.active===true||s.stop_pending===true);
-  const confirmed=window.confirm(subtitleUiTriText(
+  const confirmed=window.confirm(key.startsWith('tt:')?tileLayoutText(
+    'Остановить '+active.length+' из '+group.streams.length+
+      ' плиток мультиплекса «'+group.title+'» и открыть редактор DVB-T/T2? Вещание этих каналов прервётся.',
+    'Stop '+active.length+' of '+group.streams.length+
+      ' tiles on multiplex “'+group.title+'” and open the DVB-T/T2 editor? Their broadcast will be interrupted.',
+    'Zaustaviti '+active.length+' od '+group.streams.length+
+      ' pločica multipleksa „'+group.title+'” i otvoriti DVB-T/T2 uređivač? Emitiranje će se prekinuti.',
+    active.length+' von '+group.streams.length+
+      ' Kacheln des Multiplexes „'+group.title+'“ stoppen und DVB-T/T2-Editor öffnen? Die Übertragung wird unterbrochen.')
+    :subtitleUiTriText(
     'Остановить '+active.length+' из '+group.streams.length+
       ' плиток транспондера «'+group.title+'» и открыть редактор выбранного транспондера? Вещание этих каналов прервётся.',
     'Stop '+active.length+' of '+group.streams.length+
@@ -10404,7 +10413,16 @@ async function saveExistingTransponderTune(){
       'Ungültige Frequenz oder Bandbreite/Symbolrate'));
     return false;
   }
-  const ok=window.confirm(subtitleUiTriText(
+  const ok=window.confirm(terrestrial?tileLayoutText(
+    'Сохранить настройки мультиплекса «'+chosen.label+
+      '» для '+chosen.streams.length+' каналов? Каналы останутся остановленными.',
+    'Save multiplex settings for “'+chosen.label+
+      '” across '+chosen.streams.length+' channels? Channels will remain stopped.',
+    'Spremiti postavke multipleksa „'+chosen.label+
+      '” za '+chosen.streams.length+' kanala? Kanali će ostati zaustavljeni.',
+    'Multiplex-Einstellungen „'+chosen.label+
+      '“ für '+chosen.streams.length+' Kanäle speichern? Kanäle bleiben gestoppt.')
+    :subtitleUiTriText(
     'Сохранить параметры транспондера «'+chosen.label+
       '» для '+chosen.streams.length+' каналов? Каналы останутся остановленными.',
     'Save tuning for transponder “'+chosen.label+
@@ -10427,7 +10445,12 @@ async function saveExistingTransponderTune(){
     if(data.result!=='ok')throw Error(data.error||'Transponder save failed');
     closeModal();
     await fetchState();
-    window.alert(subtitleUiTriText(
+    window.alert(terrestrial?tileLayoutText(
+      'Параметры мультиплекса сохранены. Каналы остаются остановленными.',
+      'Multiplex settings saved. Channels remain stopped.',
+      'Postavke multipleksa spremljene. Kanali ostaju zaustavljeni.',
+      'Multiplex-Einstellungen gespeichert. Kanäle bleiben gestoppt.')
+      :subtitleUiTriText(
       'Параметры транспондера сохранены. Каналы остаются остановленными.',
       'Transponder settings saved. Channels remain stopped.',
       'Postavke transpondera spremljene. Kanali ostaju zaustavljeni.'));
@@ -10460,11 +10483,19 @@ function openAddChannelModal(initialTransponderTune=null) {
       subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
     ${editing&&editGroup? `
     <div class="tp-scan-context">
-      <label for="satExistingTransponder">${subtitleUiTriText('Выбранный транспондер из списка плиток','Selected transponder from tile group','Odabrani transponder iz grupe pločica')}</label>
+      <label for="satExistingTransponder">${editingTerrestrial?tileLayoutText(
+        'Выбранный мультиплекс DVB-T/T2','Selected DVB-T/T2 multiplex',
+        'Odabrani DVB-T/T2 multipleks','Ausgewählter DVB-T/T2-Multiplex'):
+        subtitleUiTriText('Выбранный транспондер из списка плиток','Selected transponder from tile group','Odabrani transponder iz grupe pločica')}</label>
       <select id="satExistingTransponder" disabled>
         <option selected value="${escapeHtmlValue(activeTransponderEdit.group_key)}">${escapeHtmlValue(editGroup.title)}</option>
       </select>
-      <small>${subtitleUiTriText('Выбран автоматически. Изменения сохраняются для всех каналов этого TP без изменения выходов, SID и CAM.','Selected automatically. Saves tuning for all channels in this TP without changing outputs, SID or CAM.','Automatski odabran. Spremanje podešavanja za sve kanale TP-a bez promjene izlaza, SID-a ili CAM-a.')}</small>
+      <small>${editingTerrestrial?tileLayoutText(
+         'MUX и PLP выбраны автоматически. Изменения применяются ко всем каналам выбранного мультиплекса без изменения выходов, SID, PID и CAM.',
+         'MUX and PLP selected automatically. Apply tuning to all channels without changing outputs, SID, PID or CAM.',
+         'MUX i PLP odabrani automatski. Postavke se primjenjuju na sve kanale bez promjena izlaza, SID, PID ili CAM.',
+         'MUX und PLP automatisch gewählt. Alle Kanäle werden abgestimmt, Ausgänge, SID, PID und CAM bleiben unverändert.'):
+         subtitleUiTriText('Выбран автоматически. Изменения сохраняются для всех каналов этого TP без изменения выходов, SID и CAM.','Selected automatically. Saves tuning for all channels in this TP without changing outputs, SID or CAM.','Automatski odabran. Spremanje podešavanja za sve kanale TP-a bez promjene izlaza, SID-a ili CAM-a.')}</small>
     </div>`:''}
     <div class="sat-signal-panel">
       <div class="sat-meter"><div class="sat-meter-head"><span>Сигнал</span><strong id="satSignalValue">0%</strong></div><div class="sat-bar"><span id="satSignalBar"></span></div></div>
@@ -10541,7 +10572,10 @@ function openAddChannelModal(initialTransponderTune=null) {
     </div>
     <div class="modal-actions">
       <button class="button-secondary" onclick="closeModal()">Отмена</button>
-      ${editing&&editGroup?`<button id="satSaveTransponderButton" class="button-primary" type="button" onclick="saveExistingTransponderTune()">${subtitleUiTriText('Сохранить параметры TP','Save transponder settings','Spremi postavke transpondera')}</button>`:''}
+      ${editing&&editGroup?`<button id="satSaveTransponderButton" class="button-primary" type="button" onclick="saveExistingTransponderTune()">${editingTerrestrial?tileLayoutText(
+           'Сохранить параметры MUX','Save multiplex settings',
+           'Spremi postavke multipleksa','Multiplex-Einstellungen speichern'):
+           subtitleUiTriText('Сохранить параметры TP','Save transponder settings','Spremi postavke transpondera')}</button>`:''}
       <button id="satSaveButton" class="button-secondary" onclick="saveSelectedSatelliteChannels()">${subtitleUiTriText('Сохранить найденные каналы','Save found channels','Spremi pronađene kanale')}</button>
     </div>
   `);
