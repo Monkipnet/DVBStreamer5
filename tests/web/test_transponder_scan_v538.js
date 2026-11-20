@@ -81,6 +81,9 @@ function simulator(options={}){
       }
       return {transponders:[...groups.values()]};
    },
+   // V602: the shared scan helper now checks terrestrial tuning first.
+   // All fixtures here are satellite, so return null from its discriminator.
+   streamTerrestrialMultiplexInfo:()=>null,
    streamSatelliteTransponderInfo:stream=>({
      key:options.invalid?'unconfigured:sat-1':stream.tpKey,title:'BetaDigital TP'}),
    fetchJson:async(url,params)=>{
