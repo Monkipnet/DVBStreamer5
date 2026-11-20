@@ -30,7 +30,7 @@ for(const mark of [
   'data-cesbo-menu-toggle',
   'function closeCesboTileMenu(restoreFocus=false)',
   "addInputSubgroup(tiles,'tt:'+group.key+':'+mux.key",
-  '#tiles .dvb-card-tiles.terrestrial-mux-container',
+  '.input-subgroup.tp-edit-subgroup>summary',
   "satReceptionType",
   "reception.value=['dvb-t','dvb-t2'].includes("
 
