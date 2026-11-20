@@ -64,6 +64,29 @@ int main() {
     assert(trash.empty() && ec);
     trash=quarantineStoppedTemporaryHls(root,"../../outside",ec);
     assert(trash.empty() && ec);
+    // Crash/legacy-tail sweep requires a completely ended playlist and
+    // all files older than 24 h; fresh HLS is never eligible.
+    const fs::path old=root/"sat-old-ended";
+    put(old/"video.m3u8");
+    put(old/"segment00000001.ts");
+    {
+        std::ofstream playlist(old/"video.m3u8",std::ios::trunc);
+        playlist<<"#EXTM3U\n#EXTINF:4.0,\nsegment00000001.ts\n#EXT-X-ENDLIST\n";
+    }
+    assert(!isStaleCompletedTemporaryHls(old));
+    const auto past=fs::file_time_type::clock::now()-std::chrono::hours(48);
+    fs::last_write_time(old/"video.m3u8",past);
+    fs::last_write_time(old/"segment00000001.ts",past);
+    assert(isStaleCompletedTemporaryHls(old));
+    put(old/"fresh.ts");
+    assert(!isStaleCompletedTemporaryHls(old));
+    fs::remove(old/"fresh.ts");
+    {
+        std::ofstream playlist(old/"video.m3u8",std::ios::trunc);
+        playlist<<"#EXTM3U\n#EXTINF:4.0,\nsegment00000001.ts\n";
+    }
+    fs::last_write_time(old/"video.m3u8",past);
+    assert(!isStaleCompletedTemporaryHls(old));
     fs::remove_all(base,ec);
     std::cout<<"PASS V598 HLS stop tail quarantine, ABR/CMAF, restart isolation, symlink safety\n";
 }
