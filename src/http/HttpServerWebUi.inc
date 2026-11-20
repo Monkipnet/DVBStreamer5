@@ -1148,7 +1148,7 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 <summary data-ui-ru="Администрирование" data-ui-en="Administration" data-ui-hr="Administracija">Администрирование</summary>
 <div class="system-submenu-list">
 <button class="system-menu-item" onclick="openConfigTransferModal();closeSystemMenu()" data-ui-ru="Конфигурация" data-ui-en="Configuration" data-ui-hr="Konfiguracija">Конфигурация</button>
-<button class="system-menu-item" onclick="openTileViewModal();closeSystemMenu()" data-ui-ru="Вид плиток" data-ui-en="Tile display" data-ui-hr="Prikaz pločica">Вид плиток</button>
+<button class="system-menu-item" onclick="openTileViewModal();closeSystemMenu()" data-ui-ru="Вид плиток" data-ui-en="Tile display" data-ui-hr="Prikaz pločica" data-ui-de="Kachelansicht">Вид плиток</button>
 <button class="system-menu-item" id="dashboardThemeButton" onclick="toggleDashboardTheme()" aria-pressed="false" data-ui-ru="Светлая тема" data-ui-en="Light theme" data-ui-hr="Svijetla tema">Светлая тема</button>
 <button class="system-menu-item" onclick="openAboutModal();closeSystemMenu()" data-i18n="about">About</button>
 </div>
