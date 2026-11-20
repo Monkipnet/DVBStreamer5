@@ -984,6 +984,18 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
   grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));
   gap:5px;
 }
+/* Keep DVB-T/T2 multiplex groups full-width, even in compact mode;
+   only the actual stream tiles within each group use 145px columns. */
+#tiles .dvb-card-tiles.terrestrial-mux-container{
+  grid-template-columns:minmax(0,1fr);
+}
+#tiles.tiles-cesbo .dvb-card-tiles.terrestrial-mux-container{
+  grid-template-columns:minmax(0,1fr);
+}
+#tiles .dvb-card-tiles.terrestrial-mux-container>.input-subgroup{
+  width:100%;
+  min-width:0;
+}
 #tiles.tiles-cesbo .tile[data-stream-id]{
   height:60px;min-height:60px;padding:6px 28px 6px 7px;
   gap:2px;border-radius:3px;background:#f9fafb;color:#243344;
@@ -7878,7 +7890,7 @@ function render(force=false) {
       saveDvbCardGroupOpen();
     });
     const grid=document.createElement('div');
-    grid.className='tile-grid dvb-card-tiles';
+    grid.className='tile-grid dvb-card-tiles terrestrial-mux-container';
     details.appendChild(grid);
     tiles.appendChild(details);
     for(const mux of terrestrialGroups.multiplexes){
