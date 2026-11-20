@@ -17,6 +17,11 @@
 #include <ctype.h>
 #include <stddef.h>
 
+/* oscam.c defines this global below the header include. The reader-control
+ * worker checks the same shutdown state as OSCam's own main loop.
+ * cs_exit_oscam() is a function, not this flag. */
+extern int32_t exit_oscam;
+
 #define DVBSTREAMER5_READER_CONTROL_PATH "/run/dvbstreamer5-oscam-mini-reader.sock"
 
 static int dvbstreamer5_reader_label_is_safe(const char *name)
