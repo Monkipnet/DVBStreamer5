@@ -10,6 +10,19 @@
 * `HlsFileCache` limits cached small files to 64 MiB and checks size/mtime per request, but has no per-directory invalidation. Deleted files cannot be served by normal cache reads because the filesystem is checked first.
 * OnDemand uses successful segment responses, not manifest polling, to retain an active viewer. There is a 75-second recent-media grace and a separate up-to-120-second cold-start grace. When idle, the monitor calls the same `stopStream(id)`.
 
+> **Update V10.8.598 (20 November 2026):** The audited gap is now
+> addressed in code. See `src/media/HlsTemporaryCleanup.h` and
+> `tests/test_hls_temporary_cleanup_v598.cpp`. The lifecycle cleanup
+> quarantines non-archive TS/ABR/CMAF directories on final Stop and skips
+> active concurrent starts and automatic failover. At startup a conservative
+> scavenger removes only ended `video.m3u8` directories whose files are all
+> older than 24 hours. The original audit below is retained as historical
+> context; validation on home2 and GitHub Actions is still pending.
+>
+> **Important:** An unexpected stop after a crash with NO `#EXT-X-ENDLIST`
+> does not qualify for automatic startup scavenging. No media is deleted
+> solely because it is old; this is intentional for safety.
+
 ## Safe implementation design — NOT YET IMPLEMENTED
 
 1. Make temporary HLS ownership explicit per stream and generation. Never delete the current generation while a new stream has started with the same ID; the async stop worker must not race with a subsequent start.
