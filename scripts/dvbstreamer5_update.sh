@@ -3,6 +3,7 @@ set -Eeuo pipefail
 umask 077
 URL='https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c3d'
 META='https://tvstreammersat5.tech/downloads/dvbstreamer5/latest.json'
+RELEASE_URL="$URL" # validated per-release metadata may point to the canonical archive
 MAX_BYTES=1073741824
 UPDATE_STATUS='/var/lib/dvbstreamer5/update-status'
 update_phase(){
@@ -114,16 +115,60 @@ determine_archive_release(){
  [[ "$(printf '%s\n' "$versions" | grep -c .)" == 1 ]] || die 'No unique embedded version'
  RELEASE_VERSION="$versions"
 }
+# Use jq when available, but never require it on Ubuntu 18.04 / portable
+# installs. Python 3's standard JSON parser provides the same strict types.
+metadata_field(){
+  local manifest="$1" field="$2"
+  if command -v jq >/dev/null 2>&1; then
+    case "$field" in
+      version) jq -er '.version | strings' "$manifest" ;;
+      url) jq -er '.url | strings' "$manifest" ;;
+      sha256) jq -er '.sha256 // "" | strings' "$manifest" ;;
+      size) jq -er '.size // 0 | numbers' "$manifest" ;;
+      *) return 1 ;;
+    esac
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$manifest" "$field" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    obj = json.load(source)
+if not isinstance(obj, dict):
+    raise SystemExit(1)
+field = sys.argv[2]
+value = obj.get(field, '' if field == 'sha256' else 0 if field == 'size' else None)
+if field in ('version', 'url', 'sha256'):
+    if not isinstance(value, str):
+        raise SystemExit(1)
+elif field == 'size':
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise SystemExit(1)
+else:
+    raise SystemExit(1)
+print(value)
+PY
+  else
+    echo 'Requires jq or python3 to read latest.json' >&2
+    return 1
+  fi
+}
 read_release(){
   local tmp="$1" manifest="$1/manifest.json" header="$1/header.txt" link
-  RELEASE_SHA=''; RELEASE_SIZE=0; ARCHIVE_ROOT=''
+  RELEASE_SHA=''; RELEASE_SIZE=0; ARCHIVE_ROOT=''; RELEASE_URL="$URL"
   if curl -fsSL --proto '=https' --proto-redir '=https' --max-redirs 3 --max-time 20 --max-filesize 8192 "$META" -o "$manifest" 2>/dev/null; then
-    command -v jq >/dev/null || die 'jq is required to parse release metadata'
-    RELEASE_VERSION="$(jq -er '.version | strings' "$manifest")" || die 'Missing release version'
-    link="$(jq -er '.url | strings' "$manifest")" || die 'Missing release URL'
-    [[ "$link" == "$URL" ]] || die 'Unexpected release URL'
-    RELEASE_SHA="$(jq -er '.sha256 // "" | strings' "$manifest")"
-    RELEASE_SIZE="$(jq -er '.size // 0 | numbers' "$manifest")"
+    RELEASE_VERSION="$(metadata_field "$manifest" version)" || die 'Missing or invalid release version in latest.json'
+    valid_version "$RELEASE_VERSION" || die 'Bad release version in latest.json'
+    link="$(metadata_field "$manifest" url)" || die 'Missing or invalid release URL in latest.json'
+    # Support both the original PHP download and exact-version files under
+    # the official release directory. Reject all other URLs, including CDNs
+    # and arbitrary metadata-provided hosts.
+    case "$link" in
+      "$URL"|"https://tvstreammersat5.tech/downloads/dvbstreamer5/DVBStreamer5-$RELEASE_VERSION-linux-x86_64.tar.gz")
+        RELEASE_URL="$link" ;;
+      *) die 'Unexpected release URL: use the fixed PHP link or canonical versioned HTTPS archive' ;;
+    esac
+    RELEASE_SHA="$(metadata_field "$manifest" sha256)" || die 'Invalid release SHA256'
+    RELEASE_SIZE="$(metadata_field "$manifest" size)" || die 'Invalid release size'
     [[ -z "$RELEASE_SHA" || "$RELEASE_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || die 'Bad SHA256'
     [[ "$RELEASE_SIZE" =~ ^[0-9]+$ ]] || die 'Bad archive size'
     (( RELEASE_SIZE <= MAX_BYTES )) || die 'Archive too large'
@@ -159,7 +204,7 @@ read_release(){
 }
 download_archive(){
   local out="$1" details status effective size
-  details="$(curl -sSL --show-error --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 600 --max-filesize "$MAX_BYTES" -o "$out" -w '%{http_code} %{url_effective}' "$URL")" || die 'Archive download failed'
+  details="$(curl -sSL --show-error --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 600 --max-filesize "$MAX_BYTES" -o "$out" -w '%{http_code} %{url_effective}' "$RELEASE_URL")" || die 'Archive download failed'
   read -r status effective <<< "$details"
   if [[ "$status" == 404 ]]; then
     die "Archive not found (HTTP 404): verify the download.php file ID on tvstreammersat5.tech"
