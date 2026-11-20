@@ -28,7 +28,12 @@ for(const mark of [
   "stream_ids:group.streams.map",
   "tileLayoutMode==='cesbo'",
   'data-cesbo-menu-toggle',
-  'function closeCesboTileMenu(restoreFocus=false)'
+  'function closeCesboTileMenu(restoreFocus=false)',
+  "grid.className='tile-grid dvb-card-tiles terrestrial-mux-container'",
+  '#tiles .dvb-card-tiles.terrestrial-mux-container',
+  "satReceptionType",
+  "reception.value=['dvb-t','dvb-t2'].includes("
+
 ])assert.ok(ui.includes(mark),'Missing V602 UI integration: '+mark);
 for(const mark of [
   'const bool terrestrial=system=="dvb-t" || system=="dvb-t2"',
