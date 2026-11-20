@@ -47,5 +47,7 @@ assert.match(oscam,/#include "dvbstreamer5-reader-control\.h"/);
 assert.match(oscam,/dvbstreamer5_reader_control_worker/);
 assert.match(control,/SOCK_SEQPACKET/);
 assert.match(control,/validLabel\(label\)/);
-assert.match(version,/kProgramVersion = "10\.8\.593"/);
+const currentVersion = version.match(/kProgramVersion = "10\.8\.(\d+)"/);
+assert.ok(currentVersion && Number(currentVersion[1]) >= 593,
+  'OSCam reader control requires version V10.8.593 or newer');
 console.log('PASS V593 OSCam-mini local-only selected-reader restart, RU EN HR DE, no full service restart');

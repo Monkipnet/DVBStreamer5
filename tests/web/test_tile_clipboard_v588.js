@@ -49,5 +49,7 @@ for(const label of ['Копировать плитку','Copy tile','Kopiraj plo
   'Вставить плитку','Paste tile','Zalijepi pločicu','Kachel einfügen']){
     assert.ok(ui.includes(label),'Missing RU/EN/HR/DE label: '+label);
 }
-assert.match(version,/kProgramVersion = "10\.8\.58[89]"/);
+const currentVersion = version.match(/kProgramVersion = "10\.8\.(\d+)"/);
+assert.ok(currentVersion && Number(currentVersion[1]) >= 588,
+  'Tile clipboard requires version V10.8.588 or newer');
 console.log('PASS V588/V589 tile clipboard: right-click, 4 languages, one-action paste, session gates');
