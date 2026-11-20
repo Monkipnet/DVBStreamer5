@@ -496,6 +496,12 @@ target_include_directories(dvbstreamer5_tile_clipboard_test PRIVATE
 target_link_libraries(dvbstreamer5_tile_clipboard_test PRIVATE dvbstreamer5_jsoncpp)
 add_test(NAME tile_clipboard_safe_transfer COMMAND dvbstreamer5_tile_clipboard_test)
 
+# V590: emulate two UDP channels + one HTTP channel on one DVB-T2 mux.
+# Also guard distinct PLPs/muxes and unchanged satellite frontend isolation.
+add_executable(dvbstreamer5_shared_dvb_t2_key_test tests/test_shared_dvb_t2_key_v590.cpp)
+target_include_directories(dvbstreamer5_shared_dvb_t2_key_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME shared_dvb_t2_mixed_outputs COMMAND dvbstreamer5_shared_dvb_t2_key_test)
+
 # V10.8.563: bounded, opt-in iCAM Newcamd grace with expiry regression tests.
 add_executable(dvbstreamer5_oscam_newcamd_grace_test
     tests/test_oscam_newcamd_grace.c)

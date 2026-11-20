@@ -1,4 +1,5 @@
 #include "media/SharedDvbInputPool.h"
+#include "media/SharedDvbTuneKey.h"
 #include "media/TransportStream.h"
 
 #include <algorithm>
@@ -29,29 +30,6 @@ std::string frontendKey(const LinuxDvbTuneConfig& config) {
     return std::to_string(config.adapter) + ":" + std::to_string(config.frontend);
 }
 
-std::string transponderKey(const LinuxDvbTuneConfig& config) {
-    std::ostringstream out;
-    out
-        << config.adapter << ':' << config.frontend
-        << "|rf=" << config.frequencyKHz
-        << "|sr=" << config.symbolRateK
-        << "|bw=" << config.bandwidthHz
-        << "|pol=" << config.polarity
-        << "|sys=" << config.deliverySystem
-        << "|mod=" << config.modulation
-        << "|fec=" << config.fec
-        << "|diseqc=" << config.diseqcSource
-        << "|lof1=" << config.lnbLof1KHz
-        << "|lof2=" << config.lnbLof2KHz
-        << "|slof=" << config.lnbSlofKHz
-        << "|unicable=" << config.unicableMode
-        << "|ub=" << config.unicableUserBand
-        << "|ubfreq=" << config.unicableFrequencyKHz
-        << "|position=" << config.unicablePosition
-        << "|pin=" << config.unicablePin
-        << "|isi=" << config.streamId;
-    return out.str();
-}
 
 bool logCounter(std::uint64_t value) {
     return value <= 3 || (value != 0 && (value & (value - 1)) == 0);
@@ -526,7 +504,7 @@ struct SharedDvbInputPool::Impl {
 
         LinuxDvbTuneConfig tune = requested;
         tune.pids = "8192";
-        const std::string key = transponderKey(tune);
+        const std::string key = sharedDvbTransponderKey(tune);
         const std::string frontend = frontendKey(tune);
 
         std::shared_ptr<Bus> bus;
@@ -553,6 +531,22 @@ struct SharedDvbInputPool::Impl {
                 }
 
                 if (busy) {
+                    // Only safe physical tuning fields are logged: never log
+                    // full DVB URIs, Unicable PINs or media credentials.
+                    if (oldBus && (isTerrestrialDvbSystem(tune.deliverySystem) ||
+                                   isTerrestrialDvbSystem(oldBus->tune.deliverySystem))) {
+                        std::cerr << "SHARED DVB TUNE CONFLICT"
+                                  << " frontend=" << frontend
+                                  << " current_sys=" << oldBus->tune.deliverySystem
+                                  << " current_rf_khz=" << oldBus->tune.frequencyKHz
+                                  << " current_bw_hz=" << oldBus->tune.bandwidthHz
+                                  << " current_plp=" << oldBus->tune.streamId
+                                  << " requested_sys=" << tune.deliverySystem
+                                  << " requested_rf_khz=" << tune.frequencyKHz
+                                  << " requested_bw_hz=" << tune.bandwidthHz
+                                  << " requested_plp=" << tune.streamId
+                                  << std::endl;
+                    }
                     error =
                         "DVB frontend adapter" + std::to_string(tune.adapter) +
                         "/frontend" + std::to_string(tune.frontend) +
@@ -688,7 +682,7 @@ struct SharedDvbInputPool::Impl {
         error.clear();
         LinuxDvbTuneConfig tune = requested;
         tune.pids = "8192";
-        const std::string key = transponderKey(tune);
+        const std::string key = sharedDvbTransponderKey(tune);
         const std::string frontend = frontendKey(tune);
 
         std::lock_guard<std::mutex> lock(mutex);
