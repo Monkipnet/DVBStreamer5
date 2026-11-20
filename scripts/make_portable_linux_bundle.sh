@@ -11,7 +11,7 @@ BINARY=""
 DO_BUILD=0
 DO_ARCHIVE=0
 INCLUDE_OSCAM=auto
-INCLUDE_TSDECRYPT=auto
+INCLUDE_TSDECRYPT=yes
 TSDECRYPT_BINARY=""
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 2)"
 
@@ -30,14 +30,14 @@ Options:
   --jobs N              Parallel build jobs used with --build
   --with-oscam          Require and include build/oscam-mini/oscam-mini
   --without-oscam       Do not include oscam-mini
-  --with-tsdecrypt      Require an iCAM TSDecrypt executable in the bundle
-  --without-tsdecrypt   Do not include external TSDecrypt
+  --with-tsdecrypt      Require iCAM TSDecrypt (default)
+  --without-tsdecrypt   Explicitly omit TSDecrypt (nonstandard bundle)
   --tsdecrypt-binary FILE   Bundle a supplied executable as bin/tsdecrypt
   --archive             Create a versioned .tar.gz and .tar.gz.sha256
   -h, --help            Show this help
 
 The bundle contains the application, web assets, CA plugins found in the build
-folder, optional oscam-mini, the ELF interpreter and recursively discovered
+folder, required-by-default iCAM TSDecrypt, optional oscam-mini, the ELF interpreter and recursively discovered
 shared-library dependencies. It also contains install.sh/uninstall.sh for a
 systemd installation with runtime files in /opt/DVBStreamer5 and configuration
 in /etc/dvbstreamer5. Hardware kernel/user drivers are intentionally not bundled.
