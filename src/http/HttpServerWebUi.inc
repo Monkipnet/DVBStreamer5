@@ -5160,6 +5160,10 @@ function wisiEpgChooseExternal(select) {
   if(!row||!chosen)return;
   const field=row.querySelector('[data-wisi-xmltv-channel]');
   if(field)field.value=chosen.value;
+  const display=row.querySelector('[data-wisi-xmltv-display]');
+  if(display)display.value=(wisiXmltvCatalogBySource.get(
+    row.querySelector('[data-wisi-xmltv-source]')?.value)||[])
+    .find(x=>x.id===chosen.value)?.name||chosen.textContent.split('  ·  ')[0];
   const search=row.querySelector('[data-wisi-xmltv-search]');
   if(search)search.value=chosen.textContent.split('  ·  ')[0];
 }
@@ -5190,7 +5194,18 @@ async function wisiEpgLoadSource(sourceId, force=false) {
     while(wisiXmltvCatalogBySource.size >= 2)
       wisiXmltvCatalogBySource.delete(wisiXmltvCatalogBySource.keys().next().value);
     wisiXmltvCatalogBySource.set(sourceId,Array.isArray(data)?data:[]);
+    for(const item of (Array.isArray(data)?data:[])) {
+      if(item?.id&&item?.name)
+        wisiXmltvDisplayNames.set(String(sourceId)+'\\0'+String(item.id),String(item.name));
+    }
     wisiEpgUpdateMatches(sourceId);
+    // The channel list may be open while metadata is loading.
+    const list=document.querySelector('[data-wisi-channel-list="'+
+      CSS.escape(String(sourceId))+'"]');
+    if(list&&wisiEpgChannelEditContext===null) {
+      const outputId=list.getAttribute('data-output-id');
+      if(outputId)wisiEpgShowChannelList(outputId);
+    }
   } catch(error) {
     uiError(error?.message||error);
   } finally {
@@ -5203,6 +5218,8 @@ function wisiEpgExternalSourceChanged(select) {
   if(!row)return;
   const id=row.querySelector('[data-wisi-xmltv-channel]');
   if(id)id.value='';
+  const display=row.querySelector('[data-wisi-xmltv-display]');
+  if(display)display.value='';
   const search=row.querySelector('[data-wisi-xmltv-search]');
   if(search)search.value='';
   wisiEpgUpdateMatches(select.value);
@@ -5244,14 +5261,13 @@ function wisiEpgShowChannelList(outputId) {
     const sourceName=external ? (source?.name||svc.xmltv_source_id||'XMLTV') :
       text('Плитка','Tile','Pločica','Kachel');
     const channelName=external
-      ? (wisiXmltvCatalogBySource.get(svc.xmltv_source_id)||[])
-          .find(x=>x.id===svc.xmltv_channel_id)?.name || svc.xmltv_channel_id
+      ? wisiChannelDisplayName(svc.xmltv_source_id,svc.xmltv_channel_id,svc.service_id)
       : (stream?.name||svc.stream_id);
     return '<div class="wisi-epg-channel-row">'+
       '<div class="wisi-epg-channel-main"><strong>'+
       escapeHtmlValue(channelName||'—')+'</strong>'+
       '<small>'+escapeHtmlValue(sourceName)+' · '+
-      escapeHtmlValue(external?svc.xmltv_channel_id:svc.stream_id)+'</small>'+
+      escapeHtmlValue(external?sourceName:(stream?.name||svc.stream_id))+'</small>'+
       '<small>SID '+Number(svc.service_id)+' · TSID '+
       Number(svc.transport_stream_id)+' · ONID '+Number(svc.original_network_id)+'</small></div>'+
       '<div class="wisi-epg-channel-buttons">'+
@@ -5310,9 +5326,12 @@ function wisiEpgEditChannel(outputId,index) {
     '<select data-wisi-xmltv-matches size="5" onchange="wisiEpgChooseExternal(this)">'+
     wisiEpgMatchOptions(sourceId,'',original?.xmltv_channel_id||'')+
     '</select></label>'+
-    '<label>'+text('XMLTV ID канала','XMLTV channel ID','XMLTV ID kanala','XMLTV-Kanal-ID')+
-    '<input maxlength="256" data-wisi-xmltv-channel value="'+
-    escapeHtmlValue(original?.xmltv_channel_id||'')+'" placeholder="channel-id"/></label>'+
+    '<label>'+text('Название канала','Channel name','Naziv kanala','Kanalname')+
+    '<input readonly data-wisi-xmltv-display value="'+escapeHtmlValue(
+      original?.xmltv_channel_id ? wisiChannelDisplayName(sourceId,
+        original.xmltv_channel_id,original.service_id) : '')+'"/></label>'+
+    '<input type="hidden" maxlength="256" data-wisi-xmltv-channel value="'+
+    escapeHtmlValue(original?.xmltv_channel_id||'')+'"/>'+
     '<button class="button-secondary" type="button" onclick="wisiEpgReloadExternal(this)">'+
       text('Обновить список','Refresh list','Osvježi popis','Liste aktualisieren')+'</button></div>';
   const existingStream=(state.streams||[]).find(x=>x.id===original?.stream_id);
@@ -6597,6 +6616,13 @@ function epgHoverEventHtml(event, label, active) {
 }
 let wisiEpgHoverToken = 0;
 const wisiEpgHoverCache = new Map();
+const wisiXmltvDisplayNames = new Map();
+function wisiChannelDisplayName(sourceId, channelId, sid) {
+  const key=String(sourceId||'')+'\\0'+String(channelId||'');
+  const cached=wisiXmltvDisplayNames.get(key) ||
+    (wisiXmltvCatalogBySource.get(sourceId)||[]).find(ch=>ch.id===channelId)?.name;
+  return cached || wisiText('Канал','Channel','Kanal','Kanal')+' '+Number(sid||0);
+}
 function hideEpgHover() {
   ++wisiEpgHoverToken;
   epgHoverTile = null;
@@ -6604,6 +6630,36 @@ function hideEpgHover() {
     epgHoverTooltip.classList.remove('visible');
     epgHoverTooltip.setAttribute('aria-hidden', 'true');
   }
+}
+function positionEpgHoverBesideTile(tile) {
+  if (!epgHoverTooltip || !tile) return;
+  const rect=tile.getBoundingClientRect();
+  const w=epgHoverTooltip.offsetWidth, h=epgHoverTooltip.offsetHeight;
+  const gap=12, pad=12, vw=window.innerWidth, vh=window.innerHeight;
+  const right=rect.right+gap, left=rect.left-w-gap;
+  let x,y;
+  // Prefer beside the tile, never on top of its action buttons.
+  if(right+w<=vw-pad) {
+    x=right;
+    y=Math.max(pad,Math.min(vh-h-pad,rect.top));
+  } else if(left>=pad) {
+    x=left;
+    y=Math.max(pad,Math.min(vh-h-pad,rect.top));
+  } else {
+    // Narrow screens: use a free area above or below the entire tile.
+    const above=rect.top-h-gap, below=rect.bottom+gap;
+    if(above>=pad || below+h<=vh-pad) {
+      y=above>=pad ? above : below;
+      x=Math.max(pad,Math.min(vw-w-pad,rect.left));
+    } else {
+      // No non-overlapping space exists: hide rather than block tile actions.
+      epgHoverTooltip.classList.remove('visible');
+      epgHoverTooltip.setAttribute('aria-hidden','true');
+      return;
+    }
+  }
+  epgHoverTooltip.style.left=Math.round(x)+'px';
+  epgHoverTooltip.style.top=Math.round(y)+'px';
 }
 function showEpgHover(tile, stream=streamById(tile?.dataset.streamId)) {
   if (!tile || !stream || stream.epg_enabled !== true || !window.matchMedia('(hover:hover)').matches) {
@@ -6624,17 +6680,7 @@ function showEpgHover(tile, stream=streamById(tile?.dataset.streamId)) {
     epgHoverEventHtml(stream.epg_next, uiBiText('Далее','Next'), !!stream.active);
   epgHoverTooltip.classList.add('visible');
   epgHoverTooltip.setAttribute('aria-hidden', 'false');
-  // Position relative to tile, clamped to viewport; the tooltip cannot intercept clicks.
-  const rect = tile.getBoundingClientRect();
-  const w = epgHoverTooltip.offsetWidth;
-  const h = epgHoverTooltip.offsetHeight;
-  const x = Math.max(12, Math.min(window.innerWidth - w - 12, rect.left + (rect.width - w) / 2));
-  const above = rect.top - h - 9;
-  const below = rect.bottom + 9;
-  const y = above >= 12 ? above : (below + h <= window.innerHeight - 12
-    ? below : Math.max(12, window.innerHeight - h - 12));
-  epgHoverTooltip.style.left = Math.round(x) + 'px';
-  epgHoverTooltip.style.top = Math.round(y) + 'px';
+  positionEpgHoverBesideTile(tile);
 }
 // WISI EPG hover reuses the passive channel tooltip. Load only on hover;
 // the periodic /api/state payload keeps its compact no-event summaries.
@@ -6670,15 +6716,7 @@ function wisiEpgHoverShowContent(tile, html) {
   epgHoverTooltip.innerHTML=html;
   epgHoverTooltip.classList.add('wisi-epg-tooltip','visible');
   epgHoverTooltip.setAttribute('aria-hidden','false');
-  const rect=tile.getBoundingClientRect();
-  const w=epgHoverTooltip.offsetWidth,h=epgHoverTooltip.offsetHeight;
-  const x=Math.max(12,Math.min(window.innerWidth-w-12,
-    rect.left+(rect.width-w)/2));
-  const above=rect.top-h-9,below=rect.bottom+9;
-  const y=above>=12?above:(below+h<=window.innerHeight-12
-    ?below:Math.max(12,window.innerHeight-h-12));
-  epgHoverTooltip.style.left=Math.round(x)+'px';
-  epgHoverTooltip.style.top=Math.round(y)+'px';
+  positionEpgHoverBesideTile(tile);
 }
 async function showWisiEpgHover(tile,outputId) {
   if(!tile||!window.matchMedia('(hover:hover)').matches)return;
