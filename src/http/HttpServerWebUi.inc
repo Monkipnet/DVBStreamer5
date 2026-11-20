@@ -968,6 +968,83 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 .wisi-epg-ids label{display:grid;gap:4px;font-size:.75rem;flex:1 1 90px}
 .wisi-epg-ids input{max-width:100%;box-sizing:border-box}
 @media(max-width:560px){.wisi-epg-edit-fields{grid-template-columns:minmax(0,1fr)}}
+
+/* V601: optional Astra/Cesbo-style compact channel tile mode. The existing
+   dashboard remains the default and its style is unchanged unless selected. */
+#tiles.tiles-cesbo .tile-grid:not(.wisi-epg-tiles){
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));
+  gap:5px;
+}
+#tiles.tiles-cesbo .tile[data-stream-id]{
+  height:60px;min-height:60px;padding:6px 28px 6px 7px;
+  gap:2px;border-radius:3px;background:#f9fafb;color:#243344;
+  box-shadow:none;transform:none;overflow:hidden;border:1px solid #cbd5df;
+  transition:background-color .15s,border-color .15s;
+}
+#tiles.tiles-cesbo .tile[data-stream-id]:before{display:none}
+#tiles.tiles-cesbo .tile[data-stream-id].active{border-color:#80c493}
+#tiles.tiles-cesbo .tile[data-stream-id].error{border-color:#e47b7b}
+#tiles.tiles-cesbo .tile[data-stream-id]:hover{background:#f1f6fc;border-color:#5e9bd0;transform:none}
+#tiles.tiles-cesbo .tile[data-stream-id] .top{
+  padding-right:0;min-height:0;height:auto;overflow:visible;display:block;
+}
+#tiles.tiles-cesbo .tile[data-stream-id] .top>.tile-heading{min-width:0;width:100%}
+#tiles.tiles-cesbo .tile[data-stream-id] .title{
+  color:#263442;font-size:12px;font-weight:500;line-height:17px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+#tiles.tiles-cesbo .tile[data-stream-id] .status-line,
+#tiles.tiles-cesbo .tile[data-stream-id] .dvb-meters,
+#tiles.tiles-cesbo .tile[data-stream-id] .info,
+#tiles.tiles-cesbo .tile[data-stream-id] .controls,
+#tiles.tiles-cesbo .tile[data-stream-id] .tile-actions .badge,
+#tiles.tiles-cesbo .tile[data-stream-id] .tile-actions .delete-button{
+  display:none!important;
+}
+#tiles .tile[data-stream-id] .cesbo-compact-status,
+#tiles .tile[data-stream-id] .cesbo-menu-trigger{display:none}
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status{
+  display:block;font:400 11px/15px Arial,Helvetica,sans-serif;
+  color:#9aa1ab;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status.online{color:#4eaa68}
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status.no-output{color:#d75c59}
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status.pending{color:#a16b20}
+#tiles.tiles-cesbo .tile[data-stream-id] .tile-actions{right:3px;top:3px}
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-menu-trigger{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:24px;height:24px;padding:0;border:0;border-radius:3px;
+  background:transparent;color:#648eab;font-size:20px;font-weight:700;
+  line-height:1;cursor:pointer;
+}
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-menu-trigger:hover,
+#tiles.tiles-cesbo .tile[data-stream-id] .cesbo-menu-trigger[aria-expanded="true"]{
+  background:#e1ecf5;color:#185c92;
+}
+.cesbo-tile-menu-popup{
+  position:fixed;z-index:19;box-sizing:border-box;
+  display:grid;gap:2px;width:196px;max-width:calc(100vw - 16px);
+  padding:5px;background:#fff;color:#22354b;border:1px solid #aec7dc;
+  border-radius:5px;box-shadow:0 12px 32px rgba(0,0,0,.22);
+}
+.cesbo-tile-menu-popup[hidden]{display:none}
+.cesbo-tile-menu-popup button{
+  width:100%;border:0;border-radius:3px;text-align:left;cursor:pointer;
+  color:inherit;background:transparent;padding:8px 10px;font-size:12px;
+}
+.cesbo-tile-menu-popup button:hover,
+.cesbo-tile-menu-popup button:focus-visible{background:#e8f2fa;outline:0}
+.cesbo-tile-menu-popup button[data-stream-action="delete"]{color:#b82e35}
+.cesbo-tile-menu-popup button:disabled{opacity:.5;cursor:wait}
+.tile-layout-picker{display:grid;gap:5px;margin:9px 0 14px}
+.tile-layout-picker label{display:flex;align-items:center;gap:9px;padding:9px 10px;
+  border:1px solid rgba(125,209,255,.22);border-radius:7px;cursor:pointer}
+.tile-layout-picker label:has(input:checked){border-color:#53b2e9;background:rgba(83,178,233,.12)}
+.tile-layout-picker input{accent-color:#36a2ed}
+.tile-layout-picker small{font-size:10px;opacity:.74}
+@media(max-width:460px){
+  #tiles.tiles-cesbo .tile-grid:not(.wisi-epg-tiles){grid-template-columns:repeat(auto-fill,minmax(min(100%,125px),1fr))}
+}
 </style>
 </head>
 <body>
