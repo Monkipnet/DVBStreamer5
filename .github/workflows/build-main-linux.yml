@@ -134,7 +134,11 @@ jobs:
           key: dvbstreamer5-native-codecs-ubuntu2404-${{ hashFiles('scripts/build_native_codecs.sh', 'scripts/vendor_native_codecs.sh') }}
 
       - name: Validate DVB-T/T2 UI, terrestrial API and JavaScript syntax
-        run: node tests/web/test_dvb_terrestrial_ui.js
+        run: |
+          node tests/web/test_dvb_terrestrial_ui.js
+          # Physical frontend emulation without a DVB tuner/FFmpeg/OSCam.
+          c++ -std=c++17 -O2 -Wall -Wextra -Isrc tests/test_shared_dvb_t2_key_v590.cpp -o /tmp/dvb-t2-key-v590
+          /tmp/dvb-t2-key-v590
 
       - name: Verify external DVB frontend ownership and safe scanning
         run: |

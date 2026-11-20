@@ -9,6 +9,7 @@ const ui = fs.readFileSync(path.join(root, 'src/http/HttpServerWebUi.inc'), 'utf
 const source = fs.readFileSync(path.join(root, 'src/DvbSatellite.cpp'), 'utf8');
 const input = fs.readFileSync(path.join(root, 'src/media/LinuxDvbInput.cpp'), 'utf8');
 const pool = fs.readFileSync(path.join(root, 'src/media/SharedDvbInputPool.cpp'), 'utf8');
+const tuneKey = fs.readFileSync(path.join(root, 'src/media/SharedDvbTuneKey.h'), 'utf8');
 const relay = fs.readFileSync(path.join(root, 'src/StreamManager.cpp'), 'utf8');
 const warm = fs.readFileSync(path.join(root, 'src/StableUdpOutput.cpp'), 'utf8');
 
@@ -36,7 +37,16 @@ for (const marker of [
   'DTV_FREQUENCY', 'DTV_STREAM_ID', 'tuneTerrestrialFrontend('
 ]) assert.ok(input.includes(marker), 'Missing native frontend tuning: ' + marker);
 
-assert.ok(pool.includes('config.bandwidthHz'), 'Shared DVB key must include bandwidth');
+assert.ok(pool.includes('sharedDvbTransponderKey(tune)'),
+  'Shared DVB subscriber and warm standby must use the canonical tune key');
+assert.ok(tuneKey.includes('config.bandwidthHz'),
+  'Shared DVB-T2 key must include bandwidth');
+assert.ok(tuneKey.includes('config.frequencyKHz'),
+  'Shared DVB-T2 key must include RF frequency');
+assert.ok(tuneKey.includes('config.streamId'),
+  'Shared DVB-T2 key must retain PLP identity');
+assert.ok(tuneKey.includes('isTerrestrialDvbSystem(config.deliverySystem)'),
+  'DVB-T/T2 key must normalize terrestrial-only tune parameters');
 assert.ok(relay.includes('relay.dvbTuneConfig.bandwidthHz = dvbParams.bandwidthHz'),
   'Live DVB input must propagate bandwidth');
 assert.ok(warm.includes('tune.bandwidthHz = params.bandwidthHz'),
