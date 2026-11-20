@@ -3950,9 +3950,14 @@ Json::Value StreamManager::epgUdpPreview(const std::string& outputId) const {
         if (++limit > kMaxHoverServices) break;
         Json::Value entry(Json::objectValue);
         entry["sid"] = svc.serviceId;
-        // For external EPG use the assigned XMLTV ID as a safe label; do
-        // not copy any configured provider URL into the hover response.
+        // Show provider channel names, never provider URLs or credentials.
+        // Keep XMLTV IDs internal for the EPG lookup and SID mapping.
         entry["name"] = svc.streamId.empty() ? svc.xmltvChannelId : svc.streamId;
+        if (svc.streamId.empty() && externalXmltvManager_) {
+            const auto displayName = externalXmltvManager_->channelName(
+                svc.xmltvSourceId, svc.xmltvChannelId);
+            if (!displayName.empty()) entry["name"] = displayName;
+        }
         Json::Value snapshot(Json::objectValue);
         if (!svc.streamId.empty()) {
             for (const auto& cfg : configManager.config.streams) {
