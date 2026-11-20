@@ -1047,8 +1047,8 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 </div>
 </details>
 <div class="system-menu-root-actions">
-<button class="system-menu-item" id="checkReleaseButton" onclick="checkBinaryUpdates()" data-ui-ru="Проверка обновлений" data-ui-en="Check for updates" data-ui-hr="Provjeri ažuriranja">Проверка обновлений</button>
-<button class="system-menu-item" id="installReleaseButton" hidden style="display:none;color:#9fe7b3" onclick="installBinaryUpdate()" data-ui-ru="Обновить программу" data-ui-en="Install update" data-ui-hr="Instaliraj ažuriranje">Обновить программу</button>
+<button class="system-menu-item" id="checkReleaseButton" onclick="checkBinaryUpdates()" data-ui-ru="Проверка обновлений" data-ui-en="Check for updates" data-ui-hr="Provjeri ažuriranja" data-ui-de="Auf Updates prüfen">Проверка обновлений</button>
+<button class="system-menu-item" id="installReleaseButton" hidden style="display:none;color:#9fe7b3" onclick="installBinaryUpdate()" data-ui-ru="Обновить программу" data-ui-en="Install update" data-ui-hr="Instaliraj ažuriranje" data-ui-de="Update installieren">Обновить программу</button>
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
 <button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
 </div>
@@ -7618,7 +7618,7 @@ function deleteStream(id) {
 }
 let latestVerifiedUpdate=null;
 let updateRequestBusy=false;
-function releaseText(ru,en,hr){return language==='ru'?ru:language==='hr'?hr:en;}
+function releaseText(ru,en,hr,de){return language==='ru'?ru:language==='hr'?hr:language==='de'?(de||en):en;}
 let updateProgressDismissed=false;
 function closeBinaryUpdateProgress(){
   updateProgressDismissed=true;
@@ -7632,15 +7632,15 @@ function updateProgress(phase,detail=''){
   if(!updateProgressDismissed)surface.hidden=false;
   surface.dataset.phase=phase;
   const captions={
-    checking:releaseText('Проверка версии на сайте…','Checking website release…','Provjera verzije na stranici…'),
-    available:releaseText('Доступно обновление','Update available','Dostupno ažuriranje'),
-    current:releaseText('Установлена актуальная версия','Already up to date','Verzija je ažurna'),
-    downloading:releaseText('Загрузка бинарного архива…','Downloading binary archive…','Preuzimanje binarne arhive…'),
-    verifying:releaseText('Проверка архива…','Checking archive integrity…','Provjera arhive…'),
-    installing:releaseText('Установка и перезапуск службы…','Installing and restarting service…','Instalacija i ponovno pokretanje servisa…'),
-    done:releaseText('Обновление завершено','Update completed','Ažuriranje završeno'),
-    error:releaseText('Ошибка обновления','Update failed','Ažuriranje nije uspjelo'),
-    starting:releaseText('Запуск обновления…','Starting update…','Pokretanje ažuriranja…')
+    checking:releaseText('Проверка версии на сайте…','Checking website release…','Provjera verzije na stranici…','Prüfe verfügbare Version…'),
+    available:releaseText('Доступно обновление','Update available','Dostupno ažuriranje','Update verfügbar'),
+    current:releaseText('Установлена актуальная версия','Already up to date','Verzija je ažurna','Bereits aktuell'),
+    downloading:releaseText('Загрузка бинарного архива…','Downloading binary archive…','Preuzimanje binarne arhive…','Lade Programmarchiv herunter…'),
+    verifying:releaseText('Проверка архива…','Checking archive integrity…','Provjera arhive…','Prüfe Archiv…'),
+    installing:releaseText('Установка и перезапуск службы…','Installing and restarting service…','Instalacija i ponovno pokretanje servisa…','Installiere und starte Dienst neu…'),
+    done:releaseText('Обновление завершено','Update completed','Ažuriranje završeno','Update abgeschlossen'),
+    error:releaseText('Ошибка обновления','Update failed','Ažuriranje nije uspjelo','Update fehlgeschlagen'),
+    starting:releaseText('Запуск обновления…','Starting update…','Pokretanje ažuriranja…','Starte Update…')
   };
   text.textContent=(captions[phase]||captions.starting)+(detail?' — '+detail:'');
 }
@@ -7668,7 +7668,7 @@ async function checkBinaryUpdates(){
       if(installButton){
         installButton.hidden=false;
         installButton.style.display='';
-        installButton.textContent=releaseText('Обновить до ','Update to ','Ažuriraj na ')+data.latest;
+        installButton.textContent=releaseText('Обновить до ','Update to ','Ažuriraj na ','Aktualisieren auf ')+data.latest;
       }
       updateProgress('available',data.latest);
     }else updateProgress('current',data.current);
@@ -7687,7 +7687,7 @@ async function watchBinaryUpdate(version){
       if(data.phase==='error'){updateProgress('error',releaseText(
         'См. /var/log/dvbstreamer5-update.log',
         'See /var/log/dvbstreamer5-update.log',
-        'Pogledajte /var/log/dvbstreamer5-update.log'));return;}
+        'Pogledajte /var/log/dvbstreamer5-update.log','Siehe /var/log/dvbstreamer5-update.log'));return;}
       if(data.phase==='done'){
         updateProgress('done',version);
         // A successful replacement can restart the web server before this response.
@@ -7704,7 +7704,7 @@ async function watchBinaryUpdate(version){
       updateProgress('installing',version);
     }
   }
-  updateProgress('error',releaseText('Проверка времени ожидания: см. журнал','Status timeout: inspect log','Isteklo vrijeme: provjerite zapisnik'));
+  updateProgress('error',releaseText('Проверка времени ожидания: см. журнал','Status timeout: inspect log','Isteklo vrijeme: provjerite zapisnik','Zeitüberschreitung: Protokoll prüfen'));
 }
 async function installBinaryUpdate(){
   if(!latestVerifiedUpdate||updateRequestBusy)return;
@@ -7712,7 +7712,7 @@ async function installBinaryUpdate(){
   const question=releaseText(
     'Установить версию '+version+'? Во время перезапуска вещание прервётся.',
     'Install version '+version+'? Streaming will be interrupted during restart.',
-    'Instalirati '+version+'? Emitiranje će biti prekinuto pri ponovnom pokretanju.');
+    'Instalirati '+version+'? Emitiranje će biti prekinuto pri ponovnom pokretanju.','Version '+version+' installieren? Beim Neustart wird der Stream unterbrochen.');
   if(!window.confirm(question))return;
   updateRequestBusy=true;
   const checkButton=document.getElementById('checkReleaseButton');
