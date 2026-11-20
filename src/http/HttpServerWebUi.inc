@@ -984,6 +984,10 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 #tiles.tiles-cesbo .tile[data-stream-id]:before{display:none}
 #tiles.tiles-cesbo .tile[data-stream-id].active{border-color:#80c493}
 #tiles.tiles-cesbo .tile[data-stream-id].error{border-color:#e47b7b}
+#tiles.tiles-cesbo .tile[data-stream-id].cesbo-no-output,
+#tiles.tiles-cesbo .tile[data-stream-id].cesbo-no-output:hover{
+  border-color:#e47b7b;
+}
 #tiles.tiles-cesbo .tile[data-stream-id]:hover{background:#f1f6fc;border-color:#5e9bd0;transform:none}
 #tiles.tiles-cesbo .tile[data-stream-id] .top{
   padding-right:0;min-height:0;height:auto;overflow:visible;display:block;
@@ -1227,10 +1231,13 @@ function setTileLayoutMode(mode){
   render(true);
 }
 let cesboMenuTrigger=null;
-function closeCesboTileMenu(){
-  if(cesboMenuTrigger)cesboMenuTrigger.setAttribute('aria-expanded','false');
+function closeCesboTileMenu(restoreFocus=false){
+  const previous=cesboMenuTrigger;
+  if(previous)previous.setAttribute('aria-expanded','false');
   cesboMenuTrigger=null;
   document.getElementById('cesboTileMenu')?.remove();
+  if(restoreFocus && previous && typeof previous.focus==='function')
+    previous.focus();
 }
 function openCesboTileMenu(trigger){
   const tile=trigger?.closest('.tile[data-stream-id],.wisi-epg-tile');
@@ -1290,6 +1297,29 @@ function openCesboTileMenu(trigger){
       popup.appendChild(button);
     }
   }
+  popup.addEventListener('keydown',event=>{
+    const buttons=Array.from(popup.querySelectorAll('button:not(:disabled)'));
+    if(!buttons.length)return;
+    const index=buttons.indexOf(document.activeElement);
+    let next=-1;
+    if(event.key==='ArrowDown')next=(index+1)%buttons.length;
+    else if(event.key==='ArrowUp')next=(index<0?0:index-1+buttons.length)%buttons.length;
+    else if(event.key==='Home')next=0;
+    else if(event.key==='End')next=buttons.length-1;
+    else if(event.key==='Escape'){
+      event.preventDefault();
+      event.stopPropagation();
+      closeCesboTileMenu(true);
+      return;
+    }else if(event.key==='Tab'){
+      closeCesboTileMenu();
+      return;
+    }
+    if(next>=0){
+      event.preventDefault();
+      buttons[next].focus();
+    }
+  });
   document.body.appendChild(popup); // Not clipped by tile overflow.
   cesboMenuTrigger=trigger;
   trigger.setAttribute('aria-expanded','true');
@@ -1316,7 +1346,7 @@ document.addEventListener('click',event=>{
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape'&&cesboMenuTrigger){
     event.preventDefault();
-    closeCesboTileMenu();
+    closeCesboTileMenu(true);
   }
 });
 window.addEventListener('resize',closeCesboTileMenu);
@@ -7072,6 +7102,11 @@ function streamStoppingLabel() {
 function updateStreamTile(tile, stream) {
   if (!tile || !stream) return;
   tile.classList.toggle('active', !!stream.active);
+  // Distinguish a running stream without outgoing packets from a healthy
+  // green channel in the optional Astra-style dashboard.
+  tile.classList.toggle('cesbo-no-output',
+    !!stream.active && !stream.stop_pending &&
+    !(Number(stream.bitrate_out_kbps)>0));
 
   const statusPill = tile.querySelector('[data-role="status-pill"]');
   if (statusPill) {
