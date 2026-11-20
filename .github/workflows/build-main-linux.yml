@@ -140,6 +140,12 @@ jobs:
           c++ -std=c++17 -O2 -Wall -Wextra -Isrc tests/test_shared_dvb_t2_key_v590.cpp -o /tmp/dvb-t2-key-v590
           /tmp/dvb-t2-key-v590
 
+      - name: Verify OSCam-mini individual reader control without a daemon
+        run: |
+          c++ -std=c++17 -Wall -Wextra -pthread -Isrc tests/test_oscam_reader_control_v593.cpp -o /tmp/oscam-reader-control-v593
+          /tmp/oscam-reader-control-v593
+          node tests/web/test_oscam_reader_restart_v593.js
+
       - name: Verify external DVB frontend ownership and safe scanning
         run: |
           c++ -std=c++17 -Wall -Wextra -I. tests/test_dvb_frontend_owners.cpp -o /tmp/dvb-owner-test
@@ -267,6 +273,7 @@ jobs:
             dvbstreamer5_epg_udp_eit_test \
             dvbstreamer5_epg_udp_cbr_test \
             dvbstreamer5_tile_clipboard_test \
+            dvbstreamer5_oscam_reader_control_test \
             dvbstreamer5_shared_dvb_t2_key_test \
             dvbstreamer5_tsdecrypt_ecm_pid_policy_test \
             dvbstreamer5_tsdecrypt_pid_learning_test \
@@ -309,6 +316,7 @@ jobs:
           node tests/web/test_wisi_epg_hover_v586.js
           node tests/web/test_tile_clipboard_v588.js
           node tests/web/test_tile_clipboard_v589.js
+          node tests/web/test_oscam_reader_restart_v593.js
           ctest --test-dir build-main-ci --output-on-failure
 
       - name: Restore pinned iCAM TSDecrypt source and executable cache

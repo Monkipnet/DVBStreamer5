@@ -496,6 +496,12 @@ target_include_directories(dvbstreamer5_tile_clipboard_test PRIVATE
 target_link_libraries(dvbstreamer5_tile_clipboard_test PRIVATE dvbstreamer5_jsoncpp)
 add_test(NAME tile_clipboard_safe_transfer COMMAND dvbstreamer5_tile_clipboard_test)
 
+# V593: root-only OSCam-mini single-reader control, with fake Unix socket.
+add_executable(dvbstreamer5_oscam_reader_control_test tests/test_oscam_reader_control_v593.cpp)
+target_include_directories(dvbstreamer5_oscam_reader_control_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(dvbstreamer5_oscam_reader_control_test PRIVATE Threads::Threads)
+add_test(NAME oscam_reader_restart_ipc COMMAND dvbstreamer5_oscam_reader_control_test)
+
 # V590: emulate two UDP channels + one HTTP channel on one DVB-T2 mux.
 # Also guard distinct PLPs/muxes and unchanged satellite frontend isolation.
 add_executable(dvbstreamer5_shared_dvb_t2_key_test tests/test_shared_dvb_t2_key_v590.cpp)

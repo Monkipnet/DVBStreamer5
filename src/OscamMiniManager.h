@@ -19,6 +19,7 @@ public:
     std::string settingsJson();
     std::string saveSettingsJson(const std::string& body);
     std::string serviceActionJson(const std::string& body);
+    std::string readerActionJson(const std::string& body);
     std::string renderPage();
     bool synchronizeCamClients(const std::vector<CamClientConfig>& clients, std::string& error);
     void appendRuntimeCamClients(std::vector<CamClientConfig>& clients);

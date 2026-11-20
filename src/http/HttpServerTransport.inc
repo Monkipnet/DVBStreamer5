@@ -1602,6 +1602,16 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/oscam-mini/action") {
                 res.set(http::field::content_type, "application/json");
                 res.body() = OscamMiniManager::instance().serviceActionJson(req.body());
+            } else if (target == "/api/oscam-mini/reader-action") {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                if (apiKeyAttempt ||
+                    !(isAuthorized(req) || isPanelSessionAuthorized(req))) {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"ok":false,"error":"Admin session required"})";
+                } else {
+                    res.body() = OscamMiniManager::instance().readerActionJson(req.body());
+                }
             } else if (target == "/api/epg-udp/action") {
                 // Runtime Start/Stop and persistent autostart are independent.
                 // Update one output by ID while preserving all channel mappings.

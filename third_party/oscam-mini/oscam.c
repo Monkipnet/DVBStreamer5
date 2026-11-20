@@ -39,6 +39,7 @@
 #include "oscam-string.h"
 #include "oscam-time.h"
 #include "oscam-work.h"
+#include "dvbstreamer5-reader-control.h"
 #include "reader-common.h"
 #include "module-gbox.h"
 
@@ -1820,6 +1821,10 @@ int32_t main(int32_t argc, char *argv[])
 	do_report_emm_support();
 
 	init_cardreader();
+#ifdef __linux__
+	/* V593: allow recovery while a smartcard is still initializing. */
+	start_thread("DVB reader control", (void *) &dvbstreamer5_reader_control_worker, NULL, NULL, 1, 1);
+#endif
 
 	cs_waitforcardinit();
 	

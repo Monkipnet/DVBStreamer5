@@ -1,4 +1,5 @@
 #include "OscamMiniManager.h"
+#include "OscamReaderControl.h"
 #include "ConfigManager.h"
 
 #include <algorithm>
@@ -1501,6 +1502,42 @@ std::string OscamMiniManager::serviceActionJson(const std::string& body) {
     return json(output);
 }
 
+// V593: per-reader restart is queued inside OSCam via a root-only local
+// socket. Never write oscam.server, restart systemd or disturb other readers.
+std::string OscamMiniManager::readerActionJson(const std::string& body) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Json::Value reply(Json::objectValue);
+    auto fail = [&reply](const std::string& error) {
+        reply["ok"] = false;
+        reply["error"] = error;
+        return json(reply);
+    };
+    if (body.size() > 512U) return fail("Reader request too large");
+    std::string parseError;
+    const auto request = parse(body, parseError);
+    if (!parseError.empty() || !request.isObject() ||
+        !request["action"].isString() || !request["label"].isString() ||
+        request["action"].asString() != "restart")
+        return fail("Invalid OSCam reader action");
+    const auto label = request["label"].asString();
+    if (!dvbstreamer5::oscam_reader_control::validLabel(label))
+        return fail("Invalid OSCam reader label");
+    const auto settings = loadLocked();
+    const auto it = std::find_if(settings.readers.begin(), settings.readers.end(),
+        [&](const Reader& reader) { return reader.label == label; });
+    if (it == settings.readers.end() || !it->enabled)
+        return fail("Reader not found or disabled");
+    if (trim(run("systemctl is-active " + std::string(kService))) != "active")
+        return fail("OSCam-mini service is not running");
+    std::string controlError;
+    if (!dvbstreamer5::oscam_reader_control::restartReader(label, controlError))
+        return fail(controlError);
+    reply["ok"] = true;
+    reply["queued"] = true;
+    reply["label"] = label;
+    return json(reply);
+}
+
 std::string OscamMiniManager::renderPage() {
     return R"HTML(<!doctype html>
 <html lang="en">
@@ -1745,6 +1782,7 @@ oscamLocaleObserver.observe(document.documentElement,{subtree:true,childList:tru
 function syncOscamLanguage(){
   const selected=normalizeLanguage(localStorage.getItem('dvbstreamer5-language')||language);
   if(selected!==language){language=selected;applyOscamLanguage(document.body)}
+  refreshOscamReaderRestartLabels();
 }
 window.addEventListener('storage',event=>{if(event.key==='dvbstreamer5-language')syncOscamLanguage()});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncOscamLanguage()});
@@ -1753,6 +1791,46 @@ let devices=[];
 let detectedReaders=[];
 let lastStatus={};
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function oscamReaderText(ru,en,hr,de){
+  const current=(localStorage.getItem('dvbstreamer5-language')||'en').toLowerCase();
+  return current==='ru'?ru:current==='hr'?hr:current==='de'?de:en;
+}
+function refreshOscamReaderRestartLabels(){
+  document.querySelectorAll('.reader-restart').forEach(button=>{
+    button.textContent=oscamReaderText('Перезапустить ридер','Restart reader',
+      'Ponovno pokreni čitač','Reader neu starten');
+    button.title=oscamReaderText('Перезапускает только этот сохранённый ридер',
+      'Restarts only this saved reader',
+      'Ponovno pokreće samo ovaj spremljeni čitač',
+      'Startet nur diesen gespeicherten Reader neu');
+  });
+}
+async function restartOscamReader(button){
+  const row=button?.closest('.reader');
+  const label=row?.dataset.reader||'';
+  if(!label)return;
+  if(!window.confirm(oscamReaderText(
+    'Перезапустить только ридер «'+label+'»? Возможна краткая задержка ECM.',
+    'Restart only reader “'+label+'”? ECM responses may pause briefly.',
+    'Ponovno pokrenuti samo čitač „'+label+'”? ECM može nakratko zastati.',
+    'Nur Reader „'+label+'“ neu starten? ECM kann kurz aussetzen.')))return;
+  button.disabled=true;
+  try{
+    const result=await api('/api/oscam-mini/reader-action',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'restart',label})
+    });
+    if(!result.ok)throw Error(result.error||'OSCam reader restart failed');
+    msg.textContent=oscamReaderText(
+      'Перезапуск ридера «'+label+'» отправлен',
+      'Reader “'+label+'” restart queued',
+      'Ponovno pokretanje čitača „'+label+'” poslano',
+      'Neustart für Reader „'+label+'“ eingereiht');
+    msg.className='msg success';
+    await refreshStatus();
+  }catch(e){msg.textContent=e.message;msg.className='msg error'}
+  finally{button.disabled=false}
+}
 async function api(url,opt){const r=await fetch(url,opt);let data;try{data=await r.json()}catch(e){throw new Error(await r.text()||('HTTP '+r.status))}return data}
 function stateClass(s){return ['active','idle','down','disabled'].includes(s)?s:'down'}
 function activityDot(s){s=stateClass(s);return `<span class="dot dot-${s}"></span>`}
@@ -1817,7 +1895,7 @@ function readerHtml(r={},i=0){const label=r.label||('Reader'+(i+1));return `<div
 <label class="reader-local">AU Provider<input class="reader-auprovid" maxlength="6" value="${esc(r.auprovid||'')}" placeholder="000652"></label>
 <label class="reader-local">EMM cache<input class="reader-emmcache" value="${esc(r.emmcache||'1,3,2,0')}" placeholder="1,3,2,0"></label>
 <label class="reader-local" style="grid-column:1/-1">RSAKey<input class="reader-rsakey" autocomplete="off" value="${esc(r.rsakey||'')}" placeholder="HEX RSA key"></label>
-</div><div class="row" style="margin-top:10px"><button class="danger" onclick="this.closest('.reader').remove()">Удалить ридер</button></div></div></div>`}
+</div><div class="row" style="margin-top:10px"><button type="button" class="alt reader-restart" onclick="restartOscamReader(this)" title="${esc(oscamReaderText('Перезапускает только этот сохранённый ридер','Restarts only this saved reader','Ponovno pokreće samo ovaj spremljeni čitač','Startet nur diesen gespeicherten Reader neu'))}">${esc(oscamReaderText('Перезапустить ридер','Restart reader','Ponovno pokreni čitač','Reader neu starten'))}</button><button class="danger" onclick="this.closest('.reader').remove()">Удалить ридер</button></div></div></div>`}
 function readerProtocolChanged(sel){const row=sel.closest('.reader');if(!row)return;const remote=['newcamd','newcamd524','newcamd525','camd35','cs357x','cs378x','cccam','cccam_ext','radegast','gbox','scam','ghttp','camd33'].includes(sel.value);row.querySelectorAll('.reader-remote').forEach(e=>e.style.display=remote?'flex':'none');row.querySelectorAll('.reader-local').forEach(e=>e.style.display=remote?'none':'flex');row.querySelectorAll('.reader-des-key').forEach(e=>e.style.display=(remote&&['newcamd','newcamd524','newcamd525'].includes(sel.value))?'flex':'none');row.querySelectorAll('.reader-cccam').forEach(e=>e.style.display=(remote&&['cccam','cccam_ext'].includes(sel.value))?'flex':'none');row.querySelectorAll('.reader-cs378x').forEach(e=>e.style.display=(remote&&sel.value==='cs378x')?'flex':'none');row.querySelectorAll('.reader-ghttp').forEach(e=>e.style.display=(remote&&sel.value==='ghttp')?'flex':'none');row.querySelectorAll('.reader-local-port').forEach(e=>e.style.display=(remote&&sel.value==='gbox')?'flex':'none');const summary=row.querySelector('.reader-summary-device');if(summary)summary.textContent=remote?((row.querySelector('.reader-remote-host')?.value||'remote')+':'+(row.querySelector('.reader-remote-port')?.value||'')):(row.querySelector('.reader-device')?.value||'устройство не выбрано')}
 function addReader(r={}){const box=document.createElement('div');box.innerHTML=readerHtml(r,document.querySelectorAll('.reader').length);const node=box.firstElementChild;if(node){readers.append(node);readerProtocolChanged(node.querySelector('.reader-protocol'))}applyActivity(lastStatus)}
 
