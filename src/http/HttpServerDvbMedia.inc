@@ -349,9 +349,22 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
                std::isfinite(tune[name].asDouble()) &&
                tune[name].asDouble()>=min && tune[name].asDouble()<=max;
     };
+    if(!tune["delivery_system"].isString())
+        return fail("Missing DVB delivery system");
+    const std::string system=tune["delivery_system"].asString();
+    const bool terrestrial=system=="dvb-t" || system=="dvb-t2";
+    const bool satellite=system=="dvb-s" || system=="dvb-s2";
+    if(!terrestrial && !satellite)
+        return fail("Unsupported DVB delivery system");
+    const auto validBandwidth=[&]() {
+        if(!validNumber("bandwidth_hz",1712000,10000000))return false;
+        const int hz=tune["bandwidth_hz"].asInt();
+        return hz==1712000 || hz==5000000 || hz==6000000 ||
+               hz==7000000 || hz==8000000 || hz==10000000;
+    };
     if(!validNumber("adapter",0,31) || !validNumber("frontend",0,31) ||
-       !validNumber("frequency_mhz",900,14000) ||
-       !validNumber("symbol_rate",100,60000) ||
+       !validNumber("frequency_mhz",terrestrial?42:900,terrestrial?1002:14000) ||
+       (terrestrial?!validBandwidth():!validNumber("symbol_rate",100,60000)) ||
        !validNumber("diseqc_source",-1,3) ||
        !validNumber("stream_id",-1,255) ||
        !validNumber("lnb_lof1_mhz",0,14000) ||
@@ -367,7 +380,7 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
        !tune["fec"].isString() ||
        !tune["unicable_mode"].isString() ||
        !root.get("satellite_name","").isString())
-        return fail("Invalid DVB satellite tuning fields");
+        return fail("Invalid DVB tuning fields");
     const auto name=root.get("satellite_name","").asString();
     if(name.size()>80 || name.find_first_of("\r\n")!=std::string::npos)
         return fail("Invalid satellite display name");
@@ -397,12 +410,14 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
             return fail("Channel configuration changed; reload before editing: "+id);
         DvbSatelliteParams original;std::string error;
         if(!DvbSatellite::parseUri(found->inputUri,original,error) ||
-           original.deliverySystem!="dvb-s" &&
-           original.deliverySystem!="dvb-s2" ||
+           (terrestrial ?
+             (original.deliverySystem!="dvb-t" && original.deliverySystem!="dvb-t2") :
+             (original.deliverySystem!="dvb-s" && original.deliverySystem!="dvb-s2")) ||
            original.adapter!=adapter || original.frontend!=frontend)
-            return fail("Selected channel is not on the expected satellite frontend: "+id);
+            return fail("Selected channel is not on the expected DVB frontend: "+id);
         if(haveReference &&
            (original.frequencyKHz!=reference.frequencyKHz ||
+            original.bandwidthHz!=reference.bandwidthHz ||
             original.symbolRateK!=reference.symbolRateK ||
             original.polarity!=reference.polarity ||
             original.deliverySystem!=reference.deliverySystem ||
@@ -410,13 +425,14 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
             original.diseqcSource!=reference.diseqcSource ||
             original.unicableMode!=reference.unicableMode ||
             original.unicablePosition!=reference.unicablePosition))
-            return fail("Selected channels belong to different transponders");
+            return fail("Selected channels belong to different transponders/multiplexes");
         reference=original;haveReference=true;
         if(streamManager.isStreamActive(id)||streamManager.isStopPending(id))
             return fail("Stop all transponder channels before saving: "+id);
         DvbSatelliteParams updated=original;
         updated.frequencyKHz=mhzToKhz(tune["frequency_mhz"].asDouble());
-        updated.symbolRateK=tune["symbol_rate"].asUInt();
+        if(terrestrial)updated.bandwidthHz=tune["bandwidth_hz"].asUInt();
+        else updated.symbolRateK=tune["symbol_rate"].asUInt();
         updated.polarity=tune["polarity"].asString();
         updated.deliverySystem=tune["delivery_system"].asString();
         updated.modulation=tune["modulation"].asString();
@@ -432,6 +448,18 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
             tune["unicable_frequency_mhz"].asDouble());
         updated.unicablePosition=tune["unicable_position"].asInt();
         updated.unicablePin=tune["unicable_pin"].asInt();
+        // DVB-T/T2 is an RF multiplex, not an LNB. Keep its physical tuning
+        // clean even when the shared editor still contains satellite fields.
+        if(terrestrial){
+            updated.symbolRateK=0;
+            updated.polarity.clear();
+            updated.diseqcSource=-1;
+            updated.unicableMode="none";
+            updated.unicableUserBand=-1;
+            updated.unicableFrequencyKHz=0;
+            updated.unicablePosition=0;
+            updated.unicablePin=-1;
+        }
         std::string validationError;
         DvbSatelliteParams check;
         if(!DvbSatellite::parseUri(DvbSatellite::buildUri(updated),
@@ -441,7 +469,10 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
             expected,DvbSatellite::buildUri(check),name);
         DvbSatelliteParams checkedUri;
         if(uri.empty() ||
-           !DvbSatellite::parseUri(uri,checkedUri,validationError))
+           !DvbSatellite::parseUri(uri,checkedUri,validationError) ||
+           checkedUri.deliverySystem!=system ||
+           checkedUri.frequencyKHz!=check.frequencyKHz ||
+           (terrestrial && checkedUri.bandwidthHz!=check.bandwidthHz))
             return fail("Cannot preserve channel tuning URI: "+id);
         updates.emplace_back(static_cast<std::size_t>(std::distance(
             configManager.config.streams.begin(),found)),uri);
@@ -454,6 +485,7 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
            other.adapter!=reference.adapter ||
            other.frontend!=reference.frontend ||
            other.frequencyKHz!=reference.frequencyKHz ||
+           other.bandwidthHz!=reference.bandwidthHz ||
            other.symbolRateK!=reference.symbolRateK ||
            other.polarity!=reference.polarity ||
            other.streamId!=reference.streamId ||
@@ -471,11 +503,11 @@ std::string HttpServer::handleDvbTransponderEdit(const std::string& body) {
         DvbSatelliteParams params;std::string error;
         if(DvbSatellite::parseUri(state->config.inputUri,params,error) &&
            params.adapter==adapter && params.frontend==frontend)
-            return fail("Satellite frontend still has an active consumer");
+            return fail("DVB frontend still has an active consumer");
     }
     if(dvbstreamer5::media::network::LinuxDvbInput::hasActiveFrontend(
         adapter,frontend))
-        return fail("Satellite frontend is still occupied");
+        return fail("DVB frontend is still occupied");
     const auto before=configManager.config.streams;
     for(const auto& [index,uri]:updates)
         configManager.config.streams[index].inputUri=uri;
