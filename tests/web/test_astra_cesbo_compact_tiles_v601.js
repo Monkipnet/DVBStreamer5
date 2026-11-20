@@ -26,7 +26,7 @@ for(const required of [
   "document.body.appendChild(popup)",
   "window.addEventListener('scroll',closeCesboTileMenu,true)",
   "window.addEventListener('resize',closeCesboTileMenu)",
-  'data-ui-de="Tile display"'
+  'data-ui-de="Kachelansicht"'
 ]){
   assert.ok(ui.includes(required),'Missing optional compact UI: '+required);
 }
@@ -34,7 +34,7 @@ for(const required of [
   '#tiles.tiles-cesbo .tile-grid:not(.wisi-epg-tiles)',
   '#tiles.tiles-cesbo .tile[data-stream-id].active',
   '#tiles.tiles-cesbo .tile[data-stream-id] .controls',
-  '#tiles.tiles-cesbo .tile[data-stream-id] .delete-button',
+  '#tiles.tiles-cesbo .tile[data-stream-id] .tile-actions .delete-button',
   '.cesbo-tile-menu-popup',
   '.cesbo-tile-menu-popup[hidden]',
   '#tiles.tiles-cesbo .wisi-epg-tile'
