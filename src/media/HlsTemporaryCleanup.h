@@ -48,7 +48,7 @@ inline bool isStaleCompletedTemporaryHls(
     if (fs::last_write_time(manifest,error) > cutoff || error) return false;
     std::ifstream in(manifest, std::ios::binary);
     if (!in) return false;
-    std::string contents(static_cast<std::size_t>(size), '\\0');
+    std::string contents(static_cast<std::size_t>(size), static_cast<char>(0));
     in.read(&contents[0],static_cast<std::streamsize>(size));
     if (!in || contents.find("#EXT-X-ENDLIST") == std::string::npos)
         return false;
