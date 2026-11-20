@@ -42,7 +42,14 @@ assert.match(vendor,/credentials\.uid != 0/);
 assert.match(vendor,/chmod\(path, 0600\)/);
 assert.match(vendor,/get_reader_by_label\(command \+ 8\)/);
 assert.match(vendor,/add_job\(rdr->client, ACTION_READER_RESTART/);
-assert.doesNotMatch(vendor,/systemctl|httpport|CONFIG_WEBIF/);
+// Regression: this header is included before the global is defined in oscam.c.
+assert.match(vendor,/extern\s+int32_t\s+exit_oscam\s*;/);
+assert.match(oscam,/int32_t\s+exit_oscam\s*=\s*0\s*;/);
+assert.ok(oscam.indexOf('#include "dvbstreamer5-reader-control.h"') <
+  oscam.indexOf('int32_t exit_oscam = 0;'));
+// Never confuse an explanatory comment with a forbidden service-control call.
+const vendorCode=vendor.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/[^\n]*/g,'');
+assert.doesNotMatch(vendorCode,/\b(systemctl|httpport|CONFIG_WEBIF)\b/);
 assert.match(oscam,/#include "dvbstreamer5-reader-control\.h"/);
 assert.match(oscam,/dvbstreamer5_reader_control_worker/);
 assert.match(control,/SOCK_SEQPACKET/);
