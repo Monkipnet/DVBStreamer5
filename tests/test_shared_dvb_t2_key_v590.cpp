@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 
+using dvbstreamer5::media::network::LinuxDvbTuneConfig;
 using dvbstreamer5::media::network::sharedDvbTransponderKey;
 
 int main() {
