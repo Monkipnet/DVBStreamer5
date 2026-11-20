@@ -1178,6 +1178,96 @@ function toggleDashboardTheme(){
   }
 }
 
+// V601: optional Astra/Cesbo-inspired compact layout. Existing tiles stay
+// selected by default, including on a fresh installation or browser profile.
+const tileLayoutStorageKey='dvbstreamer5-tile-layout-v601';
+let tileLayoutMode='standard';
+try{
+  if(localStorage.getItem(tileLayoutStorageKey)==='cesbo')tileLayoutMode='cesbo';
+}catch(_){}
+function tileLayoutText(ru,en,hr,de){
+  return language==='ru'?ru:language==='hr'?hr:language==='de'?de:en;
+}
+function setTileLayoutMode(mode){
+  if(mode!=='standard'&&mode!=='cesbo')return;
+  tileLayoutMode=mode;
+  try{localStorage.setItem(tileLayoutStorageKey,mode);}catch(_){}
+  closeCesboTileMenu();
+  lastTileStructureSignature='';
+  render(true);
+}
+let cesboMenuTrigger=null;
+function closeCesboTileMenu(){
+  if(cesboMenuTrigger)cesboMenuTrigger.setAttribute('aria-expanded','false');
+  cesboMenuTrigger=null;
+  document.getElementById('cesboTileMenu')?.remove();
+}
+function openCesboTileMenu(trigger){
+  const tile=trigger?.closest('.tile[data-stream-id]');
+  if(!tile||tileLayoutMode!=='cesbo')return;
+  if(cesboMenuTrigger===trigger){closeCesboTileMenu();return;}
+  closeCesboTileMenu();
+  hideEpgHover();
+  const id=tile.dataset.streamId;
+  const stream=streamById(id);
+  if(!stream)return;
+  const popup=document.createElement('div');
+  popup.id='cesboTileMenu';
+  popup.className='cesbo-tile-menu-popup';
+  popup.setAttribute('role','menu');
+  popup.setAttribute('aria-label',tileLayoutText('Действия с каналом','Channel actions',
+    'Radnje kanala','Kanalaktionen'));
+  const running=!!stream.active||!!stream.stop_pending;
+  const originalToggle=tile.querySelector('[data-role="stream-toggle"]');
+  const actions=[
+    ['toggle',originalToggle?.textContent||(running?t('stop'):t('start'))],
+    ['edit',tileLayoutText('Редактировать','Edit','Uredi','Bearbeiten')],
+    ['quality',tileLayoutText('График качества','Quality chart','Grafikon kvalitete','Qualitätsdiagramm')],
+    ['copy',tileLayoutText('Копировать URL','Copy URL','Kopiraj URL','URL kopieren')],
+    ['delete',tileLayoutText('Удалить','Delete','Izbriši','Löschen')]
+  ];
+  for(const [action,label] of actions){
+    const button=document.createElement('button');
+    button.type='button';
+    button.textContent=label;
+    button.dataset.streamAction=action;
+    button.dataset.streamId=id;
+    button.setAttribute('role','menuitem');
+    if(action==='toggle')button.dataset.streamActive=running?'1':'0';
+    popup.appendChild(button);
+  }
+  document.body.appendChild(popup); // Not clipped by .tile{overflow:hidden}.
+  cesboMenuTrigger=trigger;
+  trigger.setAttribute('aria-expanded','true');
+  const rect=trigger.getBoundingClientRect();
+  const width=popup.offsetWidth, height=popup.offsetHeight;
+  const left=Math.max(8,Math.min(rect.right-width,window.innerWidth-width-8));
+  const desiredTop=rect.bottom+4;
+  const top=desiredTop+height<=window.innerHeight-8?desiredTop:
+    Math.max(8,rect.top-height-4);
+  popup.style.left=left+'px';
+  popup.style.top=top+'px';
+  popup.querySelector('button')?.focus();
+}
+document.addEventListener('click',event=>{
+  const trigger=event.target.closest?.('[data-cesbo-menu-toggle]');
+  if(trigger){
+    event.preventDefault();
+    event.stopPropagation();
+    openCesboTileMenu(trigger);
+    return;
+  }
+  if(!event.target.closest?.('#cesboTileMenu'))closeCesboTileMenu();
+});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&cesboMenuTrigger){
+    event.preventDefault();
+    closeCesboTileMenu();
+  }
+});
+window.addEventListener('resize',closeCesboTileMenu);
+window.addEventListener('scroll',closeCesboTileMenu,true);
+
 const tileVisibilityStorageKey='dvbstreamer5-tile-visible-v1';
 const tileVisibilityFields=[
  ['status','Статус Online/Offline','Online/offline status','Status Online/Offline'],
@@ -1243,17 +1333,34 @@ function resetTileVisibility(){
  openTileViewModal();
 }
 function openTileViewModal(){
- const title=language==='ru'?'Вид плиток':language==='hr'?'Prikaz pločica':'Tile display';
- const hint=language==='ru'?'Выберите данные, отображаемые в плитках. Изменения применяются сразу и сохраняются в этом браузере.'
-   :language==='hr'?'Odaberite podatke vidljive na pločicama. Promjene se odmah primjenjuju i spremaju u pregledniku.'
-   :'Choose which tile details are visible. Changes apply immediately and are saved in this browser.';
- const reset=language==='ru'?'Показать всё (по умолчанию)':language==='hr'?'Prikaži sve (zadano)':'Show all (default)';
+ const title=tileLayoutText('Вид плиток','Tile display','Prikaz pločica','Kachelansicht');
+ const hint=tileLayoutText(
+   'Выберите вид и отображаемые данные. Изменения применяются сразу и сохраняются в этом браузере.',
+   'Choose the layout and visible details. Changes apply immediately and are saved in this browser.',
+   'Odaberite prikaz i vidljive podatke. Promjene se odmah primjenjuju i spremaju u pregledniku.',
+   'Layout und sichtbare Daten wählen. Änderungen gelten sofort und werden in diesem Browser gespeichert.');
+ const reset=tileLayoutText('Показать всё (по умолчанию)','Show all (default)',
+   'Prikaži sve (zadano)','Alles anzeigen (Standard)');
+ const layoutTitle=tileLayoutText('Расположение плиток','Tile layout',
+   'Raspored pločica','Kachellayout');
+ const normal=tileLayoutText('Обычный вид (по умолчанию)','Standard (default)',
+   'Standardni prikaz (zadano)','Standardansicht (Vorgabe)');
+ const compact=tileLayoutText('Компактный вид Astra / Cesbo','Compact Astra / Cesbo view',
+   'Kompaktni prikaz Astra / Cesbo','Kompakte Astra-/Cesbo-Ansicht');
  const rows=tileVisibilityFields.map(field=>
    '<label style="display:flex;align-items:center;gap:10px;padding:7px 0;cursor:pointer"><input type="checkbox" data-tile-visibility="'+field[0]+'" '+(tileVisibility[field[0]]===false?'':'checked')+'><span>'+tileVisibilityLabel(field)+'</span></label>'
  ).join('');
- openModal('<h2>'+title+'</h2><p>'+hint+'</p><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));column-gap:22px;margin:12px 0">'+rows+'</div><button type="button" class="button-secondary" onclick="resetTileVisibility()">'+reset+'</button>');
+ const layout='<fieldset class="tile-layout-picker"><legend>'+layoutTitle+'</legend>'+
+   '<label><input type="radio" name="tile-layout" data-tile-layout="standard" '+(tileLayoutMode==='standard'?'checked':'')+'><span>'+normal+'</span></label>'+
+   '<label><input type="radio" name="tile-layout" data-tile-layout="cesbo" '+(tileLayoutMode==='cesbo'?'checked':'')+'><span>'+compact+'</span></label>'+
+   '</fieldset>';
+ openModal('<h2>'+title+'</h2><p>'+hint+'</p>'+layout+
+   '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));column-gap:22px;margin:12px 0">'+rows+'</div>'+
+   '<button type="button" class="button-secondary" onclick="resetTileVisibility()">'+reset+'</button>');
  document.querySelectorAll('#modalContent input[data-tile-visibility]').forEach(input=>
    input.addEventListener('change',()=>setTileVisibility(input.dataset.tileVisibility,input.checked)));
+ document.querySelectorAll('#modalContent input[data-tile-layout]').forEach(input=>
+   input.addEventListener('change',()=>{if(input.checked)setTileLayoutMode(input.dataset.tileLayout);}));
 }
 
 const translations = {
@@ -3878,6 +3985,7 @@ document.addEventListener('click', event => {
   if (!id) return;
   event.preventDefault();
   event.stopPropagation();
+  closeCesboTileMenu();
   try {
     const action = button.dataset.streamAction;
     if (action === 'toggle') {
@@ -5936,6 +6044,7 @@ function streamTileStructureSignature(stream) {
 function tilesStructureSignature() {
   return JSON.stringify({
     language,
+    tileLayoutMode,
     streams: (state.streams || []).map(streamTileStructureSignature),
     // WISI virtual tiles are independent of stream counts and media actions.
     wisi_epg: (state.epg_udp_outputs || []).map(o=>[
@@ -6996,6 +7105,20 @@ function updateStreamTile(tile, stream) {
     decodePill.title = `${decodeInfo.detail}. Контроль по A/V PID, scrambling_control и валидному PES на выходе.`;
   }
 
+  const compactStatus=tile.querySelector('[data-role="cesbo-compact-status"]');
+  if(compactStatus){
+    const active=!!stream.active;
+    const kbps=Number(stream.bitrate_out_kbps)||0;
+    const outputOk=active&&kbps>0;
+    compactStatus.className='cesbo-compact-status'+
+      (stream.stop_pending?' pending':outputOk?' online':active?' no-output':'');
+    compactStatus.textContent=stream.stop_pending?streamStoppingLabel():
+      !active?tileLayoutText('Неактивен','Inactive','Neaktivan','Inaktiv'):
+      Math.max(0,Math.round(kbps))+' kbit/s';
+    compactStatus.title=stream.using_backup
+      ?tileLayoutText('Резервный источник','Backup source','Rezervni izvor','Reservequelle')
+      :stream.active?tileLayoutText('Исходящий битрейт','Output bitrate','Izlazni bitrate','Ausgangsbitrate'):'';
+  }
   const toggleButton = tile.querySelector('[data-role="stream-toggle"]');
   if (toggleButton) {
     toggleButton.className = stream.active ? 'stop-button' : 'start-button';
@@ -7463,6 +7586,7 @@ function renderWisiEpgTiles(tiles) {
 function render(force=false) {
   const tiles = document.getElementById('tiles');
   if (!tiles) return;
+  tiles.classList.toggle('tiles-cesbo',tileLayoutMode==='cesbo');
 
   const signature = tilesStructureSignature();
   const streams = state.streams || [];
@@ -7473,6 +7597,7 @@ function render(force=false) {
   }
 
   hideEpgHover();
+  closeCesboTileMenu();
   tiles.innerHTML = '';
   const grouped = makeDvbCardGroups(streams);
   const hasDvbCards = grouped.cards.length > 0;
@@ -7572,9 +7697,11 @@ function render(force=false) {
           </div>
         </div>
       </div>
+      <div class="cesbo-compact-status" data-role="cesbo-compact-status"></div>
       <div class="tile-actions">
         <div class="badge">${outputs.length > 1 ? outputBadgeText(stream) : bitrateMode}</div>
         <button class="delete-button" title="${t('delete')}" aria-label="${t('delete')}" data-stream-action="delete" data-stream-id="${escapeHtmlValue(stream.id)}">×</button>
+        <button type="button" class="cesbo-menu-trigger" data-cesbo-menu-toggle aria-haspopup="menu" aria-expanded="false" title="${tileLayoutText('Действия с каналом','Channel actions','Radnje kanala','Kanalaktionen')}" aria-label="${tileLayoutText('Действия с каналом','Channel actions','Radnje kanala','Kanalaktionen')}">⋯</button>
       </div>
       <div class="dvb-meters${stream.dvb_input ? '' : ' placeholder'}" title="${stream.dvb_input ? 'DVB Signal / Quality' : ''}">
         <div class="dvb-meter"><span data-role="dvb-signal-fill" class="dvb-meter-fill"></span><b data-role="dvb-signal-label" class="dvb-meter-label">S —</b></div>
