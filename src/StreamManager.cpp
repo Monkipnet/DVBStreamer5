@@ -26,6 +26,7 @@
 #include "media/HlsSegmentSettings.h"
 #include "media/HlsOnlyCbrRoutingPolicy.h"
 #include "media/OnDemandHlsStartupPolicy.h"
+#include "media/HlsTemporaryCleanup.h"
 #include "NativeHttpClient.h"
 #include "media/UdpSocket.h"
 #include "media/HttpTsEpollDispatcher.h"
@@ -3012,6 +3013,42 @@ bool StreamManager::stopStream(const std::string& id) {
     {
         std::lock_guard<std::mutex> lock(asyncStopMutex_);
         stoppingAbortRefs_.erase(id);
+    }
+    // V598: do not leave old non-archived TS, ABR and CMAF tails after
+    // final teardown. Never touch archival output or preserved failover.
+    // The startingStreamsMutex_ lease makes the same-ID Start/Stop/Start
+    // race safe: a new Start either sees the renamed path or causes this
+    // cleanup to be skipped. No filesystem deletion occurs under the lease.
+    if (!automaticFailoverTransition && !state->config.hlsArchiveEnabled &&
+        (state->nativeHlsSegmenter || state->nativeCmafSegmenter ||
+         !state->hlsAbrVariants.empty())) {
+        std::filesystem::path quarantined;
+        std::error_code quarantineError;
+        {
+            std::lock_guard<std::mutex> launching(startingStreamsMutex_);
+            if (!startingStreamIds_.count(id)) {
+                std::lock_guard<std::mutex> current(managerMutex);
+                if (streams.find(id) == streams.end()) {
+                    quarantined =
+                        dvbstreamer5::media::hls::quarantineStoppedTemporaryHls(
+                            "/tmp/dvbstreamer5-hls", id, quarantineError);
+                }
+            }
+        }
+        if (quarantineError) {
+            std::cerr << "NATIVE HLS CLEANUP SKIP stream_id=" << id
+                      << " reason=" << quarantineError.message() << std::endl;
+        }
+        if (!quarantined.empty()) {
+            std::error_code removeError;
+            const auto removed =
+                dvbstreamer5::media::hls::removeQuarantinedTemporaryHls(
+                    quarantined, removeError);
+            std::cerr << "NATIVE HLS CLEANUP stream_id=" << id
+                      << " removed_entries=" << removed
+                      << " error=" << (removeError ? removeError.message() : "none")
+                      << std::endl;
+        }
     }
     return true;
 }
