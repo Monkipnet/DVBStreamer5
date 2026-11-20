@@ -15,8 +15,12 @@ inline constexpr const char* kSocketPath =
     "/run/dvbstreamer5-oscam-mini-reader.sock";
 inline bool validLabel(const std::string& label) {
     if (label.empty() || label.size() > 64U) return false;
+    // Match OSCam-mini's ASCII-only dvbstreamer5_reader_label_is_safe().
+    // Locale-dependent std::isalnum() can admit names the daemon rejects.
     for (unsigned char c : label)
-        if (!(std::isalnum(c) || c == '_' || c == '-' || c == '.' || c == '@'))
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-' ||
+              c == '.' || c == '@'))
             return false;
     return true;
 }
