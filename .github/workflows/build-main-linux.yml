@@ -140,6 +140,13 @@ jobs:
           c++ -std=c++17 -O2 -Wall -Wextra -Isrc tests/test_shared_dvb_t2_key_v590.cpp -o /tmp/dvb-t2-key-v590
           /tmp/dvb-t2-key-v590
 
+      - name: Emulate HLS tail cleanup, orphan recovery, ABR/CMAF and restart isolation
+        run: |
+          c++ -std=c++17 -O2 -Wall -Wextra -UNDEBUG -Isrc \
+            tests/test_hls_temporary_cleanup_v598.cpp -o /tmp/dvbstreamer5-hls-cleanup-v598
+          /tmp/dvbstreamer5-hls-cleanup-v598
+          node tests/web/test_hls_tail_cleanup_v598.js
+
       - name: Verify OSCam-mini individual reader control without a daemon
         run: |
           c++ -std=c++17 -Wall -Wextra -pthread -Isrc tests/test_oscam_reader_control_v593.cpp -o /tmp/oscam-reader-control-v593
