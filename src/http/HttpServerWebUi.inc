@@ -1324,23 +1324,23 @@ window.addEventListener('scroll',closeCesboTileMenu,true);
 
 const tileVisibilityStorageKey='dvbstreamer5-tile-visible-v1';
 const tileVisibilityFields=[
- ['status','Статус Online/Offline','Online/offline status','Status Online/Offline'],
- ['uptime','Время работы','Uptime','Vrijeme rada'],
- ['runtime','Состояние процесса','Runtime status','Status procesa'],
- ['badge','Тип выхода / CBR/VBR','Output mode / CBR/VBR','Vrsta izlaza / CBR/VBR'],
- ['signal','Уровень сигнала','Signal level','Razina signala'],
- ['quality','Качество сигнала','Signal quality','Kvaliteta signala'],
- ['output','Выходной адрес','Output address','Izlazna adresa'],
- ['activeInput','Активный вход','Active input','Aktivni ulaz'],
- ['primary','Основной вход','Primary input','Primarni ulaz'],
- ['backup','Резервный вход','Backup input','Rezervni ulaz'],
- ['sid','SID','SID','SID'],
- ['frontend','Frontend','Frontend','Frontend'],
- ['tuning','Настройка DVB','DVB tuning','DVB podešavanje'],
- ['ca','Условный доступ (CA)','Conditional access (CA)','Uvjetni pristup (CA)'],
- ['decode','Декодирование','Descrambling','Dekodiranje'],
- ['bitrateIn','Входящий битрейт','Input bitrate','Ulazni bitrate'],
- ['bitrateOut','Исходящий битрейт','Output bitrate','Izlazni bitrate']
+ ['status','Статус Online/Offline','Online/offline status','Status Online/Offline','Online-/Offline-Status'],
+ ['uptime','Время работы','Uptime','Vrijeme rada','Laufzeit'],
+ ['runtime','Состояние процесса','Runtime status','Status procesa','Prozessstatus'],
+ ['badge','Тип выхода / CBR/VBR','Output mode / CBR/VBR','Vrsta izlaza / CBR/VBR','Ausgangstyp / CBR/VBR'],
+ ['signal','Уровень сигнала','Signal level','Razina signala','Signalpegel'],
+ ['quality','Качество сигнала','Signal quality','Kvaliteta signala','Signalqualität'],
+ ['output','Выходной адрес','Output address','Izlazna adresa','Ausgangsadresse'],
+ ['activeInput','Активный вход','Active input','Aktivni ulaz','Aktiver Eingang'],
+ ['primary','Основной вход','Primary input','Primarni ulaz','Haupteingang'],
+ ['backup','Резервный вход','Backup input','Rezervni ulaz','Reserveeingang'],
+ ['sid','SID','SID','SID','SID'],
+ ['frontend','Frontend','Frontend','Frontend','Frontend'],
+ ['tuning','Настройка DVB','DVB tuning','DVB podešavanje','DVB-Abstimmung'],
+ ['ca','Условный доступ (CA)','Conditional access (CA)','Uvjetni pristup (CA)','Zugangsberechtigung (CA)'],
+ ['decode','Декодирование','Descrambling','Dekodiranje','Entschlüsselung'],
+ ['bitrateIn','Входящий битрейт','Input bitrate','Ulazni bitrate','Eingangsbitrate'],
+ ['bitrateOut','Исходящий битрейт','Output bitrate','Izlazni bitrate','Ausgangsbitrate']
 ];
 let tileVisibility={};
 try{
@@ -1350,7 +1350,7 @@ try{
  }
 }catch(_){}
 function tileVisibilityLabel(field){
- return language==='ru'?field[1]:language==='hr'?field[3]:field[2];
+ return language==='ru'?field[1]:language==='hr'?field[3]:language==='de'?field[4]:field[2];
 }
 function applyTileVisibility(tile){
  if(!tile)return;
