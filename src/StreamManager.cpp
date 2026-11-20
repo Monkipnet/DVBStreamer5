@@ -532,6 +532,52 @@ StreamManager::StreamManager(ConfigManager& cfg, TelegramNotifier& notifier)
                   : Json::Value(Json::arrayValue);
               return result;
           })) {
+    // V598: reap only fully ended, >24h stale non-archive HLS tails
+    // left by older versions or abnormal restarts. At construction time no
+    // media generators have been launched by this manager yet.
+    {
+        const std::filesystem::path root("/tmp/dvbstreamer5-hls");
+        std::error_code listingError;
+        std::filesystem::directory_iterator entries(root, listingError);
+        const std::filesystem::directory_iterator end;
+        std::size_t checked = 0;
+        if (!listingError) for (; entries != end && checked++ < 1024;
+                                entries.increment(listingError)) {
+            if (listingError) break;
+            const auto id = entries->path().filename().string();
+            if (!dvbstreamer5::media::hls::safeTemporaryHlsId(id))
+                continue;
+            // Never touch configured HLS archives, even if their destination
+            // happens to live inside the usual temporary root.
+            const bool archive = std::any_of(
+                cfg.config.streams.begin(), cfg.config.streams.end(),
+                [&](const StreamConfig& configured) {
+                    return configured.id == id && configured.hlsArchiveEnabled;
+                });
+            if (archive ||
+                !dvbstreamer5::media::hls::isStaleCompletedTemporaryHls(
+                    entries->path()))
+                continue;
+            std::error_code cleanupError;
+            const auto quarantined =
+                dvbstreamer5::media::hls::quarantineStoppedTemporaryHls(
+                    root, id, cleanupError);
+            if (!quarantined.empty()) {
+                const auto removed =
+                    dvbstreamer5::media::hls::removeQuarantinedTemporaryHls(
+                        quarantined, cleanupError);
+                std::cerr << "NATIVE HLS STALE CLEANUP stream_id=" << id
+                          << " removed_entries=" << removed
+                          << " error="
+                          << (cleanupError ? cleanupError.message() : "none")
+                          << std::endl;
+            } else if (cleanupError) {
+                std::cerr << "NATIVE HLS STALE CLEANUP SKIP stream_id=" << id
+                          << " reason=" << cleanupError.message()
+                          << std::endl;
+            }
+        }
+    }
     // V397: 4 epoll pollers replace one detached writer thread per viewer.
     httpEpollDispatcher_=std::make_unique<
         dvbstreamer5::media::network::HttpTsEpollDispatcher>(4);
