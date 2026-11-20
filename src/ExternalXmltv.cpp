@@ -757,6 +757,16 @@ Json::Value ExternalXmltvManager::channels(const std::string& sourceId) const {
     return root;
 }
 
+std::string ExternalXmltvManager::channelName(
+    const std::string& sourceId, const std::string& channelId) const {
+    if (sourceId.empty() || channelId.empty()) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto source = sources_.find(sourceId);
+    if (source == sources_.end()) return {};
+    const auto channel = source->second.channels.find(channelId);
+    return channel == source->second.channels.end() ? std::string{} : channel->second;
+}
+
 Json::Value ExternalXmltvManager::snapshot(
     const std::string& sourceId, const std::string& channelId,
     unsigned days) const {
