@@ -15,6 +15,12 @@ using namespace dvbstreamer5::oscam_reader_control;
 int main() {
     assert(validLabel("remote_reader_01"));
     assert(validLabel("pcsc.0"));
+    assert(validLabel("reader-1@remote"));
+    assert(validLabel(std::string(64, 'Z')));
+    // The OSCam-mini daemon accepts ASCII only, irrespective of C++ locale.
+    assert(!validLabel(std::string("\xC3\xA9")));
+    assert(!validLabel(std::string(1, static_cast<char>(0xFF))));
+    assert(!validLabel("name\treader"));
     assert(!validLabel(""));
     assert(!validLabel("a; systemctl restart oscam-mini"));
     assert(!validLabel("one\nrestart other"));
