@@ -20,7 +20,6 @@ for(const required of [
   'data-cesbo-menu-toggle',
   'data-role="cesbo-compact-status"',
   'class="cesbo-compact-status"',
-  "data-stream-action=action",
   "button.dataset.streamId=id",
   "closeCesboTileMenu();",
   "document.body.appendChild(popup)",
