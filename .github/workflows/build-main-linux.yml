@@ -67,6 +67,14 @@ jobs:
           c++ -std=c++17 -Wall -Wextra -UNDEBUG -Isrc tests/test_dvb_transponder_edit_v539.cpp -o /tmp/dvbstreamer5-tp-editor
           /tmp/dvbstreamer5-tp-editor
 
+      - name: Emulate DVB-T/T2 adapter editing, PLP/bandwidth and original compact tiles
+        run: |
+          node tests/web/test_terrestrial_adapter_edit_v602.js
+          node tests/web/test_astra_cesbo_compact_tiles_v601.js
+          c++ -std=c++17 -O2 -Wall -Wextra -UNDEBUG -Isrc \
+            tests/test_dvb_terrestrial_mux_edit_v602.cpp -o /tmp/dvb-t2-mux-editor-v602
+          /tmp/dvb-t2-mux-editor-v602
+
       - name: Emulate DVB-S2 transponder stop and scan with translated header search
         run: node tests/web/test_transponder_scan_v538.js
 
