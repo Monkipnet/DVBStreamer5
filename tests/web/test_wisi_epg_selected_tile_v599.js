@@ -65,7 +65,7 @@ vm.runInContext(ui.slice(start,end),ctx);
   await ctx.wisiEpgLoadSource('xmltv-two',true);
   assert.deepEqual(shown,['wisi-second'],'Metadata completion switched to first tile');
   assert.deepEqual(selectors,['.wisi-epg-channel-list[data-wisi-output-id]']);
-  assert.equal(ctx.wisiXmltvDisplayNames.get('xmltv-two\\0news-two'),'News Two');
+  assert.equal(ctx.wisiXmltvDisplayNames.get('xmltv-two'+String.fromCharCode(0)+'news-two'),'News Two');
   assert.equal(loaded.length,1);
   // An edited channel or closed modal must never be overwritten.
   shown.length=0;
