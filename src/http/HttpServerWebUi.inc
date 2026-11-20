@@ -6221,6 +6221,51 @@ function streamSatelliteTransponderInfo(stream) {
   ]):'unconfigured:'+String(stream.id);
   return {key,title};
 }
+// V602: identify DVB-T/T2 multiplexes by the exact physical frontend and
+// RF/PLP settings, not by channel SID. Multiple programmes share one MUX.
+function streamTerrestrialMultiplexInfo(stream){
+  if(!streamIsTerrestrialDvb(stream))return null;
+  const uri=String(stream.input_uri||'');
+  const q=uri.indexOf('?');
+  const params=new URLSearchParams(q<0?'':uri.slice(q+1));
+  const adapter=Number(stream.dvb_adapter), frontend=Number(stream.dvb_frontend);
+  const frequency=Number(params.get('frequency_khz'));
+  const bandwidth=Number(params.get('bandwidth_hz')||8000000);
+  const delivery=String(params.get('delivery_system')||'').toLowerCase();
+  const plp=Number(params.get('stream_id')??stream.dvb_stream_id??-1);
+  const valid=Number.isInteger(adapter)&&adapter>=0&&
+    Number.isInteger(frontend)&&frontend>=0&&
+    params.has('frequency_khz')&&Number.isInteger(frequency)&&
+    frequency>=42000&&frequency<=1002000&&
+    [1712000,5000000,6000000,7000000,8000000,10000000].includes(bandwidth)&&
+    Number.isInteger(plp)&&plp>=-1&&plp<=255&&
+    (delivery==='dvb-t2'||delivery==='dvb-t'&&plp===-1);
+  const freqMHz=Number((frequency/1000).toFixed(3));
+  const label='A'+(Number.isInteger(adapter)?adapter:'?')+
+    '/FE'+(Number.isInteger(frontend)?frontend:'?');
+  const title=valid?'MUX '+freqMHz+' MHz · '+
+    (bandwidth/1000000)+' MHz · '+delivery.toUpperCase()+
+    (plp>=0?' · PLP '+plp:'')+' · '+label
+    :'MUX — · '+label;
+  const key=valid?JSON.stringify([adapter,frontend,delivery,frequency,bandwidth,plp]):
+    'unconfigured:'+String(stream.id);
+  return {key,title,valid};
+}
+function makeTerrestrialMultiplexGroups(streams){
+  const groups=new Map(),other=[];
+  for(const stream of streams){
+    const info=streamTerrestrialMultiplexInfo(stream);
+    if(!info){other.push(stream);continue;}
+    if(!groups.has(info.key))
+      groups.set(info.key,{key:info.key,title:info.title,valid:info.valid,streams:[]});
+    groups.get(info.key).streams.push(stream);
+  }
+  const multiplexes=[...groups.values()].sort((a,b)=>
+    a.title.localeCompare(b.title,language,{numeric:true,sensitivity:'base'})||
+    a.key.localeCompare(b.key));
+  for(const group of multiplexes)group.streams.sort(sortDvbCardStreams);
+  return {multiplexes,other};
+}
 function makeSatelliteTransponderGroups(streams) {
   const groups=new Map();
   const terrestrial=[];
