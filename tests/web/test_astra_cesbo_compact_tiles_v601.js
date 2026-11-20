@@ -41,6 +41,15 @@ for(const required of [
   '.cesbo-tile-menu-popup[hidden]',
   '#tiles.tiles-cesbo .wisi-epg-tile'
 ])assert.ok(css.includes(required),'Missing compact tile style: '+required);
+// Dark palette must apply only in compact mode while keeping the light
+// compact palette and original standard tiles untouched.
+for(const required of [
+  'html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id]',
+  'html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile',
+  'html:not([data-dashboard-theme="light"]) .cesbo-tile-menu-popup',
+  '#tiles.tiles-cesbo .tile[data-stream-id]{'
+])assert.ok(css.includes(required),'Missing Astra/Cesbo theme rule: '+required);
+assert.ok(!css.includes('html:not([data-dashboard-theme="light"]) .tile[data-stream-id]{'));
 // Check that standard mode remains the default: compact styles are always
 // scoped to #tiles.tiles-cesbo and both controls already exist for standard.
 assert.ok(!css.includes('.tile{height:60px'));
