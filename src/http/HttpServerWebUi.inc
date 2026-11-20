@@ -10360,6 +10360,7 @@ function applyTransponderScanTune(tune) {
   setValue('satName',tune.satellite_name);
   setValue('satFrequency',tune.frequency_mhz);
   setValue('satSymbolRate',tune.symbol_rate);
+  setValue('satBandwidth',tune.bandwidth_hz);
   setValue('satPolarity',tune.polarity);
   setValue('satDeliverySystem',tune.delivery_system);
   setValue('satModulation',tune.modulation);
@@ -10388,13 +10389,19 @@ async function saveExistingTransponderTune(){
   if(!selection||selection.value!==activeTransponderEdit.group_key)return false;
   const chosen=activeTransponderEdit;
   const tune=satelliteTunePayload();
-  if(!(Number.isFinite(tune.frequency_mhz)&&tune.frequency_mhz>=900&&
-       tune.frequency_mhz<=14000 &&
-       Number.isFinite(tune.symbol_rate)&&tune.symbol_rate>=100 &&
-       tune.symbol_rate<=60000)){
-    uiError(subtitleUiTriText('Неверная частота или Symbol Rate',
-      'Invalid frequency or symbol rate',
-      'Neispravna frekvencija ili brzina simbola'));
+  const terrestrial=tune.delivery_system==='dvb-t'||tune.delivery_system==='dvb-t2';
+  const validBandwidth=[1712000,5000000,6000000,7000000,8000000,10000000]
+    .includes(tune.bandwidth_hz);
+  const validFrequency=Number.isFinite(tune.frequency_mhz)&&
+    (terrestrial?(tune.frequency_mhz>=42&&tune.frequency_mhz<=1002):
+      tune.frequency_mhz>=900&&tune.frequency_mhz<=14000);
+  if(!validFrequency || (terrestrial?!validBandwidth:
+     !(Number.isFinite(tune.symbol_rate)&&tune.symbol_rate>=100&&
+       tune.symbol_rate<=60000))){
+    uiError(tileLayoutText('Неверная частота или полоса/символьная скорость',
+      'Invalid frequency or bandwidth/symbol rate',
+      'Neispravna frekvencija ili širina pojasa/simbolna brzina',
+      'Ungültige Frequenz oder Bandbreite/Symbolrate'));
     return false;
   }
   const ok=window.confirm(subtitleUiTriText(
@@ -10436,6 +10443,8 @@ async function saveExistingTransponderTune(){
 function openAddChannelModal(initialTransponderTune=null) {
   const modalGeneration=++satelliteModalGeneration;
   const editing=!!initialTransponderTune?.group_key;
+  const editingTerrestrial=editing &&
+    ['dvb-t','dvb-t2'].includes(initialTransponderTune.delivery_system);
   const editGroup=editing ? findTransponderGroupForScan(
     initialTransponderTune.group_key,state.streams||[]) : null;
   activeTransponderEdit=editing&&editGroup?{
@@ -10446,7 +10455,9 @@ function openAddChannelModal(initialTransponderTune=null) {
   }:null;
   satelliteServices = [];
   openModal(`
-    <h2 id="satAddTitle">${editing?subtitleUiTriText('Редактирование транспондера — DVB-S/S2','Edit transponder — DVB-S/S2','Uredi transponder — DVB-S/S2'):subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
+    <h2 id="satAddTitle">${editingTerrestrial?tileLayoutText('Редактирование мультиплекса — DVB-T/T2','Edit multiplex — DVB-T/T2','Uredi multipleks — DVB-T/T2','Multiplex bearbeiten — DVB-T/T2'):
+      editing?subtitleUiTriText('Редактирование транспондера — DVB-S/S2','Edit transponder — DVB-S/S2','Uredi transponder — DVB-S/S2'):
+      subtitleUiTriText('Добавить канал — DVB-S/S2','Add channel — DVB-S/S2','Dodaj kanal — DVB-S/S2')}</h2>
     ${editing&&editGroup? `
     <div class="tp-scan-context">
       <label for="satExistingTransponder">${subtitleUiTriText('Выбранный транспондер из списка плиток','Selected transponder from tile group','Odabrani transponder iz grupe pločica')}</label>
@@ -10540,6 +10551,14 @@ function openAddChannelModal(initialTransponderTune=null) {
   // Do not probe the default adapter while the selected transponder is
   // waiting for adapter metadata and form tuning parameters.
   transponderScanPreparing=!!initialTransponderTune;
+  // V602: reception mode must be selected before filtering /api/dvb-adapters.
+  // Otherwise a terrestrial-only frontend disappears from the adapter list
+  // when the shared editor initially defaults to DVB-S2.
+  if(initialTransponderTune){
+    const reception=document.getElementById('satReceptionType');
+    if(reception)reception.value=['dvb-t','dvb-t2'].includes(
+      initialTransponderTune.delivery_system)?'terrestrial':'satellite';
+  }
   setDvbReceptionMode(false);
   updateSatelliteUnicableUi(false);
   updateSatelliteOutputHints(false);
@@ -10563,8 +10582,17 @@ function openAddChannelModal(initialTransponderTune=null) {
           title.setAttribute('data-ui-ru','Редактирование транспондера — DVB-S/S2');
           title.setAttribute('data-ui-en','Edit transponder — DVB-S/S2');
           title.setAttribute('data-ui-hr','Uredi transponder — DVB-S/S2');
-          title.textContent=subtitleUiTriText('Редактирование транспондера — DVB-S/S2',
-            'Edit transponder — DVB-S/S2','Uredi transponder — DVB-S/S2');
+          if(editingTerrestrial){
+            title.setAttribute('data-ui-ru','Редактирование мультиплекса — DVB-T/T2');
+            title.setAttribute('data-ui-en','Edit multiplex — DVB-T/T2');
+            title.setAttribute('data-ui-hr','Uredi multipleks — DVB-T/T2');
+            title.setAttribute('data-ui-de','Multiplex bearbeiten — DVB-T/T2');
+          }
+          title.textContent=editingTerrestrial?tileLayoutText(
+            'Редактирование мультиплекса — DVB-T/T2','Edit multiplex — DVB-T/T2',
+            'Uredi multipleks — DVB-T/T2','Multiplex bearbeiten — DVB-T/T2'):
+            subtitleUiTriText('Редактирование транспондера — DVB-S/S2',
+              'Edit transponder — DVB-S/S2','Uredi transponder — DVB-S/S2');
         }
       }
       scheduleSatelliteSignalPolling();
