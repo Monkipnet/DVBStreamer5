@@ -44,6 +44,22 @@ for(const required of [
 // Check that standard mode remains the default: compact styles are always
 // scoped to #tiles.tiles-cesbo and both controls already exist for standard.
 assert.ok(!css.includes('.tile{height:60px'));
+// V602: a running but silent/empty stream shows red rather than healthy green.
+assert.match(ui,/tile\.classList\.toggle\('cesbo-no-output'/);
+assert.ok(css.includes('.tile[data-stream-id].cesbo-no-output'),
+  'Running stream without outgoing bitrate needs a red warning border');
+// Tile-display field labels have four explicit translations, including DE.
+const fieldBegin=ui.indexOf('const tileVisibilityFields=[');
+const fieldEnd=ui.indexOf('];',fieldBegin)+2;
+assert.ok(fieldBegin>0 && fieldEnd>fieldBegin);
+const tileFields=new Function('return '+ui.slice(fieldBegin,fieldEnd)
+  .replace('const tileVisibilityFields=','')+';')();
+assert.equal(tileFields.length,17);
+assert.ok(tileFields.every(field=>field.length===5&&field.every(value=>typeof value==='string'&&value.length)),
+  'All tile-display labels must have RU EN HR DE translations');
+assert.ok(ui.includes("language==='de'?field[4]:field[2]"),
+  'German tile-display labels must not fall back to English');
+
 assert.match(ui,/function setTileLayoutMode\(mode\)\s*\{/);
 assert.match(ui,/function updateStreamTile\(tile, stream\)/);
 assert.match(ui,/function renderWisiEpgTiles\(tiles\)/);
