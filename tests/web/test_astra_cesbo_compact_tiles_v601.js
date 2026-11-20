@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const ui=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
 const version=fs.readFileSync('src/AppVersion.h','utf8');
-assert.match(version,/kProgramVersion = "10\\.8\\.60[1-9]"/);
+assert.match(version,/kProgramVersion = "10\.8\.60[1-9]"/);
 
 const start=ui.indexOf('<script>'), end=ui.indexOf('</script>',start);
 assert.ok(start>0&&end>start,'Embedded dashboard JavaScript');
