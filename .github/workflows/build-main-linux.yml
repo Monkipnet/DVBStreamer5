@@ -221,6 +221,13 @@ jobs:
       - name: Verify TSDecrypt is mandatory in standard portable bundles
         run: node tests/web/test_portable_tsdecrypt_default_v597.js
 
+      - name: Emulate update checks without jq and atomic website release publication
+        run: |
+          bash -n scripts/dvbstreamer5_update.sh
+          bash -n scripts/publish_portable_release.sh
+          node tests/web/test_update_metadata_compat_v599.js
+          node tests/web/test_update_publication_v599.js
+
       - name: Verify signed binary update policy and UI
         run: node tests/web/test_binary_update_policy.js
 
