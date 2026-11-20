@@ -7826,6 +7826,7 @@ function render(force=false) {
       addInputSubgroup(tiles,'tp:'+group.key+':'+tp.key,
         tp.title,tp.streams,parents,orderedStreams);
     if(!buckets.terrestrial.length)continue;
+    const terrestrialGroups=makeTerrestrialMultiplexGroups(buckets.terrestrial);
 
     // Keep the physical card wrapper only for DVB-T/T2 channels.
     const details=document.createElement('details');
@@ -7833,10 +7834,21 @@ function render(force=false) {
     details.dataset.cardKey=group.key;
     details.open=dvbCardGroupOpen[group.key]===true;
     const summary=document.createElement('summary');
-    const title=document.createElement('strong');
-    title.className='dvb-card-title';
+    const title=document.createElement('button');
+    title.type='button';
+    title.className='dvb-card-title dvb-card-edit-title';
     title.textContent=dvbCardDisplayTitle(group);
-    title.title=title.textContent;
+    title.title=tileLayoutText(
+      'Редактировать адаптер DVB-T/T2',
+      'Edit DVB-T/T2 adapter',
+      'Uredi DVB-T/T2 adapter',
+      'DVB-T/T2-Adapter bearbeiten');
+    title.setAttribute('aria-label',title.title+': '+dvbCardDisplayTitle(group));
+    title.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      editTerrestrialAdapterGroup(group.key);
+    });
     const count=document.createElement('span');
     count.className='dvb-card-count';
     count.dataset.cardCount='1';
@@ -7860,7 +7872,11 @@ function render(force=false) {
     grid.className='tile-grid dvb-card-tiles';
     details.appendChild(grid);
     tiles.appendChild(details);
-    for(const stream of buckets.terrestrial) {
+    for(const mux of terrestrialGroups.multiplexes){
+      addInputSubgroup(grid,'tt:'+group.key+':'+mux.key,
+        mux.title,mux.streams,parents,orderedStreams);
+    }
+    for(const stream of terrestrialGroups.other){
       parents.set(String(stream.id),grid);
       orderedStreams.push(stream);
     }
