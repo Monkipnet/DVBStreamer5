@@ -5202,8 +5202,10 @@ async function wisiEpgLoadSource(sourceId, force=false) {
         wisiXmltvDisplayNames.set(String(sourceId)+'\\0'+String(item.id),String(item.name));
     }
     wisiEpgUpdateMatches(sourceId);
-    // The channel list may be open while metadata is loading.
-    const list=document.querySelector('[data-wisi-output-id]');
+    // V599: dashboard tiles also have data-wisi-output-id. Target ONLY the
+    // channel list inside the currently open modal, never the first tile.
+    const list=document.getElementById('modalContent')?.querySelector(
+      '.wisi-epg-channel-list[data-wisi-output-id]');
     if(list&&wisiEpgChannelEditContext===null)
       wisiEpgShowChannelList(list.getAttribute('data-wisi-output-id'));
   } catch(error) {
