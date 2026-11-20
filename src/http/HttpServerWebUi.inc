@@ -5194,18 +5194,18 @@ async function wisiEpgLoadSource(sourceId, force=false) {
     while(wisiXmltvCatalogBySource.size >= 2)
       wisiXmltvCatalogBySource.delete(wisiXmltvCatalogBySource.keys().next().value);
     wisiXmltvCatalogBySource.set(sourceId,Array.isArray(data)?data:[]);
+    const wanted=new Set(wisiEpgUdpOutputs.flatMap(output=>
+      (output.services||[]).filter(svc=>svc.xmltv_source_id===sourceId)
+        .map(svc=>String(svc.xmltv_channel_id||''))));
     for(const item of (Array.isArray(data)?data:[])) {
-      if(item?.id&&item?.name)
+      if(item?.id&&item?.name&&wanted.has(String(item.id)))
         wisiXmltvDisplayNames.set(String(sourceId)+'\\0'+String(item.id),String(item.name));
     }
     wisiEpgUpdateMatches(sourceId);
     // The channel list may be open while metadata is loading.
-    const list=document.querySelector('[data-wisi-channel-list="'+
-      CSS.escape(String(sourceId))+'"]');
-    if(list&&wisiEpgChannelEditContext===null) {
-      const outputId=list.getAttribute('data-output-id');
-      if(outputId)wisiEpgShowChannelList(outputId);
-    }
+    const list=document.querySelector('[data-wisi-output-id]');
+    if(list&&wisiEpgChannelEditContext===null)
+      wisiEpgShowChannelList(list.getAttribute('data-wisi-output-id'));
   } catch(error) {
     uiError(error?.message||error);
   } finally {
@@ -5242,6 +5242,12 @@ async function wisiEpgOpenTileEditor(outputId) {
     wisiEpgUdpOutputs=Array.isArray(status.outputs)?status.outputs:[];
     wisiXmltvSources=Array.isArray(sources.sources)?sources.sources:[];
     wisiEpgShowChannelList(outputId);
+    for(const sourceId of new Set(wisiEpgUdpOutputs.find(
+      output=>output.id===outputId)?.services?.filter(svc=>!svc.stream_id)
+      .map(svc=>svc.xmltv_source_id).filter(Boolean)||[])) {
+      if(!wisiXmltvCatalogBySource.has(sourceId))
+        void wisiEpgLoadSource(sourceId);
+    }
   } catch(error) { uiError(error?.message||error); }
 }
 function wisiEpgShowChannelList(outputId) {
@@ -5287,7 +5293,7 @@ function wisiEpgShowChannelList(outputId) {
       'Add channels from configured XMLTV sources without creating a media stream.',
       'Dodajte kanale iz konfiguriranih XMLTV izvora bez stvaranja medijskog toka.',
       'Kanäle aus konfigurierten XMLTV-Quellen ohne Medienstream hinzufügen.')+'</small>'+
-    '<div class="wisi-epg-channel-list">'+
+    '<div class="wisi-epg-channel-list" data-wisi-output-id="'+safeId+'">'+
     (services.length ? services.map(row).join('') :
       '<div class="mpts-empty">'+text('Каналы ещё не добавлены',
       'No channels added','Kanali nisu dodani','Noch keine Kanäle')+'</div>')+
