@@ -333,6 +333,7 @@ jobs:
           node tests/web/test_wisi_epg_hover_v586.js
           node tests/web/test_epg_hover_channel_names_v596.js
           node tests/web/test_wisi_epg_selected_tile_v599.js
+          node tests/web/test_astra_cesbo_compact_tiles_v601.js
           node tests/web/test_tile_clipboard_v588.js
           node tests/web/test_tile_clipboard_v589.js
           node tests/web/test_oscam_reader_restart_v593.js
