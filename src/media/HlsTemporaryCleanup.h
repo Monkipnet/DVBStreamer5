@@ -4,6 +4,8 @@
 // segmenters. Hold StreamManager's startingStreamsMutex_ across quarantine:
 // a concurrent Start must never share the path being moved.
 #include <atomic>
+#include <chrono>
+#include <fstream>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
@@ -24,6 +26,45 @@ inline bool safeTemporaryHlsId(const std::string& id) {
             return false;
     }
     return true;
+}
+
+// Restart-time scavenging is intentionally conservative: only an ended
+// MPEG-TS HLS playlist whose contents have not changed for at least 24 hours
+// can identify a crash/old-version tail. Unknown, hot or CMAF-only directories
+// remain untouched. Check every file, not only the playlist's mtime.
+inline bool isStaleCompletedTemporaryHls(
+    const std::filesystem::path& dir,
+    std::chrono::hours minimumAge = std::chrono::hours(24)) {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    const auto status = fs::symlink_status(dir,error);
+    if (error || !fs::is_directory(status)) return false;
+    const auto manifest = dir / "video.m3u8";
+    const auto manifestStatus = fs::symlink_status(manifest,error);
+    if (error || !fs::is_regular_file(manifestStatus)) return false;
+    const auto size = fs::file_size(manifest,error);
+    if (error || size == 0 || size > 65536U) return false;
+    const auto cutoff = fs::file_time_type::clock::now() - minimumAge;
+    if (fs::last_write_time(manifest,error) > cutoff || error) return false;
+    std::ifstream in(manifest, std::ios::binary);
+    if (!in) return false;
+    std::string contents(static_cast<std::size_t>(size), '\\0');
+    in.read(&contents[0],static_cast<std::streamsize>(size));
+    if (!in || contents.find("#EXT-X-ENDLIST") == std::string::npos)
+        return false;
+    fs::recursive_directory_iterator it(dir,fs::directory_options::none,error);
+    const fs::recursive_directory_iterator end;
+    if (error) return false;
+    std::size_t inspected = 0;
+    for (; it != end; it.increment(error)) {
+        if (error || ++inspected > 1024) return false;
+        const auto entryStatus=it->symlink_status(error);
+        if (error || fs::is_symlink(entryStatus)) return false;
+        if (fs::is_regular_file(entryStatus) &&
+            (fs::last_write_time(it->path(),error)>cutoff || error))
+            return false;
+    }
+    return !error;
 }
 
 // Return an empty path when nothing needs cleanup. Never follow a symlink
