@@ -6387,18 +6387,41 @@ function sortNetworkInputStreams(streams) {
 // V538 TRANSPONDER SCAN ACTION BEGIN
 let transponderGroupScanBusy=false;
 function findTransponderGroupForScan(key,streams) {
-  if(typeof key!=='string'||!key.startsWith('tp:'))return null;
+  if(typeof key!=='string'||(!key.startsWith('tp:')&&!key.startsWith('tt:')))
+    return null;
   const cards=makeDvbCardGroups(streams||[]).cards;
   for(const card of cards){
-    const grouped=makeSatelliteTransponderGroups(card.streams);
-    for(const tp of grouped.transponders){
-      if('tp:'+card.key+':'+tp.key===key)
-        return tp;
+    if(key.startsWith('tp:')){
+      const grouped=makeSatelliteTransponderGroups(card.streams);
+      for(const tp of grouped.transponders)
+        if('tp:'+card.key+':'+tp.key===key)return tp;
+    }else{
+      const grouped=makeTerrestrialMultiplexGroups(card.streams);
+      for(const mux of grouped.multiplexes)
+        if('tt:'+card.key+':'+mux.key===key)return mux;
     }
   }
   return null;
 }
 function transponderScanTuneFromStream(stream) {
+  const terrestrial=streamTerrestrialMultiplexInfo(stream);
+  if(terrestrial){
+    if(!terrestrial.valid)return null;
+    const raw=String(stream.input_uri||'');
+    const question=raw.indexOf('?');
+    const params=new URLSearchParams(question<0?'':raw.slice(question+1));
+    const frequency=Number(params.get('frequency_khz'));
+    return {
+      adapter:Number(stream.dvb_adapter),frontend:Number(stream.dvb_frontend),
+      frequency_mhz:frequency/1000,
+      bandwidth_hz:Number(params.get('bandwidth_hz')||8000000),
+      delivery_system:params.get('delivery_system'),
+      modulation:params.get('modulation')||'auto',
+      fec:params.get('fec')||'auto',
+      stream_id:Number(params.get('stream_id')??stream.dvb_stream_id??-1),
+      satellite_name:params.get('satellite_name')||stream.dvb_nit_network_name||''
+    };
+  }
   const info=streamSatelliteTransponderInfo(stream);
   if(!info||info.key.startsWith('unconfigured:'))return null;
   const raw=String(stream.input_uri||'');
@@ -6446,15 +6469,17 @@ async function beginTransponderGroupScan(key){
   if(transponderGroupScanBusy)return false;
   const group=findTransponderGroupForScan(key,state.streams||[]);
   if(!group || !group.streams.length){
-    uiError(subtitleUiTriText('Транспондер не найден','Transponder not found',
-      'Transponder nije pronađen'));
+    uiError(tileLayoutText('Транспондер или мультиплекс не найден',
+      'Transponder or multiplex not found','Transponder ili multipleks nije pronađen',
+      'Transponder oder Multiplex nicht gefunden'));
     return false;
   }
   const tune=transponderScanTuneFromStream(group.streams[0]);
   if(!tune){
-    uiError(subtitleUiTriText('Параметры транспондера неполные',
-      'Transponder tuning parameters are incomplete',
-      'Parametri podešavanja transpondera nisu potpuni'));
+    uiError(tileLayoutText('Параметры DVB-тюнера неполные',
+      'DVB tuning parameters are incomplete',
+      'Parametri DVB podešavanja nisu potpuni',
+      'DVB-Abstimmungsparameter sind unvollständig'));
     return false;
   }
   const ids=new Set(group.streams.map(s=>String(s.id)));
