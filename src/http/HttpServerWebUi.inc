@@ -1045,6 +1045,36 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 @media(max-width:460px){
   #tiles.tiles-cesbo .tile-grid:not(.wisi-epg-tiles){grid-template-columns:repeat(auto-fill,minmax(min(100%,125px),1fr))}
 }
+
+/* WISI EPG virtual tiles follow the same compact mode without sharing
+   stream actions; their menu uses /api/epg-udp/action independently. */
+#tiles.tiles-cesbo .wisi-epg-tiles{grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));gap:5px}
+#tiles.tiles-cesbo .wisi-epg-tile{
+  height:60px;min-height:60px;padding:6px 28px 6px 7px;gap:2px;
+  background:#f9fafb;color:#263442;border:1px solid #cbd5df;
+  border-radius:3px;box-shadow:none;transform:none;overflow:hidden
+}
+#tiles.tiles-cesbo .wisi-epg-tile.active{border-color:#80c493}
+#tiles.tiles-cesbo .wisi-epg-tile:before{display:none}
+#tiles.tiles-cesbo .wisi-epg-tile .top{min-height:0;height:auto;padding-right:0}
+#tiles.tiles-cesbo .wisi-epg-tile .title{font-size:12px;color:#263442;font-weight:500;line-height:17px}
+#tiles.tiles-cesbo .wisi-epg-tile .status-line,
+#tiles.tiles-cesbo .wisi-epg-tile .info,
+#tiles.tiles-cesbo .wisi-epg-tile .controls,
+#tiles.tiles-cesbo .wisi-epg-tile .tile-actions{display:none!important}
+#tiles.tiles-cesbo .wisi-epg-tile .cesbo-compact-status{
+  display:block;color:#9aa1ab;font:400 11px/15px Arial,Helvetica,sans-serif
+}
+#tiles.tiles-cesbo .wisi-epg-tile.active .cesbo-compact-status{color:#4eaa68}
+#tiles.tiles-cesbo .wisi-epg-tile .wisi-menu-trigger{
+  display:inline-flex;position:absolute;top:3px;right:3px;
+  align-items:center;justify-content:center;width:24px;height:24px;
+  border:0;border-radius:3px;padding:0;background:transparent;
+  color:#648eab;font-size:20px;line-height:1;cursor:pointer;z-index:2
+}
+#tiles.tiles-cesbo .wisi-epg-tile .wisi-menu-trigger:hover{background:#e1ecf5;color:#185c92}
+#tiles .wisi-epg-tile .cesbo-compact-status,
+#tiles .wisi-epg-tile .wisi-menu-trigger{display:none}
 </style>
 </head>
 <body>
@@ -1203,40 +1233,64 @@ function closeCesboTileMenu(){
   document.getElementById('cesboTileMenu')?.remove();
 }
 function openCesboTileMenu(trigger){
-  const tile=trigger?.closest('.tile[data-stream-id]');
+  const tile=trigger?.closest('.tile[data-stream-id],.wisi-epg-tile');
   if(!tile||tileLayoutMode!=='cesbo')return;
   if(cesboMenuTrigger===trigger){closeCesboTileMenu();return;}
   closeCesboTileMenu();
   hideEpgHover();
-  const id=tile.dataset.streamId;
-  const stream=streamById(id);
-  if(!stream)return;
+  const isWisi=tile.classList.contains('wisi-epg-tile');
+  const id=isWisi?tile.dataset.wisiOutputId:tile.dataset.streamId;
+  const stream=isWisi?null:streamById(id);
+  const out=isWisi?(state.epg_udp_outputs||[]).find(item=>String(item.id)===id):null;
+  if(!isWisi&&!stream || isWisi&&!out)return;
   const popup=document.createElement('div');
   popup.id='cesboTileMenu';
   popup.className='cesbo-tile-menu-popup';
   popup.setAttribute('role','menu');
   popup.setAttribute('aria-label',tileLayoutText('Действия с каналом','Channel actions',
     'Radnje kanala','Kanalaktionen'));
-  const running=!!stream.active||!!stream.stop_pending;
-  const originalToggle=tile.querySelector('[data-role="stream-toggle"]');
-  const actions=[
-    ['toggle',originalToggle?.textContent||(running?t('stop'):t('start'))],
-    ['edit',tileLayoutText('Редактировать','Edit','Uredi','Bearbeiten')],
-    ['quality',tileLayoutText('График качества','Quality chart','Grafikon kvalitete','Qualitätsdiagramm')],
-    ['copy',tileLayoutText('Копировать URL','Copy URL','Kopiraj URL','URL kopieren')],
-    ['delete',tileLayoutText('Удалить','Delete','Izbriši','Löschen')]
-  ];
-  for(const [action,label] of actions){
-    const button=document.createElement('button');
-    button.type='button';
-    button.textContent=label;
-    button.dataset.streamAction=action;
-    button.dataset.streamId=id;
-    button.setAttribute('role','menuitem');
-    if(action==='toggle')button.dataset.streamActive=running?'1':'0';
-    popup.appendChild(button);
+  if(isWisi){
+    const actions=[
+      [out.enabled?'stop':'start',out.enabled?tileLayoutText('Стоп','Stop','Zaustavi','Stopp'):tileLayoutText('Старт','Start','Pokreni','Starten')],
+      ['edit',tileLayoutText('Редактировать','Edit','Uredi','Bearbeiten')],
+      ['autostart',out.auto_start?tileLayoutText('Отключить автостарт','Disable autostart','Isključi automatsko pokretanje','Autostart deaktivieren'):
+        tileLayoutText('Включить автостарт','Enable autostart','Uključi automatsko pokretanje','Autostart aktivieren')]
+    ];
+    for(const [action,label] of actions){
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=label;
+      button.setAttribute('role','menuitem');
+      button.addEventListener('click',()=>{
+        closeCesboTileMenu();
+        if(action==='edit')void wisiEpgOpenTileEditor(id);
+        else if(action==='autostart')void wisiEpgTileAction(id,'autostart',!out.auto_start,button);
+        else void wisiEpgTileAction(id,action,null,button);
+      });
+      popup.appendChild(button);
+    }
+  }else{
+    const running=!!stream.active||!!stream.stop_pending;
+    const originalToggle=tile.querySelector('[data-role="stream-toggle"]');
+    const actions=[
+      ['toggle',originalToggle?.textContent||(running?t('stop'):t('start'))],
+      ['edit',tileLayoutText('Редактировать','Edit','Uredi','Bearbeiten')],
+      ['quality',tileLayoutText('График качества','Quality chart','Grafikon kvalitete','Qualitätsdiagramm')],
+      ['copy',tileLayoutText('Копировать URL','Copy URL','Kopiraj URL','URL kopieren')],
+      ['delete',tileLayoutText('Удалить','Delete','Izbriši','Löschen')]
+    ];
+    for(const [action,label] of actions){
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=label;
+      button.dataset.streamAction=action;
+      button.dataset.streamId=id;
+      button.setAttribute('role','menuitem');
+      if(action==='toggle')button.dataset.streamActive=running?'1':'0';
+      popup.appendChild(button);
+    }
   }
-  document.body.appendChild(popup); // Not clipped by .tile{overflow:hidden}.
+  document.body.appendChild(popup); // Not clipped by tile overflow.
   cesboMenuTrigger=trigger;
   trigger.setAttribute('aria-expanded','true');
   const rect=trigger.getBoundingClientRect();
@@ -7558,7 +7612,11 @@ function renderWisiEpgTiles(tiles) {
       '</strong><span>'+channels+'</span></div>'+
       '<div class="info-row"><strong>'+text('Битрейт CBR','CBR bitrate','CBR brzina','CBR-Bitrate')+
       '</strong><span>'+Number(out.bitrate_kbps||3000)+' kbps</span></div>'+
-      '</div><div class="controls">'+
+      '</div><div class="cesbo-compact-status">'+
+      (active?Number(out.bitrate_kbps||3000)+' kbit/s':status)+'</div>'+
+      '<button type="button" class="cesbo-menu-trigger wisi-menu-trigger" data-cesbo-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="'+
+      text('Действия с EPG-выходом','EPG output actions','Radnje EPG izlaza','EPG-Ausgangsaktionen')+'">⋯</button>'+
+      '<div class="controls">'+
       '<button type="button" data-wisi-toggle class="'+(running?'stop-button':'start-button')+'">'+
       (running?text('Стоп','Stop','Zaustavi','Stopp'):text('Старт','Start','Pokreni','Start'))+'</button>'+
       '<button type="button" data-wisi-edit>'+
