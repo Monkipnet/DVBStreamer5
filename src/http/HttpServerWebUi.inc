@@ -984,18 +984,8 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
   grid-template-columns:repeat(auto-fill,minmax(min(100%,145px),1fr));
   gap:5px;
 }
-/* Keep DVB-T/T2 multiplex groups full-width, even in compact mode;
-   only the actual stream tiles within each group use 145px columns. */
-#tiles .dvb-card-tiles.terrestrial-mux-container{
-  grid-template-columns:minmax(0,1fr);
-}
-#tiles.tiles-cesbo .dvb-card-tiles.terrestrial-mux-container{
-  grid-template-columns:minmax(0,1fr);
-}
-#tiles .dvb-card-tiles.terrestrial-mux-container>.input-subgroup{
-  width:100%;
-  min-width:0;
-}
+/* DVB-T/T2 MUX spoilers now use the same top-level layout as DVB-S/S2.
+   Keep this independent of the optional compact tile-grid rules. */
 #tiles.tiles-cesbo .tile[data-stream-id]{
   height:60px;min-height:60px;padding:6px 28px 6px 7px;
   gap:2px;border-radius:3px;background:#f9fafb;color:#243344;
@@ -1100,6 +1090,65 @@ html[data-dashboard-theme="light"] .wisi-epg-tiles{border-top-color:#d7e3ef}
 #tiles.tiles-cesbo .wisi-epg-tile .wisi-menu-trigger:hover{background:#e1ecf5;color:#185c92}
 #tiles .wisi-epg-tile .cesbo-compact-status,
 #tiles .wisi-epg-tile .wisi-menu-trigger{display:none}
+
+/* V603: Compact Astra/Cesbo follows the dashboard theme. The compact
+   light palette above stays intact; do not change the standard tile view. */
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id],
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile{
+  background:#172332;color:#e8f3ff;border-color:#34475d;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id]:hover,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile:hover{
+  background:#213249;border-color:#6a9bc6;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id].active,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile.active{
+  background:#162e2a;border-color:#39bd81;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id].cesbo-no-output,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id].cesbo-no-output:hover,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id].error{
+  background:#34232c;border-color:#ff737b;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .title,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile .title{
+  color:#f0f6ff;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile .cesbo-compact-status{
+  color:#b0c2d5;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status.online,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile.active .cesbo-compact-status{
+  color:#78e0a1;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status.no-output{
+  color:#ff999e;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-compact-status.pending{
+  color:#f7c271;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-menu-trigger,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile .wisi-menu-trigger{
+  color:#b8d9f4;
+}
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-menu-trigger:hover,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .tile[data-stream-id] .cesbo-menu-trigger[aria-expanded="true"],
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile .wisi-menu-trigger:hover,
+html:not([data-dashboard-theme="light"]) #tiles.tiles-cesbo .wisi-epg-tile .wisi-menu-trigger[aria-expanded="true"]{
+  background:#304861;color:#fff;
+}
+html:not([data-dashboard-theme="light"]) .cesbo-tile-menu-popup{
+  background:#1b2a3a;color:#f1f7ff;border-color:#506d88;
+  box-shadow:0 14px 36px rgba(0,0,0,.55);
+}
+html:not([data-dashboard-theme="light"]) .cesbo-tile-menu-popup button:hover,
+html:not([data-dashboard-theme="light"]) .cesbo-tile-menu-popup button:focus-visible{
+  background:#2a4660;
+}
+html:not([data-dashboard-theme="light"]) .cesbo-tile-menu-popup button[data-stream-action="delete"]{
+  color:#ff989e;
+}
 </style>
 </head>
 <body>
@@ -7849,57 +7898,23 @@ function render(force=false) {
     if(!buckets.terrestrial.length)continue;
     const terrestrialGroups=makeTerrestrialMultiplexGroups(buckets.terrestrial);
 
-    // Keep the physical card wrapper only for DVB-T/T2 channels.
-    const details=document.createElement('details');
-    details.className='dvb-card-group';
-    details.dataset.cardKey=group.key;
-    details.open=dvbCardGroupOpen[group.key]===true;
-    const summary=document.createElement('summary');
-    const title=document.createElement('button');
-    title.type='button';
-    title.className='dvb-card-title dvb-card-edit-title';
-    title.textContent=dvbCardDisplayTitle(group);
-    title.title=tileLayoutText(
-      'Редактировать адаптер DVB-T/T2',
-      'Edit DVB-T/T2 adapter',
-      'Uredi DVB-T/T2 adapter',
-      'DVB-T/T2-Adapter bearbeiten');
-    title.setAttribute('aria-label',title.title+': '+dvbCardDisplayTitle(group));
-    title.addEventListener('click',event=>{
-      event.preventDefault();
-      event.stopPropagation();
-      editTerrestrialAdapterGroup(group.key);
-    });
-    const count=document.createElement('span');
-    count.className='dvb-card-count';
-    count.dataset.cardCount='1';
-    count.textContent=buckets.terrestrial.filter(stream=>stream.active).length+
-      '/'+buckets.terrestrial.length+' '+t('cardActive');
-    const status=document.createElement('span');
-    status.className='dvb-card-status';
-    const meters=document.createElement('span');
-    meters.className='dvb-card-meters';
-    meters.dataset.cardMeters='1';
-    status.append(meters,count);
-    summary.title=dvbCardDisplayDevice(group);
-    summary.append(title,status);
-    details.appendChild(summary);
-    details.addEventListener('toggle',()=>{
-      if(tileSearchQuery)return; // Preserve the operator's previous collapsed state.
-      dvbCardGroupOpen[group.key]=details.open;
-      saveDvbCardGroupOpen();
-    });
-    const grid=document.createElement('div');
-    grid.className='tile-grid dvb-card-tiles terrestrial-mux-container';
-    details.appendChild(grid);
-    tiles.appendChild(details);
+    // V603: no adapter-level spoiler around terrestrial multiplexes.
+    // DVB-T/T2 uses precisely the same single top-level, editable spoiler
+    // (title / centered arrow / signal meters) as DVB-S/S2.
     for(const mux of terrestrialGroups.multiplexes){
-      addInputSubgroup(grid,'tt:'+group.key+':'+mux.key,
+      addInputSubgroup(tiles,'tt:'+group.key+':'+mux.key,
         mux.title,mux.streams,parents,orderedStreams);
     }
-    for(const stream of terrestrialGroups.other){
-      parents.set(String(stream.id),grid);
-      orderedStreams.push(stream);
+    // Preserve malformed/legacy terrestrial tiles even if no MUX can be
+    // parsed safely. Do not invent tuning data or an editable MUX for them.
+    if(terrestrialGroups.other.length){
+      const grid=document.createElement('div');
+      grid.className='tile-grid dvb-unconfigured-tiles';
+      tiles.appendChild(grid);
+      for(const stream of terrestrialGroups.other){
+        parents.set(String(stream.id),grid);
+        orderedStreams.push(stream);
+      }
     }
   }
   if(grouped.network.length) {
