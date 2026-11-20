@@ -1,0 +1,18 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const packager = fs.readFileSync('scripts/make_portable_linux_bundle.sh','utf8');
+const workflow = fs.readFileSync('.github/workflows/build-main-linux.yml','utf8');
+const version = fs.readFileSync('src/AppVersion.h','utf8');
+assert.match(packager,/INCLUDE_TSDECRYPT=yes/);
+assert.match(packager,/--without-tsdecrypt\) INCLUDE_TSDECRYPT=no/);
+assert.match(packager,/INCLUDE_TSDECRYPT" == yes && -z "\$TSDECRYPT_BINARY"/);
+assert.match(packager,/fail ".*no TSDecrypt binary was built/);
+assert.match(packager,/install -m 0755 "\$TSDECRYPT_BINARY" "\$STAGE\/bin\/tsdecrypt\.bin"/);
+assert.match(packager,/--verify "\$STAGE\/bin\/tsdecrypt\.bin"/);
+assert.match(workflow,/bash scripts\/build_tsdecrypt_icam\.sh/);
+assert.match(workflow,/--with-tsdecrypt/);
+assert.match(workflow,/test -x "dist\/DVBStreamer5-\$\{version\}-linux-x86_64\/bin\/tsdecrypt"/);
+assert.match(version,/kProgramVersion = "10\.8\.(\d+)"/);
+assert.ok(Number(version.match(/10\.8\.(\d+)/)[1])>=597);
+console.log('PASS V597: default portable requires TSDecrypt, CI builds and validates it');
