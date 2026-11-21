@@ -8140,8 +8140,19 @@ async function checkBinaryUpdates(){
         'Обновить / новая копия','Update / new copy',
         'Ažuriraj / nova kopija','Aktualisieren / neue Kopie');
     }
-    if(data.available)updateProgress('available',data.latest);
-    else updateProgress('current',data.current);
+    if(data.available){
+      updateProgress('available',data.latest);
+    }else{
+      updateProgress('current',data.current);
+      // An identical binary version must never hide the option to create
+      // another independent instance with its own settings and HTTP port.
+      const createCopy=window.confirm(releaseText(
+        'Версия '+data.current+' уже установлена. Установить дополнительную независимую копию?',
+        'Version '+data.current+' is already installed. Install another independent copy?',
+        'Verzija '+data.current+' već je instalirana. Instalirati dodatnu neovisnu kopiju?',
+        'Version '+data.current+' ist bereits installiert. Weitere unabhängige Kopie installieren?'));
+      if(createCopy)window.setTimeout(()=>installBinaryUpdate(true),0);
+    }
   }catch(e){updateProgress('error',String(e?.message||e));}
   finally{setUpdateButtonBusy(button,false);updateRequestBusy=false;}
 }
@@ -8176,10 +8187,10 @@ async function watchBinaryUpdate(version){
   }
   updateProgress('error',releaseText('Проверка времени ожидания: см. журнал','Status timeout: inspect log','Isteklo vrijeme: provjerite zapisnik','Zeitüberschreitung: Protokoll prüfen'));
 }
-async function installBinaryUpdate(){
+async function installBinaryUpdate(forceNewCopy=false){
   if(!latestVerifiedUpdate||updateRequestBusy)return;
   const version=latestVerifiedUpdate;
-  const choice=window.prompt(releaseText(
+  const choice=forceNewCopy?'2':window.prompt(releaseText(
     'Выберите действие: 1 — обновить эту копию; 2 — установить дополнительную копию.',
     'Choose action: 1 — update this copy; 2 — install an additional copy.',
     'Odaberite radnju: 1 — ažuriraj ovu kopiju; 2 — instaliraj dodatnu kopiju.',
