@@ -328,7 +328,14 @@ install_release(){
   echo "UPDATE: installing $RELEASE_VERSION; backup=$backup"
   UPDATE_TXN_DIRTY=1
   # EXIT trap restores the runtime and units if any operation fails.
-  if ! (cd "$bundle" && /bin/bash ./install.sh) ||
+  # A web update must never invoke the all-instance dispatcher.
+  if [[ "$1" == install-current ]]; then
+    [[ -f "$bundle/legacy-install.sh" ]] ||
+      die 'Release lacks isolated legacy installer; web update refused'
+  fi
+  local install_script='./install.sh'
+  if [[ "$1" == install-current ]]; then install_script='./legacy-install.sh'; fi
+  if ! (cd "$bundle" && /bin/bash "$install_script") ||
      ! systemctl is-active --quiet dvbstreamer5.service; then
     die 'Installation failed; rollback requested'
   fi
@@ -349,4 +356,4 @@ valid_version "$2" || die 'Invalid current version'
 for command in curl tar strings sha256sum flock mktemp stat sed; do
   command -v "$command" >/dev/null || die "Missing dependency: $command"
 done
-case "$1" in check) check "$@" ;; install|install-instance|install-new) install_release "$@" ;; *) die 'Unknown action';; esac
+case "$1" in check) check "$@" ;; install|install-current|install-instance|install-new) install_release "$@" ;; *) die 'Unknown action';; esac
