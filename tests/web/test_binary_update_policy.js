@@ -235,3 +235,21 @@ assert.match(web,/function applyLanguage\(\)\s*\{[\s\S]*?updateDashboardThemeBut
 const syntax=spawnSync('bash',['-n'],{input:updater,encoding:'utf8'});
 assert.equal(syntax.status,0,'Bash updater syntax: '+syntax.stderr);
 console.log('PASS: Bash update UI, API, portable packaging and syntax');
+
+
+const uninstallScript=fs.readFileSync('scripts/dvbstreamer5_uninstall.sh','utf8');
+for(const marker of [
+  'SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"',
+  'INSTALL_DIR="$(dirname -- "$SCRIPT_PATH")"',
+  'dvbstreamer5@${INSTANCE}.service',
+  'grep -Fxq "WorkingDirectory=$INSTALL_DIR"',
+  'grep -Fxq "ExecStart=$INSTALL_DIR/run.sh"',
+  'systemctl stop "$UNIT"',
+  'systemctl disable "$UNIT"'
+]) assert.ok(uninstallScript.includes(marker),'Missing scoped uninstall protection: '+marker);
+assert.ok(!uninstallScript.includes('rm -rf -- "$CONFIG_DIR"'),
+  'Uninstaller must not recursively purge shared legacy config');
+assert.ok(packageScript.includes('scripts/dvbstreamer5_uninstall.sh'),
+  'Portable must include the scoped uninstall source');
+assert.ok(packageScript.includes('scripts uninstall.sh; do'),
+  'Installer must copy uninstall.sh into each installed runtime');
