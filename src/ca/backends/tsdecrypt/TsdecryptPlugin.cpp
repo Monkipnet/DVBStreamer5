@@ -106,6 +106,13 @@ struct Service {
     // DVBStreamer5 because the async output FIFO was empty. Neither of the
     // existing input_drops/output_drops counters detects this starvation.
     std::atomic<uint64_t> outputChildNullPackets{0}, outputUnderrunNullPackets{0};
+    // V614: distinguish TSDecrypt's still-encrypted packets that the parent
+    // actively replaces with NULL. Never log the packet or control word.
+    std::atomic<uint64_t> childScrambledSuppressed{0};
+    std::atomic<uint64_t> outputPrivate1Pes{0};
+    // Access only while Service::mutex is held, never in reader without it.
+    size_t peakInputBytes = 0;
+    size_t peakOutputPackets = 0;
     std::atomic<uint64_t> outputClearMediaPes{0}, outputClearOnScrambledPid{0};
     std::atomic<uint64_t> outputClearMediaPesOnScrambledPid{0};
     std::atomic<uint64_t> outputClearVideoPesOnScrambledPid{0};
@@ -363,6 +370,7 @@ struct Service {
                     std::memcpy(packet.data(), unaligned.data() + position, kPacket);
                     // Do not forward encrypted data as decoded content.
                     if ((packet[3] & 0xC0) != 0) {
+                        childScrambledSuppressed.fetch_add(1, std::memory_order_relaxed);
                         packet.fill(0xFF);
                         packet[0] = 0x47; packet[1] = 0x1F; packet[2] = 0xFF; packet[3] = 0x10;
                     }
@@ -370,6 +378,7 @@ struct Service {
                         output.pop_front(); outputDrops.fetch_add(1);
                     }
                     output.push_back(std::move(packet));
+                    peakOutputPackets = std::max(peakOutputPackets, output.size());
                     position += kPacket;
                 }
                 if (position) unaligned.erase(unaligned.begin(), unaligned.begin() + position);
@@ -729,6 +738,7 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
             if (anyEncrypted) service->lastEncryptedInputMs.store(Service::monotonicMs());
             if (service->inputBytes + size <= kMaxQueueBytes) {
                 service->input.push_back(std::move(original)); service->inputBytes += size;
+                service->peakInputBytes = std::max(service->peakInputBytes, service->inputBytes);
                 service->cv.notify_one();
             } else service->inputDrops.fetch_add(1);
         }
@@ -760,6 +770,11 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                             }
                             if (facts.clearMediaPesStart)
                                 service->outputClearMediaPes.fetch_add(1);
+                            // TS private_stream_1 (0xbd) can carry AC-3/E-AC-3;
+                            // do not misrepresent it as an absent audio stream.
+                            if (facts.clearMediaPesStart &&
+                                !facts.clearVideoPesStart && !facts.clearAudioPesStart)
+                                service->outputPrivate1Pes.fetch_add(1);
                         } else ++scrambled;
                     }
                 } else {
