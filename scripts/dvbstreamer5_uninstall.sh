@@ -72,6 +72,10 @@ if (( PURGE )); then
         [[ "$CONFIG_DIR" == "/etc/dvbstreamer5/instances/$INSTANCE" ]] ||
             fail 'Configuration path rejected'
         rm -rf --one-file-system -- "$CONFIG_DIR"
+        STATE_DIR="/var/lib/dvbstreamer5/instances/$INSTANCE"
+        if [[ -d "$STATE_DIR" && ! -L "$STATE_DIR" ]]; then
+            rm -rf --one-file-system -- "$STATE_DIR"
+        fi
     fi
     printf 'Removed this runtime and its configuration.\n'
 else
