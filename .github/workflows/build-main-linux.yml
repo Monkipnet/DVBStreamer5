@@ -55,6 +55,13 @@ jobs:
           ASAN_OPTIONS=detect_leaks=1 /tmp/dvbstreamer5-security-v545
           node tests/web/test_http_security_v545.js
 
+      - name: Emulate DVB DVR buffer resizing for 4 PCIe tuners (V617)
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -UNDEBUG -Isrc \
+            tests/test_dvb_dvr_buffer_v617.cpp -o /tmp/dvb-dvr-buffer-v617
+          /tmp/dvb-dvr-buffer-v617
+          python3 tests/test_dvb_dvr_buffer_v617.py
+
       - name: Emulate passive home2 TS continuity stage localization
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -Isrc tests/test_ts_cc_stage_v608.cpp -o /tmp/ts-cc-stage-v608

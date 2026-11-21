@@ -1,4 +1,5 @@
 #include "media/LinuxDvbInput.h"
+#include "media/DvbDvrBuffer.h"
 #include "media/DvbFrontendOwners.h"
 #include "media/DvbUnicableTunePolicy.h"
 
@@ -1196,6 +1197,27 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
         close();
         return false;
     }
+    // The TS_TAP delivers into a separate Linux DVB DVR ring. Resizing only
+    // demux filter buffers above leaves DVR at the kernel's small default and
+    // causes EOVERFLOW under concurrent full-transponder input (home2).
+    // Best-effort: older drivers may reject the ioctl; don't stop the channel.
+    const auto dvrBuffer = configureDvbDvrBuffer(
+        dvrFd_, [](int fd, unsigned long request, unsigned long bytes) {
+            return ::ioctl(fd, request, bytes);
+        });
+    std::ostringstream resizeLine;
+    resizeLine << "NATIVE DVB DVR buffer resize "
+               << (dvrBuffer.success ? "ok" : "warning")
+               << " adapter=" << frontendAdapter_
+               << " frontend=" << frontendIndex_
+               << " device=" << dvr
+               << " requested_bytes=" << kDvbDvrBufferBytes;
+    if (!dvrBuffer.success) {
+        resizeLine << " errno=" << dvrBuffer.error
+                   << " error=" << std::strerror(dvrBuffer.error);
+    }
+    resizeLine << '\n';
+    std::clog << resizeLine.str();
     error.clear();
     return true;
 #else
@@ -1246,8 +1268,12 @@ bool LinuxDvbInput::read(
             // OFFLINE stream.  Continue draining and let CC diagnostics expose
             // any packet loss.
             if (overflowCount_ <= 3 || (overflowCount_ & (overflowCount_ - 1)) == 0) {
-                std::clog << "NATIVE DVB DVR overflow recovered count="
-                          << overflowCount_ << '\n';
+                std::ostringstream overflowLine;
+                overflowLine << "NATIVE DVB DVR overflow recovered count="
+                             << overflowCount_
+                             << " adapter=" << frontendAdapter_
+                             << " frontend=" << frontendIndex_ << '\n';
+                std::clog << overflowLine.str();
             }
             error.clear();
             return true;
