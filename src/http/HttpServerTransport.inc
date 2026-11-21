@@ -2039,9 +2039,12 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         } else {
                             const std::string updaterPath = dvbInstanceRoot() + "/updater.sh";
                             const std::string action = mode == "new" ? "install-new" :
-                                (instance.empty() ? "install" : "install-instance");
+                                (instance.empty() ? "install-current" : "install-instance");
+                            // Each positional parameter must be separated from VERSION.
+                            // Previously mode=new generated 10.8.6219001 rather than
+                            // 10.8.621 9001 and failed with "Invalid instance argument".
                             const std::string argument = mode == "new" ?
-                                std::to_string(requestedPort) :
+                                " " + std::to_string(requestedPort) :
                                 (instance.empty() ? "" : " " + instance);
                             const std::string command =
                                 "/usr/bin/systemd-run --no-block --unit=dvbstreamer5-update-" +
