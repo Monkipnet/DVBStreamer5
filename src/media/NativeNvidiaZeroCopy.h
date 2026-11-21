@@ -11,6 +11,7 @@
 namespace dvbstreamer5::media::codec {
 
 struct NvidiaZeroCopyConfig {
+    std::string streamId; // Per-instance diagnostic identity; never sent to NVDEC.
     mpegts::ElementaryCodec inputCodec = mpegts::ElementaryCodec::Unknown;
     mpegts::ElementaryCodec outputCodec = mpegts::ElementaryCodec::Unknown;
     int width = 0;
