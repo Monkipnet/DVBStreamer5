@@ -8178,10 +8178,40 @@ async function watchBinaryUpdate(version){
 async function installBinaryUpdate(){
   if(!latestVerifiedUpdate||updateRequestBusy)return;
   const version=latestVerifiedUpdate;
-  const question=releaseText(
-    'Установить версию '+version+'? Во время перезапуска вещание прервётся.',
-    'Install version '+version+'? Streaming will be interrupted during restart.',
-    'Instalirati '+version+'? Emitiranje će biti prekinuto pri ponovnom pokretanju.','Version '+version+' installieren? Beim Neustart wird der Stream unterbrochen.');
+  const choice=window.prompt(releaseText(
+    'Выберите действие: 1 — обновить эту копию; 2 — установить дополнительную копию.',
+    'Choose action: 1 — update this copy; 2 — install an additional copy.',
+    'Odaberite radnju: 1 — ažuriraj ovu kopiju; 2 — instaliraj dodatnu kopiju.',
+    'Aktion wählen: 1 — diese Kopie aktualisieren; 2 — weitere Kopie installieren.'),'1');
+  if(choice===null)return;
+  if(choice!=='1'&&choice!=='2'){
+    window.alert(releaseText('Неверный выбор','Invalid selection','Neispravan odabir','Ungültige Auswahl'));
+    return;
+  }
+  const newCopy=choice==='2';
+  let requestedPort=0;
+  if(newCopy){
+    const entered=window.prompt(releaseText(
+      'HTTP-порт для новой независимой копии (1024–65535):',
+      'HTTP port for the additional independent copy (1024–65535):',
+      'HTTP port dodatne neovisne kopije (1024–65535):',
+      'HTTP-Port für die zusätzliche unabhängige Kopie (1024–65535):'),'9001');
+    if(entered===null)return;
+    if(!/^[0-9]{4,5}$/.test(entered)||Number(entered)<1024||Number(entered)>65535){
+      window.alert(releaseText('Недопустимый порт','Invalid port','Neispravan port','Ungültiger Port'));
+      return;
+    }
+    requestedPort=Number(entered);
+  }
+  const question=newCopy
+    ? releaseText('Создать отдельную копию на порту '+requestedPort+'?',
+      'Install independent copy on port '+requestedPort+'?',
+      'Instalirati neovisnu kopiju na portu '+requestedPort+'?',
+      'Unabhängige Kopie auf Port '+requestedPort+' installieren?')
+    : releaseText('Обновить только текущую копию? Её потоки временно прервутся.',
+      'Update only this copy? Its streams will restart.',
+      'Ažurirati samo ovu kopiju? Njezini streamovi će se ponovno pokrenuti.',
+      'Nur diese Kopie aktualisieren? Ihre Streams werden neu gestartet.');
   if(!window.confirm(question))return;
   updateRequestBusy=true;
   const checkButton=document.getElementById('checkReleaseButton');
@@ -8194,7 +8224,7 @@ async function installBinaryUpdate(){
     const response=await fetch('/api/update/install',{
       method:'POST',credentials:'same-origin',
       headers:{'X-Requested-With':'DVBStreamer5','Content-Type':'application/json'},
-      body:'{}'
+      body:JSON.stringify(newCopy?{mode:'new',port:requestedPort}:{mode:'current'})
     });
     const data=await response.json();
     if(!response.ok||data.result!=='started')throw Error(data.error||'Update unavailable');
