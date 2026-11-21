@@ -1147,10 +1147,23 @@ bool HttpServer::handleRestartProgram(std::string* error) {
     // API response can reach the browser.
     const auto nonce = static_cast<unsigned long long>(
         std::chrono::steady_clock::now().time_since_epoch().count());
+    const char* instanceRaw = std::getenv("DVBSTREAMER5_INSTANCE_ID");
+    const std::string instanceId = instanceRaw ? instanceRaw : "";
+    const bool safeInstance = instanceId.size() <= 32 &&
+        std::all_of(instanceId.begin(), instanceId.end(), [](unsigned char ch) {
+            return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                   (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+        });
+    if (!safeInstance) {
+        if (error) *error = "Invalid current DVBStreamer5 instance identifier";
+        return false;
+    }
+    const std::string service = instanceId.empty()
+        ? "dvbstreamer5.service" : "dvbstreamer5@" + instanceId + ".service";
     const std::string command =
         "/usr/bin/systemd-run --quiet --no-block --on-active=2s "
         "--unit=dvbstreamer5-panel-restart-" + std::to_string(nonce) +
-        " /usr/bin/systemctl --no-block restart dvbstreamer5.service";
+        " /usr/bin/systemctl --no-block restart " + service;
     const int rc = std::system(command.c_str());
     if (rc != 0) {
         std::cerr << "PROGRAM RESTART V531 FAILED"
@@ -1161,7 +1174,7 @@ bool HttpServer::handleRestartProgram(std::string* error) {
     }
     std::cerr << "PROGRAM RESTART V531 SCHEDULED"
               << " action=independent-systemd-timer"
-              << " delay_s=2 service=dvbstreamer5.service"
+              << " delay_s=2 service=" << service
               << " unit=dvbstreamer5-panel-restart-" << nonce
               << std::endl;
     return true;
