@@ -21,7 +21,7 @@ for(const text of [
   '!isPanelSessionAuthorized(req)',
   'apiKeyAttempt',
   '"X-Requested-With"',
-  '/opt/DVBStreamer5/updater.sh'
+  'dvbInstanceRoot() + "/updater.sh"'
 ]) assert.ok(transport.includes(text),'Missing secure update route: '+text);
 for(const text of [
   'scripts/dvbstreamer5_update.sh',
@@ -68,7 +68,7 @@ for(const marker of [
 ]) assert.ok(web.includes(marker),'Missing visible updater progress: '+marker);
 for(const marker of [
   'target == "/api/update/status"',
-  '/var/lib/dvbstreamer5/update-status',
+  'dvbInstanceRoot() + "/update-status"',
   'phase != "downloading"'
 ]) assert.ok(transport.includes(marker),'Missing status API protection: '+marker);
 for(const marker of [
@@ -84,7 +84,7 @@ for(const marker of [
   'chmod 0755 "$INSTALL_DIR/updater.sh"'
 ]) assert.ok(packageScript.includes(marker),'Missing installer updater guard: '+marker);
 for(const marker of [
-  'Updater missing: install /opt/DVBStreamer5/updater.sh',
+  'Updater missing in this instance',
   'Updater check failed: ',
   'failure["exit_status"] = exitCode',
   'Json::writeString(writer, failure)',
@@ -101,7 +101,7 @@ assert.ok(!transport.includes('" 2>/dev/null"'), 'Updater stderr must not be dis
 // Update launcher must escape dvbstreamer5.service's systemd cgroup.
 for (const marker of [
   '/usr/bin/systemd-run --no-block --unit=dvbstreamer5-update-',
-  'exec /bin/bash /opt/DVBStreamer5/updater.sh install ',
+  'exec /bin/bash " + updaterPath + " " +',
   '>>/var/log/dvbstreamer5-update.log 2>&1'
 ]) assert.ok(transport.includes(marker), 'Missing independent update worker: '+marker);
 assert.ok(!transport.includes('nohup /bin/bash /opt/DVBStreamer5/updater.sh install'),
@@ -253,3 +253,41 @@ assert.ok(packageScript.includes('scripts/dvbstreamer5_uninstall.sh'),
   'Portable must include the scoped uninstall source');
 assert.ok(packageScript.includes('scripts uninstall.sh; do'),
   'Installer must copy uninstall.sh into each installed runtime');
+
+
+const multiInstaller=fs.readFileSync('scripts/dvbstreamer5_multi_install.sh','utf8');
+for (const token of [
+  '--update-all', '--update-instance', '--new',
+  'New HTTP port:', 'systemctl enable --now "$unit"',
+  'Environment=DVBSTREAMER5_INSTANCE_ID=$NAME',
+  'Environment=DVBSTREAMER5_CONFIG_DIR=$conf',
+  'Environment=DVBSTREAMER5_EPG_CACHE_DIR=$state/epg',
+  'cp -a -- "$dir" "$backup/runtime"',
+  'systemctl is-active --quiet "$unit"'
+]) assert.ok(multiInstaller.includes(token),'Multi-instance install missing: '+token);
+for(const token of [
+  'scripts/dvbstreamer5_multi_install.sh',
+  '"$STAGE/legacy-install.sh"',
+  '"$STAGE/install.sh"'
+]) assert.ok(packageScript.includes(token),'Portable multi-instance dispatcher missing: '+token);
+for(const token of [
+  'mode:\'new\'',
+  'mode:\'current\'',
+  'requestedPort',
+  'async function installBinaryUpdate()'
+]) assert.ok(web.includes(token),'Missing web instance selection: '+token);
+for(const token of [
+  'install-new', 'install-instance',
+  'Web updater cannot modify another instance',
+  'UPDATE_STATUS="$SCRIPT_DIR/update-status"'
+]) assert.ok(updater.includes(token),'Updater instance scope missing: '+token);
+for(const token of [
+  'dvbInstanceRoot()',
+  'request.get("mode", "current")',
+  'requestedPort < 1024 || requestedPort > 65535',
+  'install-instance'
+]) assert.ok(transport.includes(token),'Web updater instance scope missing: '+token);
+const multiSyntax=spawnSync('bash',['-n'],{input:multiInstaller,encoding:'utf8'});
+assert.equal(multiSyntax.status,0,'Multi-instance installer Bash syntax: '+multiSyntax.stderr);
+const uninstallSyntax=spawnSync('bash',['-n'],{input:uninstallScript,encoding:'utf8'});
+assert.equal(uninstallSyntax.status,0,'Multi-instance uninstaller Bash syntax: '+uninstallSyntax.stderr);
