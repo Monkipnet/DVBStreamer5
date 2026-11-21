@@ -1,4 +1,5 @@
 #include "media/NativeUdpRelay.h"
+#include "TsCcStageTrace.h"
 
 #include "NativeHttpClient.h"
 #include "media/CbrTsPacer.h"
@@ -935,6 +936,14 @@ void NativeUdpRelay::run() {
     std::uint64_t lastT2miLogPackets = 0;
 
     dvbstreamer5::media::mpegts::ContinuityTracker continuity;
+    // V608 home2: passive, opt-in continuity trace at pipeline boundaries.
+    // Disabled by default to avoid per-packet hashing overhead.
+    const char* const ccTraceId=std::getenv("DVBSTREAMER5_TS_CC_TRACE_STREAM_ID");
+    const bool ccTraceEnabled=ccTraceId && *ccTraceId &&
+        config_.streamId==ccTraceId;
+    TsCcStageTrace ccBeforeCa(config_.streamId,"pre_ca");
+    TsCcStageTrace ccAfterCa(config_.streamId,"post_ca");
+    TsCcStageTrace ccPreOutput(config_.streamId,"pre_output");
     std::vector<dvbstreamer5::media::mpegts::Packet> packets;
     std::vector<dvbstreamer5::media::mpegts::Packet> remappedPackets;
     // V430: reuse the container; the chunks themselves are moved out of the
@@ -1878,6 +1887,9 @@ void NativeUdpRelay::run() {
         }
 
         if (!packets.empty() && config_.processTransport) {
+            if(ccTraceEnabled)
+                ccBeforeCa.inspect(reinterpret_cast<const std::uint8_t*>(
+                    packets.data()),packets.size()*188U);
             constexpr std::size_t kCaBatchPackets = 77;
             // V429: Packet is exactly a contiguous 188-byte std::array.
             // The CA hook mutates TS bytes in place. Use 77-packet slices of
@@ -1922,6 +1934,9 @@ void NativeUdpRelay::run() {
                 }
             }
             if (!running_.load(std::memory_order_acquire)) break;
+            if(ccTraceEnabled)
+                ccAfterCa.inspect(reinterpret_cast<const std::uint8_t*>(
+                    packets.data()),packets.size()*188U);
         }
 
         if (!packets.empty()) {
@@ -2000,6 +2015,9 @@ void NativeUdpRelay::run() {
             config_.primaryProgramIdentity)
             config_.primaryProgramIdentity->observe(packets);
         if (!packets.empty()) {
+            if(ccTraceEnabled)
+                ccPreOutput.inspect(reinterpret_cast<const std::uint8_t*>(
+                    packets.data()),packets.size()*188U);
             // Count the real MPEG-TS payload produced by the pipeline before
             // CBR null-packet stuffing and before duplicating it to outputs.
             std::size_t nonNullPacketCount = 0;
