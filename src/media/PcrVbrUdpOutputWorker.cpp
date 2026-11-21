@@ -267,6 +267,7 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         }
         const auto queued=packets_.size();
         const auto dropped=droppedBytes_;
+        const auto pendingEpochs=preservedEpochs_.size();
         lock.unlock();
         std::string error;
         // The network socket is always served before any observer work.
@@ -305,7 +306,7 @@ void PcrVbrUdpOutputWorker::run()noexcept{
                      <<" output_index="<<index_
                      <<" mode="<<(pcrMode?"source_pcr":"fallback_no_pcr")
                      <<" queue_packets="<<queued
-                     <<" pending_pcr_epochs="<<preservedEpochs_.size()
+                     <<" pending_pcr_epochs="<<pendingEpochs
                      <<" late_reanchors="<<lateResets
                      <<" vbr_peak_cap_kbps="<<peakBitsPerSecond_/1000ULL
                      <<" cap_throttled_datagrams="<<peakThrottled
