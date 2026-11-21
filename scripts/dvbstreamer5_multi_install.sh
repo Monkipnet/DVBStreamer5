@@ -48,7 +48,13 @@ install_named(){
   local state="/var/lib/dvbstreamer5/instances/$NAME" unit="dvbstreamer5@$NAME.service"
   local fresh="$1" item
   if [[ "$fresh" == yes ]]; then
-    [[ ! -e "$dir" && ! -e "/etc/systemd/system/$unit" ]] || fail 'Instance already exists'
+    # Never reuse configuration left by an earlier installation: a new copy
+    # must start with a clean, private configuration under /etc.
+    [[ ! -e "$dir" && ! -e "/etc/systemd/system/$unit" &&
+       ! -e "$conf" && ! -e "$state" ]] ||
+       fail 'Instance name already has a runtime, settings or state directory; choose a different name'
+    [[ "$conf" == "/etc/dvbstreamer5/instances/$NAME" ]] ||
+       fail 'Unexpected configuration location'
     if command -v ss >/dev/null; then
       if ss -H -ltnu | awk '{print $5}' | grep -Eq "[:.]$PORT$"; then fail "Port $PORT is already in use"; fi
     else fail 'ss is required to verify port availability'; fi
@@ -73,8 +79,11 @@ PY
   mkdir -p -m 0755 "$dir" "$state" "$state/epg" "$state/archive"
   mkdir -p -m 0700 "$conf"
   if [[ "$fresh" == yes ]]; then
+    # A fresh installation has no imported channels, tuner assignments,
+    # subscribers, passwords, keys, or OSCam configuration from other copies.
     printf '{"http_port":%s,"server_name":"DVBStreamer5 %s","streams":[]}\n' "$PORT" "$NAME" > "$conf/dvbstreamer5-config.json"
     chmod 0600 "$conf/dvbstreamer5-config.json"
+    log "Fresh isolated settings: $conf/dvbstreamer5-config.json"
   fi
   local backup=''
   if [[ "$fresh" != yes ]]; then
