@@ -307,3 +307,40 @@ for(const token of [
   '"streams":[]'
 ]) assert.ok(multiInstaller.includes(token),
   'New copy must use clean private /etc settings: '+token);
+
+
+// V621: a privileged panel removal may only uninstall the instance that
+// accepted the request, after an explicit confirmation.
+const scopedUninstall=fs.readFileSync('scripts/dvbstreamer5_uninstall.sh','utf8');
+for(const token of [
+  'id="uninstallThisInstanceButton"',
+  'async function uninstallThisInstance()',
+  "window.prompt(warning)!=='DELETE'",
+  "'/api/instance/identity'",
+  "'/api/instance/uninstall'",
+  "confirmation:'DELETE'",
+  'Полностью удалить эту копию',
+  'Fully uninstall this copy',
+  'Potpuno deinstaliraj ovu kopiju',
+  'Diese Kopie vollständig deinstallieren'
+]) assert.ok(web.includes(token),'V621 scoped admin uninstall UI: '+token);
+for(const token of [
+  'target == "/api/instance/identity"',
+  'target == "/api/instance/uninstall"',
+  'apiKeyAttempt ||',
+  'requestedWith->value() != "DVBStreamer5"',
+  'request.get("confirmation", "").asString() != "DELETE"',
+  'request.get("instance", "").asString() != instance',
+  '"/opt/DVBStreamer5-" + instance',
+  ' /bin/bash " + script + " --purge-config"',
+  '--on-active=2s'
+]) assert.ok(transport.includes(token),'V621 scoped uninstall API: '+token);
+for(const token of [
+  'INSTALL_DIR="$(dirname -- "$SCRIPT_PATH")"',
+  'grep -Fxq "WorkingDirectory=$INSTALL_DIR"',
+  'grep -Fxq "ExecStart=$INSTALL_DIR/run.sh"',
+  'STATE_DIR="/var/lib/dvbstreamer5/instances/$INSTANCE"',
+  'rm -rf --one-file-system -- "$STATE_DIR"'
+]) assert.ok(scopedUninstall.includes(token),'V621 uninstall must preserve other instances: '+token);
+const scopedSyntax=spawnSync('bash',['-n'],{input:scopedUninstall,encoding:'utf8'});
+assert.equal(scopedSyntax.status,0,'Scoped uninstall Bash syntax: '+scopedSyntax.stderr);
