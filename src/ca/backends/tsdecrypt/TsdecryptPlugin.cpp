@@ -90,6 +90,9 @@ struct Service {
     // All reported values are metadata only; never retain raw CW/ECM payloads.
     std::atomic<uint64_t> ecmReceived{0}, ecmDuplicates{0}, ecmProcessed{0};
     std::atomic<uint64_t> ecmReportCount{0}, cwValidSignalEvents{0}, cwWarningEvents{0};
+    // V616: numeric-only CW installation telemetry; no CW or ECM bytes.
+    std::atomic<uint64_t> cwAppliedEvents{0}, cwEvenApplied{0}, cwOddApplied{0};
+    std::atomic<uint64_t> cwNonzeroModeApplied{0}, lastCwAppliedMs{0};
     std::atomic<uint64_t> camdConnectAttempts{0}, camdConnected{0};
     std::atomic<uint64_t> camdConnectErrors{0}, camdReconnects{0};
     std::atomic<uint64_t> camdNoCwErrors{0}, ecmQueueOverflows{0};
@@ -268,6 +271,29 @@ struct Service {
                         ecmDuplicates.fetch_add(report.duplicates);
                         ecmProcessed.fetch_add(report.processed);
                         ecmReportCount.fetch_add(1);
+                    }
+                    const auto applied =
+                        dvbstreamer5::ca::tsdecrypt_detail::parseCwAppliedReport(
+                            line.c_str());
+                    if (applied.valid) {
+                        const auto total = cwAppliedEvents.fetch_add(1) + 1;
+                        if (applied.even) cwEvenApplied.fetch_add(1);
+                        if (applied.odd) cwOddApplied.fetch_add(1);
+                        if (applied.mode) cwNonzeroModeApplied.fetch_add(1);
+                        lastCwAppliedMs.store(monotonicMs());
+                        // The original TSDecrypt stderr line is never copied.
+                        const char* target =
+                            std::getenv("DVBSTREAMER5_TS_AV_TRACE_STREAM_ID");
+                        if (target && id == target) {
+                            std::fprintf(stderr,
+                                "TSDECRYPT CW APPLY stream=%s count=%llu "
+                                "even=%u odd=%u mode=%u diagnostic_only=1\n",
+                                id.c_str(),
+                                static_cast<unsigned long long>(total),
+                                applied.even ? 1U : 0U,
+                                applied.odd ? 1U : 0U,
+                                static_cast<unsigned>(applied.mode));
+                        }
                     }
                     if (dvbstreamer5::ca::tsdecrypt_detail::hasSafeLogEvent(
                             line.c_str(), "CW  | OK: Valid code word was received.")) {
@@ -876,6 +902,9 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                     "input_queued_bytes=%zu input_peak_bytes=%zu "
                     "output_queued_packets=%zu output_peak_packets=%zu "
                     "child_last_output_age_ms=%llu "
+                    "cw_applied=%llu cw_even_applied=%llu "
+                    "cw_odd_applied=%llu cw_nonzero_mode_applied=%llu "
+                    "cw_last_applied_age_ms=%llu "
                     "child_scrambled_suppressed=%llu private1_pes=%llu "
                     "output_null_child=%llu output_null_underrun=%llu "
                     "input_drops=%llu output_drops=%llu diagnostic_only=1\n",
@@ -883,6 +912,18 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                     service->inputBytes, service->peakInputBytes,
                     service->output.size(), service->peakOutputPackets,
                     static_cast<unsigned long long>(childAgeMs),
+                    static_cast<unsigned long long>(
+                        service->cwAppliedEvents.load()),
+                    static_cast<unsigned long long>(
+                        service->cwEvenApplied.load()),
+                    static_cast<unsigned long long>(
+                        service->cwOddApplied.load()),
+                    static_cast<unsigned long long>(
+                        service->cwNonzeroModeApplied.load()),
+                    static_cast<unsigned long long>(
+                        service->lastCwAppliedMs.load() &&
+                        nowMs >= service->lastCwAppliedMs.load()
+                        ? nowMs - service->lastCwAppliedMs.load() : 0ULL),
                     static_cast<unsigned long long>(
                         service->childScrambledSuppressed.load()),
                     static_cast<unsigned long long>(
