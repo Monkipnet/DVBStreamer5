@@ -61,6 +61,8 @@ jobs:
           /tmp/ts-cc-stage-v608
           c++ -std=c++17 -Wall -Wextra -Werror -Isrc tests/test_pcr_stage_v609.cpp -o /tmp/ts-pcr-stage-v609
           /tmp/ts-pcr-stage-v609
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc tests/test_h264_field_reference_v612.cpp -o /tmp/h264-mixed-ref-v612
+          /tmp/h264-mixed-ref-v612
           node tests/web/test_runtime_recovery_v552.js
 
       - name: Verify dashboard channel search including devices domains and CIDR
