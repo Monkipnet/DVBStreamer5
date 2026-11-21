@@ -10,7 +10,7 @@ for(const text of [
   'id="checkReleaseButton"',
   'id="installReleaseButton" hidden',
   'async function checkBinaryUpdates()',
-  'async function installBinaryUpdate()',
+  'async function installBinaryUpdate(forceNewCopy=false)',
   'latestVerifiedUpdate=data.latest',
   "'/api/update/check'",
   "'/api/update/install'"
@@ -344,3 +344,15 @@ for(const token of [
 ]) assert.ok(scopedUninstall.includes(token),'V621 uninstall must preserve other instances: '+token);
 const scopedSyntax=spawnSync('bash',['-n'],{input:scopedUninstall,encoding:'utf8'});
 assert.equal(scopedSyntax.status,0,'Scoped uninstall Bash syntax: '+scopedSyntax.stderr);
+
+
+// Regression V622: HTTP mode=new must separate VERSION and PORT. The
+// previous 10.8.6219001 argument always failed as Invalid instance argument.
+assert.ok(transport.includes('" " + std::to_string(requestedPort)'),
+  'New instance HTTP port must be a separate argv item');
+assert.ok(transport.includes('(instance.empty() ? "install-current" : "install-instance")'),
+  'Legacy panel update must explicitly target only the legacy installation');
+assert.ok(updater.includes('if [[ "$1" == install-current ]]; then install_script=\'./legacy-install.sh\'; fi'),
+  'Legacy panel update must bypass the all-instance installer');
+assert.ok(updater.includes("install|install-current|install-instance|install-new"),
+  'Bash updater must accept explicitly scoped legacy update');
