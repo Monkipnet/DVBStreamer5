@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <iterator>
+#include <utility>
 
 namespace dvbstreamer5::media::mpegts {
 
@@ -79,6 +80,7 @@ public:
             // Keep the prior clock epoch available to the UDP sender so an
             // unflagged forward-PCR leap need not erase valid queued TS.
             previousAnchors_=std::move(anchors_);
+            anchors_.clear();
             anchors_.push_back({index,0,pcr});
             lastObservedAt_=observedAt;
             ++resets_;
