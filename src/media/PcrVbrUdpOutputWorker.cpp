@@ -97,6 +97,7 @@ bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
                      <<" pcr_jump_ms="<<clock_.lastResetDeltaMs()
                      <<" pcr_pid="<<clock_.referencePid()
                      <<" packet_gap="<<clock_.lastResetPacketGap()
+                     <<" pcr_wall_gap_ms="<<clock_.lastResetWallGapMs()
                      <<" pcr_prev_27mhz="<<clock_.lastResetPreviousPcr()
                      <<" pcr_next_27mhz="<<clock_.lastResetCurrentPcr()
                      <<" prev_packet_index="<<clock_.lastResetPreviousIndex()
