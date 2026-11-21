@@ -59,20 +59,41 @@ public:
             return {matches25_, matches25_ != previous, measuredFps_};
         }
 
-        // At full capacity, next_ is the oldest PTS, and the preceding slot
-        // is the latest. 33 pictures represent 32 presentation intervals.
-        const std::uint64_t first = ring_[next_];
-        const std::uint64_t last = ring_[(next_ + kWindow - 1) % kWindow];
-        const std::uint64_t span = (last - first) & kMask;
-        if (span == 0 || span >= kHalf ||
-            span > 10ULL * 90000ULL) {
+        // V610: H.264 PES often arrives in DECODE order (B-frame reorder),
+        // so the first and last arrival PTS do not bracket 32 display
+        // intervals. The old endpoint-span estimate oscillated from ~23.5
+        // to ~27.6 fps on a perfectly steady PAL 25-fps source and toggled
+        // the real FPS gate on every few pictures.
+        //
+        // Unwrap the 33 PTS around the oldest arrival (33-bit modulo), sort
+        // into PRESENTATION order, then use the median picture interval.
+        // This remains 25 even if one access unit is late or missing; a
+        // genuine 29.97/30 or 50-fps source still stays on the downsampler.
+        std::array<std::int64_t, kWindow> ordered{};
+        const std::uint64_t origin = ring_[next_];
+        for (std::size_t i = 0; i < kWindow; ++i) {
+            const auto delta = (ring_[i] - origin) & kMask;
+            ordered[i] = delta < kHalf
+                ? static_cast<std::int64_t>(delta)
+                : static_cast<std::int64_t>(delta) -
+                    static_cast<std::int64_t>(kMask + 1ULL);
+        }
+        std::sort(ordered.begin(), ordered.end());
+        const auto span = ordered.back() - ordered.front();
+        if (span <= 0 || span > 10LL * 90000LL) {
             reset();
             return {false, previous, 0.0};
         }
 
-        measuredFps_ = 32.0 * 90000.0 / static_cast<double>(span);
-        // Leave ample margin for PAL 25 and 24.975-fps jitter, but keep
-        // 29.97/30, 50 and 59.94-fps sources on the legacy downsampler.
+        std::array<std::int64_t, kWindow - 1> gaps{};
+        for (std::size_t i = 0; i < gaps.size(); ++i)
+            gaps[i] = ordered[i + 1] - ordered[i];
+        std::sort(gaps.begin(), gaps.end());
+        const double medianGap = 0.5 * static_cast<double>(
+            gaps[(kWindow - 1) / 2 - 1] + gaps[(kWindow - 1) / 2]);
+        measuredFps_ = medianGap > 0.0
+            ? 90000.0 / medianGap : 0.0;
+        // Keep the existing PAL tolerance and 30/50fps protection.
         matches25_ = std::isfinite(measuredFps_) &&
                      measuredFps_ >= 23.5 && measuredFps_ <= 26.5;
         return {matches25_, matches25_ != previous, measuredFps_};
