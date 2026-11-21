@@ -102,6 +102,10 @@ struct Service {
     std::atomic<uint64_t> ecmPidHolds{0};
     std::atomic<uint64_t> lastCamdErrorMs{0};
     std::atomic<uint64_t> inputScrambledPackets{0}, outputNullPackets{0};
+    // Distinguish NULL returned by tsdecrypt from a NULL synthesized by
+    // DVBStreamer5 because the async output FIFO was empty. Neither of the
+    // existing input_drops/output_drops counters detects this starvation.
+    std::atomic<uint64_t> outputChildNullPackets{0}, outputUnderrunNullPackets{0};
     std::atomic<uint64_t> outputClearMediaPes{0}, outputClearOnScrambledPid{0};
     std::atomic<uint64_t> outputClearMediaPesOnScrambledPid{0};
     std::atomic<uint64_t> outputClearVideoPesOnScrambledPid{0};
@@ -758,9 +762,13 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                                 service->outputClearMediaPes.fetch_add(1);
                         } else ++scrambled;
                     }
-                } else service->outputNullPackets.fetch_add(1);
+                } else {
+                    service->outputNullPackets.fetch_add(1);
+                    service->outputChildNullPackets.fetch_add(1);
+                }
             } else {
                 service->outputNullPackets.fetch_add(1);
+                service->outputUnderrunNullPackets.fetch_add(1);
                 std::memset(data+i,0xFF,kPacket);
                 data[i]=0x47; data[i+1]=0x1F; data[i+2]=0xFF; data[i+3]=0x10;
             }
@@ -778,7 +786,8 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 "input_scrambled=%llu output_clear_encrypted_pid=%llu "
                 "clear_media_pes=%llu clear_media_pes_encrypted_pid=%llu "
                 "video_pes_encrypted_pid=%llu audio_pes_encrypted_pid=%llu "
-                "output_null=%llu input_drops=%llu output_drops=%llu "
+                "output_null=%llu output_null_child=%llu "
+                "output_null_underrun=%llu input_drops=%llu output_drops=%llu "
                 "restarts=%llu camd_blackout_restarts=%llu recovering=%u "
                 "camd_connect_attempts=%llu camd_connected=%llu "
                 "camd_connect_errors=%llu camd_reconnects=%llu "
@@ -805,6 +814,8 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                 static_cast<unsigned long long>(service->outputClearVideoPesOnScrambledPid.load()),
                 static_cast<unsigned long long>(service->outputClearAudioPesOnScrambledPid.load()),
                 static_cast<unsigned long long>(service->outputNullPackets.load()),
+                static_cast<unsigned long long>(service->outputChildNullPackets.load()),
+                static_cast<unsigned long long>(service->outputUnderrunNullPackets.load()),
                 static_cast<unsigned long long>(service->inputDrops.load()),
                 static_cast<unsigned long long>(service->outputDrops.load()),
                 static_cast<unsigned long long>(service->restartCount.load()),
@@ -938,6 +949,10 @@ const char* statusJson(void* self) {
         item["output_clear_media_pes_on_input_scrambled_pid"] =
             Json::UInt64(entry.second->outputClearMediaPesOnScrambledPid.load());
         item["output_null_packets"] = Json::UInt64(entry.second->outputNullPackets.load());
+        item["output_null_child_packets"] =
+            Json::UInt64(entry.second->outputChildNullPackets.load());
+        item["output_null_underrun_packets"] =
+            Json::UInt64(entry.second->outputUnderrunNullPackets.load());
         item["clear_video_pes_starts_on_input_scrambled_pid"] =
             Json::UInt64(entry.second->outputClearVideoPesOnScrambledPid.load());
         item["clear_audio_pes_starts_on_input_scrambled_pid"] =
