@@ -5,7 +5,14 @@ URL='https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c
 META='https://tvstreammersat5.tech/downloads/dvbstreamer5/latest.json'
 RELEASE_URL="$URL" # validated per-release metadata may point to the canonical archive
 MAX_BYTES=1073741824
-UPDATE_STATUS='/var/lib/dvbstreamer5/update-status'
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+case "$SCRIPT_DIR" in
+  /opt/DVBStreamer5) INSTANCE_ID='legacy' ;;
+  /opt/DVBStreamer5-*) INSTANCE_ID="${SCRIPT_DIR#/opt/DVBStreamer5-}" ;;
+  *) INSTANCE_ID='legacy' ;;
+esac
+[[ "$INSTANCE_ID" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$ ]] || { echo 'Unsafe updater instance name' >&2; exit 1; }
+UPDATE_STATUS="$SCRIPT_DIR/update-status"
 update_phase(){
   # Fixed, non-user-controlled phase strings; readable by the web status API.
   case "$1" in downloading|verifying|installing|restarting|done|error) ;;
@@ -246,7 +253,7 @@ check(){
 }
 install_release(){
   (( EUID == 0 )) || die 'Installation requires root'
-  exec 9>/run/lock/dvbstreamer5-update.lock
+  exec 9>"/run/lock/dvbstreamer5-update-$INSTANCE_ID.lock"
   flock -n 9 || die 'Update already running'
   local tmp archive root bundle backup name line expected_version
   tmp="$(mktemp -d -p /var/tmp dvb5-update.XXXXXXXX)"
@@ -257,7 +264,7 @@ install_release(){
   UPDATE_INSTALL_ACTIVE=1
   update_phase downloading
   read_release "$tmp"
-  newer "$RELEASE_VERSION" "$2" || die 'No newer release'
+  if [[ "$1" != install-new ]]; then newer "$RELEASE_VERSION" "$2" || die 'No newer release'; fi
   expected_version="$RELEASE_VERSION"
   archive="$tmp/release.tar.gz"
   if [[ ! -f "$archive" ]]; then download_archive "$archive"; fi
@@ -282,6 +289,29 @@ install_release(){
     [[ -f "$bundle/$file" ]] || die "Missing $file"
   done
   (cd "$bundle" && sha256sum -c SHA256SUMS >/dev/null) || die 'Bundle checksums failed'
+  # Multi-instance operations use the independently packaged dispatcher.
+  # The web action never updates sibling instances.
+  if [[ "$1" == install-instance || "$1" == install-new ]]; then
+    local label="${3:-}"
+    [[ "$label" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$ ]] || die 'Invalid instance argument'
+    UPDATE_TXN_DIRTY=0
+    update_phase installing
+    if [[ "$1" == install-instance ]]; then
+      [[ "$INSTANCE_ID" == "$label" ]] || die 'Web updater cannot modify another instance'
+      /bin/bash "$bundle/install.sh" --update-instance --name "$label" ||
+        die 'Instance update failed; check installer rollback'
+    else
+      [[ "$label" =~ ^[0-9]{4,5}$ ]] || die 'Invalid new HTTP port'
+      ((10#$label>=1024 && 10#$label<=65535)) || die 'Invalid port'
+      /bin/bash "$bundle/install.sh" --new --name "p$label" --port "$label" ||
+        die 'Additional instance installation failed'
+    fi
+    update_phase done
+    UPDATE_INSTALL_ACTIVE=0
+    echo "UPDATE: finished $1 ($label), version $RELEASE_VERSION"
+    return 0
+  fi
+  [[ "$INSTANCE_ID" == legacy ]] || die 'Named instance must use install-instance'
   mkdir -p -m 0700 /var/lib/dvbstreamer5/update-backups
   backup="/var/lib/dvbstreamer5/update-backups/before-$RELEASE_VERSION-from-$2"
   [[ -d /opt/DVBStreamer5 && ! -e "$backup" ]] || die 'Missing runtime or backup collision'
@@ -313,9 +343,10 @@ install_release(){
   UPDATE_INSTALL_ACTIVE=0
   echo "UPDATE: completed $RELEASE_VERSION"
 }
-(( $# == 2 )) || die 'Usage: dvbstreamer5_update.sh check|install VERSION'
+[[ $# -eq 2 || ( $# -eq 3 && ( "$1" == install-instance || "$1" == install-new ) ) ]] ||
+  die 'Usage: updater.sh check|install VERSION or install-instance|install-new VERSION ARG'
 valid_version "$2" || die 'Invalid current version'
 for command in curl tar strings sha256sum flock mktemp stat sed; do
   command -v "$command" >/dev/null || die "Missing dependency: $command"
 done
-case "$1" in check) check "$@" ;; install) install_release "$@" ;; *) die 'Unknown action';; esac
+case "$1" in check) check "$@" ;; install|install-instance|install-new) install_release "$@" ;; *) die 'Unknown action';; esac
