@@ -5,6 +5,17 @@
 #include <sys/time.h>
 
 namespace {
+std::string dvbInstanceRoot() {
+    const char* raw = std::getenv("DVBSTREAMER5_INSTANCE_ID");
+    if (!raw || !*raw) return "/opt/DVBStreamer5";
+    const std::string id(raw);
+    if (id.empty() || id.size() > 32 ||
+        !std::all_of(id.begin(), id.end(), [](unsigned char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '-' || c == '_';
+        })) return "/opt/DVBStreamer5";
+    return "/opt/DVBStreamer5-" + id;
+}
 // Linux zero-copy HLS media transfer. This function is only called after the
 // ordinary per-request middleware check and the existing OnDemand guard.
 // No URL or token is used to construct a filesystem path here.
@@ -1321,7 +1332,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             } else if (target == "/api/update/status") {
                 res.set(http::field::content_type, "application/json");
                 // Only fixed phase words can enter the JSON response.
-                std::ifstream statusFile("/var/lib/dvbstreamer5/update-status");
+                std::ifstream statusFile(dvbInstanceRoot() + "/update-status");
                 std::string phase;
                 if (!std::getline(statusFile, phase) ||
                     (phase != "downloading" && phase != "verifying" &&
@@ -1333,11 +1344,11 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                 // Fixed download host; never accept a URL from the browser.
                 res.set(http::field::content_type, "application/json");
                 res.set(http::field::cache_control, "no-store");
-                const char* updaterPath = "/opt/DVBStreamer5/updater.sh";
+                const std::string updaterPath = dvbInstanceRoot() + "/updater.sh";
                 std::ifstream updaterFile(updaterPath);
                 if (!updaterFile.good()) {
                     res.result(http::status::service_unavailable);
-                    res.body() = R"({"result":"error","error":"Updater missing: install /opt/DVBStreamer5/updater.sh from the portable bundle"})";
+                    res.body() = R"({"result":"error","error":"Updater missing in this instance: install portable bundle updater.sh"})";
                 } else {
                     const std::string command = std::string("/bin/bash ") +
                         updaterPath + " check " + std::string(kProgramVersion) +
@@ -1984,19 +1995,50 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     // dvbstreamer5.service inside the bundle installer.
                     const auto updateRunId =
                         std::chrono::steady_clock::now().time_since_epoch().count();
-                    const std::string command =
-                        "/usr/bin/systemd-run --no-block --unit=dvbstreamer5-update-" +
-                        std::to_string(updateRunId) +
-                        " --description='DVBStreamer5 binary update' "
-                        "/bin/bash -c 'exec /bin/bash /opt/DVBStreamer5/updater.sh install " +
-                        std::string(kProgramVersion) +
-                        " >>/var/log/dvbstreamer5-update.log 2>&1'";
-                    const int rc = std::system(command.c_str());
-                    if (rc != 0) {
-                        res.result(http::status::service_unavailable);
-                        res.body() = R"({"result":"error","error":"Unable to start independent systemd update worker"})";
+                    Json::Value request;
+                    Json::CharReaderBuilder jsonReader;
+                    std::string jsonError;
+                    std::istringstream requestStream(req.body());
+                    if (!Json::parseFromStream(jsonReader, requestStream,
+                                               &request, &jsonError) || !request.isObject()) {
+                        res.result(http::status::bad_request);
+                        res.body() = R"({"result":"error","error":"Invalid update request"})";
                     } else {
-                        res.body() = R"({"result":"started"})";
+                        const std::string mode = request.get("mode", "current").asString();
+                        const int requestedPort = request.get("port", 0).asInt();
+                        const char* instanceEnv = std::getenv("DVBSTREAMER5_INSTANCE_ID");
+                        const std::string instance = instanceEnv ? instanceEnv : "";
+                        const bool validInstance = instance.size() <= 32 &&
+                            std::all_of(instance.begin(), instance.end(), [](unsigned char c) {
+                                return std::isalnum(c) || c == '_' || c == '-';
+                            });
+                        if ((mode != "current" && mode != "new") ||
+                            (mode == "new" && (requestedPort < 1024 || requestedPort > 65535)) ||
+                            !validInstance) {
+                            res.result(http::status::bad_request);
+                            res.body() = R"({"result":"error","error":"Invalid update mode or port"})";
+                        } else {
+                            const std::string updaterPath = dvbInstanceRoot() + "/updater.sh";
+                            const std::string action = mode == "new" ? "install-new" :
+                                (instance.empty() ? "install" : "install-instance");
+                            const std::string argument = mode == "new" ?
+                                std::to_string(requestedPort) :
+                                (instance.empty() ? "" : " " + instance);
+                            const std::string command =
+                                "/usr/bin/systemd-run --no-block --unit=dvbstreamer5-update-" +
+                                std::to_string(updateRunId) +
+                                " --description='DVBStreamer5 binary update' "
+                                "/bin/bash -c 'exec /bin/bash " + updaterPath + " " +
+                                action + " " + std::string(kProgramVersion) + argument +
+                                " >>/var/log/dvbstreamer5-update.log 2>&1'";
+                            const int rc = std::system(command.c_str());
+                            if (rc != 0) {
+                                res.result(http::status::service_unavailable);
+                                res.body() = R"({"result":"error","error":"Unable to start independent systemd update worker"})";
+                            } else {
+                                res.body() = R"({"result":"started"})";
+                            }
+                        }
                     }
                 }
             } else if (target == "/api/restart-program") {
