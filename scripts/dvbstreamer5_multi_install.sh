@@ -72,7 +72,13 @@ PY
     printf '{"http_port":%s,"server_name":"DVBStreamer5 %s","streams":[]}\n' "$PORT" "$NAME" > "$conf/dvbstreamer5-config.json"
     chmod 0600 "$conf/dvbstreamer5-config.json"
   fi
-  if [[ "$fresh" != yes ]]; then systemctl stop "$unit"; fi
+  local backup=''
+  if [[ "$fresh" != yes ]]; then
+    backup="$(mktemp -d -p /var/tmp "dvbstreamer5-$NAME-rollback.XXXXXXXX")"
+    cp -a -- "$dir" "$backup/runtime"
+    cp -a -- "/etc/systemd/system/$unit" "$backup/service"
+    systemctl stop "$unit"
+  fi
   for item in bin lib web ca-plugins etc tls run.sh updater.sh uninstall.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS scripts oscam-mini; do
     [[ -e "$BUNDLE/$item" ]] || continue
     rm -rf -- "$dir/$item"
@@ -107,8 +113,23 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 EOF_UNIT
   systemctl daemon-reload
-  systemctl enable --now "$unit"
-  systemctl is-active --quiet "$unit" || fail "Instance $NAME did not start"
+  if ! systemctl enable --now "$unit" || ! systemctl is-active --quiet "$unit"; then
+    if [[ -n "$backup" ]]; then
+      systemctl stop "$unit" || true
+      rm -rf -- "$dir"
+      mv -- "$backup/runtime" "$dir"
+      cp -a -- "$backup/service" "/etc/systemd/system/$unit"
+      systemctl daemon-reload
+      systemctl start "$unit" || true
+    else
+      systemctl disable --now "$unit" || true
+      rm -f -- "/etc/systemd/system/$unit"
+      systemctl daemon-reload
+      rm -rf -- "$dir"
+    fi
+    fail "Instance $NAME failed to start; previous runtime restored when available"
+  fi
+  [[ -z "$backup" ]] || rm -rf -- "$backup"
   log "Installed $NAME at $dir; service $unit"
 }
 case "$ACTION" in
