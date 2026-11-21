@@ -1,4 +1,5 @@
 #include "media/PcrVbrSourceClock.h"
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -79,10 +80,12 @@ int main(){
     // V605 home2 regression: a 7.2-second source jump must expose the
     // exact PCR and packet-index gap, with no change in reset behavior.
     PcrVbrSourceClock forward;
-    check(!forward.observe(pkt(2700000ULL),100),"first PCR reset");
-    check(!forward.observe(pkt(5400000ULL),200),"second PCR reset");
+    const auto t0=std::chrono::steady_clock::time_point{};
+    check(!forward.observe(pkt(2700000ULL),100,t0),"first PCR reset");
+    check(!forward.observe(pkt(5400000ULL),200,t0+std::chrono::milliseconds(100)),
+          "second PCR reset");
     check(forward.ready(),"initial forward clock unavailable");
-    check(forward.observe(pkt(199800000ULL),260),
+    check(forward.observe(pkt(199800000ULL),260,t0+std::chrono::milliseconds(200)),
           "7.2-second forward PCR jump was not detected");
     check(std::string(forward.lastResetCause())=="forward_jump" &&
           forward.lastResetDeltaMs()==7200,
@@ -93,7 +96,21 @@ int main(){
           forward.lastResetCurrentIndex()==260ULL &&
           forward.lastResetPacketGap()==60ULL,
           "forward PCR jump diagnostics incorrect");
+    check(forward.lastResetWallGapMs()==100,
+          "forward PCR wall-time gap differs from source packet gap");
     check(!forward.ready(),"real forward jump failed to reset pacing anchors");
+    // A real source stall can have the same 7.2-second PCR jump, but a
+    // 7.2-second monotonic observation gap: distinguish without changing
+    // any packet or the existing reset policy.
+    PcrVbrSourceClock stalled;
+    check(!stalled.observe(pkt(2700000ULL),100,t0),"initial PCR reset");
+    check(!stalled.observe(pkt(5400000ULL),200,t0+std::chrono::milliseconds(100)),
+          "second stalled-PCR anchor reset");
+    check(stalled.observe(pkt(199800000ULL),260,
+                                 t0+std::chrono::milliseconds(7300)),
+          "stalled source PCR jump not detected");
+    check(stalled.lastResetWallGapMs()==7200,
+          "stalled source not distinguished by monotonic PCR gap");
     // Dense DVB PCR schedule exceeds the 512-anchor retention limit.
     // O(log N) lookups must interpolate exactly at anchors and between
     // them, with both forward and backward extrapolation unchanged.
