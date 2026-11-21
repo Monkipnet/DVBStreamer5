@@ -761,7 +761,11 @@ private:
                     std::cerr << "NATIVE NVDEC DECODE ERROR status="
                               << static_cast<int>(decodeStatus.decodeStatus)
                               << " picture=" << display->picture_index
-                              << " count=" << nvdecCorruptFrames_ << std::endl;
+                              << " count=" << nvdecCorruptFrames_
+                              << " stream_id=" << config_.streamId
+                              << " type=" << (decodeStatus.decodeStatus == cuvidDecodeStatus_Error_Concealed
+                                   ? "error_concealed" : "error_unconcealed")
+                              << " action=forward_to_encoder" << std::endl;
                 }
             }
         }
