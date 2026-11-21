@@ -68,8 +68,32 @@ int main(){
     check(!clock.ready(),"PCR reset should discard stale clock anchors");
     check(std::string(clock.lastResetCause())=="discontinuity_flag",
         "discontinuity flag missing from PCR reset diagnostics");
+    check(clock.lastResetPreviousPcr()==4320000ULL &&
+          clock.lastResetCurrentPcr()==27000000ULL &&
+          clock.lastResetPreviousIndex()==320ULL &&
+          clock.lastResetCurrentIndex()==400ULL &&
+          clock.lastResetPacketGap()==80ULL,
+          "PCR discontinuity diagnostic lost source packet indices/ticks");
     clock.observe(pkt(28350000),500);
     check(clock.ready(),"PCR recovery failed");
+    // V605 home2 regression: a 7.2-second source jump must expose the
+    // exact PCR and packet-index gap, with no change in reset behavior.
+    PcrVbrSourceClock forward;
+    check(!forward.observe(pkt(2700000ULL),100),"first PCR reset");
+    check(!forward.observe(pkt(5400000ULL),200),"second PCR reset");
+    check(forward.ready(),"initial forward clock unavailable");
+    check(forward.observe(pkt(199800000ULL),260),
+          "7.2-second forward PCR jump was not detected");
+    check(std::string(forward.lastResetCause())=="forward_jump" &&
+          forward.lastResetDeltaMs()==7200,
+          "forward PCR jump classification changed");
+    check(forward.lastResetPreviousPcr()==5400000ULL &&
+          forward.lastResetCurrentPcr()==199800000ULL &&
+          forward.lastResetPreviousIndex()==200ULL &&
+          forward.lastResetCurrentIndex()==260ULL &&
+          forward.lastResetPacketGap()==60ULL,
+          "forward PCR jump diagnostics incorrect");
+    check(!forward.ready(),"real forward jump failed to reset pacing anchors");
     // Dense DVB PCR schedule exceeds the 512-anchor retention limit.
     // O(log N) lookups must interpolate exactly at anchors and between
     // them, with both forward and backward extrapolation unchanged.
