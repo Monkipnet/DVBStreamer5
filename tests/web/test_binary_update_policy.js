@@ -274,7 +274,7 @@ for(const token of [
   'mode:\'new\'',
   'mode:\'current\'',
   'requestedPort',
-  'async function installBinaryUpdate()'
+  'async function installBinaryUpdate(forceNewCopy=false)'
 ]) assert.ok(web.includes(token),'Missing web instance selection: '+token);
 for(const token of [
   'install-new', 'install-instance',
