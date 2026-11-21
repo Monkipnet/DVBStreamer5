@@ -67,6 +67,9 @@ jobs:
           /tmp/ts-av-stage-v614
           c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -Isrc tests/test_ts_av_bad_pes_v615.cpp -o /tmp/ts-av-bad-pes-v615
           /tmp/ts-av-bad-pes-v615
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -Isrc tests/test_tsdecrypt_cw_apply_v616.cpp -o /tmp/tsdecrypt-cw-v616
+          /tmp/tsdecrypt-cw-v616
+          node tests/web/test_tsdecrypt_cw_apply_v616.js
           node tests/web/test_tsdecrypt_stage_v614.js
           node tests/web/test_nvdec_stream_attribution_v613.js
           node tests/web/test_runtime_recovery_v552.js
