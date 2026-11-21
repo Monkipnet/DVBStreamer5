@@ -49,6 +49,34 @@ struct EcmReport {
     uint64_t processed = 0;
     bool valid = false;
 };
+// V616: parse *only* an explicitly allowlisted, key-free custom marker
+// emitted after TSDecrypt applies a CW to the CSA key schedule.
+// Never collect, log or hash CW bytes / ECM payload / endpoint details.
+struct CwAppliedReport {
+    bool valid = false;
+    uint8_t mode = 0;
+    bool even = false;
+    bool odd = false;
+};
+inline CwAppliedReport parseCwAppliedReport(const char* line) noexcept {
+    CwAppliedReport result;
+    if (!line) return result;
+    const char* const p = std::strstr(line, "DVB5 | CW_APPLIED mode=");
+    if (!p) return result;
+    unsigned mode = 0, even = 0, odd = 0;
+    char trailing = '\0';
+    // Strict format: reject nonnumeric and appended fields.
+    if (std::sscanf(p, "DVB5 | CW_APPLIED mode=%u even=%u odd=%u%c",
+                    &mode, &even, &odd, &trailing) != 3 ||
+        mode > 255U || even > 1U || odd > 1U || (!even && !odd))
+        return result;
+    result.valid = true;
+    result.mode = static_cast<uint8_t>(mode);
+    result.even = even != 0;
+    result.odd = odd != 0;
+    return result;
+}
+
 // Accept only the numeric summary TSDecrypt emits with -H. Never parse or
 // forward arbitrary child stderr lines, which could contain sensitive data.
 inline EcmReport parseEcmReport(const char* line) noexcept {
