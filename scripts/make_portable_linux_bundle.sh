@@ -320,7 +320,7 @@ EOF_OSCAM
     chmod 0755 "$STAGE/oscam-mini/oscam-mini"
 fi
 
-cat > "$STAGE/install.sh" <<'EOF_INSTALL'
+cat > "$STAGE/legacy-install.sh" <<'EOF_INSTALL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 022
@@ -483,7 +483,8 @@ if [[ -x "$INSTALL_DIR/oscam-mini/oscam-mini" ]]; then
     echo "OSCam   : systemctl status $OSCAM_UNIT --no-pager"
 fi
 EOF_INSTALL
-chmod 0755 "$STAGE/install.sh"
+chmod 0755 "$STAGE/legacy-install.sh"
+install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_multi_install.sh" "$STAGE/install.sh"
 
 install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_uninstall.sh" "$STAGE/uninstall.sh"
 
