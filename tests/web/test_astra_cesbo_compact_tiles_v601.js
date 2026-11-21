@@ -6,7 +6,7 @@ const fs=require('node:fs');
 const ui=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
 const version=fs.readFileSync('src/AppVersion.h','utf8');
 // Versions after V609 must keep testing the original compact UI.
-const release=version.match(/kProgramVersion = "(\\d+)\\.(\\d+)\\.(\\d+)"/);
+const release=version.match(/kProgramVersion = "([0-9]+)[.]([0-9]+)[.]([0-9]+)"/);
 assert.ok(release && Number(release[1])===10 && Number(release[2])===8 &&
           Number(release[3])>=601,
           'Compact tiles must remain valid on releases from 10.8.601');
