@@ -291,3 +291,19 @@ const multiSyntax=spawnSync('bash',['-n'],{input:multiInstaller,encoding:'utf8'}
 assert.equal(multiSyntax.status,0,'Multi-instance installer Bash syntax: '+multiSyntax.stderr);
 const uninstallSyntax=spawnSync('bash',['-n'],{input:uninstallScript,encoding:'utf8'});
 assert.equal(uninstallSyntax.status,0,'Multi-instance uninstaller Bash syntax: '+uninstallSyntax.stderr);
+
+
+for(const token of [
+  'if(createCopy)window.setTimeout(()=>installBinaryUpdate(true),0)',
+  'async function installBinaryUpdate(forceNewCopy=false)',
+  "const choice=forceNewCopy?'2':window.prompt",
+]) { if(token) assert.ok(web.includes(token),'Same-version new-copy prompt missing: '+token); }
+assert.ok(web.includes('Установить дополнительную независимую копию?'),
+  'Version equality must still offer an independent installation');
+for(const token of [
+  '! -e "$conf" && ! -e "$state"',
+  'Fresh isolated settings:',
+  '"/etc/dvbstreamer5/instances/$NAME"',
+  '"streams":[]'
+]) assert.ok(multiInstaller.includes(token),
+  'New copy must use clean private /etc settings: '+token);
