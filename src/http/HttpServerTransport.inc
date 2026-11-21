@@ -2043,6 +2043,65 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                         }
                     }
                 }
+            } else if (target == "/api/instance/uninstall") {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                // Destructive action: panel authentication only, no API keys.
+                // Require a same-origin AJAX header and an explicit typed
+                // confirmation bound to this process's own instance.
+                const auto requestedWith = req.find("X-Requested-With");
+                if (apiKeyAttempt ||
+                    !(isPanelSessionAuthorized(req) || isAuthorized(req)) ||
+                    requestedWith == req.end() ||
+                    requestedWith->value() != "DVBStreamer5") {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"result":"error","error":"Administrator panel authentication required"})";
+                } else {
+                    Json::Value request;
+                    Json::CharReaderBuilder parser;
+                    std::string parseError;
+                    std::istringstream input(req.body());
+                    const char* rawInstance = std::getenv("DVBSTREAMER5_INSTANCE_ID");
+                    const std::string instance = rawInstance && *rawInstance ?
+                        std::string(rawInstance) : "legacy";
+                    const bool safeInstance = !instance.empty() && instance.size() <= 32 &&
+                        std::all_of(instance.begin(), instance.end(), [](unsigned char c) {
+                            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                   (c >= '0' && c <= '9') || c == '_' || c == '-';
+                        });
+                    if (!safeInstance ||
+                        !Json::parseFromStream(parser, input, &request, &parseError) ||
+                        !request.isObject() ||
+                        request.get("confirmation", "").asString() != "DELETE" ||
+                        request.get("instance", "").asString() != instance) {
+                        res.result(http::status::bad_request);
+                        res.body() = R"({"result":"error","error":"Instance confirmation mismatch"})";
+                    } else {
+                        const std::string root = instance == "legacy"
+                            ? "/opt/DVBStreamer5" : "/opt/DVBStreamer5-" + instance;
+                        const std::string script = root + "/uninstall.sh";
+                        // Uninstaller independently verifies the systemd unit
+                        // owns its directory. Do not target arbitrary paths.
+                        if (!std::filesystem::is_regular_file(script)) {
+                            res.result(http::status::service_unavailable);
+                            res.body() = R"({"result":"error","error":"Instance uninstaller not found"})";
+                        } else {
+                            const auto nonce = std::chrono::steady_clock::now()
+                                .time_since_epoch().count();
+                            const std::string command =
+                                "/usr/bin/systemd-run --quiet --no-block --on-active=2s "
+                                "--unit=dvbstreamer5-uninstall-" + std::to_string(nonce) +
+                                " /bin/bash " + script + " --purge-config";
+                            const int rc = std::system(command.c_str());
+                            if (rc != 0) {
+                                res.result(http::status::service_unavailable);
+                                res.body() = R"({"result":"error","error":"Unable to schedule instance uninstallation"})";
+                            } else {
+                                res.body() = R"({"result":"scheduled","instance":""})";
+                            }
+                        }
+                    }
+                }
             } else if (target == "/api/restart-program") {
                 res.set(http::field::content_type, "application/json");
                 // Program restart is a privileged system operation. API keys
