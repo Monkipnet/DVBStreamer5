@@ -213,6 +213,21 @@ change('camd.c', [
      '\t\tts->ecm_pid_consecutive_denials = 0;\n'
      '\t}\n'),
 ])
+# V616: emit only key-free *applied* events so a PES corruption window can
+# be correlated with even/odd CW installation. This never prints/serializes
+# the CW, ECM payload, account, endpoint, or any CW-derived fingerprint.
+change('camd.c', [(
+    '\tif (c->key->is_valid_cw)\n\t\tcamd_set_cw(ts, c->key->cw, 1);',
+    '\tif (c->key->is_valid_cw) {\n'
+    '\t\tcamd_set_cw(ts, c->key->cw, 1);\n'
+    '\t\t/* Metadata only. The -K mode still suppresses CW bytes. */\n'
+    '\t\tts_LOGf("DVB5 | CW_APPLIED mode=%u even=%u odd=%u\\n",\n'
+    '\t\t\t(unsigned)c->ecm_mode,\n'
+    '\t\t\t(unsigned)(memcmp(c->key->cw, invalid_cw, 8) != 0),\n'
+    '\t\t\t(unsigned)(memcmp(c->key->cw + 8, invalid_cw, 8) != 0));\n'
+    '\t}'),
+])
+
 print('Patched isolated TSDecrypt: ECM-aware CSA + sticky ECM PID policy')
 PY
 
