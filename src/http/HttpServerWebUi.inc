@@ -8132,15 +8132,16 @@ async function checkBinaryUpdates(){
     const response=await fetch('/api/update/check',{cache:'no-store',credentials:'same-origin'});
     const data=await response.json();
     if(!response.ok||data.result!=='ok')throw Error(data.error||'Release check failed');
-    if(data.available){
-      latestVerifiedUpdate=data.latest;
-      if(installButton){
-        installButton.hidden=false;
-        installButton.style.display='';
-        installButton.textContent=releaseText('Обновить до ','Update to ','Ažuriraj na ','Aktualisieren auf ')+data.latest;
-      }
-      updateProgress('available',data.latest);
-    }else updateProgress('current',data.current);
+    latestVerifiedUpdate=data.latest;
+    if(installButton){
+      installButton.hidden=false;
+      installButton.style.display='';
+      installButton.textContent=releaseText(
+        'Обновить / новая копия','Update / new copy',
+        'Ažuriraj / nova kopija','Aktualisieren / neue Kopie');
+    }
+    if(data.available)updateProgress('available',data.latest);
+    else updateProgress('current',data.current);
   }catch(e){updateProgress('error',String(e?.message||e));}
   finally{setUpdateButtonBusy(button,false);updateRequestBusy=false;}
 }
