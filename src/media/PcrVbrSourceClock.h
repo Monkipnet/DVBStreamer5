@@ -51,6 +51,14 @@ public:
             return false;
         }
         if(discontinuity || ticks>kHz*2ULL){
+            // Diagnostic-only V605: distinguish a large source-PCR jump
+            // over a few transport packets from an interval with few PCRs.
+            // Never modify the source PCR, media packets or reset policy.
+            lastResetPreviousPcr_=last.pcr;
+            lastResetCurrentPcr_=pcr;
+            lastResetPreviousIndex_=last.index;
+            lastResetCurrentIndex_=index;
+            lastResetPacketGap_=index-last.index;
             lastResetCause_=discontinuity ? "discontinuity_flag" :
                 (pcr<last.pcr ? "backward_jump" : "forward_jump");
             lastResetDeltaMs_=pcr<last.pcr ?
@@ -103,6 +111,11 @@ public:
     std::uint64_t resets()const noexcept{return resets_;}
     const char* lastResetCause()const noexcept{return lastResetCause_;}
     std::int64_t lastResetDeltaMs()const noexcept{return lastResetDeltaMs_;}
+    std::uint64_t lastResetPreviousPcr()const noexcept{return lastResetPreviousPcr_;}
+    std::uint64_t lastResetCurrentPcr()const noexcept{return lastResetCurrentPcr_;}
+    std::uint64_t lastResetPreviousIndex()const noexcept{return lastResetPreviousIndex_;}
+    std::uint64_t lastResetCurrentIndex()const noexcept{return lastResetCurrentIndex_;}
+    std::uint64_t lastResetPacketGap()const noexcept{return lastResetPacketGap_;}
     std::uint64_t shortStepsIgnored()const noexcept{return shortStepsIgnored_;}
     std::uint16_t referencePid()const noexcept{return referencePid_;}
 private:
@@ -113,6 +126,9 @@ private:
     std::uint64_t shortStepsIgnored_=0;
     const char* lastResetCause_="none";
     std::int64_t lastResetDeltaMs_=0;
+    std::uint64_t lastResetPreviousPcr_=0,lastResetCurrentPcr_=0;
+    std::uint64_t lastResetPreviousIndex_=0,lastResetCurrentIndex_=0;
+    std::uint64_t lastResetPacketGap_=0;
 };
 
 } // namespace dvbstreamer5::media::mpegts
