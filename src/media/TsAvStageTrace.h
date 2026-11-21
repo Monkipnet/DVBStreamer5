@@ -18,10 +18,18 @@ public:
         std::uint16_t pid = 0x1fff;
         std::uint64_t packets = 0;
         std::uint64_t scrambled = 0;
+        std::uint64_t scrambledEven = 0;
+        std::uint64_t scrambledOdd = 0;
+        std::uint64_t scrambledReserved = 0;
         std::uint64_t tei = 0;
         std::uint64_t pusi = 0;
         std::uint64_t clearPes = 0;
         std::uint64_t badPes = 0;
+        // Mutually exclusive reasons for an invalid clear PES start.
+        std::uint64_t badPesPrefix = 0;
+        std::uint64_t badPesStreamId = 0;
+        std::uint64_t badPesTruncated = 0;
+        std::uint64_t badPesAdaptation = 0;
         std::uint64_t private1Pes = 0;
         std::uint64_t pts = 0;
         std::uint64_t ptsBackward = 0;
@@ -61,7 +69,11 @@ public:
                 if ((p[1] & 0x80U) != 0) { ++t.tei; break; }
                 const std::uint8_t afc = (p[3] >> 4) & 0x03U;
                 if (afc == 0U) break;
-                if ((p[3] & 0xc0U) != 0U) ++t.scrambled;
+                const std::uint8_t scrambling = (p[3] >> 6U) & 3U;
+                if (scrambling) ++t.scrambled;
+                if (scrambling == 2U) ++t.scrambledEven;
+                else if (scrambling == 3U) ++t.scrambledOdd;
+                else if (scrambling == 1U) ++t.scrambledReserved;
                 if (!t.hasWall) {
                     t.hasWall = true;
                 } else if (time >= t.lastWallMs) {
@@ -76,20 +88,33 @@ public:
                 if ((p[3] & 0xc0U) != 0U || afc == 2U) break;
                 std::size_t start = 4;
                 if (afc == 3U) {
-                    if (p[4] > 182U) { ++t.badPes; break; }
+                    if (p[4] > 182U) {
+                        ++t.badPes;
+                        ++t.badPesAdaptation;
+                        break;
+                    }
                     start = 5U + p[4];
                 }
-                if (start + 9U > 188U ||
-                    p[start] != 0 || p[start+1] != 0 ||
+                if (start + 9U > 188U) {
+                    ++t.badPes;
+                    ++t.badPesTruncated;
+                    break;
+                }
+                if (p[start] != 0 || p[start+1] != 0 ||
                     p[start+2] != 1) {
                     ++t.badPes;
+                    ++t.badPesPrefix;
                     break;
                 }
                 const std::uint8_t stream = p[start+3];
                 const bool expected = index == 0
                     ? (stream >= 0xe0U && stream <= 0xefU)
                     : ((stream >= 0xc0U && stream <= 0xdfU) || stream == 0xbdU);
-                if (!expected) { ++t.badPes; break; }
+                if (!expected) {
+                    ++t.badPes;
+                    ++t.badPesStreamId;
+                    break;
+                }
                 ++t.clearPes;
                 if (stream == 0xbdU) ++t.private1Pes;
                 if ((p[start+7] & 0x80U) == 0U ||
@@ -143,12 +168,19 @@ public:
                       << " packets_delta=" << (t.packets - previous.packets)
                       << " scrambled=" << t.scrambled
                       << " scrambled_delta=" << (t.scrambled - previous.scrambled)
+                      << " scramble_even_delta=" << (t.scrambledEven - previous.scrambledEven)
+                      << " scramble_odd_delta=" << (t.scrambledOdd - previous.scrambledOdd)
+                      << " scramble_reserved_delta=" << (t.scrambledReserved - previous.scrambledReserved)
                       << " tei=" << t.tei
                       << " pusi=" << t.pusi
                       << " clear_pes=" << t.clearPes
                       << " clear_pes_delta=" << (t.clearPes - previous.clearPes)
                       << " bad_pes=" << t.badPes
                       << " bad_pes_delta=" << (t.badPes - previous.badPes)
+                      << " bad_pes_prefix_delta=" << (t.badPesPrefix - previous.badPesPrefix)
+                      << " bad_pes_stream_delta=" << (t.badPesStreamId - previous.badPesStreamId)
+                      << " bad_pes_short_delta=" << (t.badPesTruncated - previous.badPesTruncated)
+                      << " bad_pes_adaptation_delta=" << (t.badPesAdaptation - previous.badPesAdaptation)
                       << " private1_pes=" << t.private1Pes
                       << " pts=" << t.pts
                       << " pts_backward=" << t.ptsBackward
