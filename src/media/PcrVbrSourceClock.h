@@ -76,7 +76,9 @@ public:
                     static_cast<unsigned __int128>(last.pcr-pcr)*1000ULL/kHz) :
                 static_cast<std::int64_t>(
                     static_cast<unsigned __int128>(ticks)*1000ULL/kHz);
-            anchors_.clear();
+            // Keep the prior clock epoch available to the UDP sender so an
+            // unflagged forward-PCR leap need not erase valid queued TS.
+            previousAnchors_=std::move(anchors_);
             anchors_.push_back({index,0,pcr});
             lastObservedAt_=observedAt;
             ++resets_;
@@ -94,18 +96,25 @@ public:
         return false;
     }
     bool ready()const noexcept{return anchors_.size()>=2;}
+    std::deque<Anchor> takePreviousAnchors() noexcept {
+        return std::move(previousAnchors_);
+    }
     bool timeNs(std::uint64_t index,std::int64_t& out)const noexcept{
-        if(!ready())return false;
+        return timeNsForAnchors(anchors_,index,out);
+    }
+    static bool timeNsForAnchors(const std::deque<Anchor>& anchors,
+                                 std::uint64_t index,std::int64_t& out) noexcept {
+        if(anchors.size()<2)return false;
         // PCR lookups run for every UDP packet. Search only O(log N)
         // anchor positions instead of scanning up to 512 timestamps.
         // Preserve the two-anchor interpolation/extrapolation semantics.
         auto upper=std::upper_bound(
-            anchors_.begin()+1,anchors_.end(),index,
+            anchors.begin()+1,anchors.end(),index,
             [](std::uint64_t packetIndex,const Anchor& anchor) {
                 return packetIndex<anchor.index;
             });
-        const auto rightIt = upper==anchors_.end()
-            ? std::prev(anchors_.end()) : upper;
+        const auto rightIt = upper==anchors.end()
+            ? std::prev(anchors.end()) : upper;
         const auto leftIt = std::prev(rightIt);
         const Anchor* right = &*rightIt;
         const Anchor* left = &*leftIt;
@@ -133,6 +142,7 @@ public:
     std::uint16_t referencePid()const noexcept{return referencePid_;}
 private:
     std::deque<Anchor> anchors_;
+    std::deque<Anchor> previousAnchors_;
     std::uint16_t referencePid_=0x1fff;
     bool havePid_=false;
     std::uint64_t resets_=0;
