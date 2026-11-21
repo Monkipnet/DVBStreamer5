@@ -11,6 +11,7 @@ using namespace std::chrono_literals;
 using dvbstreamer5::media::mpegts::Packet;
 namespace {
 constexpr std::size_t kMaxPackets=(8*1024*1024)/188;
+constexpr std::size_t kMaxPreservedEpochs=8;
 constexpr std::size_t kMaximumObserverBytes=2U*1024U*1024U;
 // Keep VBR startup bounded. The former 2.2s no-PCR hold delayed
 // perfectly valid single-packet streams and failed the established
@@ -83,14 +84,31 @@ bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
     if(packets_.empty())firstQueued_=Clock::now();
     for(const auto& packet:in){
         if(clock_.observe(packet,nextIndex_)){
-            // Source has explicitly restarted its PCR clock. Old media cannot
-            // be scheduled against the new timeline.
-            const auto discardedPackets=packets_.size();
-            droppedBytes_+=discardedPackets*188ULL;
-            packets_.clear();
-            frontIndex_=nextIndex_;
-            firstQueued_=Clock::now();
-            restartClock_=true;
+            // V607: on a forward source-PCR jump without the MPEG-TS
+            // discontinuity flag, the queued prefix is still valid media.
+            // Retain its own PCR timeline and send it before the new epoch,
+            // rather than deleting complete PES/frames from the live output.
+            // Explicit discontinuities and backwards resets remain destructive.
+            const bool preserve=std::strcmp(clock_.lastResetCause(),
+                                             "forward_jump")==0 &&
+                                !packets_.empty() &&
+                                preservedEpochs_.size()<kMaxPreservedEpochs;
+            auto oldAnchors=clock_.takePreviousAnchors();
+            const auto preservedPackets=preserve ? packets_.size() : 0U;
+            const auto discardedPackets=preserve ? 0U : packets_.size();
+            if(preserve){
+                preservedEpochs_.push_back(
+                    {nextIndex_,std::move(oldAnchors)});
+                // The running output epoch is still valid. Let its sender
+                // finish naturally, then reanchor at the queued boundary.
+            }else{
+                droppedBytes_+=discardedPackets*188ULL;
+                packets_.clear();
+                preservedEpochs_.clear();
+                frontIndex_=nextIndex_;
+                firstQueued_=Clock::now();
+                restartClock_=true;
+            }
             std::cerr<<"NATIVE UDP VBR PCR RESET stream_id="<<streamId_
                      <<" output_index="<<index_
                      <<" cause="<<clock_.lastResetCause()
@@ -104,6 +122,7 @@ bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
                      <<" packet_index="<<clock_.lastResetCurrentIndex()
                      <<" dropped_packets="<<discardedPackets
                      <<" dropped_bytes="<<discardedPackets*188ULL
+                     <<" preserved_packets="<<preservedPackets
                      <<std::endl;
         }
         packets_.push_back(packet);
@@ -114,6 +133,9 @@ bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
         for(std::size_t i=0;i<excess;++i)packets_.pop_front();
         frontIndex_+=excess;
         droppedBytes_+=excess*188ULL;
+        // A bound breach invalidates older epoch timelines just as it
+        // invalidates the old packet-clock anchor.
+        preservedEpochs_.clear();
         firstQueued_=Clock::now();
         restartClock_=true;
         std::cerr<<"NATIVE UDP VBR PCR OVERFLOW stream_id="<<streamId_
@@ -139,13 +161,33 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         cv_.wait(lock,[&]{return stop_||!packets_.empty();});
         if(stop_)break;
         const auto now=Clock::now();
+        // A sender must never combine datagrams across a PCR reset.
+        // Switch the timebase only after the entire queued old epoch
+        // (including any 1..6 packet tail) was physically sent.
+        while(!preservedEpochs_.empty() &&
+              frontIndex_>=preservedEpochs_.front().untilIndex){
+            preservedEpochs_.pop_front();
+            firstQueued_=now;
+            restartClock_=true;
+        }
+        const auto* oldEpoch=preservedEpochs_.empty()
+            ? nullptr : &preservedEpochs_.front().anchors;
+        const bool epochReady=oldEpoch
+            ? oldEpoch->size()>=2 : clock_.ready();
+        const auto epochTimeNs=[&](std::uint64_t index,
+                                   std::int64_t& out)noexcept{
+            return oldEpoch
+                ? dvbstreamer5::media::mpegts::PcrVbrSourceClock::
+                    timeNsForAnchors(*oldEpoch,index,out)
+                : clock_.timeNs(index,out);
+        };
         if(restartClock_){
             started=false;restartClock_=false;
             lastWireSendAt={};lastWireBytes=0;
         }
         if(!started){
             const auto elapsed=now-firstQueued_;
-            const auto reservoir=clock_.ready()
+            const auto reservoir=epochReady
                 ? kPcrPrebuffer : kMaxNoPcrWait;
             if(elapsed<reservoir){
                 cv_.wait_until(lock,firstQueued_+reservoir,
@@ -156,7 +198,7 @@ void PcrVbrUdpOutputWorker::run()noexcept{
             lastWireSendAt={};lastWireBytes=0;
             wallAnchor=now;
             indexAnchor=frontIndex_;
-            pcrMode=clock_.timeNs(frontIndex_,mediaAnchor);
+            pcrMode=epochTimeNs(frontIndex_,mediaAnchor);
             if(!pcrMode)mediaAnchor=0;
             std::cerr<<"NATIVE UDP VBR PCR START stream_id="<<streamId_
                      <<" output_index="<<index_
@@ -169,11 +211,11 @@ void PcrVbrUdpOutputWorker::run()noexcept{
                      <<std::endl;
         }
         std::int64_t mediaNs=0;
-        if(clock_.ready() && !pcrMode){
-            pcrMode=clock_.timeNs(frontIndex_,mediaNs);
+        if(epochReady && !pcrMode){
+            pcrMode=epochTimeNs(frontIndex_,mediaNs);
             mediaAnchor=mediaNs;indexAnchor=frontIndex_;wallAnchor=now;
         }
-        if(pcrMode && !clock_.timeNs(frontIndex_,mediaNs)){
+        if(pcrMode && !epochTimeNs(frontIndex_,mediaNs)){
             pcrMode=false;indexAnchor=frontIndex_;wallAnchor=now;
         }
         if(!pcrMode){
@@ -214,7 +256,11 @@ void PcrVbrUdpOutputWorker::run()noexcept{
             ++lateResets;
         }
         std::array<std::uint8_t,7*188> buffer{};
-        const auto count=std::min<std::size_t>(7,packets_.size());
+        const auto count=oldEpoch
+            ? std::min<std::size_t>({7,packets_.size(),
+                   static_cast<std::size_t>(
+                       preservedEpochs_.front().untilIndex-frontIndex_)})
+            : std::min<std::size_t>(7,packets_.size());
         for(std::size_t i=0;i<count;++i){
             std::memcpy(buffer.data()+i*188,packets_.front().data(),188);
             packets_.pop_front();++frontIndex_;
@@ -259,6 +305,7 @@ void PcrVbrUdpOutputWorker::run()noexcept{
                      <<" output_index="<<index_
                      <<" mode="<<(pcrMode?"source_pcr":"fallback_no_pcr")
                      <<" queue_packets="<<queued
+                     <<" pending_pcr_epochs="<<preservedEpochs_.size()
                      <<" late_reanchors="<<lateResets
                      <<" vbr_peak_cap_kbps="<<peakBitsPerSecond_/1000ULL
                      <<" cap_throttled_datagrams="<<peakThrottled
