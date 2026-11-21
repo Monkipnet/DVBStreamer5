@@ -1,5 +1,6 @@
 #include "media/NativeUdpRelay.h"
 #include "TsCcStageTrace.h"
+#include "media/TsAvStageTrace.h"
 #include "media/PcrStageTrace.h"
 
 #include "NativeHttpClient.h"
@@ -942,6 +943,34 @@ void NativeUdpRelay::run() {
     const char* const ccTraceId=std::getenv("DVBSTREAMER5_TS_CC_TRACE_STREAM_ID");
     const bool ccTraceEnabled=ccTraceId && *ccTraceId &&
         config_.streamId==ccTraceId;
+    // V614: compare known video/audio PIDs across the CA boundary with
+    // metadata-only, opt-in tracing. Invalid or absent PIDs disable the probe.
+    const char* const avTraceId = std::getenv("DVBSTREAMER5_TS_AV_TRACE_STREAM_ID");
+    const auto diagnosticPid = [](const char* key) -> std::uint16_t {
+        const char* value = std::getenv(key);
+        if (!value || !*value || value[0] == '-') return 0x1fffU;
+        char* end = nullptr;
+        const unsigned long result = std::strtoul(value, &end, 0);
+        if (!end || *end != '\0' || result == 0 || result >= 0x1fffUL)
+            return 0x1fffU;
+        return static_cast<std::uint16_t>(result);
+    };
+    const std::uint16_t avVideoPid = diagnosticPid("DVBSTREAMER5_TS_AV_VIDEO_PID");
+    const std::uint16_t avAudioPid = diagnosticPid("DVBSTREAMER5_TS_AV_AUDIO_PID");
+    const bool avTraceEnabled = avTraceId && *avTraceId &&
+        config_.streamId == avTraceId &&
+        avVideoPid != 0x1fffU && avAudioPid != 0x1fffU &&
+        avVideoPid != avAudioPid;
+    dvbstreamer5::media::mpegts::TsAvStageTrace avBeforeCa(
+        config_.streamId, "pre_ca", avVideoPid, avAudioPid);
+    dvbstreamer5::media::mpegts::TsAvStageTrace avAfterCa(
+        config_.streamId, "post_ca", avVideoPid, avAudioPid);
+    dvbstreamer5::media::mpegts::TsAvStageTrace avPreOutput(
+        config_.streamId, "pre_output", avVideoPid, avAudioPid);
+    if (avTraceEnabled)
+        std::cerr << "TS AV STAGE CONFIG stream=" << config_.streamId
+                  << " video_pid=" << avVideoPid << " audio_pid=" << avAudioPid
+                  << " diagnostic_only=1" << std::endl;
     TsCcStageTrace ccBeforeCa(config_.streamId,"pre_ca");
     TsCcStageTrace ccAfterCa(config_.streamId,"post_ca");
     TsCcStageTrace ccPreOutput(config_.streamId,"pre_output");
@@ -1891,9 +1920,10 @@ void NativeUdpRelay::run() {
         }
 
         if (!packets.empty() && config_.processTransport) {
-            if(ccTraceEnabled){
+            if(ccTraceEnabled || avTraceEnabled){
                 const auto* ts=reinterpret_cast<const std::uint8_t*>(packets.data());
-                ccBeforeCa.inspect(ts,packets.size()*188U);
+                if (ccTraceEnabled) ccBeforeCa.inspect(ts,packets.size()*188U);
+                if (avTraceEnabled) avBeforeCa.inspect(ts,packets.size()*188U);
                 pcrBeforeCa.inspect(ts,packets.size()*188U);
             }
             constexpr std::size_t kCaBatchPackets = 77;
@@ -1940,9 +1970,10 @@ void NativeUdpRelay::run() {
                 }
             }
             if (!running_.load(std::memory_order_acquire)) break;
-            if(ccTraceEnabled){
+            if(ccTraceEnabled || avTraceEnabled){
                 const auto* ts=reinterpret_cast<const std::uint8_t*>(packets.data());
-                ccAfterCa.inspect(ts,packets.size()*188U);
+                if (ccTraceEnabled) ccAfterCa.inspect(ts,packets.size()*188U);
+                if (avTraceEnabled) avAfterCa.inspect(ts,packets.size()*188U);
                 pcrAfterCa.inspect(ts,packets.size()*188U);
             }
         }
@@ -2023,9 +2054,10 @@ void NativeUdpRelay::run() {
             config_.primaryProgramIdentity)
             config_.primaryProgramIdentity->observe(packets);
         if (!packets.empty()) {
-            if(ccTraceEnabled){
+            if(ccTraceEnabled || avTraceEnabled){
                 const auto* ts=reinterpret_cast<const std::uint8_t*>(packets.data());
-                ccPreOutput.inspect(ts,packets.size()*188U);
+                if (ccTraceEnabled) ccPreOutput.inspect(ts,packets.size()*188U);
+                if (avTraceEnabled) avPreOutput.inspect(ts,packets.size()*188U);
                 pcrPreOutput.inspect(ts,packets.size()*188U);
             }
             // Count the real MPEG-TS payload produced by the pipeline before
