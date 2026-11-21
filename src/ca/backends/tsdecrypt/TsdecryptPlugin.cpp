@@ -863,6 +863,37 @@ int processTs(void* self, const char* id, uint8_t* data, size_t size,
                         service->lastCamdErrorMs.load(),
                         service->cwValidReported.load()
                     })));
+            const char* const avTarget = std::getenv("DVBSTREAMER5_TS_AV_TRACE_STREAM_ID");
+            if (avTarget && *avTarget && service->id == avTarget) {
+                const uint64_t nowMs = Service::monotonicMs();
+                const uint64_t lastChild = service->lastChildOutputMs.load();
+                const uint64_t childAgeMs =
+                    lastChild && nowMs >= lastChild ? nowMs-lastChild : 0ULL;
+                // Called while Service::mutex is held. Read the FIFO gauges
+                // consistently without observing, altering or retaining TS data.
+                std::fprintf(stderr,
+                    "TSDECRYPT FIFO DIAG stream=%s "
+                    "input_queued_bytes=%zu input_peak_bytes=%zu "
+                    "output_queued_packets=%zu output_peak_packets=%zu "
+                    "child_last_output_age_ms=%llu "
+                    "child_scrambled_suppressed=%llu private1_pes=%llu "
+                    "output_null_child=%llu output_null_underrun=%llu "
+                    "input_drops=%llu output_drops=%llu diagnostic_only=1\n",
+                    service->id.c_str(),
+                    service->inputBytes, service->peakInputBytes,
+                    service->output.size(), service->peakOutputPackets,
+                    static_cast<unsigned long long>(childAgeMs),
+                    static_cast<unsigned long long>(
+                        service->childScrambledSuppressed.load()),
+                    static_cast<unsigned long long>(
+                        service->outputPrivate1Pes.load()),
+                    static_cast<unsigned long long>(
+                        service->outputChildNullPackets.load()),
+                    static_cast<unsigned long long>(
+                        service->outputUnderrunNullPackets.load()),
+                    static_cast<unsigned long long>(service->inputDrops.load()),
+                    static_cast<unsigned long long>(service->outputDrops.load()));
+            }
         }
     }
     if (result) {
