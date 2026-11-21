@@ -29,7 +29,11 @@ if [[ -z "$ACTION" ]]; then
     read -r answer
     case "$answer" in 1) ACTION='--update-all';; 2) ACTION='--new';; *) fail 'Invalid selection';; esac
   else
-    fail 'Noninteractive install requires --update-all or --new --name ID --port PORT'
+    # Compatibility with V10.8.618 and older web updaters: these run
+    # bundle/install.sh without arguments in a detached systemd worker.
+    # Updating every existing copy is the documented installer default.
+    log 'Noninteractive legacy updater detected: updating installed copies.'
+    ACTION='--update-all'
   fi
 fi
 validate_name(){
