@@ -757,7 +757,7 @@ private:
                  decodeStatus.decodeStatus == cuvidDecodeStatus_Error_Concealed)) {
                 ++nvdecCorruptFrames_;
                 if (nvdecCorruptFrames_ <= 8 ||
-                    (nvdecCorruptFrames_ % 100ULL) == 0ULL) {
+                    (nvdecCorruptFrames_ % 25ULL) == 0ULL) {
                     std::cerr << "NATIVE NVDEC DECODE ERROR status="
                               << static_cast<int>(decodeStatus.decodeStatus)
                               << " picture=" << display->picture_index
