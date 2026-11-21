@@ -160,7 +160,13 @@ void CaBackendManager::loadPluginsLocked() {
         directories.push_back(executableDir / "ca-plugins");
         directories.push_back(executableDir);
     }
-    directories.emplace_back(kDefaultPluginDirectory);
+    // Named DVBStreamer5 instances must not load plugins from the legacy
+    // installation. With a private plugin path, scanning /opt/DVBStreamer5
+    // also creates misleading duplicate-plugin messages.
+    const char* instanceId = std::getenv("DVBSTREAMER5_INSTANCE_ID");
+    if (!instanceId || !*instanceId) {
+        directories.emplace_back(kDefaultPluginDirectory);
+    }
 
     std::vector<std::string> files;
     std::set<std::string> seenDirectories;
