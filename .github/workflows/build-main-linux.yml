@@ -59,6 +59,8 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Werror -Isrc tests/test_ts_cc_stage_v608.cpp -o /tmp/ts-cc-stage-v608
           /tmp/ts-cc-stage-v608
+          c++ -std=c++17 -Wall -Wextra -Werror -Isrc tests/test_pcr_stage_v609.cpp -o /tmp/ts-pcr-stage-v609
+          /tmp/ts-pcr-stage-v609
           node tests/web/test_runtime_recovery_v552.js
 
       - name: Verify dashboard channel search including devices domains and CIDR
