@@ -1,6 +1,8 @@
 #include "media/NativeTsDemux.h"
+#include "media/H264FieldReference.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <utility>
@@ -121,6 +123,12 @@ bool h264FirstMbInSliceZero(const std::uint8_t* nal, std::size_t size) {
 
 } // namespace
 
+void NativeTsDemux::setDiagnosticStreamId(std::string streamId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    diagnosticStreamId_ = std::move(streamId);
+    rawH264PesCaptures_.clear();
+}
+
 void NativeTsDemux::setSampleCallback(SampleCallback callback) {
     std::lock_guard<std::mutex> lock(mutex_);
     sampleCallback_ = std::move(callback);
@@ -138,6 +146,7 @@ void NativeTsDemux::reset() {
     streamsByPid_.clear();
     pes_.clear();
     videoAu_.clear();
+    rawH264PesCaptures_.clear();
     programNumber_ = 0;
     pmtPid_ = 0xffff;
     pesTrimEvents_ = 0;
@@ -500,6 +509,60 @@ void NativeTsDemux::flushPes(std::uint16_t pid) {
         }
     }
 
+    // V612: capture original, parsed H.264 PES PAYLOAD before any AU
+    // reassembly. Compare against DVBSTREAMER5_DUMP_H264_ES (post-AU) to
+    // locate any byte loss/reordering. Exact per-stream opt-in, maximum
+    // 64 MiB per video PID; never alter or discard transport data.
+    if (sample.stream.kind == ElementaryKind::Video &&
+        sample.stream.codec == ElementaryCodec::H264 &&
+        sample.stream.pid == rawClockVideoPid_ &&
+        !diagnosticStreamId_.empty()) {
+        const char* prefix = std::getenv("DVBSTREAMER5_DUMP_RAW_H264_PES");
+        const char* target = std::getenv("DVBSTREAMER5_DUMP_H264_ES_STREAM_ID");
+        if (prefix && *prefix && target && diagnosticStreamId_ == target) {
+            auto& capture = rawH264PesCaptures_[sample.stream.pid];
+            if (!capture.opened) {
+                capture.opened = true;
+                const std::string path = std::string(prefix) +
+                    ".sid-" + std::to_string(programNumber_) +
+                    ".pid-" + std::to_string(sample.stream.pid) + ".h264";
+                capture.file.open(path, std::ios::binary | std::ios::trunc);
+                std::cerr << "NATIVE AVC RAW PES DUMP "
+                          << (capture.file ? "open" : "open_failed")
+                          << " stream_id=" << diagnosticStreamId_
+                          << " service_id=" << programNumber_
+                          << " pid=" << sample.stream.pid
+                          << " path=" << path
+                          << " limit_mb=64 diagnostic_only=1" << std::endl;
+            }
+            constexpr std::uint64_t kMaxCapture = 64ULL * 1024ULL * 1024ULL;
+            if (capture.file && !capture.exhausted) {
+                if (sample.data.size() > kMaxCapture - capture.bytes) {
+                    capture.exhausted = true;
+                    capture.file.close();
+                    std::cerr << "NATIVE AVC RAW PES DUMP limit"
+                              << " stream_id=" << diagnosticStreamId_
+                              << " pid=" << sample.stream.pid
+                              << " bytes=" << capture.bytes
+                              << " last_pes_preserved=1" << std::endl;
+                } else {
+                    capture.file.write(
+                        reinterpret_cast<const char*>(sample.data.data()),
+                        static_cast<std::streamsize>(sample.data.size()));
+                    if (!capture.file) {
+                        capture.exhausted = true;
+                        capture.file.close();
+                        std::cerr << "NATIVE AVC RAW PES DUMP write_failed"
+                                  << " stream_id=" << diagnosticStreamId_
+                                  << " pid=" << sample.stream.pid << std::endl;
+                    } else {
+                        capture.bytes += sample.data.size();
+                    }
+                }
+            }
+        }
+    }
+
     // V10.8.45: an MPEG-TS PES boundary is not an AVC access-unit or NAL
     // boundary. The live LVM AVC Main service can split SPS/PPS and slices
     // across adjacent PES packets. Passing each PES directly to OpenH264 made
@@ -778,10 +841,31 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
                 // the same frame, not a new frame. Keep every NAL byte.
                 pendingPicturePrefix = 0;
                 ++state.h264FieldPairs;
+                const bool mixedReference = h264MixedReferenceFields(
+                    firstPicture.nalRefIdc, currentPicture.nalRefIdc);
+                if (mixedReference) {
+                    ++state.h264MixedReferencePairs;
+                    if (state.h264MixedReferencePairs <= 12U ||
+                        (state.h264MixedReferencePairs % 100U) == 0U) {
+                        std::cerr << "NATIVE AVC AU MIXED REFERENCE"
+                                  << " service_id=" << programNumber_
+                                  << " pmt_pid=" << pmtPid_
+                                  << " pid=" << sample.stream.pid
+                                  << " frame_num=" << firstPicture.frameNum
+                                  << " first_nal_ref_idc="
+                                  << static_cast<unsigned>(firstPicture.nalRefIdc)
+                                  << " second_nal_ref_idc="
+                                  << static_cast<unsigned>(currentPicture.nalRefIdc)
+                                  << " mixed_total=" << state.h264MixedReferencePairs
+                                  << " diagnostic_only=1 action=preserve_au"
+                                  << std::endl;
+                    }
+                }
                 if (state.h264FieldPairs <= 4U ||
                     (state.h264FieldPairs % 250U) == 0U) {
                     std::cerr << "NATIVE AVC AU FIELD_PAIR pid="
                               << sample.stream.pid
+                              << " service_id=" << programNumber_
                               << " frame_num=" << firstPicture.frameNum
                               << " first_bottom=" << (firstPicture.bottomField ? 1 : 0)
                               << " pairs=" << state.h264FieldPairs
@@ -821,6 +905,7 @@ void NativeTsDemux::queueVideoSample(DemuxSample&& sample) {
             if (h264PesPtsResyncEvents_ <= 8U ||
                 h264PesPtsResyncEvents_ % 50U == 0U) {
                 std::cerr << "NATIVE AVC PES PTS RESYNC pid=" << sample.stream.pid
+                          << " service_id=" << programNumber_
                           << " drift_ms=" << (recovered.drift90k / 90LL)
                           << " old_pts=" << state.pts90k
                           << " source_pts=" << recovered.pts90k
