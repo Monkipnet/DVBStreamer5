@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <string>
@@ -45,6 +46,8 @@ public:
     NativeTsDemux() = default;
 
     void setSampleCallback(SampleCallback callback);
+    // Set before push(); exact per-stream scope for optional raw PES diagnostics.
+    void setDiagnosticStreamId(std::string streamId);
     void setProgramCallback(ProgramCallback callback);
     void reset();
     bool push(const std::uint8_t* data, std::size_t size, std::string& error);
@@ -106,6 +109,7 @@ private:
         std::map<std::uint32_t, H264SpsState> h264Sps;
         std::map<std::uint32_t, H264PpsState> h264Pps;
         std::uint64_t h264FieldPairs = 0;
+        std::uint64_t h264MixedReferencePairs = 0;
         std::uint64_t h264SingleFields = 0;
         bool h264FieldCoded = false;
     };
@@ -130,7 +134,16 @@ private:
     static bool containsRandomAccessNal(ElementaryCodec codec, const std::uint8_t* data, std::size_t size);
     static std::uint64_t readPts(const std::uint8_t* data) noexcept;
 
+    struct RawPesCapture {
+        std::ofstream file;
+        std::uint64_t bytes = 0;
+        bool opened = false;
+        bool exhausted = false;
+    };
+
     mutable std::mutex mutex_;
+    std::string diagnosticStreamId_;
+    std::map<std::uint16_t, RawPesCapture> rawH264PesCaptures_;
     PacketFramer framer_;
     std::map<std::uint16_t, SectionAssembler> psi_;
     std::map<std::uint16_t, DemuxStreamInfo> streamsByPid_;
