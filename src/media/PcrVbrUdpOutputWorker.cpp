@@ -1,8 +1,10 @@
 #include "media/PcrVbrUdpOutputWorker.h"
+#include "TsCcStageTrace.h"
 #include "media/VbrPeakRatePolicy.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 
 namespace dvbstreamer5::media::network {
@@ -147,6 +149,9 @@ bool PcrVbrUdpOutputWorker::enqueue(const std::vector<Packet>& in){
     return true;
 }
 void PcrVbrUdpOutputWorker::run()noexcept{
+    const char* const ccTraceId=std::getenv("DVBSTREAMER5_TS_CC_TRACE_STREAM_ID");
+    const bool ccTraceEnabled=ccTraceId && *ccTraceId && streamId_==ccTraceId;
+    TsCcStageTrace ccWire(streamId_,"udp_vbr_wire");
     bool started=false,pcrMode=false;
     auto wallAnchor=Clock::time_point{};
     std::int64_t mediaAnchor=0;
@@ -269,6 +274,8 @@ void PcrVbrUdpOutputWorker::run()noexcept{
         const auto dropped=droppedBytes_;
         const auto pendingEpochs=preservedEpochs_.size();
         lock.unlock();
+        if(ccTraceEnabled)
+            ccWire.inspect(buffer.data(),count*188U);
         std::string error;
         // The network socket is always served before any observer work.
         if(socket_){
