@@ -1231,6 +1231,7 @@ html:not([data-dashboard-theme="light"]) .cesbo-tile-menu-popup button[data-stre
 <button class="system-menu-item" id="checkReleaseButton" onclick="checkBinaryUpdates()" data-ui-ru="Проверка обновлений" data-ui-en="Check for updates" data-ui-hr="Provjeri ažuriranja" data-ui-de="Auf Updates prüfen">Проверка обновлений</button>
 <button class="system-menu-item" id="installReleaseButton" hidden style="display:none;color:#9fe7b3" onclick="installBinaryUpdate()" data-ui-ru="Обновить программу" data-ui-en="Install update" data-ui-hr="Instaliraj ažuriranje" data-ui-de="Update installieren">Обновить программу</button>
 <button class="system-menu-item restart-button" onclick="closeSystemMenu();restartProgram()" data-i18n="restartProgram">Restart</button>
+<button class="system-menu-item" id="uninstallThisInstanceButton" onclick="closeSystemMenu();uninstallThisInstance()" data-ui-ru="Полностью удалить эту копию" data-ui-en="Fully uninstall this copy" data-ui-hr="Potpuno deinstaliraj ovu kopiju" data-ui-de="Diese Kopie vollständig deinstallieren">Полностью удалить эту копию</button>
 <button class="system-menu-item logout-button" onclick="logoutPanel()" data-i18n="logout">Logout</button>
 </div>
 </div>
@@ -8247,6 +8248,56 @@ async function installBinaryUpdate(forceNewCopy=false){
     setUpdateButtonBusy(checkButton,false);
     setUpdateButtonBusy(installButton,false);
     updateRequestBusy=false;
+  }
+}
+async function uninstallThisInstance(){
+  // Only an administrator of this copy can request removal. The server
+  // independently binds the confirmation to its own instance identity.
+  let identity;
+  try{
+    const response=await fetch('/api/instance/identity',{
+      cache:'no-store',credentials:'same-origin'
+    });
+    identity=await response.json();
+    if(!response.ok||identity.result!=='ok')throw Error(identity.error||'Unavailable');
+  }catch(error){
+    window.alert(releaseText(
+      'Не удалось определить текущую копию: ','Could not identify this copy: ',
+      'Nije moguće identificirati ovu kopiju: ','Diese Kopie konnte nicht identifiziert werden: '
+    )+String(error?.message||error));
+    return;
+  }
+  const instance=String(identity.instance||'');
+  const port=Number(identity.port);
+  const warning=releaseText(
+    'Полностью удалить ТОЛЬКО эту копию DVBStreamer5 ('+instance+', HTTP '+port+')? Все её каналы остановятся; настройки и данные будут удалены. Остальные копии останутся работать. Введите DELETE:',
+    'Permanently remove ONLY this DVBStreamer5 copy ('+instance+', HTTP '+port+')? Its streams stop and its settings and data are deleted. Other copies keep running. Type DELETE:',
+    'Trajno ukloniti SAMO ovu kopiju DVBStreamer5 ('+instance+', HTTP '+port+')? Njezini tokovi prestat će raditi, a postavke i podaci bit će izbrisani. Ostale kopije nastavljaju raditi. Upišite DELETE:',
+    'NUR diese DVBStreamer5-Kopie ('+instance+', HTTP '+port+') vollständig entfernen? Ihre Streams stoppen, ihre Einstellungen und Daten werden gelöscht. Andere Kopien laufen weiter. DELETE eingeben:');
+  if(window.prompt(warning)!=='DELETE')return;
+  if(!window.confirm(releaseText(
+    'Последнее подтверждение: безвозвратно удалить экземпляр '+instance+'?',
+    'Final confirmation: permanently uninstall instance '+instance+'?',
+    'Završna potvrda: trajno ukloniti instancu '+instance+'?',
+    'Letzte Bestätigung: Instanz '+instance+' endgültig entfernen?')))return;
+  try{
+    const response=await fetch('/api/instance/uninstall',{
+      method:'POST',credentials:'same-origin',
+      headers:{'X-Requested-With':'DVBStreamer5','Content-Type':'application/json'},
+      body:JSON.stringify({instance,confirmation:'DELETE'})
+    });
+    const data=await response.json();
+    if(!response.ok||data.result!=='scheduled')
+      throw Error(data.error||'Uninstall scheduling failed');
+    window.alert(releaseText(
+      'Удаление этой копии запланировано. Веб-интерфейс скоро отключится.',
+      'Removal of this copy scheduled. This web interface will disconnect.',
+      'Uklanjanje ove kopije je zakazano. Ovo web-sučelje će se prekinuti.',
+      'Entfernung dieser Kopie geplant. Diese Weboberfläche wird getrennt.'));
+  }catch(error){
+    window.alert(releaseText('Не удалось удалить: ','Uninstall failed: ',
+      'Deinstalacija nije uspjela: ','Deinstallation fehlgeschlagen: ')+
+      String(error?.message||error));
   }
 }
 async function restartProgram() {
