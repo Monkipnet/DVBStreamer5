@@ -2356,6 +2356,7 @@ bool NativeTranscoderPipeline::handleVideo(mpegts::DemuxSample&& sample, std::st
             std::string zeroCopyError;
             if (codec::nvidiaZeroCopyRuntimeAvailable()) {
                 codec::NvidiaZeroCopyConfig zeroCopyConfig;
+                zeroCopyConfig.streamId = config_.streamId;
                 zeroCopyConfig.inputCodec = sample.stream.codec;
                 zeroCopyConfig.outputCodec = videoCodecFromName(config_.videoCodec);
                 zeroCopyConfig.width = config_.width;
