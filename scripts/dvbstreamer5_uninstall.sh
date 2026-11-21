@@ -60,10 +60,19 @@ rm -f -- "$unit_file"
 systemctl daemon-reload
 rm -rf --one-file-system -- "$INSTALL_DIR"
 if (( PURGE )); then
-    case "$CONFIG_DIR" in
-        /etc/dvbstreamer5|/etc/dvbstreamer5/instances/*) rm -rf --one-file-system -- "$CONFIG_DIR" ;;
-        *) fail 'Configuration path rejected' ;;
-    esac
+    if [[ "$INSTANCE" == legacy ]]; then
+        # This directory may also contain instances/ used by other services.
+        # Never recursively remove it or touch its child instance directories.
+        for file in dvbstreamer5-config.json dvbstreamer5-subscribers.json dvbstreamer5-ui.key; do
+            rm -f -- "$CONFIG_DIR/$file"
+        done
+        # Legacy OSCam config is intentionally retained unless independently
+        # proven to be private; it may be shared by another installed copy.
+    else
+        [[ "$CONFIG_DIR" == "/etc/dvbstreamer5/instances/$INSTANCE" ]] ||
+            fail 'Configuration path rejected'
+        rm -rf --one-file-system -- "$CONFIG_DIR"
+    fi
     printf 'Removed this runtime and its configuration.\n'
 else
     printf 'Removed this runtime. Configuration preserved: %s\n' "$CONFIG_DIR"
