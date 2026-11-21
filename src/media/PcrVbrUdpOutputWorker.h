@@ -48,6 +48,13 @@ private:
     std::condition_variable cv_;
     std::deque<dvbstreamer5::media::mpegts::Packet> packets_;
     dvbstreamer5::media::mpegts::PcrVbrSourceClock clock_;
+    struct PreservedEpoch {
+        std::uint64_t untilIndex=0;
+        std::deque<dvbstreamer5::media::mpegts::PcrVbrSourceClock::Anchor> anchors;
+    };
+    // Only unflagged forward jumps preserve the already queued, ordered TS.
+    // A real discontinuity/backwards clock reset still discards stale media.
+    std::deque<PreservedEpoch> preservedEpochs_;
     std::uint64_t frontIndex_=0,nextIndex_=0,droppedBytes_=0;
     std::chrono::steady_clock::time_point firstQueued_{};
     bool stop_=false;
