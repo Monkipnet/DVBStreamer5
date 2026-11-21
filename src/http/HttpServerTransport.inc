@@ -1331,6 +1331,23 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                     res.body() = Json::writeString(
                         writer, streamManager.epgSnapshot(streamId));
                 }
+            } else if (target == "/api/instance/identity") {
+                res.set(http::field::content_type, "application/json");
+                res.set(http::field::cache_control, "no-store");
+                if (apiKeyAttempt ||
+                    !(isPanelSessionAuthorized(req) || isAuthorized(req))) {
+                    res.result(http::status::forbidden);
+                    res.body() = R"({"result":"error","error":"Panel login required"})";
+                } else {
+                    const char* rawInstance = std::getenv("DVBSTREAMER5_INSTANCE_ID");
+                    Json::Value identity(Json::objectValue);
+                    identity["result"] = "ok";
+                    identity["instance"] = rawInstance && *rawInstance ? rawInstance : "legacy";
+                    identity["port"] = configManager.config.httpPort;
+                    Json::StreamWriterBuilder writer;
+                    writer["indentation"] = "";
+                    res.body() = Json::writeString(writer, identity);
+                }
             } else if (target == "/api/update/status") {
                 res.set(http::field::content_type, "application/json");
                 // Only fixed phase words can enter the JSON response.
@@ -2097,7 +2114,7 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
                                 res.result(http::status::service_unavailable);
                                 res.body() = R"({"result":"error","error":"Unable to schedule instance uninstallation"})";
                             } else {
-                                res.body() = R"({"result":"scheduled","instance":""})";
+                                res.body() = R"({"result":"scheduled"})";
                             }
                         }
                     }
