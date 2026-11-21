@@ -30,7 +30,9 @@ assert.ok(api.includes('isPanelSessionAuthorized(req) || isAuthorized(req)'));
 const restart = actions.slice(actions.indexOf('bool HttpServer::handleRestartProgram('),
                               actions.indexOf('void HttpServer::handleDeleteStream('));
 assert.ok(restart.includes('/usr/bin/systemd-run --quiet --no-block --on-active=2s'));
-assert.ok(restart.includes('/usr/bin/systemctl --no-block restart dvbstreamer5.service'));
+assert.ok(restart.includes('"/usr/bin/systemctl --no-block restart " + service'));
+assert.ok(restart.includes('"dvbstreamer5@" + instanceId + ".service"'));
+assert.ok(restart.includes('? "dvbstreamer5.service"'));
 assert.ok(restart.includes('if (rc != 0)'));
 assert.ok(!restart.includes('std::thread('), 'old cgroup-bound restart thread must be gone');
 
