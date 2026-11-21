@@ -5,7 +5,11 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const ui=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
 const version=fs.readFileSync('src/AppVersion.h','utf8');
-assert.match(version,/kProgramVersion = "10\.8\.60[1-9]"/);
+// Versions after V609 must keep testing the original compact UI.
+const release=version.match(/kProgramVersion = "(\\d+)\\.(\\d+)\\.(\\d+)"/);
+assert.ok(release && Number(release[1])===10 && Number(release[2])===8 &&
+          Number(release[3])>=601,
+          'Compact tiles must remain valid on releases from 10.8.601');
 
 const start=ui.indexOf('<script>'), end=ui.indexOf('</script>',start);
 assert.ok(start>0&&end>start,'Embedded dashboard JavaScript');
