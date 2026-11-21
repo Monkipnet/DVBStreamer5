@@ -378,7 +378,7 @@ if [[ -d "$INSTALL_DIR/oscam-mini/config" ]]; then
 fi
 
 log "Installing application runtime under $INSTALL_DIR"
-for item in bin lib web ca-plugins etc tls run.sh updater.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS scripts; do
+for item in bin lib web ca-plugins etc tls run.sh updater.sh uninstall.sh VERSION PORTABILITY.txt BUNDLE-INFO.txt SHA256SUMS scripts; do
     [[ -e "$BUNDLE_DIR/$item" ]] || continue
     rm -rf -- "$INSTALL_DIR/$item"
     cp -a -- "$BUNDLE_DIR/$item" "$INSTALL_DIR/$item"
@@ -391,7 +391,7 @@ fi
 
 [[ -s "$INSTALL_DIR/updater.sh" && -s "$INSTALL_DIR/VERSION" ]] ||
     { echo "ERROR: portable bundle has no updater.sh or VERSION" >&2; exit 1; }
-chmod 0755 "$INSTALL_DIR/updater.sh"
+chmod 0755 "$INSTALL_DIR/updater.sh" "$INSTALL_DIR/uninstall.sh"
 chmod 0755 "$INSTALL_DIR/run.sh" "$INSTALL_DIR/bin/$APP"
 if [[ -x "$INSTALL_DIR/oscam-mini/oscam-mini" ]]; then
     chmod 0755 "$INSTALL_DIR/oscam-mini/oscam-mini" "$INSTALL_DIR/oscam-mini/oscam-mini.bin"
@@ -485,32 +485,7 @@ fi
 EOF_INSTALL
 chmod 0755 "$STAGE/install.sh"
 
-cat > "$STAGE/uninstall.sh" <<'EOF_UNINSTALL'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-INSTALL_DIR=${DVBSTREAMER5_INSTALL_DIR:-/opt/DVBStreamer5}
-CONFIG_DIR=${DVBSTREAMER5_CONFIG_DIR:-/etc/dvbstreamer5}
-PURGE=0
-[[ "${1:-}" == "--purge-config" ]] && PURGE=1
-
-[[ $EUID -eq 0 ]] || { echo "Run as root: sudo ./uninstall.sh" >&2; exit 1; }
-
-systemctl disable --now dvbstreamer5.service 2>/dev/null || true
-systemctl disable --now oscam-mini.service 2>/dev/null || true
-rm -f /etc/systemd/system/dvbstreamer5.service /etc/systemd/system/oscam-mini.service
-systemctl daemon-reload
-rm -rf -- "$INSTALL_DIR"
-
-if (( PURGE )); then
-    rm -rf -- "$CONFIG_DIR"
-    echo "Removed program and configuration."
-else
-    echo "Removed program. Configuration preserved in $CONFIG_DIR"
-    echo "Use --purge-config to remove it too."
-fi
-EOF_UNINSTALL
-chmod 0755 "$STAGE/uninstall.sh"
+install -m 0755 "$PROJECT_ROOT/scripts/dvbstreamer5_uninstall.sh" "$STAGE/uninstall.sh"
 
 cat > "$STAGE/INSTALL.txt" <<'EOF_INSTALL_TXT'
 DVBStreamer5 installable Linux bundle
