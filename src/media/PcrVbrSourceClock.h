@@ -1,6 +1,7 @@
 #pragma once
 #include "media/TransportStream.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <iterator>
@@ -15,7 +16,9 @@ public:
     static constexpr std::uint64_t kHz=27000000ULL;
     static constexpr std::uint64_t kWrap=(1ULL<<33U)*300ULL;
     struct Anchor {std::uint64_t index=0;std::int64_t ns=0;std::uint64_t pcr=0;};
-    bool observe(const Packet& packet,std::uint64_t index) {
+    bool observe(const Packet& packet,std::uint64_t index,
+                 std::chrono::steady_clock::time_point observedAt=
+                     std::chrono::steady_clock::now()) {
         if(packet[0]!=0x47 || (packet[3]&0x20)==0 ||
            packet[4]<7 || (packet[5]&0x10)==0)return false;
         const std::uint16_t pid=static_cast<std::uint16_t>(
@@ -33,6 +36,7 @@ public:
         const bool discontinuity=(packet[5]&0x80U)!=0;
         if(anchors_.empty()){
             anchors_.push_back({index,0,pcr});
+            lastObservedAt_=observedAt;
             return false;
         }
         const auto last=anchors_.back();
@@ -59,6 +63,12 @@ public:
             lastResetPreviousIndex_=last.index;
             lastResetCurrentIndex_=index;
             lastResetPacketGap_=index-last.index;
+            // Elapsed monotonic time between accepted PCR observations.
+            // A 9-second PCR jump in 9 seconds suggests input starvation;
+            // the same jump in milliseconds suggests a timestamp fault.
+            const auto wallGapMs=std::chrono::duration_cast<
+                std::chrono::milliseconds>(observedAt-lastObservedAt_).count();
+            lastResetWallGapMs_=wallGapMs>0 ? wallGapMs : 0;
             lastResetCause_=discontinuity ? "discontinuity_flag" :
                 (pcr<last.pcr ? "backward_jump" : "forward_jump");
             lastResetDeltaMs_=pcr<last.pcr ?
@@ -68,6 +78,7 @@ public:
                     static_cast<unsigned __int128>(ticks)*1000ULL/kHz);
             anchors_.clear();
             anchors_.push_back({index,0,pcr});
+            lastObservedAt_=observedAt;
             ++resets_;
             return true;
         }
@@ -78,6 +89,7 @@ public:
         const auto deltaNs=static_cast<std::int64_t>(
             static_cast<unsigned __int128>(ticks)*1000000000ULL/kHz);
         anchors_.push_back({index,last.ns+deltaNs,pcr});
+        lastObservedAt_=observedAt;
         while(anchors_.size()>512)anchors_.pop_front();
         return false;
     }
@@ -116,6 +128,7 @@ public:
     std::uint64_t lastResetPreviousIndex()const noexcept{return lastResetPreviousIndex_;}
     std::uint64_t lastResetCurrentIndex()const noexcept{return lastResetCurrentIndex_;}
     std::uint64_t lastResetPacketGap()const noexcept{return lastResetPacketGap_;}
+    std::int64_t lastResetWallGapMs()const noexcept{return lastResetWallGapMs_;}
     std::uint64_t shortStepsIgnored()const noexcept{return shortStepsIgnored_;}
     std::uint16_t referencePid()const noexcept{return referencePid_;}
 private:
@@ -129,6 +142,8 @@ private:
     std::uint64_t lastResetPreviousPcr_=0,lastResetCurrentPcr_=0;
     std::uint64_t lastResetPreviousIndex_=0,lastResetCurrentIndex_=0;
     std::uint64_t lastResetPacketGap_=0;
+    std::int64_t lastResetWallGapMs_=0;
+    std::chrono::steady_clock::time_point lastObservedAt_{};
 };
 
 } // namespace dvbstreamer5::media::mpegts
