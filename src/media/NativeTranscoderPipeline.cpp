@@ -297,6 +297,7 @@ bool NativeTranscoderPipeline::initialize(const NativeTranscoderConfig& config, 
     if (config_.videoCodec != "copy" && !mux_.setCodec(mpegts::ElementaryKind::Video, videoCodecFromName(config_.videoCodec), error)) return false;
     if (config_.audioCodec != "copy" && !mux_.setCodec(mpegts::ElementaryKind::Audio, audioCodecFromName(config_.audioCodec), error)) return false;
 
+    demux_.setDiagnosticStreamId(config_.streamId);
     demux_.setProgramCallback([this](const std::vector<mpegts::DemuxStreamInfo>& streams) { onProgram(streams); });
     demux_.setSampleCallback([this](mpegts::DemuxSample&& sample) { onSample(std::move(sample)); });
     initialized_ = true;
