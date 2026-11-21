@@ -87,6 +87,36 @@ int main() {
     }
     require(dropped>=30&&dropped<=50,"reordered decoder PTS reproduces ~40 dropped of 125");
 
+    // V610 home2 reproduction: H.264 PES in decode order 0,3,1,2,4
+    // causes the old endpoint-span detector to flip 25-fps bypass on/off
+    // repeatedly, resetting the gate clock even though source is 25fps.
+    // After the long window fills, all B-frame permutations must stay locked.
+    const int reorderedPictures[] = {0,3,1,2,4};
+    for (std::uint64_t step : {3600ULL,3003ULL,1800ULL}) {
+        source.reset();
+        bool previouslyLocked=false;
+        int falseTransitions=0;
+        for(int group=0;group<60;++group){
+            for(int picture : reorderedPictures){
+                const int presentation=group*5+picture;
+                const auto result=source.observe(
+                    wrap(static_cast<std::int64_t>(NativeVideoSourceCadence::kMask)
+                         -720000LL+static_cast<std::int64_t>(presentation)
+                                     *static_cast<std::int64_t>(step)),true);
+                if(group>=8 && step==3600ULL && !result.matches25)
+                    ++falseTransitions;
+                if(group>=8 && step!=3600ULL && result.matches25)
+                    require(false,"B-reordered 30/50fps must not bypass FPS gate");
+                if(group>=8 && step==3600ULL && !previouslyLocked)
+                    require(false,"stable PAL must not lose lock after 33 PES");
+                previouslyLocked=result.matches25;
+            }
+        }
+        if(step==3600ULL)
+            require(falseTransitions==0,
+                    "B-reordered PAL cadence must not toggle bypass");
+    }
+
     // True 29.97/30fps must still use the existing downsampler.
     source.reset();
     for(int i=0;i<125;++i)
