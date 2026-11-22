@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-// Explicit override: decimal 0..3000; zero disables grace. Invalid => 0.
+// Explicit override: decimal 0..4000; zero disables grace. Invalid => 0.
 static inline uint16_t dvb5_newcamd_grace_parse(const char *value)
 {
 	if(!value || !*value) { return 0; }
@@ -16,7 +16,7 @@ static inline uint16_t dvb5_newcamd_grace_parse(const char *value)
 		if(*p < '0' || *p > '9') { return 0; }
 	}
 	const unsigned long ms = strtoul(value, NULL, 10);
-	return (ms <= 3000) ? (uint16_t)ms : 0;
+	return (ms <= 4000) ? (uint16_t)ms : 0;
 }
 
 static inline uint16_t dvb5_newcamd_grace_for_route(
