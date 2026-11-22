@@ -18,7 +18,9 @@ int main(void)
 	assert(dvb5_newcamd_grace_parse("1500") == 1500);
 	assert(dvb5_newcamd_grace_parse("1501") == 1501);
 	assert(dvb5_newcamd_grace_parse("3000") == 3000);
-	assert(dvb5_newcamd_grace_parse("3001") == 0);
+	assert(dvb5_newcamd_grace_parse("3001") == 3001);
+	assert(dvb5_newcamd_grace_parse("4000") == 4000);
+	assert(dvb5_newcamd_grace_parse("4001") == 0);
 	assert(dvb5_newcamd_grace_parse("-1") == 0);
 	assert(dvb5_newcamd_grace_parse("1500ms") == 0);
 	assert(dvb5_newcamd_grace_parse(" 1500") == 0);
@@ -32,6 +34,9 @@ int main(void)
 	assert(dvb5_newcamd_grace_for_route(0x0100, 1, 1, NULL) == 0);
 	assert(dvb5_newcamd_grace_for_route(0x098D, 1, 1, "1500") == 1500);
 	assert(dvb5_newcamd_grace_for_route(0x098D, 1, 1, "3000") == 3000);
+	assert(dvb5_newcamd_grace_for_route(0x098D, 1, 1, "4000") == 4000);
+	assert(dvb5_newcamd_grace_for_route(0x098D, 0, 1, "4000") == 0);
+	assert(dvb5_newcamd_grace_for_route(0x0100, 1, 1, "4000") == 0);
 	assert(dvb5_newcamd_grace_for_route(0x098D, 0, 1, "3000") == 0);
 	assert(dvb5_newcamd_grace_for_route(0x098D, 1, 0, "3000") == 0);
 	assert(dvb5_newcamd_grace_for_route(0x0100, 1, 1, "3000") == 0);
@@ -41,11 +46,13 @@ int main(void)
 	assert(dvb5_newcamd_effective_timeout_ms(5000, 0) == 5000);
 	assert(dvb5_newcamd_effective_timeout_ms(5000, 1500) == 6500);
 	assert(dvb5_newcamd_effective_timeout_ms(5000, 3000) == 8000);
+	assert(dvb5_newcamd_effective_timeout_ms(5000, 4000) == 9000);
 	assert(dvb5_newcamd_effective_timeout_ms(5000, dvb5_newcamd_grace_for_route(0x098D, 1, 1, NULL)) == 8000);
 	assert(dvb5_newcamd_effective_timeout_ms(UINT32_MAX, 1500) == UINT32_MAX);
 	assert(dvb5_newcamd_reader_expiry_seconds(5000) == 6);
 	assert(dvb5_newcamd_reader_expiry_seconds(6500) == 8);
 	assert(dvb5_newcamd_reader_expiry_seconds(8000) == 9);
+	assert(dvb5_newcamd_reader_expiry_seconds(9000) == 10);
 	assert(dvb5_newcamd_reader_expiry_seconds(6108) == 7);
 	// home2 observed these five real late-FOUND durations:
 	const uint32_t late_ms[] = {5060, 5826, 5835, 5870, 6108};
