@@ -514,6 +514,30 @@ public:
         if (offset) remainder.erase(remainder.begin(), remainder.begin() + static_cast<std::ptrdiff_t>(offset));
     }
 
+    // Scan-only transport counters distinguish a real FE LOCK from an actual
+    // MPEG-TS/PAT feed. They do not change tuning, filtering or PSI admission.
+    std::uint64_t tsPacketsReceived() const { return tsPackets_; }
+    std::uint64_t teiPacketsReceived() const { return teiPackets_; }
+    std::uint64_t patPacketsReceived() const { return pidPackets_[0]; }
+    std::uint64_t patSectionsParsed() const { return patSections_; }
+    Json::Value topPidPacketCounts() const {
+        std::vector<std::pair<std::uint64_t, std::uint16_t>> counts;
+        counts.reserve(128);
+        for (std::uint16_t pid = 0; pid < 8191; ++pid) {
+            if (pidPackets_[pid]) counts.emplace_back(pidPackets_[pid], pid);
+        }
+        std::sort(counts.begin(), counts.end(),
+            [](const auto& a, const auto& b) {
+                return a.first != b.first ? a.first > b.first : a.second < b.second;
+            });
+        Json::Value top(Json::objectValue);
+        for (std::size_t i = 0; i < std::min<std::size_t>(12, counts.size()); ++i) {
+            top[std::to_string(counts[i].second)] =
+                static_cast<Json::UInt64>(counts[i].first);
+        }
+        return top;
+    }
+
     // NIT actual (PID 0x10): only trust orbital data for the SDT-actual TS.
     std::string nitNetworkName() const { return nitNetworkName_; }
     std::string actualOrbitalPosition() const {
@@ -581,6 +605,10 @@ private:
     };
 
     std::map<uint16_t, std::uint64_t> pmtPackets;
+    std::array<std::uint64_t, 8192> pidPackets_ {};
+    std::uint64_t tsPackets_ = 0;
+    std::uint64_t teiPackets_ = 0;
+    std::uint64_t patSections_ = 0;
 
     bool isPmtPid(uint16_t pid) const {
         for (const auto& [sid, pmtPid] : programMap) {
@@ -601,8 +629,14 @@ private:
     }
 
     void parsePacket(const uint8_t* packet) {
-        if (packet[0] != 0x47 || (packet[1] & 0x80)) return;
+        if (packet[0] != 0x47) return;
+        ++tsPackets_;
         const uint16_t pid = static_cast<uint16_t>(((packet[1] & 0x1F) << 8) | packet[2]);
+        ++pidPackets_[pid];
+        if (packet[1] & 0x80) {
+            ++teiPackets_;
+            return;
+        }
         const uint8_t scrambling = static_cast<uint8_t>((packet[3] >> 6) & 0x03);
         if (scrambling != 0) markPacketScrambled(pid);
 
@@ -762,6 +796,7 @@ private:
 
     void parsePat(const uint8_t* section, size_t size) {
         if (size < 12 || section[0] != 0x00) return;
+        ++patSections_;
         const size_t end = size >= 4 ? size - 4 : 0;
         for (size_t pos = 8; pos + 4 <= end; pos += 4) {
             const uint16_t program = static_cast<uint16_t>((section[pos] << 8) | section[pos + 1]);
@@ -1021,6 +1056,8 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
     FrontendStats stats;
     std::string tuneError;
     bool tuned = false;
+    std::uint64_t dvrBytesRead = 0;
+    std::uint64_t dvrDataReads = 0;
     constexpr int kTuneStartupAttempts = 3;
     constexpr auto kTuneRetryDelay = std::chrono::milliseconds(700);
 
@@ -1031,6 +1068,8 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         auto attemptDeadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
         bool extendedForPmt = false;
+        std::uint64_t attemptBytesRead = 0;
+        std::uint64_t attemptDataReads = 0;
         dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
         tune.adapter = params.adapter;
         tune.frontend = params.frontend;
@@ -1071,6 +1110,8 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
                     break;
                 }
                 if (received && collectServices) {
+                    attemptBytesRead += received;
+                    ++attemptDataReads;
                     attemptScanner.feed(buffer.data(), received);
                 }
                 // Some frontends need longer before the PMT carousel becomes
@@ -1112,6 +1153,8 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         }
 
         scanner = std::move(attemptScanner);
+        dvrBytesRead = attemptBytesRead;
+        dvrDataReads = attemptDataReads;
         stats = attemptStats;
         tuneError = attemptError;
 
@@ -1181,6 +1224,33 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         result["service_count"] = services.size();
         result["pmt_ready_count"] = static_cast<Json::UInt64>(scanner.readyProgramCount());
         result["pmt_ts_packet_counts"] = scanner.pmtPacketCounts();
+        result["ts_packets_received"] = static_cast<Json::UInt64>(scanner.tsPacketsReceived());
+        result["pat_ts_packet_count"] = static_cast<Json::UInt64>(scanner.patPacketsReceived());
+        result["pat_section_count"] = static_cast<Json::UInt64>(scanner.patSectionsParsed());
+        result["tei_ts_packet_count"] = static_cast<Json::UInt64>(scanner.teiPacketsReceived());
+        result["top_ts_pid_packet_counts"] = scanner.topPidPacketCounts();
+        result["dvr_bytes_read"] = static_cast<Json::UInt64>(dvrBytesRead);
+        result["dvr_data_reads"] = static_cast<Json::UInt64>(dvrDataReads);
+        // A successful frontend LOCK with zero PAT does not imply a successful
+        // transport scan. Log the missing stage for SSH-only installations.
+        Json::StreamWriterBuilder diagWriter;
+        diagWriter["indentation"] = "";
+        std::cerr << "DVB SCAN TS DIAG"
+                  << " adapter=" << params.adapter
+                  << " frontend=" << params.frontend
+                  << " rf_khz=" << params.frequencyKHz
+                  << " tuned=" << (tuned ? 1 : 0)
+                  << " locked=" << (stats.locked ? 1 : 0)
+                  << " dvr_bytes=" << dvrBytesRead
+                  << " dvr_reads=" << dvrDataReads
+                  << " ts_packets=" << scanner.tsPacketsReceived()
+                  << " tei_packets=" << scanner.teiPacketsReceived()
+                  << " pat_packets=" << scanner.patPacketsReceived()
+                  << " pat_sections=" << scanner.patSectionsParsed()
+                  << " services=" << scanner.discoveredProgramCount()
+                  << " pmt_ready=" << scanner.readyProgramCount()
+                  << " top_pids=" << Json::writeString(diagWriter, scanner.topPidPacketCounts())
+                  << std::endl;
         result["nit_network_name"] = scanner.nitNetworkName();
         result["nit_orbital_position"] = scanner.actualOrbitalPosition();
         result["transport_stream_id"] = scanner.transportStreamId();
