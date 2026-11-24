@@ -1099,7 +1099,10 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
             attemptStats = readFrontendStats(params);
             attemptStats.locked = true;
             auto lastStatsRead = std::chrono::steady_clock::time_point{};
-            std::array<std::uint8_t, 188 * 128> buffer {};
+            // A full DVB-S2 transponder may deliver tens of megabits/s.
+            // Consume large TS bursts instead of repeatedly poll/read on
+            // 24 KiB chunks, especially with a 0x2000 full-transponder filter.
+            std::array<std::uint8_t, 188 * 2048> buffer {};
             while (std::chrono::steady_clock::now() < attemptDeadline) {
                 const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                     attemptDeadline - std::chrono::steady_clock::now());
@@ -1127,8 +1130,12 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
                 }
 
                 const auto now = std::chrono::steady_clock::now();
-                if (lastStatsRead.time_since_epoch().count() == 0 ||
-                    now - lastStatsRead >= std::chrono::milliseconds(350)) {
+                // Frontend status ioctls can block on ddbridge/STV090x.
+                // During a full TS scan prioritize draining the DVR ring;
+                // the initial tune already sampled lock and signal quality.
+                if (!collectServices &&
+                    (lastStatsRead.time_since_epoch().count() == 0 ||
+                     now - lastStatsRead >= std::chrono::milliseconds(350))) {
                     const FrontendStats current = readFrontendStats(params);
                     attemptStats.available = attemptStats.available || current.available;
                     attemptStats.signalPercent =
