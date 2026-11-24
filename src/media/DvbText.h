@@ -134,6 +134,44 @@ inline std::string decodeUcs2Be(const std::uint8_t* data, std::size_t size) {
     return out;
 }
 
+// EN 300 468 Annex A.1: C1 controls in DVB names are display instructions,
+// not channel-name characters. 0x86/0x87 toggle emphasis and 0x8A is CR/LF.
+// Handle both their U+0080..U+009F UTF-8 form (single-byte DVB tables) and
+// U+E080..U+E09F private-use form (two-byte DVB tables). Byte-pattern
+// matching after decoding preserves valid UTF-8 continuation bytes such as
+// 0x86 in Cyrillic code points.
+inline std::string stripDvbDisplayControls(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();) {
+        const auto b0 = static_cast<std::uint8_t>(text[i]);
+        std::size_t controlBytes = 0;
+        std::uint8_t control = 0;
+        if (b0 == 0xc2U && i + 1 < text.size()) {
+            const auto b1 = static_cast<std::uint8_t>(text[i + 1]);
+            if (b1 >= 0x80U && b1 <= 0x9fU) {
+                controlBytes = 2;
+                control = b1;
+            }
+        } else if (b0 == 0xeeU && i + 2 < text.size() &&
+                   static_cast<std::uint8_t>(text[i + 1]) == 0x82U) {
+            const auto b2 = static_cast<std::uint8_t>(text[i + 2]);
+            if (b2 >= 0x80U && b2 <= 0x9fU) {
+                controlBytes = 3;
+                control = b2;
+            }
+        }
+        if (controlBytes) {
+            if (control == 0x8aU && !out.empty() && out.back() != ' ')
+                out.push_back(' ');
+            i += controlBytes;
+        } else {
+            out.push_back(text[i++]);
+        }
+    }
+    return out;
+}
+
 // Decode DVB SI text according to the most common ETSI EN 300 468 Annex A
 // selectors used by satellite operators. In particular, selector 0x01 is
 // ISO-8859-5 (Cyrillic), which is used on TürkmenÄlem/Express multiplexes.
@@ -144,23 +182,23 @@ inline std::string decode(const std::uint8_t* data, std::size_t size) {
     const std::uint8_t selector = data[0];
     if (selector >= 0x20U) {
         if (validUtf8(data, size)) {
-            return std::string(reinterpret_cast<const char*>(data), size);
+            return stripDvbDisplayControls(std::string(reinterpret_cast<const char*>(data), size));
         }
-        return decodeLatin1(data, size);
+        return stripDvbDisplayControls(decodeLatin1(data, size));
     }
 
     if (selector == 0x15U) {
         ++data;
         --size;
-        return validUtf8(data, size)
+        return stripDvbDisplayControls(validUtf8(data, size)
             ? std::string(reinterpret_cast<const char*>(data), size)
-            : decodeLatin1(data, size);
+            : decodeLatin1(data, size));
     }
 
     if (selector == 0x11U) {
         ++data;
         --size;
-        return decodeUcs2Be(data, size);
+        return stripDvbDisplayControls(decodeUcs2Be(data, size));
     }
 
     unsigned iso8859Table = 0;
@@ -179,8 +217,8 @@ inline std::string decode(const std::uint8_t* data, std::size_t size) {
     data += skip;
     size -= skip;
 
-    if (iso8859Table == 5U) return decodeIso88595(data, size);
-    if (iso8859Table == 9U) return decodeIso88599(data, size);
+    if (iso8859Table == 5U) return stripDvbDisplayControls(decodeIso88595(data, size));
+    if (iso8859Table == 9U) return stripDvbDisplayControls(decodeIso88599(data, size));
 
     // Unknown/reserved table: preserve the text as UTF-8 when the broadcaster
     // actually sends UTF-8 behind a non-standard selector; otherwise retain
