@@ -84,6 +84,9 @@ jobs:
       - name: Verify dashboard channel search including devices domains and CIDR
         run: node tests/web/test_tile_search_v535.js
 
+      - name: Emulate incomplete PAT/PMT scan regression (V624)
+        run: node tests/web/test_dvb_scan_pmt_recovery_v624.js
+
       - name: Verify DVB transponder name-only editing and centered spoiler
         run: node tests/web/test_dvb_spoiler_v549.js
 
