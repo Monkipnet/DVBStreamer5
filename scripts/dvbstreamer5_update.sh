@@ -5,7 +5,14 @@ URL='https://tvstreammersat5.tech/download.php?id=5c15e7ab4ff1c26daef79d745d211c
 META='https://tvstreammersat5.tech/downloads/dvbstreamer5/latest.json'
 RELEASE_URL="$URL" # validated per-release metadata may point to the canonical archive
 MAX_BYTES=1073741824
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# Resolve the script directory with Bash builtins. The release checker must
+# also run in minimal environments without jq or the external dirname utility.
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+case "$SCRIPT_SOURCE" in
+  */*) SCRIPT_PARENT="${SCRIPT_SOURCE%/*}"; [[ -n "$SCRIPT_PARENT" ]] || SCRIPT_PARENT='/' ;;
+  *) SCRIPT_PARENT='.' ;;
+esac
+SCRIPT_DIR="$(cd -- "$SCRIPT_PARENT" && pwd -P)"
 case "$SCRIPT_DIR" in
   /opt/DVBStreamer5) INSTANCE_ID='legacy' ;;
   /opt/DVBStreamer5-*) INSTANCE_ID="${SCRIPT_DIR#/opt/DVBStreamer5-}" ;;
