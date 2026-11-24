@@ -195,6 +195,12 @@ jobs:
           /tmp/oscam-reader-control-v593
           node tests/web/test_oscam_reader_restart_v593.js
 
+      - name: Verify OSCam-mini file-backed service log fallback (V630)
+        run: |
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -pthread -Isrc tests/test_oscam_mini_file_log_v630.cpp -o /tmp/oscam-log-v630
+          /tmp/oscam-log-v630
+          node tests/web/test_oscam_file_log_v630.js
+
       - name: Verify external DVB frontend ownership and safe scanning
         run: |
           c++ -std=c++17 -Wall -Wextra -I. tests/test_dvb_frontend_owners.cpp -o /tmp/dvb-owner-test
