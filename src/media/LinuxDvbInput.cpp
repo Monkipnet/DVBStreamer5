@@ -1157,6 +1157,38 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
     std::clog << "NATIVE DVB FRONTEND owner acquired adapter="
               << frontendAdapter_ << " frontend=" << frontendIndex_ << '\n';
 
+    const std::string dvr = devicePath(config, "dvr");
+    dvrFd_ = ::open(dvr.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (dvrFd_ < 0) {
+        error = deviceError("cannot open DVB transport-stream tap", dvr);
+        close();
+        return false;
+    }
+    // Initialize the DVR ring BEFORE starting DMX_IMMEDIATE_START filters.
+    // With the old ordering the high-bitrate TS feed could overflow the
+    // kernel's tiny default DVR ring before the 8 MiB resize took effect.
+    // The TS_TAP delivers into a separate Linux DVB DVR ring. Resizing only
+    // demux filter buffers above leaves DVR at the kernel's small default and
+    // causes EOVERFLOW under concurrent full-transponder input (home2).
+    // Best-effort: older drivers may reject the ioctl; don't stop the channel.
+    const auto dvrBuffer = configureDvbDvrBuffer(
+        dvrFd_, [](int fd, unsigned long request, unsigned long bytes) {
+            return ::ioctl(fd, request, bytes);
+        });
+    std::ostringstream resizeLine;
+    resizeLine << "NATIVE DVB DVR buffer resize "
+               << (dvrBuffer.success ? "ok" : "warning")
+               << " adapter=" << frontendAdapter_
+               << " frontend=" << frontendIndex_
+               << " device=" << dvr
+               << " requested_bytes=" << kDvbDvrBufferBytes;
+    if (!dvrBuffer.success) {
+        resizeLine << " errno=" << dvrBuffer.error
+                   << " error=" << std::strerror(dvrBuffer.error);
+    }
+    resizeLine << '\n';
+    std::clog << resizeLine.str();
+
     const std::string demux = devicePath(config, "demux");
     const std::vector<std::uint16_t> filters =
         pids.empty() ? std::vector<std::uint16_t>{kDmxAllPids} : pids;
@@ -1190,34 +1222,6 @@ bool LinuxDvbInput::open(const LinuxDvbTuneConfig& config, std::string& error) {
         demuxFds_.push_back(fd);
     }
 
-    const std::string dvr = devicePath(config, "dvr");
-    dvrFd_ = ::open(dvr.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    if (dvrFd_ < 0) {
-        error = deviceError("cannot open DVB transport-stream tap", dvr);
-        close();
-        return false;
-    }
-    // The TS_TAP delivers into a separate Linux DVB DVR ring. Resizing only
-    // demux filter buffers above leaves DVR at the kernel's small default and
-    // causes EOVERFLOW under concurrent full-transponder input (home2).
-    // Best-effort: older drivers may reject the ioctl; don't stop the channel.
-    const auto dvrBuffer = configureDvbDvrBuffer(
-        dvrFd_, [](int fd, unsigned long request, unsigned long bytes) {
-            return ::ioctl(fd, request, bytes);
-        });
-    std::ostringstream resizeLine;
-    resizeLine << "NATIVE DVB DVR buffer resize "
-               << (dvrBuffer.success ? "ok" : "warning")
-               << " adapter=" << frontendAdapter_
-               << " frontend=" << frontendIndex_
-               << " device=" << dvr
-               << " requested_bytes=" << kDvbDvrBufferBytes;
-    if (!dvrBuffer.success) {
-        resizeLine << " errno=" << dvrBuffer.error
-                   << " error=" << std::strerror(dvrBuffer.error);
-    }
-    resizeLine << '\n';
-    std::clog << resizeLine.str();
     error.clear();
     return true;
 #else
