@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 using namespace dvbstreamer5::oscamlog;
