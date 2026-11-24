@@ -7,6 +7,7 @@ const {spawnSync}=require('node:child_process');
 const src=fs.readFileSync('scripts/dvbstreamer5_update.sh','utf8');
 const ui=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
 assert.match(src,/RELEASE_URL="\$URL"/);
+assert.doesNotMatch(src, /\$\(dirname\b/, 'Updater must resolve its directory without external dirname');
 assert.match(src,/elif command -v python3/);
 assert.match(src,/json\.load\(source\)/);
 assert.match(src,/canonical versioned HTTPS archive/);
