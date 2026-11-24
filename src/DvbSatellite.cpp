@@ -525,6 +525,24 @@ public:
     }
     int transportStreamId() const { return actualTransportStreamId_; }
     int originalNetworkId() const { return actualOriginalNetworkId_; }
+    std::size_t discoveredProgramCount() const { return programMap.size(); }
+    std::size_t readyProgramCount() const {
+        std::size_t ready = 0;
+        for (const auto& [sid, pid] : programMap) {
+            (void)pid;
+            const auto it = serviceMap.find(sid);
+            if (it != serviceMap.end() && it->second.pmtParsed && !it->second.streamPids.empty()) ++ready;
+        }
+        return ready;
+    }
+    Json::Value pmtPacketCounts() const {
+        Json::Value counts(Json::objectValue);
+        for (const auto& [sid, pid] : programMap) {
+            (void)sid;
+            counts[std::to_string(pid)] = static_cast<Json::UInt64>(pmtPackets.count(pid) ? pmtPackets.at(pid) : 0);
+        }
+        return counts;
+    }
 
     std::vector<DvbService> services() const {
         std::vector<DvbService> result;
@@ -562,6 +580,8 @@ private:
         size_t expected = 0;
     };
 
+    std::map<uint16_t, std::uint64_t> pmtPackets;
+
     bool isPmtPid(uint16_t pid) const {
         for (const auto& [sid, pmtPid] : programMap) {
             (void)sid;
@@ -587,6 +607,7 @@ private:
         if (scrambling != 0) markPacketScrambled(pid);
 
         if (pid != 0x0000 && pid != 0x0001 && pid != 0x0010 && pid != 0x0011 && !isPmtPid(pid)) return;
+        if (isPmtPid(pid)) ++pmtPackets[pid];
         const bool payloadStart = (packet[1] & 0x40) != 0;
         const uint8_t adaptation = static_cast<uint8_t>((packet[3] >> 4) & 0x03);
         if (adaptation == 0 || adaptation == 2) return;
@@ -1007,8 +1028,9 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         PsiScanner attemptScanner;
         FrontendStats attemptStats;
         std::string attemptError;
-        const auto attemptDeadline =
+        auto attemptDeadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        bool extendedForPmt = false;
         dvbstreamer5::media::network::LinuxDvbTuneConfig tune;
         tune.adapter = params.adapter;
         tune.frontend = params.frontend;
@@ -1050,6 +1072,17 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
                 }
                 if (received && collectServices) {
                     attemptScanner.feed(buffer.data(), received);
+                }
+                // Some frontends need longer before the PMT carousel becomes
+                // available. Extend the ordinary 6.5s scan once, only when
+                // PAT has already identified services but PMTs are incomplete.
+                // Do not retune or disturb a live DVB frontend.
+                if (collectServices && !extendedForPmt && timeoutMs < 18000 &&
+                    attemptScanner.discoveredProgramCount() > 0 &&
+                    attemptScanner.readyProgramCount() < attemptScanner.discoveredProgramCount() &&
+                    std::chrono::steady_clock::now() >= attemptDeadline - std::chrono::milliseconds(500)) {
+                    attemptDeadline += std::chrono::milliseconds(11500);
+                    extendedForPmt = true;
                 }
 
                 const auto now = std::chrono::steady_clock::now();
@@ -1146,6 +1179,8 @@ Json::Value runTune(const DvbSatelliteParams& params, bool collectServices, int 
         }
         result["services"] = services;
         result["service_count"] = services.size();
+        result["pmt_ready_count"] = static_cast<Json::UInt64>(scanner.readyProgramCount());
+        result["pmt_ts_packet_counts"] = scanner.pmtPacketCounts();
         result["nit_network_name"] = scanner.nitNetworkName();
         result["nit_orbital_position"] = scanner.actualOrbitalPosition();
         result["transport_stream_id"] = scanner.transportStreamId();
