@@ -1,0 +1,15 @@
+const fs = require('fs');
+const assert = require('assert');
+const source = fs.readFileSync('src/DvbSatellite.cpp', 'utf8');
+assert.match(source, /tune\.pids = "8192"/, 'scan must read all TS PIDs');
+assert.match(source, /attemptScanner\.discoveredProgramCount\(\) > 0/, 'extend only after PAT discovery');
+assert.match(source, /attemptScanner\.readyProgramCount\(\) < attemptScanner\.discoveredProgramCount\(\)/, 'extend for incomplete PMTs');
+assert.match(source, /timeoutMs < 18000/, 'do not extend full-length scans');
+assert.match(source, /attemptDeadline \+= std::chrono::milliseconds\(11500\)/, 'extend 6500 to 18000 ms once');
+assert.match(source, /extendedForPmt = true/, 'extension must run only once');
+assert.match(source, /result\["pmt_ready_count"\]/, 'report decoded PMT service count');
+assert.match(source, /result\["pmt_ts_packet_counts"\]/, 'report received TS packets for each PMT PID');
+assert.match(source, /\+\+pmtPackets\[pid\]/, 'count inbound PMT TS packets');
+assert.match(source, /externalDvbFrontendOwners/, 'retain external frontend protection');
+assert.match(source, /hasActiveFrontend/, 'retain live frontend protection');
+console.log('PASS DVB PMT incomplete scan extension and per-PID diagnostics');
