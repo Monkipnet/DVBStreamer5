@@ -224,9 +224,9 @@ inline std::string decode(const std::uint8_t* data, std::size_t size) {
     // actually sends UTF-8 behind a non-standard selector; otherwise retain
     // the previous single-byte behavior instead of emitting invalid JSON.
     if (validUtf8(data, size)) {
-        return std::string(reinterpret_cast<const char*>(data), size);
+        return stripDvbDisplayControls(std::string(reinterpret_cast<const char*>(data), size));
     }
-    return decodeLatin1(data, size);
+    return stripDvbDisplayControls(decodeLatin1(data, size));
 }
 
 inline bool isAsciiPrintable(const std::string& text) noexcept {
