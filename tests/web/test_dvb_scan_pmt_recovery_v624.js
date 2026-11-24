@@ -31,4 +31,18 @@ assert.match(source, /\+\+patSections_/, 'decoded PAT sections must be accounted
 assert.match(source, /attemptBytesRead \+= received/, 'read byte count must come from real DVR reads');
 assert.match(source, /attemptScanner\.feed\(buffer\.data\(\), received\)/, 'keep original PSI feed');
 assert.match(source, /externalDvbFrontendOwners/, 'scan may not retune an external live owner');
-console.log('PASS DVB PMT recovery and TS/PAT/DVR scan stage diagnostics');
+// V628: DVR must have its 8 MiB ring before the first TS_TAP filter is
+// started; large scan reads and nonblocking transport sampling protect PSI.
+const nativeDvb = fs.readFileSync('src/media/LinuxDvbInput.cpp', 'utf8');
+const openStart = nativeDvb.indexOf('bool LinuxDvbInput::open(');
+const dvrOpen = nativeDvb.indexOf('const std::string dvr = devicePath(config, "dvr")', openStart);
+const filterStart = nativeDvb.indexOf('const std::string demux = devicePath(config, "demux")', openStart);
+const dvrResize = nativeDvb.indexOf('configureDvbDvrBuffer(', openStart);
+assert.ok(openStart >= 0 && dvrOpen > openStart && filterStart > dvrOpen,
+  'DVR must open before starting demux TS filters');
+assert.ok(dvrResize > dvrOpen && dvrResize < filterStart,
+  'DVR ring must resize before starting demux TS filters');
+assert.match(source, /188 \* 2048/, 'scan must drain full-TS DVR in large packet-aligned buffers');
+assert.match(source, /if \(!collectServices &&\s*\(/,
+  'scan must not block DVR draining on repeated frontend ioctls');
+console.log('PASS DVB PMT recovery, TS/PAT diagnostics and full-TS DVR drain guards');
