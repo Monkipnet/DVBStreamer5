@@ -1,5 +1,6 @@
 #include "OscamMiniManager.h"
 #include "OscamReaderControl.h"
+#include "OscamMiniLogTail.h"
 #include "ConfigManager.h"
 
 #include <algorithm>
@@ -1124,29 +1125,41 @@ Json::Value OscamMiniManager::statusLocked() {
         : trim(run("ps -p " + pid + " -o pid=,rss=,vsz=,%cpu=,cmd="));
     result["process"] = process;
 
-    std::string logCommand = "journalctl -u " + std::string(kService) + " -n 120 --no-pager -o cat";
-    if (!pid.empty()) {
-        logCommand = "journalctl -u " + std::string(kService) + " _PID=" + pid + " -n 240 --no-pager -o cat";
-    }
-    std::string log = run(logCommand);
-    if (log.size() > 32000) {
-        log = log.substr(log.size() - 32000);
+    // OSCam-mini is often started with StandardOutput=append:/var/log/...
+    // (for example when systemd-journald is disabled). Resolve the actual
+    // stdout file from this service's MainPID instead of hardcoding an
+    // installation path; multi-instance services keep separate log targets.
+    // Validate the log location and read only its trailing 32 KiB.
+    const auto fileLog = serviceActive
+        ? dvbstreamer5::oscamlog::readServiceStdout(pid)
+        : dvbstreamer5::oscamlog::Snapshot{};
+    std::string log;
+    std::string recentReaderLog;
+    if (fileLog.fileBacked) {
+        log = fileLog.log;
+        recentReaderLog = fileLog.recent;
+    } else {
+        std::string logCommand = "journalctl -u " + std::string(kService) + " -n 120 --no-pager -o cat";
+        if (!pid.empty()) {
+            logCommand = "journalctl -u " + std::string(kService) +
+                " _PID=" + pid + " -n 240 --no-pager -o cat";
+        }
+        log = run(logCommand);
+        if (log.size() > 32000) log.erase(0, log.size() - 32000);
+
+        // Avoid treating a startup message as live card activity. For file-
+        // backed logs the equivalent last-45s filter is applied in the helper.
+        if (serviceActive && !pid.empty()) {
+            recentReaderLog = run(
+                "journalctl -u " + std::string(kService) + " _PID=" + pid +
+                " --since '-45 seconds' --no-pager -o cat");
+            if (recentReaderLog.size() > 32000) {
+                recentReaderLog.erase(0, recentReaderLog.size() - 32000);
+            }
+        }
     }
     result["log"] = log;
 
-    // Startup's "ready for requests" eventually falls out of the last 240
-    // journal lines on busy readers. Recent successful ECM replies are much
-    // stronger live evidence than a missing old startup message. Read only
-    // a short, time-bounded journal slice and never expose CW bytes.
-    std::string recentReaderLog;
-    if (serviceActive && !pid.empty()) {
-        recentReaderLog = run(
-            "journalctl -u " + std::string(kService) + " _PID=" + pid +
-            " --since '-45 seconds' --no-pager -o cat");
-        if (recentReaderLog.size() > 32000) {
-            recentReaderLog.erase(0, recentReaderLog.size() - 32000);
-        }
-    }
     const auto readerRecentlyFoundEcm = [&](const std::string& label) {
         if (label.empty()) return false;
         std::istringstream lines(recentReaderLog);
