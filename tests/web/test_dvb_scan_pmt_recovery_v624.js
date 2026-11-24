@@ -12,4 +12,23 @@ assert.match(source, /result\["pmt_ts_packet_counts"\]/, 'report received TS pac
 assert.match(source, /\+\+pmtPackets\[pid\]/, 'count inbound PMT TS packets');
 assert.match(source, /externalDvbFrontendOwners/, 'retain external frontend protection');
 assert.match(source, /hasActiveFrontend/, 'retain live frontend protection');
-console.log('PASS DVB PMT incomplete scan extension and per-PID diagnostics');
+// V627: a strong frontend LOCK without a PAT must be distinguishable from
+// an empty Linux DVB DVR and from a parser that cannot assemble PSI sections.
+for (const [field, label] of [
+  ['ts_packets_received', 'TS packet count'],
+  ['pat_ts_packet_count', 'PID 0 packet count'],
+  ['pat_section_count', 'PAT section count'],
+  ['tei_ts_packet_count', 'transport error count'],
+  ['top_ts_pid_packet_counts', 'sampled PID histogram'],
+  ['dvr_bytes_read', 'DVR byte count'],
+  ['dvr_data_reads', 'DVR nonempty reads'],
+]) {
+  assert.ok(source.includes('result["' + field + '"]'), 'Missing ' + label);
+}
+assert.match(source, /DVB SCAN TS DIAG/, 'SSH-only scan must log TS/PAT/PMT stage');
+assert.match(source, /\+\+pidPackets_\[pid\]/, 'all TS PIDs must be accounted');
+assert.match(source, /\+\+patSections_/, 'decoded PAT sections must be accounted');
+assert.match(source, /attemptBytesRead \+= received/, 'read byte count must come from real DVR reads');
+assert.match(source, /attemptScanner\.feed\(buffer\.data\(\), received\)/, 'keep original PSI feed');
+assert.match(source, /externalDvbFrontendOwners/, 'scan may not retune an external live owner');
+console.log('PASS DVB PMT recovery and TS/PAT/DVR scan stage diagnostics');
