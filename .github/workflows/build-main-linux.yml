@@ -87,6 +87,11 @@ jobs:
       - name: Emulate incomplete PAT/PMT scan regression (V624)
         run: node tests/web/test_dvb_scan_pmt_recovery_v624.js
 
+      - name: Verify DVB SDT channel names strip emphasis and control codes (V629)
+        run: |
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -Isrc tests/test_dvb_text_controls_v629.cpp -o /tmp/dvbtext-v629
+          /tmp/dvbtext-v629
+
       - name: Verify DVB transponder name-only editing and centered spoiler
         run: node tests/web/test_dvb_spoiler_v549.js
 
