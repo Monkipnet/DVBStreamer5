@@ -158,6 +158,8 @@ struct StreamConfig {
     // V532 imports this from Cesbo Astra make_stream[].id.
     std::string tvgId;
     std::string conditionalAccessClient;
+    // -1: inherit shared CAM settings; 0: TSDecrypt auto; 1..8190: fixed PID.
+    int caEcmPidOverride = -1;
     std::vector<StreamOutputConfig> additionalOutputs;
     // 203.67 runtime-inherited global mode; not serialized per stream.
     bool srtVpsVdsOptimization = false;

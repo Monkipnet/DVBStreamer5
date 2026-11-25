@@ -219,7 +219,9 @@ jobs:
           node tests/web/test_dvb_live_transponder_v509.js
 
       - name: Verify iCAM multichannel CA logging policy
-        run: node tests/web/test_icam_multichannel_policy.js
+        run: |
+          node tests/web/test_icam_multichannel_policy.js
+          node tests/web/test_tile_ecm_pid_override_v631.js
 
       - name: Verify remote authenticated admin preview isolation
         run: |

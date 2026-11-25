@@ -10994,6 +10994,9 @@ function updateInputModeVisibility() {
   updateIpSourcePcrVisibility();
 }
 
+function streamEcmUiText(ru,en,hr,de) {
+  return language === 'ru' ? ru : language === 'hr' ? hr : language === 'de' ? de : en;
+}
 function streamCaModeFor(stream={}) {
   const input = String(stream.input_uri || '').trim().toLowerCase();
   if (stream.ci_plus_input === true || input.startsWith('vdr://')) return 'ciplus';
@@ -11064,6 +11067,9 @@ function updateStreamCaEngine() {
     ? matches.map(client => `<option value="${satEscape(client.id)}">${satEscape(camClientSummary(client.id) || client.id)}</option>`).join('')
     : '<option value="">No configured CAM client for this engine</option>';
   if (matches.some(client => String(client.id) === current)) select.value = current;
+  const ecmRow = document.getElementById('streamEcmPidRow');
+  if (ecmRow) ecmRow.style.display = requested === 'tsdecrypt' &&
+    document.getElementById('streamCaMode')?.value === 'icam' ? '' : 'none';
 }
 function updateStreamCaMode() {
   const caMode = document.getElementById('streamCaMode')?.value || 'fta';
@@ -11490,6 +11496,11 @@ function openStreamForm(stream) {
           <div class="edit-section-head">iCAM / Newcamd / TSDecrypt / BISS-1 / BISS-2</div>
           <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CA-движок','CA engine')}>${uiBiText('CA-движок','CA engine')}</div><small class="field-help" ${uiBiAttrs('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}>${uiBiText('Выбор движка только для этой плитки.','Select the CA engine for this tile only.')}</small><select id="streamCaEngine" onchange="updateStreamCaEngine()"><option value="newcamd" ${(camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id || 'newcamd') === 'newcamd'?'selected':''}>Newcamd / OSCam-mini</option><option value="tsdecrypt" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'tsdecrypt'?'selected':''}>TSDecrypt (experimental)</option><option value="biss1" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'biss1'?'selected':''} ${subtitleUiTriAttrs('BISS-1 (фиксированный ключ)','BISS-1 (fixed key)','BISS-1 (fiksni ključ)')}>${subtitleUiTriText('BISS-1 (фиксированный ключ)','BISS-1 (fixed key)','BISS-1 (fiksni ključ)')}</option><option value="biss2" ${camClientsForUi().find(client => String(client.id) === String(stream.conditional_access_client || ''))?.backend_id === 'biss2'?'selected':''} ${subtitleUiTriAttrs('BISS-2 (AES-128, режим 1/E)','BISS-2 (AES-128, Mode 1/E)','BISS-2 (AES-128, način 1/E)')}>${subtitleUiTriText('BISS-2 (AES-128, режим 1/E)','BISS-2 (AES-128, Mode 1/E)','BISS-2 (AES-128, način 1/E)')}</option></select></div>
           <div class="edit-field"><div class="edit-field-title" ${uiBiAttrs('CAM-клиент','CAM client')}>${uiBiText('CAM-клиент','CAM client')}</div><small class="field-help" ${uiBiAttrs('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}>${uiBiText('Выберите клиента для зашифрованного native DVB-S/S2.','Select the client used for encrypted native DVB-S/S2.')}</small><select id="streamConditionalAccessClient">${camOptions}</select><small class="field-help">CA engine is selected by the CAM client: Newcamd (default), TSDecrypt (experimental), BISS-1 or BISS-2. Configure it under Menu → CAM clients. It affects only this DVB tile.</small></div>
+          <div class="edit-field" id="streamEcmPidRow" style="display:none">
+            <div class="edit-field-title" data-ui-ru="ECM PID для плитки" data-ui-en="Tile ECM PID" data-ui-hr="ECM PID pločice" data-ui-de="ECM-PID der Kachel">${streamEcmUiText('ECM PID для плитки','Tile ECM PID','ECM PID pločice','ECM-PID der Kachel')}</div>
+            <small class="field-help" data-ui-ru="-1 — CAM-клиент; 0 — авто; 1–8190 — фиксированный PID только этого канала." data-ui-en="-1: CAM client; 0: auto; 1–8190: fixed PID for this channel only." data-ui-hr="-1: CAM klijent; 0: automatski; 1–8190: fiksni PID samo za ovaj kanal." data-ui-de="-1: CAM-Client; 0: automatisch; 1–8190: feste PID nur für diesen Kanal.">${streamEcmUiText('-1 — CAM-клиент; 0 — авто; 1–8190 — фиксированный PID только этого канала.','-1: CAM client; 0: auto; 1–8190: fixed PID for this channel only.','-1: CAM klijent; 0: automatski; 1–8190: fiksni PID samo za ovaj kanal.','-1: CAM-Client; 0: automatisch; 1–8190: feste PID nur für diesen Kanal.')}</small>
+            <input id="streamCaEcmPid" class="compact" type="number" min="-1" max="8190" step="1" value="${Number.isInteger(stream.ca_ecm_pid) ? stream.ca_ecm_pid : -1}" />
+          </div>
         </div>
         <div class="form-row full edit-section" id="streamCiPlusRow" style="display:${caMode==='ciplus'?'':'none'}">
           <div class="edit-section-head"><span>DVB-CI+ / VDR</span><small>VDR streamdev</small></div>
@@ -12124,6 +12135,15 @@ function saveStream(id) {
       }
     }
   }
+  const ecmRaw = String(document.getElementById('streamCaEcmPid')?.value ?? '-1').trim();
+  const caEcmPid = Number(ecmRaw);
+  if (ecmRaw === '' || !Number.isInteger(caEcmPid) || caEcmPid < -1 || caEcmPid > 8190) {
+    uiError(streamEcmUiText('ECM PID: используйте -1, 0 или число от 1 до 8190.',
+      'ECM PID: use -1, 0, or an integer from 1 to 8190.',
+      'ECM PID: unesite -1, 0 ili cijeli broj od 1 do 8190.',
+      'ECM-PID: -1, 0 oder eine ganze Zahl von 1 bis 8190 eingeben.'));
+    return;
+  }
   const activationMode = document.getElementById('streamActivationMode')?.value === 'ondemand' ? 'ondemand' : 'online';
   if (activationMode === 'ondemand' && !outputs.some(output => ['http','hls'].includes(String(output.output_type || '').toLowerCase()))) {
     uiError('OnDemand требует хотя бы один выход HTTP или HLS, где сервер может определить подключение клиента.');
@@ -12234,7 +12254,8 @@ function saveStream(id) {
     tvg_id: String(document.getElementById('streamTvgId')?.value || '').trim().slice(0,128),
     xmltv_source_id: document.getElementById('streamXmltvSourceId')?.value || '',
     xmltv_channel_id: document.getElementById('streamXmltvChannelId')?.value.trim() || '',
-    conditional_access_client: selectedConditionalAccessClient
+    conditional_access_client: selectedConditionalAccessClient,
+    ca_ecm_pid: caEcmPid
   };
   const existingIndex = state.streams.findIndex(s=>s.id===id);
   if (existingIndex >= 0) {

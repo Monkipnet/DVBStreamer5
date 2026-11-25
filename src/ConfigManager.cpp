@@ -572,6 +572,9 @@ StreamConfig StreamConfig::fromJson(const Json::Value& root) {
     config.xmltvChannelId = root.get("xmltv_channel_id", "").asString().substr(0, 256);
     config.tvgId = root.get("tvg_id", "").asString().substr(0, 128);
     config.conditionalAccessClient = root.get("conditional_access_client", "").asString();
+    const Json::Value& tileEcmPid = root["ca_ecm_pid"];
+    if (tileEcmPid.isInt() && tileEcmPid.asInt() >= -1 && tileEcmPid.asInt() <= 8190)
+        config.caEcmPidOverride = tileEcmPid.asInt();
     if (root.isMember("outputs") && root["outputs"].isArray() && root["outputs"].size() > 0) {
         const auto primary = StreamOutputConfig::fromJson(root["outputs"][0]);
         config.outputType = primary.outputType;
@@ -693,6 +696,7 @@ Json::Value StreamConfig::toJson() const {
     root["xmltv_channel_id"] = xmltvChannelId;
     root["tvg_id"] = tvgId;
     root["conditional_access_client"] = conditionalAccessClient;
+    root["ca_ecm_pid"] = caEcmPidOverride;
     Json::Value extraOutputs(Json::arrayValue);
     for (const auto& output : additionalOutputs) {
         extraOutputs.append(output.toJson());

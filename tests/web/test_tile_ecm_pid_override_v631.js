@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const get = p => fs.readFileSync(p,'utf8');
+const h=get('src/ConfigManager.h'),c=get('src/ConfigManager.cpp');
+const k=get('src/CardManager.cpp'),u=get('src/http/HttpServerWebUi.inc');
+assert.match(h,/int caEcmPidOverride = -1;/);
+assert.match(c,/config\.caEcmPidOverride = tileEcmPid\.asInt\(\);/);
+assert.match(c,/root\["ca_ecm_pid"\] = caEcmPidOverride;/);
+assert.match(k,/client\.backendId == "tsdecrypt" && config\.caEcmPidOverride >= 0/);
+assert.match(k,/tileReader\["ecm_pid"\] = config\.caEcmPidOverride;/);
+assert.match(k,/backendClient\.key = client\.id \+ "::stream:" \+ config\.id;/);
+assert.match(u,/id="streamCaEcmPid"/);
+assert.match(u,/ca_ecm_pid: caEcmPid/);
+assert.match(u,/Number\.isInteger\(caEcmPid\)/);
+for(const lang of ['ru','en','hr','de'])assert.match(u,new RegExp('data-ui-'+lang+'="[^"]+"'));
+console.log('V631 tile ECM PID policy OK');

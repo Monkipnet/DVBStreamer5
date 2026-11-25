@@ -283,6 +283,15 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
     backendClient.maxServices = client.maxServices;
     backendClient.backendId = client.backendId;
     backendClient.backendConfig = client.backendConfig;
+    // Per-tile TSDecrypt settings never mutate a shared CAM reader.
+    if (client.backendId == "tsdecrypt" && config.caEcmPidOverride >= 0) {
+        Json::Value tileReader = parseBackendConfig(client.backendConfig);
+        tileReader["ecm_pid"] = config.caEcmPidOverride;
+        Json::StreamWriterBuilder writer;
+        writer["indentation"] = "";
+        backendClient.backendConfig = Json::writeString(writer, tileReader);
+        backendClient.key = client.id + "::stream:" + config.id;
+    }
 
     std::string backendError;
     if (!CaBackendManager::instance().startService(config, backendClient, &backendError)) {
