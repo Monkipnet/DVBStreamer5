@@ -8,7 +8,11 @@ assert.match(c,/config\.caEcmPidOverride = tileEcmPid\.asInt\(\);/);
 assert.match(c,/root\["ca_ecm_pid"\] = caEcmPidOverride;/);
 assert.match(k,/client\.backendId == "tsdecrypt" && config\.caEcmPidOverride >= 0/);
 assert.match(k,/tileReader\["ecm_pid"\] = config\.caEcmPidOverride;/);
-assert.match(k,/backendClient\.key = client\.id \+ "::stream:" \+ config\.id;/);
+// V634: preserve both configuration-generation and per-stream isolation.
+assert.match(k,/readerKey = client\.id;/);
+assert.match(k,/readerKey \+= "::config:" \+ std::to_string\(it->second\);/);
+assert.match(k,/backendClient\.key = readerKey \+ "::stream:" \+ config\.id;/);
+assert.match(k,/camsettings::readerChanged\(old->backendId,old->backendConfig,client.backendId,client.backendConfig\)/);
 assert.match(u,/id="streamCaEcmPid"/);
 assert.match(u,/ca_ecm_pid: caEcmPid/);
 assert.match(u,/Number\.isInteger\(caEcmPid\)/);
