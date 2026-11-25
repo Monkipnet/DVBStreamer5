@@ -279,6 +279,12 @@ jobs:
       - name: Verify DVB transponder and IP subnet tile grouping
         run: node tests/web/test_tile_input_grouping.js
 
+      - name: Emulate NVIDIA queue discontinuity recovery (V636)
+        run: |
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -Isrc tests/media_core/test_nvidia_recovery_policy_v636.cpp -o /tmp/nvidia-recovery-v636
+          /tmp/nvidia-recovery-v636
+          node tests/web/test_nvidia_recovery_v636.js
+
       - name: Verify NVENC HLS decoder-safe IDR boundaries and mux stall diagnostics
         run: |
           node tests/web/test_nvenc_hls_keyframe_policy.js

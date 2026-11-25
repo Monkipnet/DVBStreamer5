@@ -1,5 +1,7 @@
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeNvencQualityPolicy.h"
+#include "media/NativeNvidiaRecoveryPolicy.h"
+#include <mutex>
 #include "media/WisiChameleonProfilePolicy.h"
 
 #include <algorithm>
@@ -29,8 +31,15 @@ namespace {
 
 #if defined(__linux__) && defined(DVBSTREAMER5_HAVE_NVDEC_HEADERS) && defined(DVBSTREAMER5_HAVE_NVENC_HEADERS)
 
+// Pin the driver mappings for the lifetime of the process. Driver-owned
+// worker threads must not race a last-reference dlclose during stream reset.
+std::mutex& nvidiaLifecycleMutex() {
+    static auto* mutex = new std::mutex;
+    return *mutex;
+}
+
 bool canDlopen(const char* soname) noexcept {
-    void* handle = dlopen(soname, RTLD_LAZY | RTLD_LOCAL);
+    void* handle = dlopen(soname, RTLD_LAZY | RTLD_LOCAL | RTLD_NODELETE);
     if (!handle) return false;
     dlclose(handle);
     return true;
@@ -90,6 +99,7 @@ public:
     }
 
     bool initialize(std::string& error) {
+        std::lock_guard<std::mutex> lifecycle(nvidiaLifecycleMutex());
         error.clear();
         if ((config_.inputCodec != mpegts::ElementaryCodec::Mpeg2Video &&
              config_.inputCodec != mpegts::ElementaryCodec::H264 &&
@@ -174,6 +184,12 @@ public:
         return true;
     }
 
+    void markDiscontinuity() noexcept override {
+        discontinuityPending_ = true;
+        forceIdrNext_ = true;
+        fpsClockValid_ = false;
+    }
+
     bool process(const std::uint8_t* data, std::size_t size,
                  std::uint64_t pts90k, bool hasPts,
                  std::vector<EncodedVideoFrame>& output,
@@ -193,6 +209,12 @@ public:
         CUVIDSOURCEDATAPACKET packet{};
         packet.payload = data;
         packet.payload_size = static_cast<tcu_ulong>(size);
+        if (discontinuityPending_) {
+            packet.flags |= CUVID_PKT_DISCONTINUITY;
+            discontinuityPending_ = false;
+            std::cerr << "NATIVE NVDEC DISCONTINUITY stream_id=" << config_.streamId
+                      << " reuse_context=1" << std::endl;
+        }
         if (hasPts) {
             packet.flags |= CUVID_PKT_TIMESTAMP;
             packet.timestamp = static_cast<CUvideotimestamp>(pts90k);
@@ -255,17 +277,17 @@ public:
 
 private:
     bool loadRuntime(std::string& error) {
-        cudaLib_ = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
+        cudaLib_ = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
         if (!cudaLib_) {
             error = "libcuda.so.1 not available";
             return false;
         }
-        cuvidLib_ = dlopen("libnvcuvid.so.1", RTLD_NOW | RTLD_LOCAL);
+        cuvidLib_ = dlopen("libnvcuvid.so.1", RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
         if (!cuvidLib_) {
             error = "libnvcuvid.so.1 not available";
             return false;
         }
-        nvencLib_ = dlopen("libnvidia-encode.so.1", RTLD_NOW | RTLD_LOCAL);
+        nvencLib_ = dlopen("libnvidia-encode.so.1", RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
         if (!nvencLib_) {
             error = "libnvidia-encode.so.1 not available";
             return false;
@@ -285,7 +307,8 @@ private:
         if (!loadSymbol(cudaLib_, "cuCtxPopCurrent_v2", cuCtxPopCurrent_))
             loadSymbol(cudaLib_, "cuCtxPopCurrent", cuCtxPopCurrent_);
         if (!cuCtxCreate_ || !cuCtxDestroy_ ||
-            !cuCtxPushCurrent_ || !cuCtxPopCurrent_) {
+            !cuCtxPushCurrent_ || !cuCtxPopCurrent_ ||
+            !loadSymbol(cudaLib_, "cuCtxSynchronize", cuCtxSynchronize_)) {
             error = "CUDA context API symbols missing";
             return false;
         }
@@ -301,8 +324,7 @@ private:
             return false;
         }
         if (neutralChromaDiag_ &&
-            (!loadSymbol(cudaLib_, "cuMemsetD2D8Async", cuMemsetD2D8Async_) ||
-             !loadSymbol(cudaLib_, "cuCtxSynchronize", cuCtxSynchronize_))) {
+            !loadSymbol(cudaLib_, "cuMemsetD2D8Async", cuMemsetD2D8Async_)) {
             error = "CUDA chroma diagnostic requires device memset/synchronize APIs";
             return false;
         }
@@ -421,6 +443,27 @@ private:
             return 0;
         }
 
+        const unsigned decodeSurfaces = std::max<unsigned>(
+            2U, static_cast<unsigned>(format->min_num_decode_surfaces));
+        const NvidiaSequenceKey next{
+            static_cast<unsigned>(format->codec),
+            static_cast<unsigned>(format->chroma_format),
+            static_cast<unsigned>(format->bit_depth_luma_minus8),
+            static_cast<unsigned>(format->bit_depth_chroma_minus8),
+            format->coded_width, format->coded_height,
+            static_cast<unsigned>(format->progressive_sequence), decodeSurfaces,
+            format->display_area.left, format->display_area.top,
+            format->display_area.right, format->display_area.bottom};
+        const auto action = nvidiaSequenceAction(decoder_ && encoder_, sequenceKey_, next);
+        if (action == NvidiaSequenceAction::Reuse)
+            return static_cast<int>(decodeSurfaces);
+        if (action == NvidiaSequenceAction::RejectChange) {
+            // Do not destroy a decoder while inside its parser callback.
+            // The caller already has a runtime fallback after parse returns.
+            failCallback("NVDEC sequence geometry changed; restart outside parser callback");
+            return 0;
+        }
+        std::lock_guard<std::mutex> lifecycle(nvidiaLifecycleMutex());
         CUVIDDECODECAPS caps{};
         caps.eCodecType = format->codec;
         caps.eChromaFormat = format->chroma_format;
@@ -470,11 +513,6 @@ private:
         outputWidth_ &= ~1;
         outputHeight_ &= ~1;
 
-        destroyEncoder();
-        destroyDecoder();
-
-        const unsigned decodeSurfaces = std::max<unsigned>(
-            2U, static_cast<unsigned>(format->min_num_decode_surfaces));
         CUVIDDECODECREATEINFO create{};
         create.ulWidth = format->coded_width;
         create.ulHeight = format->coded_height;
@@ -567,6 +605,7 @@ private:
             }
         }
 
+        sequenceKey_ = next;
         frameIndex_ = 0;
         forcedIdrCount_ = 0;
         fpsClockValid_ = false;
@@ -975,8 +1014,9 @@ private:
 
         const std::uint64_t frameNumber = frameIndex_++;
         const bool forceRandomAccess =
-            frameNumber == 0 ||
+            forceIdrNext_ || frameNumber == 0 ||
             (gopFrames_ != 0 && (frameNumber % gopFrames_) == 0);
+        forceIdrNext_ = false;
 
         NV_ENC_PIC_PARAMS pic{};
         pic.version = NV_ENC_PIC_PARAMS_VER;
@@ -1341,12 +1381,17 @@ private:
     }
 
     void close() noexcept {
+        std::lock_guard<std::mutex> lifecycle(nvidiaLifecycleMutex());
         if (context_ && cuCtxPushCurrent_ &&
             cuCtxPushCurrent_(context_) == CUDA_SUCCESS) {
+            // Complete submitted CUDA work before releasing driver objects.
+            // This is a teardown fence, not a per-frame synchronization.
+            if (cuCtxSynchronize_) (void)cuCtxSynchronize_();
             if (parser_ && cuvidDestroyVideoParser_)
                 (void)cuvidDestroyVideoParser_(parser_);
             parser_ = nullptr;
             destroyEncoder();
+            if (cuCtxSynchronize_) (void)cuCtxSynchronize_();
             destroyDecoder();
             popContext();
         } else {
@@ -1430,6 +1475,9 @@ private:
 
     std::vector<EncodedVideoFrame>* callbackOutput_ = nullptr;
     std::string callbackError_;
+    NvidiaSequenceKey sequenceKey_{};
+    bool discontinuityPending_ = false;
+    bool forceIdrNext_ = false;
     bool timestampsSeen_ = false;
     bool fpsClockValid_ = false;
     std::uint64_t fpsNextPts90k_ = 0;

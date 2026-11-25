@@ -1,3 +1,4 @@
+#include "media/NativeNvidiaRecoveryPolicy.h"
 #include "media/NativeTranscoderPipeline.h"
 #include "media/NativeTickerOverlay.h"
 
@@ -876,6 +877,7 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
     std::uint64_t pacerCatchupMinStepMs = 40;
     for (;;) {
         mpegts::DemuxSample sample;
+        bool resetAtSample = false;
         const auto beforeDequeue = std::chrono::steady_clock::now();
         bool queueWasEmpty = false;
         std::size_t pacerPesDepth = 0;
@@ -891,6 +893,17 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
                 videoQueue_.empty()) break;
             if (videoQueue_.empty()) continue;
 
+            // Bind the discontinuity to the dequeued GOP under the same lock
+            // as the producer. A later overflow must not reset an older PES.
+            const auto recovery = codec::videoRecoveryAction(
+                videoResetRequested_.load(std::memory_order_acquire), videoQueue_.front().randomAccess);
+            if (recovery == codec::VideoRecoveryAction::DropUntilRandomAccess) {
+                videoQueue_.pop_front();
+                ++droppedVideoSamples_;
+                continue;
+            }
+            resetAtSample = recovery == codec::VideoRecoveryAction::Recover;
+            if (resetAtSample) videoResetRequested_.store(false, std::memory_order_release);
             sample = std::move(videoQueue_.front());
             videoQueue_.pop_front();
             if (config_.videoPesPacerEnabled) {
@@ -913,8 +926,7 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
 
         if (config_.videoPesPacerEnabled) {
             const auto paceBegin = NativeVideoPesPacer::Clock::now();
-            if (videoResetRequested_.load(std::memory_order_acquire))
-                pesPacer.reset();
+            if (resetAtSample) pesPacer.reset();
             // Pace decode order using DTS, never reordered presentation PTS.
             const auto plan = pesPacer.plan(
                 paceBegin, sample.hasDts, sample.dts90k,
@@ -966,16 +978,21 @@ void NativeTranscoderPipeline::videoWorkerLoop() {
         std::string error;
         {
             std::lock_guard<std::mutex> codecLock(videoDecoderMutex_);
-            if (videoResetRequested_.exchange(false, std::memory_order_acq_rel)) {
-                intelZeroCopy_.reset();
-                nvidiaZeroCopy_.reset();
-                videoDecoder_.reset();
-                intelZeroCopyAttempted_ = false;
-                intelZeroCopyFallbackLogged_ = false;
-                intelZeroCopyActive_.store(false, std::memory_order_release);
-                nvidiaZeroCopyAttempted_ = false;
-                nvidiaZeroCopyFallbackLogged_ = false;
-                nvidiaZeroCopyActive_.store(false, std::memory_order_release);
+            if (resetAtSample) {
+                if (nvidiaZeroCopy_) {
+                    // A queue overrun is a bitstream discontinuity, not a new
+                    // CUDA session. Retain the active hardware pipeline.
+                    nvidiaZeroCopy_->markDiscontinuity();
+                } else {
+                    intelZeroCopy_.reset();
+                    videoDecoder_.reset();
+                    intelZeroCopyAttempted_ = false;
+                    intelZeroCopyFallbackLogged_ = false;
+                    intelZeroCopyActive_.store(false, std::memory_order_release);
+                    nvidiaZeroCopyAttempted_ = false;
+                    nvidiaZeroCopyFallbackLogged_ = false;
+                    nvidiaZeroCopyActive_.store(false, std::memory_order_release);
+                }
                 videoStartupReady_ = false;
             }
             if (!handleVideo(std::move(sample), error))

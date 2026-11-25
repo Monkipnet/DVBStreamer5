@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const n=fs.readFileSync('src/media/NativeNvidiaZeroCopy.cpp','utf8');
+const p=fs.readFileSync('src/media/NativeTranscoderPipeline.cpp','utf8');
+assert.match(n,/packet.flags \|= CUVID_PKT_DISCONTINUITY;/);
+assert.match(n,/forceIdrNext_ \|\| frameNumber == 0/);
+assert.match(n,/NvidiaSequenceAction::Reuse\)\s*return static_cast<int>\(decodeSurfaces\)/);
+assert.match(n,/RTLD_NOW \| RTLD_LOCAL \| RTLD_NODELETE/);
+const close=n.slice(n.indexOf('void close() noexcept'),n.indexOf('NvidiaZeroCopyConfig config_;'));
+assert.ok(close.indexOf('cuCtxSynchronize_()')<close.indexOf('cuvidDestroyVideoParser_(parser_)'));
+const dequeue=p.slice(p.indexOf('const auto recovery = codec::videoRecoveryAction('),p.indexOf('const auto dequeuedAt'));
+assert.match(dequeue,/videoQueue_.front\(\).randomAccess/);
+assert.match(dequeue,/videoResetRequested_.store\(false/);
+const reset=p.slice(p.indexOf('if (resetAtSample) {'),p.indexOf('if (!handleVideo(std::move(sample)'));
+assert.match(reset,/nvidiaZeroCopy_->markDiscontinuity\(\)/);
+assert.ok(!reset.includes('nvidiaZeroCopy_.reset()'));
+console.log('PASS NVIDIA recovery wiring and teardown policy');

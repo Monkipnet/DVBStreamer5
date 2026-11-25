@@ -42,6 +42,8 @@ public:
                          std::uint64_t pts90k, bool hasPts,
                          std::vector<EncodedVideoFrame>& output,
                          std::string& error) = 0;
+    // Called by the owning video worker at a random-access boundary.
+    virtual void markDiscontinuity() noexcept = 0;
     virtual bool flush(std::vector<EncodedVideoFrame>& output,
                        std::string& error) = 0;
 
