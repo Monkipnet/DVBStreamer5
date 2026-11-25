@@ -207,6 +207,14 @@ jobs:
           /tmp/oscam-network-v632
           node tests/web/test_oscam_mini_network_v632.js
 
+      - name: Emulate CA inventory during blocked plugin open (V633)
+        run: |
+          mkdir -p /tmp/dvb-ca-inventory-v633/plugins
+          c++ -std=c++17 -shared -fPIC -pthread -Isrc tests/fixtures/ca_inventory_fake_plugin_v633.cpp -o /tmp/dvb-ca-inventory-v633/plugins/fake.so
+          c++ -std=c++17 -UNDEBUG -pthread -Isrc src/CaBackend.cpp tests/test_ca_backend_inventory_v633.cpp -ljsoncpp -ldl -o /tmp/dvb-ca-inventory-v633/check
+          timeout 30s /tmp/dvb-ca-inventory-v633/check /tmp/dvb-ca-inventory-v633/plugins/fake.so
+          node tests/web/test_ca_backend_inventory_v633.js
+
       - name: Verify external DVB frontend ownership and safe scanning
         run: |
           c++ -std=c++17 -Wall -Wextra -I. tests/test_dvb_frontend_owners.cpp -o /tmp/dvb-owner-test

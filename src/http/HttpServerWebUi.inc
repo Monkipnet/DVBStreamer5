@@ -4221,6 +4221,8 @@ let dvbAdapters = [];
 let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSourceSupported:false};
 let camClientsLoaded = false;
 let caManagerState = {clients:[]};
+let lastCaBackendInventory = null;
+let caManagerRefreshFailed = false;
 let streamActionBusy = new Set();
 let mptsState = {outputs:[]};
 let xmltvModalSources = [];
@@ -9406,26 +9408,44 @@ function caStreamStatusText(stream) {
   const stateText = ca.active ? 'active' : 'reserved';
   return `${client} / backend ${backendId}${backendState?` / ${backendState}`:''} / ${stateText}`;
 }
+function applyCaManagerSnapshot(snapshot) {
+  const backend = snapshot?.ca_backend;
+  // Old servers can report only passthrough while busy. Never replace an
+  // authoritative inventory with that incomplete response.
+  if (Array.isArray(backend?.backends) && (!backend.busy || backend.backends_cached === true)) {
+    lastCaBackendInventory = backend.backends;
+  }
+  caManagerState = snapshot;
+  caManagerRefreshFailed = false;
+}
 async function loadCaManager() {
   try {
-    caManagerState = await fetchJson('/api/ca-manager', {cache:'no-store'}, 10000);
+    applyCaManagerSnapshot(await fetchJson('/api/ca-manager', {cache:'no-store'}, 10000));
   } catch (_) {
-    caManagerState = {clients:[]};
+    caManagerRefreshFailed = true;
   }
   return caManagerState;
 }
+function caBackendUiText(ru,en,hr,de) {
+  return ({ru,en,hr,de})[language] || en;
+}
 function caBackendOptions(selected='newcamd') {
   const current = String(selected || 'newcamd');
-  const backends = Array.isArray(caManagerState?.ca_backend?.backends) ? caManagerState.ca_backend.backends : [];
+  const backends = lastCaBackendInventory || [];
+  const inventoryKnown = lastCaBackendInventory !== null;
+  const uncertain = !inventoryKnown || caManagerRefreshFailed || (caManagerState?.ca_backend?.busy && !caManagerState?.ca_backend?.backends_cached);
   const options = backends.map(item => {
     const id = String(item.id || '');
     if (!id || id === 'passthrough') return '';
     const label = String(item.display_name || id);
-    const suffix = item.usable === false ? ' / load error' : ' / plugin';
+    const suffix = item.usable === false ? caBackendUiText(' / ошибка загрузки',' / load error',' / pogreška učitavanja',' / Ladefehler') : ' / plugin';
     return `<option value="${satEscape(id)}" ${id===current?'selected':''}>${satEscape(label + suffix)}</option>`;
   }).filter(Boolean);
   if (!backends.some(item => String(item.id || '') === current)) {
-    options.push(`<option value="${satEscape(current)}" selected>${satEscape(current)} / not loaded</option>`);
+    const suffix = uncertain
+      ? caBackendUiText(' / статус неизвестен',' / status unknown',' / nepoznat status',' / Status unbekannt')
+      : caBackendUiText(' / не загружен',' / not loaded',' / nije učitan',' / nicht geladen');
+    options.push(`<option value="${satEscape(current)}" selected>${satEscape(current + suffix)}</option>`);
   }
   return options.join('');
 }
@@ -9593,7 +9613,7 @@ async function saveNewcamdSettings() {
   try {
     const data = await fetchJson('/api/cam-client-settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clients})}, 15000);
     if (data.result === 'error') throw new Error(data.error || 'Failed to save CAM clients');
-    caManagerState = data;
+    applyCaManagerSnapshot(data);
     state.cam_clients = clients;
     closeModal();
     fetchState();
@@ -9620,7 +9640,9 @@ async function openNewcamdModal() {
   `);
   loadCaManager().then(snapshot => {
     const status = document.getElementById('newcamdSettingsStatus');
-    if (status) status.textContent = `${(snapshot.clients || []).length} CAM client(s) configured. Use Add CAM client for another OSCam/Newcamd server.`;
+    if (status) status.textContent = caManagerRefreshFailed
+      ? caBackendUiText('Не удалось обновить список модулей.','Could not refresh the backend list.','Popis modula nije moguće osvježiti.','Modulliste konnte nicht aktualisiert werden.')
+      : `${(snapshot.clients || []).length} CAM client(s) configured. Use Add CAM client for another OSCam/Newcamd server.`;
     document.querySelectorAll('.newcamd-row').forEach(row => {
       const select = row.querySelector('[data-cam-field="backend_id"]');
       if (!select) return;

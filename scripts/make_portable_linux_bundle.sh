@@ -162,6 +162,11 @@ for plugin in "${PLUGINS[@]}"; do
 done
 [[ -n "$NEWCAMD_PLUGIN" ]] || fail "mandatory Newcamd plugin was not built: $BUILD_DIR/ca-plugins/dvbstreamer5-ca-newcamd.so"
 readelf -Ws "$NEWCAMD_PLUGIN" | grep -F 'dvbstreamer5_ca_backend_get_api_v1' >/dev/null || fail "Newcamd plugin is missing dvbstreamer5_ca_backend_get_api_v1 entry point"
+if [[ "$INCLUDE_TSDECRYPT" != no ]]; then
+    tsdecrypt_plugin="$STAGE/ca-plugins/dvbstreamer5-ca-tsdecrypt.so"
+    [[ -s "$tsdecrypt_plugin" ]] || fail "TSDecrypt backend plugin was not built"
+    readelf -Ws "$tsdecrypt_plugin" | grep -F 'dvbstreamer5_ca_backend_get_api_v1' >/dev/null || fail "TSDecrypt plugin is missing its ABI entry point"
+fi
 
 OSCAM_SOURCE=""
 if [[ "$INCLUDE_OSCAM" != no ]]; then

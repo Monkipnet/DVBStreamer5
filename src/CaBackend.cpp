@@ -197,6 +197,7 @@ void CaBackendManager::loadPluginsLocked() {
         }
         if (loadPluginFileLocked(path) && !filename.empty()) loadedPluginFilenames.insert(filename);
     }
+    publishBackendInventoryLocked();
 }
 
 bool CaBackendManager::registerBuiltinBackendLocked(
@@ -610,6 +611,18 @@ Json::Value CaBackendManager::backendToJsonLocked(const LoadedBackend& backend) 
     return item;
 }
 
+void CaBackendManager::publishBackendInventoryLocked() {
+    Json::Value inventory(Json::arrayValue);
+    for (const auto& entry : backends_) {
+        auto item = backendToJsonLocked(entry.second);
+        // Inventory is discovery metadata, not live session counters.
+        item.removeMember("open_clients");
+        inventory.append(std::move(item));
+    }
+    std::lock_guard<std::mutex> guard(inventoryMutex_);
+    backendInventory_ = std::move(inventory);
+}
+
 Json::Value CaBackendManager::streamState(const std::string& streamId) const {
     Json::Value result;
     std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
@@ -670,25 +683,14 @@ Json::Value CaBackendManager::snapshot() const {
         root["busy"] = true;
         root["status"] = "BACKEND_BUSY";
 
-        // A remote Newcamd connect/login may hold the CA manager lock for a
-        // short time.  Returning an empty backend list made the web UI replace
-        // the compiled-in Newcamd option with "not loaded", so the module
-        // appeared to disappear exactly while it was authenticating.  The two
-        // built-in backends are immutable for the lifetime of the process and
-        // can therefore be advertised safely without touching backends_.
-        Json::Value busyBackends(Json::arrayValue);
-        Json::Value passthrough;
-        passthrough["id"] = "passthrough";
-        passthrough["display_name"] = "Passthrough (без декодирования)";
-        passthrough["vendor"] = "DVBStreamer5";
-        passthrough["path"] = "builtin";
-        passthrough["builtin"] = true;
-        passthrough["usable"] = true;
-        passthrough["capabilities"] = Json::UInt(0);
-        passthrough["backend_kind"] = "passthrough";
-        busyBackends.append(passthrough);
-
-        root["backends"] = busyBackends;
+        // Discovery is published independently of the transport/session lock.
+        // Never fabricate a loaded plugin or replace a real inventory with an
+        // empty list merely because a plugin callback is busy.
+        {
+            std::lock_guard<std::mutex> guard(inventoryMutex_);
+            root["backends"] = backendInventory_;
+        }
+        root["backends_cached"] = true;
         return root;
     }
     root["abi_version"] = Json::UInt(DVBSTREAMER5_CA_BACKEND_ABI_V1);

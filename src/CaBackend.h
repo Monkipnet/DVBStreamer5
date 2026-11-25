@@ -111,6 +111,10 @@ private:
     void releaseReaderLocked(LoadedBackend& backend, const std::string& readerKey);
     Json::Value backendToJsonLocked(const LoadedBackend& backend) const;
 
+    // Independent, metadata-only cache. Never acquire mutex_ while holding this lock.
+    mutable std::mutex inventoryMutex_;
+    Json::Value backendInventory_{Json::arrayValue};
+    void publishBackendInventoryLocked();
     mutable std::mutex mutex_;
     // Last-reader closes are serialized with new opens of the same client.
     using ReaderIdentity = std::pair<std::string, std::string>;
