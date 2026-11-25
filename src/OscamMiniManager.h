@@ -67,6 +67,8 @@ private:
 
     struct Settings {
         std::string bindIp = "127.0.0.1";
+        std::string allowedIps;
+        int clientTimeout = 5000;
         std::string key = "0102030405060708091011121314";
         bool keepalive = true;
         std::vector<NewcamdUser> users;

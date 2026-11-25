@@ -201,6 +201,12 @@ jobs:
           /tmp/oscam-log-v630
           node tests/web/test_oscam_file_log_v630.js
 
+      - name: Verify OSCam-mini managed listener policy (V632)
+        run: |
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -Isrc tests/test_oscam_mini_network_v632.cpp -o /tmp/oscam-network-v632
+          /tmp/oscam-network-v632
+          node tests/web/test_oscam_mini_network_v632.js
+
       - name: Verify external DVB frontend ownership and safe scanning
         run: |
           c++ -std=c++17 -Wall -Wextra -I. tests/test_dvb_frontend_owners.cpp -o /tmp/dvb-owner-test

@@ -1,6 +1,9 @@
 #include "OscamMiniManager.h"
 #include "OscamReaderControl.h"
 #include "OscamMiniLogTail.h"
+#include "OscamMiniNetwork.h"
+#include <ifaddrs.h>
+#include <net/if.h>
 #include "ConfigManager.h"
 
 #include <algorithm>
@@ -21,6 +24,26 @@ namespace fs = std::filesystem;
 
 namespace {
 using IniSection = std::map<std::string, std::string>;
+
+Json::Value newcamdBindAddresses() {
+    Json::Value result(Json::arrayValue);
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return result;
+    std::set<std::string> seen;
+    for (auto* it = list; it; it = it->ifa_next) {
+        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET || !(it->ifa_flags & IFF_UP)) continue;
+        char ip[INET_ADDRSTRLEN]{};
+        auto* address = reinterpret_cast<sockaddr_in*>(it->ifa_addr);
+        if (!inet_ntop(AF_INET, &address->sin_addr, ip, sizeof(ip)) || !oscamnetwork::isUnicastIPv4(ip)) continue;
+        if (!seen.insert(ip).second) continue;
+        Json::Value item;
+        item["ip"] = ip;
+        item["name"] = it->ifa_name;
+        result.append(item);
+    }
+    freeifaddrs(list);
+    return result;
+}
 
 std::string trimLocal(std::string value) {
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char c) {
@@ -468,6 +491,8 @@ OscamMiniManager::Settings OscamMiniManager::loadLocked() {
     const std::string oscamConfText = readFile(configDir() + "/oscam.conf");
     const auto newcamd = parseFirstSection(oscamConfText, "newcamd");
     settings.bindIp = getValue(newcamd, "serverip", "127.0.0.1");
+    settings.allowedIps = getValue(newcamd, "allowed", "");
+    settings.clientTimeout = getInt(parseFirstSection(oscamConfText, "global"), "clienttimeout", 5000);
     settings.key = getValue(newcamd, "key", settings.key);
     settings.keepalive = isTrue(getValue(newcamd, "keepalive", "1"));
 
@@ -897,7 +922,7 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
     std::ostringstream conf;
     conf << "[global]\n"
          << "logfile = stdout\n"
-         << "clienttimeout = 5000\n"
+         << "clienttimeout = " << settings.clientTimeout << "\n"
          << "clientmaxidle = 120\n"
          << "waitforcards = 1\n\n"
          << "[newcamd]\n"
@@ -912,6 +937,7 @@ bool OscamMiniManager::saveLocked(const Settings& settings, std::string& error) 
     }
     conf << "\nkey = " << safeIni(settings.key) << "\n"
          << "keepalive = " << (settings.keepalive ? 1 : 0) << "\n";
+    if (!settings.allowedIps.empty()) conf << "allowed = " << safeIni(settings.allowedIps) << "\n";
 
     if (settings.streamRelayEnabled) {
         conf << "\n[radegast]\n"
@@ -1303,6 +1329,8 @@ std::string OscamMiniManager::settingsJson() {
 
     Json::Value result;
     result["bind_ip"] = settings.bindIp;
+    result["allowed_ips"] = settings.allowedIps;
+    result["bind_addresses"] = newcamdBindAddresses();
     result["key"] = settings.key;
     result["keepalive"] = settings.keepalive;
     result["stream_relay_enabled"] = settings.streamRelayEnabled;
@@ -1388,7 +1416,22 @@ std::string OscamMiniManager::saveSettingsJson(const std::string& body) {
     }
 
     Settings settings;
-    settings.bindIp = input.get("bind_ip", "127.0.0.1").asString();
+    const auto previous = loadLocked();
+    settings.clientTimeout = previous.clientTimeout;
+    settings.bindIp = trim(input.get("bind_ip", previous.bindIp).asString());
+    settings.allowedIps = trim(input.get("allowed_ips", previous.allowedIps).asString());
+    if (input.isMember("allowed_ips") || settings.bindIp != previous.bindIp) {
+        std::set<std::string> addresses;
+        for (const auto& item : newcamdBindAddresses()) addresses.insert(item["ip"].asString());
+        std::string allowed;
+        if (!oscamnetwork::validBind(settings.bindIp, addresses) ||
+            !oscamnetwork::normalizeAllowed(settings.bindIp, settings.allowedIps, allowed)) {
+            output["ok"] = false;
+            output["error"] = "invalid_newcamd_network";
+            return json(output);
+        }
+        settings.allowedIps = allowed;
+    }
     settings.key = input.get("key", "0102030405060708091011121314").asString();
     settings.keepalive = input.get("keepalive", true).asBool();
     settings.streamRelayEnabled = input.get("stream_relay_enabled", false).asBool();
@@ -1614,7 +1657,9 @@ html[data-dashboard-theme="light"] .w .error{color:#a32232}
 
 <div class="c">
   <h3>Newcamd</h3>
-  <div class="g"><label>Bind IP<input id="bind_ip"></label><label>DES key<input id="key"></label></div>
+  <div class="g"><label><span id="newcamd_bind_label">Bind IP</span><select id="bind_ip" onchange="updateNewcamdNetwork()"></select></label><label>DES key<input id="key"></label></div>
+  <div id="newcamd_allowed_row" class="g"><label><span id="newcamd_allowed_label">Allowed client IPs</span><input id="allowed_ips" placeholder="192.168.1.10,192.168.1.11"></label></div>
+  <div class="hint" id="newcamd_network_hint"></div>
   <div class="row" style="margin-top:16px"><h3 style="margin:0">Пользователи / порты</h3><button onclick="addUser()">+ Пользователь</button></div>
   <div class="hint">Строка пользователя свернута по умолчанию. Нажмите на неё, чтобы открыть настройки.</div>
   <div id="users"></div>
@@ -1628,6 +1673,34 @@ html[data-dashboard-theme="light"] .w .error{color:#a32232}
 <script>
 function normalizeLanguage(value){return value==='ru'?'ru':'en'}
 let language=normalizeLanguage(localStorage.getItem('dvbstreamer5-language')||'en');
+const newcamdNetworkText={
+en:['Listen address','Allowed client IPv4 addresses (comma-separated)','Local only (default)','LAN access requires explicit client IPs. The selected server IP is included automatically. Changing the address may require updating local CAM clients and restarting OSCam-mini. Restrict the port in your firewall.','Select an active local IPv4 address and enter explicit client IPv4 addresses; local mode requires no list.','Current address (review before saving)'],
+ru:['Адрес прослушивания','Разрешённые IPv4 клиентов (через запятую)','Только локально (по умолчанию)','Для доступа из сети укажите IP клиентов. IP сервера добавляется автоматически. Смена адреса может потребовать обновления локальных CAM-клиентов и перезапуска OSCam-mini. Ограничьте порт в межсетевом экране.','Выберите активный локальный IPv4 и укажите IP клиентов; в локальном режиме список не нужен.','Текущий адрес (проверьте перед сохранением)'],
+hr:['Adresa slušanja','Dopuštene IPv4 adrese klijenata (odvojene zarezom)','Samo lokalno (zadano)','Za mrežni pristup navedite IP adrese klijenata. IP poslužitelja dodaje se automatski. Promjena adrese može zahtijevati ažuriranje lokalnih CAM klijenata i ponovno pokretanje OSCam-mini. Ograničite port vatrozidom.','Odaberite aktivnu lokalnu IPv4 adresu i navedite IP adrese klijenata; lokalni način ne zahtijeva popis.','Trenutna adresa (provjerite prije spremanja)'],
+de:['Listen-Adresse','Erlaubte IPv4-Adressen der Clients (kommagetrennt)','Nur lokal (Standard)','Für Netzwerkzugriff Client-IP-Adressen angeben. Die Server-IP wird automatisch ergänzt. Eine Adressänderung kann die Anpassung lokaler CAM-Clients und einen Neustart von OSCam-mini erfordern. Port per Firewall beschränken.','Aktive lokale IPv4-Adresse auswählen und Client-IP-Adressen angeben; lokal ist keine Liste erforderlich.','Aktuelle Adresse (vor dem Speichern prüfen)']};
+function networkText(){return newcamdNetworkText[(localStorage.getItem('dvbstreamer5-language')||'en').toLowerCase()]||newcamdNetworkText.en}
+function updateNewcamdNetwork(){
+  const t=networkText();
+  // Use textContent, not HTML, for interface names and addresses.
+  const labels=[['newcamd_bind_label',t[0]],['newcamd_allowed_label',t[1]],['newcamd_network_hint',t[3]]];
+  for(const [id,value] of labels){const e=document.getElementById(id);if(e.textContent!==value)e.textContent=value;}
+  const select=document.getElementById('bind_ip');
+  for(const option of select.options){const label=option.value==='127.0.0.1'?t[2]+' — 127.0.0.1':option.dataset.legacy==='1'?t[5]+' — '+option.value:option.dataset.label;if(label&&option.textContent!==label)option.textContent=label;}
+  document.getElementById('newcamd_allowed_row').hidden=select.value==='127.0.0.1';
+}
+function loadNewcamdNetwork(s){
+  const select=document.getElementById('bind_ip');
+  select.replaceChildren();
+  const add=(ip,label,legacy=false)=>{const option=document.createElement('option');option.value=ip;option.dataset.label=label;option.dataset.legacy=legacy?'1':'0';option.textContent=label;select.append(option);};
+  add('127.0.0.1','127.0.0.1');
+  for(const item of s.bind_addresses||[]){if(item.ip!=='127.0.0.1'&&!Array.from(select.options).some(o=>o.value===item.ip))add(item.ip,item.name+' — '+item.ip);}
+  const current=s.bind_ip||'127.0.0.1';
+  if(!Array.from(select.options).some(o=>o.value===current))add(current,current,true);
+  select.value=current;
+  document.getElementById('allowed_ips').value=s.allowed_ips||'';
+  updateNewcamdNetwork();
+}
+
 
 const oscamRuToEn=new Map([
 ['Старт','Start'],
@@ -1738,7 +1811,7 @@ const oscamOriginalAttrs=new WeakMap();
 const oscamLocalizedAttrs=['title','placeholder','aria-label'];
 
 function localizeOscamTextNode(node){
-  if(!node||node.nodeType!==Node.TEXT_NODE||['SCRIPT','STYLE','PRE','CODE'].includes(node.parentElement?.tagName))return;
+  if(!node||node.nodeType!==Node.TEXT_NODE||['SCRIPT','STYLE','PRE','CODE'].includes(node.parentElement?.tagName)||node.parentElement?.closest('#newcamd_bind_label,#newcamd_allowed_label,#newcamd_network_hint,#bind_ip'))return;
   const current=node.nodeValue||'';
   if(language==='en'){
     if(/[А-Яа-яЁё]/.test(current))oscamOriginalText.set(node,current);
@@ -1796,6 +1869,7 @@ function syncOscamLanguage(){
   const selected=normalizeLanguage(localStorage.getItem('dvbstreamer5-language')||language);
   if(selected!==language){language=selected;applyOscamLanguage(document.body)}
   refreshOscamReaderRestartLabels();
+  updateNewcamdNetwork();
 }
 window.addEventListener('storage',event=>{if(event.key==='dvbstreamer5-language')syncOscamLanguage()});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncOscamLanguage()});
@@ -1916,9 +1990,9 @@ function setActivity(el,info){if(!el)return;const s=stateClass(info?.state||'dow
 function applyActivity(st){lastStatus=st||{};document.querySelectorAll('.user').forEach(el=>setActivity(el,(st.user_activity||{})[el.dataset.user]));document.querySelectorAll('.reader').forEach(el=>setActivity(el,(st.reader_activity||{})[el.dataset.reader]))}
 async function refreshStatus(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';applyActivity(st)}catch(e){}}
 
-async function loadAll(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;devices=st.devices||[];state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';const s=await api('/api/oscam-mini/settings');detectedReaders=s.detected_readers||[];bind_ip.value=s.bind_ip||'127.0.0.1';key.value=s.key||'';stream_relay_enabled.checked=!!s.stream_relay_enabled;stream_relay_port.value=s.stream_relay_port||17999;stream_source_host.value=s.stream_source_host||'127.0.0.1';stream_source_port.value=s.stream_source_port||8001;stream_client_source_host.checked=!!s.stream_client_source_host;stream_relay_buffer_time.value=s.stream_relay_buffer_time??0;stream_relay_caid.value=s.stream_relay_caid||'';stream_radegast_port.value=s.stream_radegast_port||9090;streamRelayChanged();users.innerHTML='';(s.users||[]).forEach(addUser);readers.innerHTML='';(s.readers||[]).forEach(addReader);readerScan.textContent='Найдено ридеров: '+detectedReaders.length;applyActivity(st)}catch(e){msg.textContent=e.message;msg.className='msg error'}}
+async function loadAll(){try{const st=await api('/api/oscam-mini/status');lastStatus=st;devices=st.devices||[];state.textContent=st.service_active?'● работает':'● '+(st.service_state||'остановлен');state.className=st.service_active?'status-ok':'status-bad';proc.textContent=st.process||'процесс не запущен';log.textContent=st.log||'';const s=await api('/api/oscam-mini/settings');detectedReaders=s.detected_readers||[];loadNewcamdNetwork(s);key.value=s.key||'';stream_relay_enabled.checked=!!s.stream_relay_enabled;stream_relay_port.value=s.stream_relay_port||17999;stream_source_host.value=s.stream_source_host||'127.0.0.1';stream_source_port.value=s.stream_source_port||8001;stream_client_source_host.checked=!!s.stream_client_source_host;stream_relay_buffer_time.value=s.stream_relay_buffer_time??0;stream_relay_caid.value=s.stream_relay_caid||'';stream_radegast_port.value=s.stream_radegast_port||9090;streamRelayChanged();users.innerHTML='';(s.users||[]).forEach(addUser);readers.innerHTML='';(s.readers||[]).forEach(addReader);readerScan.textContent='Найдено ридеров: '+detectedReaders.length;applyActivity(st)}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
-async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_local_port:+e.querySelector('.reader-remote-local-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),ccc_version:e.querySelector('.reader-ccc-version').value.trim(),ccc_max_hops:+e.querySelector('.reader-ccc-max-hops').value,ccc_keepalive:e.querySelector('.reader-ccc-keepalive').checked,remote_keepalive:e.querySelector('.reader-remote-keepalive').checked,remote_use_ssl:e.querySelector('.reader-remote-use-ssl').checked,detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),key:key.value.trim(),keepalive:true,stream_relay_enabled:stream_relay_enabled.checked,stream_relay_port:+stream_relay_port.value,stream_source_host:stream_source_host.value.trim(),stream_source_port:+stream_source_port.value,stream_client_source_host:stream_client_source_host.checked,stream_relay_buffer_time:+stream_relay_buffer_time.value,stream_relay_caid:stream_relay_caid.value.trim(),stream_radegast_port:+stream_radegast_port.value,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error||'Ошибка');msg.className=x.ok?'msg success':'msg error';await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
+async function save(){const userRows=[...document.querySelectorAll('.user')].map(e=>({user:e.querySelector('.user-name').value,password:e.querySelector('.user-pass').value,port:+e.querySelector('.user-port').value,caid:e.querySelector('.user-caid').value.trim(),provider:e.querySelector('.user-provider').value.trim(),groups:e.querySelector('.user-groups').value.trim(),au:e.querySelector('.user-au').checked}));const readerRows=[...document.querySelectorAll('.reader')].map(e=>({label:e.querySelector('.reader-label').value,device:e.querySelector('.reader-device').value,caid:e.querySelector('.reader-caid').value.trim(),protocol:e.querySelector('.reader-protocol').value,remote_host:e.querySelector('.reader-remote-host').value.trim(),remote_port:+e.querySelector('.reader-remote-port').value,remote_local_port:+e.querySelector('.reader-remote-local-port').value,remote_user:e.querySelector('.reader-remote-user').value.trim(),remote_password:e.querySelector('.reader-remote-password').value,remote_key:e.querySelector('.reader-remote-key').value.trim(),ccc_version:e.querySelector('.reader-ccc-version').value.trim(),ccc_max_hops:+e.querySelector('.reader-ccc-max-hops').value,ccc_keepalive:e.querySelector('.reader-ccc-keepalive').checked,remote_keepalive:e.querySelector('.reader-remote-keepalive').checked,remote_use_ssl:e.querySelector('.reader-remote-use-ssl').checked,detect:'cd',mhz:+e.querySelector('.reader-mhz').value,cardmhz:+e.querySelector('.reader-cardmhz').value,group:+e.querySelector('.reader-group').value,ident:e.querySelector('.reader-ident').value.trim(),boxkey:e.querySelector('.reader-boxkey').value.trim(),rsakey:e.querySelector('.reader-rsakey').value.trim(),auprovid:e.querySelector('.reader-auprovid').value.trim(),emmcache:e.querySelector('.reader-emmcache').value.trim(),enabled:true}));const body={bind_ip:bind_ip.value.trim(),allowed_ips:bind_ip.value==='127.0.0.1'?'':document.getElementById('allowed_ips').value.trim(),key:key.value.trim(),keepalive:true,stream_relay_enabled:stream_relay_enabled.checked,stream_relay_port:+stream_relay_port.value,stream_source_host:stream_source_host.value.trim(),stream_source_port:+stream_source_port.value,stream_client_source_host:stream_client_source_host.checked,stream_relay_buffer_time:+stream_relay_buffer_time.value,stream_relay_caid:stream_relay_caid.value.trim(),stream_radegast_port:+stream_radegast_port.value,users:userRows,readers:readerRows};msg.textContent='Сохранение…';msg.className='msg';try{const x=await api('/api/oscam-mini/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});msg.textContent=x.ok?'Сохранено и перезапущено':(x.error==='invalid_newcamd_network'?networkText()[4]:(x.error||'Ошибка'));msg.className=x.ok?'msg success':'msg error';if(x.ok)await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 
 async function act(action){try{const x=await api('/api/oscam-mini/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if(!x.ok){msg.textContent=x.error||'Ошибка';msg.className='msg error'}await loadAll()}catch(e){msg.textContent=e.message;msg.className='msg error'}}
 applyOscamLanguage(document.body);
