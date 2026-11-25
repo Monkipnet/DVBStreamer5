@@ -285,6 +285,12 @@ jobs:
           /tmp/nvidia-recovery-v636
           node tests/web/test_nvidia_recovery_v636.js
 
+      - name: Verify NVENC throughput policy and stage diagnostics (V637)
+        run: |
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Werror -Isrc tests/media_core/test_nvenc_throughput_policy_v637.cpp -o /tmp/nvenc-throughput-v637
+          /tmp/nvenc-throughput-v637
+          node tests/web/test_nvenc_throughput_v637.js
+
       - name: Verify NVENC HLS decoder-safe IDR boundaries and mux stall diagnostics
         run: |
           node tests/web/test_nvenc_hls_keyframe_policy.js

@@ -1,5 +1,7 @@
 #include "media/NativeNvidiaZeroCopy.h"
 #include "media/NativeNvencQualityPolicy.h"
+#include "media/NativeNvencThroughputPolicy.h"
+#include <chrono>
 #include "media/NativeNvidiaRecoveryPolicy.h"
 #include <mutex>
 #include "media/WisiChameleonProfilePolicy.h"
@@ -606,6 +608,7 @@ private:
         }
 
         sequenceKey_ = next;
+        perfWindowBegin_ = PerfClock::now();
         frameIndex_ = 0;
         forcedIdrCount_ = 0;
         fpsClockValid_ = false;
@@ -636,7 +639,9 @@ private:
             failCallback("NVDEC decode callback without decoder/picture");
             return 0;
         }
+        const auto decodeBegin = PerfClock::now();
         const CUresult status = cuvidDecodePicture_(decoder_, picture);
+        decodePerf_.add(elapsedUs(decodeBegin));
         if (status != CUDA_SUCCESS) {
             failCallback("cuvidDecodePicture failed: " +
                          std::to_string(static_cast<int>(status)));
@@ -678,9 +683,7 @@ private:
                 }
                 return 1;
             }
-            do {
-                fpsNextPts90k_ = (fpsNextPts90k_ + interval) & kPtsMask;
-            } while (atOrAfter(normalized, fpsNextPts90k_));
+            fpsNextPts90k_ = advanceNvencPts(fpsNextPts90k_, normalized, interval);
         }
 
         CUVIDPROCPARAMS proc{};
@@ -721,8 +724,10 @@ private:
 
         CUdeviceptr devicePtr = 0;
         unsigned int pitch = 0;
+        const auto displayBegin = PerfClock::now();
         const CUresult mapStatus = cuvidMapVideoFrame_(
             decoder_, display->picture_index, &devicePtr, &pitch, &proc);
+        mapPerf_.add(elapsedUs(displayBegin));
         if (mapStatus != CUDA_SUCCESS || devicePtr == 0 || pitch == 0) {
             failCallback("cuvidMapVideoFrame failed: " +
                          std::to_string(static_cast<int>(mapStatus)));
@@ -882,6 +887,7 @@ private:
             }
         }
 
+        const auto inputBegin = PerfClock::now();
         NV_ENC_REGISTER_RESOURCE registration{};
         registration.version = NV_ENC_REGISTER_RESOURCE_VER;
         registration.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDADEVICEPTR;
@@ -1012,6 +1018,7 @@ private:
             resourceMapped = true;
         }
 
+        inputPerf_.add(elapsedUs(inputBegin));
         const std::uint64_t frameNumber = frameIndex_++;
         const bool forceRandomAccess =
             forceIdrNext_ || frameNumber == 0 ||
@@ -1035,7 +1042,9 @@ private:
                 NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
         }
 
+        const auto submitBegin = PerfClock::now();
         status = api_.nvEncEncodePicture(encoder_, &pic);
+        submitPerf_.add(elapsedUs(submitBegin));
         if (status == NV_ENC_ERR_NEED_MORE_INPUT) {
             cleanup();
             failCallback(
@@ -1053,7 +1062,9 @@ private:
         lock.version = NV_ENC_LOCK_BITSTREAM_VER;
         lock.outputBitstream = bitstream_;
         lock.doNotWait = 0;
+        const auto lockBegin = PerfClock::now();
         status = api_.nvEncLockBitstream(encoder_, &lock);
+        lockPerf_.add(elapsedUs(lockBegin));
         if (status != NV_ENC_SUCCESS) {
             cleanup();
             failCallback("NVENC zero-copy lock bitstream failed: " +
@@ -1078,8 +1089,12 @@ private:
             lock.pictureType == NV_ENC_PIC_TYPE_IDR;
         (void)api_.nvEncUnlockBitstream(encoder_, bitstream_);
 
+        const auto cleanupBegin = PerfClock::now();
         cleanup();
+        cleanupPerf_.add(elapsedUs(cleanupBegin));
+        displayPerf_.add(elapsedUs(displayBegin));
         if (!encoded.data.empty()) callbackOutput_->push_back(std::move(encoded));
+        reportThroughput();
 
         if (forceRandomAccess) {
             ++forcedIdrCount_;
@@ -1093,6 +1108,41 @@ private:
             }
         }
         return 1;
+    }
+
+    using PerfClock = std::chrono::steady_clock;
+    static std::uint64_t elapsedUs(PerfClock::time_point begin) noexcept {
+        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+            PerfClock::now()-begin).count());
+    }
+    void reportThroughput() {
+        if (displayPerf_.count < 125) return;
+        const auto now=PerfClock::now();
+        const auto windowUs=std::chrono::duration_cast<std::chrono::microseconds>(now-perfWindowBegin_).count();
+        const auto fps=windowUs>0 ? displayPerf_.count*1000000.0/static_cast<double>(windowUs) : 0.0;
+        std::cerr << "NATIVE NVIDIA ZERO-COPY PERF stream_id=" << config_.streamId
+                  << " frames=" << displayPerf_.count
+                  << " fps=" << fps
+                  << " target_fps=" << config_.fps
+                  << " decode_calls=" << decodePerf_.count
+                  << " decode_avg_us=" << decodePerf_.average()
+                  << " decode_max_us=" << decodePerf_.maxUs
+                  << " map_avg_us=" << mapPerf_.average()
+                  << " map_max_us=" << mapPerf_.maxUs
+                  << " input_avg_us=" << inputPerf_.average()
+                  << " input_max_us=" << inputPerf_.maxUs
+                  << " submit_avg_us=" << submitPerf_.average()
+                  << " submit_max_us=" << submitPerf_.maxUs
+                  << " lock_avg_us=" << lockPerf_.average()
+                  << " lock_max_us=" << lockPerf_.maxUs
+                  << " cleanup_avg_us=" << cleanupPerf_.average()
+                  << " display_avg_us=" << displayPerf_.average()
+                  << " display_max_us=" << displayPerf_.maxUs
+                  << " preset_rank=" << effectivePresetRank_
+                  << std::endl;
+        decodePerf_.clear(); mapPerf_.clear(); inputPerf_.clear(); submitPerf_.clear();
+        lockPerf_.clear(); cleanupPerf_.clear(); displayPerf_.clear();
+        perfWindowBegin_=now;
     }
 
     bool failCallback(std::string message) {
@@ -1131,15 +1181,18 @@ private:
 #if defined(NVENCAPI_MAJOR_VERSION) && NVENCAPI_MAJOR_VERSION >= 10
         GUID presetGuid = NV_ENC_PRESET_P5_GUID;
         const char* presetName = "p5";
-        const auto selectPreset = [&](const std::string& name) {
-            if (name == "fastest" || name == "p1") { presetName = "p1"; return NV_ENC_PRESET_P1_GUID; }
-            if (name == "fast" || name == "p2" || name == "p3") { presetName = "p2"; return NV_ENC_PRESET_P2_GUID; }
-            if (name == "quality" || name == "p6") { presetName = "p6"; return NV_ENC_PRESET_P6_GUID; }
-            if (name == "best" || name == "p7") { presetName = "p7"; return NV_ENC_PRESET_P7_GUID; }
-            presetName = "p5";
-            return NV_ENC_PRESET_P5_GUID;
-        };
-        presetGuid = selectPreset(qualityChoice.preset);
+        const char* presetCap = std::getenv("DVBSTREAMER5_NVENC_PRESET_CAP");
+        effectivePresetRank_ = effectiveNvencPreset(
+            qualityChoice.preset, presetCap, qualityChoice.enabled, config_.wisiChameleonProfile);
+        switch (effectivePresetRank_) {
+            case 1: presetName="p1"; presetGuid=NV_ENC_PRESET_P1_GUID; break;
+            case 2: presetName="p2"; presetGuid=NV_ENC_PRESET_P2_GUID; break;
+            case 3: presetName="p3"; presetGuid=NV_ENC_PRESET_P3_GUID; break;
+            case 4: presetName="p4"; presetGuid=NV_ENC_PRESET_P4_GUID; break;
+            case 6: presetName="p6"; presetGuid=NV_ENC_PRESET_P6_GUID; break;
+            case 7: presetName="p7"; presetGuid=NV_ENC_PRESET_P7_GUID; break;
+            default: break;
+        }
 #else
         GUID presetGuid = NV_ENC_PRESET_LOW_LATENCY_HP_GUID;
         const char* presetName = "legacy-low-latency-hp";
@@ -1291,6 +1344,8 @@ private:
                   << " spatial_aq=1"
                   << " nvenc_quality=" << (qualityChoice.enabled ? 1 : 0)
                   << " requested_preset=" << config_.preset
+                  << " preset_cap=" << nvencPresetCap(std::getenv("DVBSTREAMER5_NVENC_PRESET_CAP"))
+                  << " effective_preset_rank=" << effectivePresetRank_
                   << " gop_frames=" << gopFrames_
                   << std::endl;
         return true;
@@ -1475,6 +1530,9 @@ private:
 
     std::vector<EncodedVideoFrame>* callbackOutput_ = nullptr;
     std::string callbackError_;
+    PerfClock::time_point perfWindowBegin_ = PerfClock::now();
+    NvencStageStats decodePerf_, mapPerf_, inputPerf_, submitPerf_, lockPerf_, cleanupPerf_, displayPerf_;
+    unsigned effectivePresetRank_ = 0;
     NvidiaSequenceKey sequenceKey_{};
     bool discontinuityPending_ = false;
     bool forceIdrNext_ = false;

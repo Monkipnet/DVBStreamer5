@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const n=fs.readFileSync('src/media/NativeNvidiaZeroCopy.cpp','utf8');
+for(const field of ['decode','map','input','submit','lock','cleanup','display'])assert.ok(n.includes(field+'_avg_us='));
+assert.match(n,/NATIVE NVIDIA ZERO-COPY PERF stream_id=/);
+assert.match(n,/DVBSTREAMER5_NVENC_PRESET_CAP/);
+assert.match(n,/case 3: presetName="p3"; presetGuid=NV_ENC_PRESET_P3_GUID/);
+assert.match(n,/case 4: presetName="p4"; presetGuid=NV_ENC_PRESET_P4_GUID/);
+assert.match(n,/advanceNvencPts\(fpsNextPts90k_, normalized, interval\)/);
+assert.match(n,/lock.doNotWait = 0;/);
+assert.match(n,/packet.flags \|= CUVID_PKT_DISCONTINUITY;/);
+console.log('PASS NVENC timing/preset wiring; V636 recovery retained');
