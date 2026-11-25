@@ -64,7 +64,7 @@ private:
     static std::string isoTime(const std::chrono::system_clock::time_point& value);
     static Json::Value clientStatusJson(const CamClientConfig& client);
     static std::string displayName(const CamClientConfig& client);
-    CamClientConfig findClient(const std::string& requested) const;
+    CamClientConfig findClient(const std::string& requested, std::string& readerKey) const;
     Json::Value slotToJson(const ServiceSlot& slot) const;
 
     mutable std::mutex mutex_;
@@ -75,4 +75,7 @@ private:
 
     mutable std::mutex configMutex_;
     std::vector<CamClientConfig> clients_;
+    std::map<std::string, uint64_t> readerGenerations_;
+    uint64_t nextReaderGeneration_ = 0;
+    bool oscamSyncOk_ = true;
 };

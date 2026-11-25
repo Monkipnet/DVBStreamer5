@@ -1,4 +1,5 @@
 #include "ConfigManager.h"
+#include "CamSettingsPolicy.h"
 #include "media/NativeTickerOverlay.h"
 #include "AutoTranscodePolicy.h"
 #include "UdpInputFirewall.h"
@@ -712,8 +713,14 @@ CamClientConfig CamClientConfig::fromJson(const Json::Value& root) {
     config.maxServices = std::clamp(root.get("max_services", 10).asUInt(), 1u, 64u);
     config.backendId = root.get("backend_id", "newcamd").asString();
     if (config.backendId.empty() || config.backendId == "passthrough") config.backendId = "newcamd";
-    config.backendConfig = root.get("backend_config", "{}").asString();
-    if (config.backendConfig.empty()) config.backendConfig = "{}";
+    Json::Value backend;
+    if (camsettings::decode(root.get("backend_config", "{}"), backend)) {
+        if (config.backendId=="newcamd" || config.backendId=="tsdecrypt") camsettings::aliases(backend);
+        config.backendConfig = camsettings::encode(backend);
+    } else {
+        config.backendConfig = root["backend_config"].isString() ? root["backend_config"].asString() : "{}";
+        if (config.backendConfig.empty()) config.backendConfig = "{}";
+    }
     return config;
 }
 

@@ -4221,6 +4221,7 @@ let dvbAdapters = [];
 let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSourceSupported:false};
 let camClientsLoaded = false;
 let caManagerState = {clients:[]};
+let camEditorClients = [];
 let lastCaBackendInventory = null;
 let caManagerRefreshFailed = false;
 let streamActionBusy = new Set();
@@ -9501,7 +9502,7 @@ function defaultNewcamdClient(index=1) {
   return {id:`newcamd-${index}`, name:`OSCam ${index}`, backend_id:'newcamd', max_services:10, backend_config:{host:'127.0.0.1', port:15000, user:'user', pass:'pass', des:'0102030405060708091011121314'}};
 }
 function newcamdSettingsClients() {
-  const configured = Array.isArray(state.cam_clients) ? state.cam_clients : [];
+  const configured = camEditorClients;
   return configured.length ? configured : [defaultNewcamdClient(1)];
 }
 function newcamdRowHtml(client={}, index=0) {
@@ -9511,8 +9512,8 @@ function newcamdRowHtml(client={}, index=0) {
     <div class="form-row"><label>Name</label><input data-cam-field="name" value="${satEscape(client.name || client.id || '')}" /></div>
     <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row"><label>OSCam host</label><input data-cam-field="host" value="${satEscape(cfg.host || client.host || '127.0.0.1')}" /></div>
     <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row"><label>Port</label><input data-cam-field="port" type="number" min="1" max="65535" value="${Number(cfg.port || client.port || 15000)}" /></div>
-    <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row"><label>User</label><input data-cam-field="user" value="${satEscape(cfg.user || client.user || 'user')}" /></div>
-    <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row"><label>Password</label><input data-cam-field="pass" type="password" value="${satEscape(cfg.pass || client.pass || '')}" /></div>
+    <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row"><label>User</label><input data-cam-field="user" autocomplete="off" value="${satEscape(cfg.user ?? client.user ?? '')}" /></div>
+    <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row"><label>Password</label><input data-cam-field="pass" type="password" autocomplete="new-password" value="${satEscape(cfg.pass ?? client.pass ?? '')}" /></div>
     <div data-camd-field style="display:${(client.backend_id==='biss1'||client.backend_id==='biss2')?'none':''}" class="form-row full"><label>DES key</label><input data-cam-field="des" value="${satEscape(cfg.des || client.des || '0102030405060708091011121314')}" /></div>
     <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>CAMD protocol (TSDecrypt)</label><select data-cam-field="protocol"><option value="NEWCAMD" ${(cfg.protocol || 'NEWCAMD').toUpperCase()==='NEWCAMD'?'selected':''}>Newcamd</option><option value="CS378X" ${String(cfg.protocol || '').toUpperCase()==='CS378X'?'selected':''}>CS378x</option></select></div>
     <div class="form-row" data-tsdecrypt-field style="display:${client.backend_id==='tsdecrypt'?'':'none'}"><label>CAID (TSDecrypt)</label><input data-cam-field="caid" maxlength="4" placeholder="098D" value="${satEscape(cfg.caid || '098D')}" /></div>
@@ -9567,11 +9568,11 @@ function collectNewcamdClients() {
     const value = field => row.querySelector(`[data-cam-field="${field}"]`)?.value || '';
     const id = value('id') || `newcamd-${index+1}`;
     const backendId = value('backend_id') || 'newcamd';
-    const previous = (Array.isArray(state.cam_clients) ? state.cam_clients : [])
+    const previous = camEditorClients
       .find(client => String(client.id) === id && client.backend_id === 'biss1');
     const previousKey = previous ? parseCamBackendConfig(previous).key || '' : '';
     const key = value('biss_key').trim() || previousKey;
-    const previousBiss2 = (Array.isArray(state.cam_clients) ? state.cam_clients : [])
+    const previousBiss2 = camEditorClients
       .find(client => String(client.id) === id && client.backend_id === 'biss2');
     const previousBiss2Config = previousBiss2 ? parseCamBackendConfig(previousBiss2) : {};
     const mode2 = value('biss2_mode') || 'biss2-1';
@@ -9587,7 +9588,7 @@ function collectNewcamdClients() {
         ? {mode:'biss1', key}
         : backendId === 'biss2'
         ? {mode:mode2, ...(mode2 === 'biss2-e' ? {esw:esw2, injected_id:id2} : {key:sw2})}
-        : {host:value('host') || '127.0.0.1', port:Number(value('port') || 15000), user:value('user') || 'user', pass:value('pass'), des:value('des') || '0102030405060708091011121314', protocol:value('protocol') || 'NEWCAMD', caid:value('caid') || '098D', ecm_pid:Number(value('ecm_pid') || 0)}
+        : {host:value('host') || '127.0.0.1', port:Number(value('port') || 15000), user:value('user'), pass:value('pass'), des:value('des') || '0102030405060708091011121314', protocol:value('protocol') || 'NEWCAMD', caid:value('caid') || '098D', ecm_pid:Number(value('ecm_pid') || 0)}
     };
   }).filter(client => client.id);
 }
@@ -9612,11 +9613,12 @@ async function saveNewcamdSettings() {
   }
   try {
     const data = await fetchJson('/api/cam-client-settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clients})}, 15000);
-    if (data.result === 'error') throw new Error(data.error || 'Failed to save CAM clients');
+    if (data.result !== 'ok') throw new Error(data.error==='invalid_cam_settings' ? caBackendUiText('Проверьте ID, логин, пароль, порт, ключ и остальные параметры CAM.','Check CAM ID, username, password, port, key and other settings.','Provjerite CAM ID, korisnika, lozinku, port, ključ i ostale postavke.','CAM-ID, Benutzer, Passwort, Port, Schlüssel und weitere Einstellungen prüfen.') : (data.error || 'Failed to save CAM clients'));
     applyCaManagerSnapshot(data);
-    state.cam_clients = clients;
     closeModal();
     fetchState();
+    if(data.oscam_sync_ok === false) uiError(caBackendUiText('Настройки сохранены, но синхронизация OSCam-mini не удалась. Проверьте журнал.','Settings saved, but OSCam-mini synchronization failed. Check the log.','Postavke su spremljene, ali sinkronizacija OSCam-mini nije uspjela. Provjerite zapisnik.','Einstellungen gespeichert, aber OSCam-mini-Synchronisierung fehlgeschlagen. Protokoll prüfen.'));
+    else window.alert(caBackendUiText('Настройки сохранены. Новые подключения используют новые параметры. Для применения к уже работающим плиткам перезапустите только эти плитки.','Settings saved. New connections use the new settings. Restart affected running tiles to apply changes.','Postavke su spremljene. Nove veze koriste nove postavke. Ponovno pokrenite zahvaćene aktivne pločice.','Einstellungen gespeichert. Neue Verbindungen verwenden die neuen Werte. Betroffene laufende Kacheln neu starten.'));
   } catch (error) {
     uiError(error?.message || error);
   }
@@ -9627,6 +9629,14 @@ function renderNewcamdRows(clients) {
   rows.innerHTML = clients.map((client,index)=>newcamdRowHtml(client,index)).join('');
 }
 async function openNewcamdModal() {
+  try {
+    const saved = await fetchJson('/api/state', {cache:'no-store'}, 15000);
+    if(!Array.isArray(saved.cam_clients)) throw new Error('invalid CAM settings snapshot');
+    camEditorClients = saved.cam_clients;
+  } catch (_) {
+    uiError(caBackendUiText('Не удалось загрузить сохранённые настройки CAM.','Could not load saved CAM settings.','Nije moguće učitati spremljene CAM postavke.','Gespeicherte CAM-Einstellungen konnten nicht geladen werden.'));
+    return;
+  }
   const clients = newcamdSettingsClients();
   openModal(`
     <h2>CAM clients / Newcamd / TSDecrypt / BISS-1 / BISS-2</h2>

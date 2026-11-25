@@ -1,0 +1,15 @@
+'use strict';
+const fs=require('fs'),assert=require('assert/strict');
+const ui=fs.readFileSync('src/http/HttpServerWebUi.inc','utf8');
+const api=fs.readFileSync('src/http/HttpServerDvbMedia.inc','utf8');
+const card=fs.readFileSync('src/CardManager.cpp','utf8');
+const oscam=fs.readFileSync('src/OscamMiniManager.cpp','utf8');
+assert.match(ui,/async function openNewcamdModal\(\)[\s\S]{0,300}fetchJson\('\/api\/state'/);
+assert.match(ui,/data-cam-field="pass" type="password" autocomplete="new-password"/);
+assert.match(api,/camsettings::merge\(updated.backendId,patch,oldConfig,merged\)/);
+assert.match(api,/if \(!configManager.save\(\)\) \{\s*configManager.config.camClients=previous/);
+assert.ok(card.indexOf('synchronizeCamClients(clients, oscamSyncError)')<card.indexOf('appendRuntimeCamClients(merged)'));
+assert.match(card,/readerKey \+= "::config:"/);
+assert.match(card,/backendClient.key = readerKey;/);
+assert.match(oscam,/portList \? line.find\('#'\)/);
+console.log('PASS CAM editor persistence and runtime wiring');

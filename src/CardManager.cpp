@@ -1,4 +1,5 @@
 #include "CardManager.h"
+#include "CamSettingsPolicy.h"
 
 #include "CaBackend.h"
 #include "OscamMiniManager.h"
@@ -148,6 +149,9 @@ CardManager& CardManager::instance() {
 }
 
 void CardManager::configure(const std::vector<CamClientConfig>& clients) {
+    // Synchronize explicit accounts before generating runtime aliases.
+    std::string oscamSyncError;
+    const bool oscamSyncOk = OscamMiniManager::instance().synchronizeCamClients(clients, oscamSyncError);
     std::vector<CamClientConfig> merged = clients;
     OscamMiniManager::instance().appendRuntimeCamClients(merged);
 
@@ -164,12 +168,17 @@ void CardManager::configure(const std::vector<CamClientConfig>& clients) {
     std::vector<CamClientConfig> configured;
     {
         std::lock_guard<std::mutex> lock(configMutex_);
+        for (const auto& client : normalized) {
+            const auto old = std::find_if(clients_.begin(), clients_.end(), [&](const auto& item){return item.id == client.id;});
+            auto generation = readerGenerations_.find(client.id);
+            if (generation == readerGenerations_.end()) readerGenerations_[client.id] = 0;
+            else if (old == clients_.end() || camsettings::readerChanged(old->backendId,old->backendConfig,client.backendId,client.backendConfig))
+                generation->second = ++nextReaderGeneration_;
+        }
+        oscamSyncOk_ = oscamSyncOk;
         clients_ = std::move(normalized);
         configured = clients_;
     }
-    std::string oscamSyncError;
-    const bool oscamSyncOk =
-        OscamMiniManager::instance().synchronizeCamClients(configured, oscamSyncError);
     if (!oscamSyncOk) {
         std::cerr << "OSCam-mini CAM listener synchronization failed: " << oscamSyncError << std::endl;
     } else {
@@ -200,11 +209,16 @@ std::string CardManager::displayName(const CamClientConfig& client) {
     return client.name.empty() ? client.id : client.name;
 }
 
-CamClientConfig CardManager::findClient(const std::string& requested) const {
+CamClientConfig CardManager::findClient(const std::string& requested, std::string& readerKey) const {
     if (requested.empty()) return {};
     std::lock_guard<std::mutex> lock(configMutex_);
     for (const auto& client : clients_) {
-        if (client.id == requested || client.name == requested) return client;
+        if (client.id == requested || client.name == requested) {
+            readerKey = client.id;
+            auto it = readerGenerations_.find(client.id);
+            if (it != readerGenerations_.end() && it->second) readerKey += "::config:" + std::to_string(it->second);
+            return client;
+        }
     }
     return {};
 }
@@ -252,7 +266,8 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
         return false;
     }
 
-    CamClientConfig client = findClient(config.conditionalAccessClient);
+    std::string readerKey;
+    CamClientConfig client = findClient(config.conditionalAccessClient, readerKey);
     if (client.id.empty()) {
         if (error) *error = "CAM client is not configured: " + config.conditionalAccessClient;
         return false;
@@ -278,7 +293,7 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
     }
 
     CaBackendReaderBinding backendClient;
-    backendClient.key = client.id;
+    backendClient.key = readerKey;
     backendClient.displayName = displayName(client);
     backendClient.maxServices = client.maxServices;
     backendClient.backendId = client.backendId;
@@ -290,7 +305,7 @@ bool CardManager::reserveService(const StreamConfig& config, std::string* error)
         Json::StreamWriterBuilder writer;
         writer["indentation"] = "";
         backendClient.backendConfig = Json::writeString(writer, tileReader);
-        backendClient.key = client.id + "::stream:" + config.id;
+        backendClient.key = readerKey + "::stream:" + config.id;
     }
 
     std::string backendError;
@@ -416,9 +431,11 @@ Json::Value CardManager::slotToJson(const ServiceSlot& slot) const {
 Json::Value CardManager::snapshot() const {
     std::vector<CamClientConfig> clients;
     std::vector<ServiceSlot> slots;
+    bool oscamSyncOk;
     {
         std::lock_guard<std::mutex> configLock(configMutex_);
         clients = clients_;
+        oscamSyncOk = oscamSyncOk_;
     }
     bool cardManagerBusy = false;
     {
@@ -439,6 +456,7 @@ Json::Value CardManager::snapshot() const {
 
     Json::Value root;
     root["mode"] = "cam-client+plugin-backend";
+    root["oscam_sync_ok"] = oscamSyncOk;
     root["ca_backend"] = CaBackendManager::instance().snapshot();
     root["network_ca_server"] = false;
     root["external_key_export"] = false;

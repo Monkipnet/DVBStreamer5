@@ -62,7 +62,11 @@ std::vector<IniSection> parseIniSections(const std::string& text, const std::str
     IniSection* current = nullptr;
 
     while (std::getline(input, line)) {
-        auto comment = line.find_first_of("#;");
+        if (trimLocal(line).rfind(";", 0) == 0) continue;
+        const auto equalsPos = line.find('=');
+        const bool portList = wanted == "newcamd" && current && equalsPos != std::string::npos &&
+                              trimLocal(line.substr(0, equalsPos)) == "port";
+        auto comment = portList ? line.find('#') : line.find_first_of("#;");
         if (comment != std::string::npos) {
             line.resize(comment);
         }
@@ -805,11 +809,10 @@ void OscamMiniManager::appendRuntimeCamClients(std::vector<CamClientConfig>& cli
             if (backend != "newcamd") return false;
             const Json::Value cfg = parseCamBackendConfigText(client.backendConfig);
             const int clientPort = cfg.get("port", 0).asInt();
-            const std::string clientUser = cfg.get("user", "").asString();
             const std::string clientHost = trimLocal(cfg.get("host", "").asString());
             const bool sameHost = clientHost == host ||
                                   (isLoopbackNewcamdHost(clientHost) && isLoopbackNewcamdHost(host));
-            return sameHost && clientPort == user.port && clientUser == user.user;
+            return sameHost && clientPort == user.port;
         });
     };
 

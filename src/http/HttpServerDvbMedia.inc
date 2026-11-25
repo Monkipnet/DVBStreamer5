@@ -1,3 +1,4 @@
+#include "CamSettingsPolicy.h"
 #include "http/DvbTransponderUriEditor.h"
 #include <cmath>
 std::string HttpServer::dvbAdapters() {
@@ -189,63 +190,61 @@ std::string HttpServer::handleCamClientSettings(const std::string& body) {
         response["result"] = "error";
         response["error"] = "invalid CAM client settings: " + errors;
     } else {
-        auto configToString = [](const Json::Value& value) {
+        const auto previous = configManager.config.camClients;
+        auto reject = [&](const std::string& message) {
+            Json::Value rejected;
+            rejected["result"]="error"; rejected["error"]=message;
             Json::StreamWriterBuilder writer;
-            writer["indentation"] = "";
-            return Json::writeString(writer, value.isNull() ? Json::Value(Json::objectValue) : value);
+            return Json::writeString(writer,rejected);
         };
-        auto parseClient = [&](const Json::Value& item) {
-            CamClientConfig updated;
-            updated.id = item.get("id", item.get("client_id", "").asString()).asString();
-            updated.name = item.get("name", updated.id).asString();
-            updated.maxServices = std::clamp(item.get("max_services", 10).asUInt(), 1u,
-                                             CardManager::kMaxConfigurableServices);
-            updated.backendId = item.get("backend_id", "newcamd").asString();
-            if (updated.backendId.empty() || updated.backendId == "passthrough") updated.backendId = "newcamd";
-            if (item.isMember("backend_config")) {
-                updated.backendConfig = item["backend_config"].isString()
-                    ? item["backend_config"].asString()
-                    : configToString(item["backend_config"]);
-            } else {
-                Json::Value backendConfig;
-                backendConfig["host"] = item.get("host", "127.0.0.1").asString();
-                backendConfig["port"] = item.get("port", 15000).asInt();
-                backendConfig["user"] = item.get("user", "user").asString();
-                backendConfig["pass"] = item.get("pass", "pass").asString();
-                backendConfig["des"] = item.get("des", "0102030405060708091011121314").asString();
-                updated.backendConfig = configToString(backendConfig);
-            }
-            if (updated.backendConfig.empty()) updated.backendConfig = "{}";
-            return updated;
+        auto parseClient = [&](const Json::Value& item, CamClientConfig& updated) {
+            if (!item.isObject()) return false;
+            if (item.isMember("id") && !item["id"].isString()) return false;
+            if (!item.isMember("id") && !item["client_id"].isString()) return false;
+            updated.id = item.get("id", item.get("client_id","")).asString();
+            if (updated.id.empty()) return false;
+            const auto old = std::find_if(previous.begin(),previous.end(),[&](const auto& c){return c.id==updated.id;});
+            const bool exists=old!=previous.end();
+            auto name=item.get("name",exists?old->name:updated.id);
+            auto limit=item.get("max_services",exists?old->maxServices:10u);
+            auto kind=item.get("backend_id",exists?old->backendId:"newcamd");
+            if (!name.isString() || !kind.isString() || !camsettings::bounded(limit,1,CardManager::kMaxConfigurableServices)) return false;
+            updated.name=name.asString();
+            updated.maxServices=limit.asUInt();
+            updated.backendId=kind.asString();
+            if (updated.backendId.empty() || updated.backendId=="passthrough") return false;
+            Json::Value oldConfig(Json::objectValue);
+            if(exists && old->backendId==updated.backendId) camsettings::decode(old->backendConfig,oldConfig);
+            Json::Value patch(Json::objectValue);
+            if(item.isMember("backend_config")) patch=item["backend_config"];
+            else for(const auto* key:{"host","port","user","pass","des","username","password","des_key","protocol","caid","ecm_pid"})
+                if(item.isMember(key)) patch[key]=item[key];
+            Json::Value merged;
+            if(!camsettings::merge(updated.backendId,patch,oldConfig,merged)) return false;
+            updated.backendConfig=camsettings::encode(merged);
+            return true;
         };
 
         std::vector<CamClientConfig> nextClients;
-        if (request["clients"].isArray()) {
+        std::set<std::string> ids;
+        if (request.isObject() && request.isMember("clients")) {
+            if(!request["clients"].isArray()) return reject("invalid_cam_settings");
             for (const auto& item : request["clients"]) {
-                CamClientConfig client = parseClient(item);
-                if (!client.id.empty()) nextClients.push_back(client);
+                CamClientConfig client;
+                if(!parseClient(item,client) || !ids.insert(client.id).second) return reject("invalid_cam_settings");
+                nextClients.push_back(std::move(client));
             }
-            configManager.config.camClients = nextClients;
         } else {
-            CamClientConfig updated = parseClient(request);
-            if (updated.id.empty()) {
-                response["result"] = "error";
-                response["error"] = "client id is required";
-                Json::StreamWriterBuilder writer;
-                return Json::writeString(writer, response);
-            }
-            bool replaced = false;
-            for (auto& existing : configManager.config.camClients) {
-                if (existing.id == updated.id) {
-                    existing = updated;
-                    replaced = true;
-                    break;
-                }
-            }
-            if (!replaced) configManager.config.camClients.push_back(updated);
+            CamClientConfig updated;
+            if(!parseClient(request,updated)) return reject("invalid_cam_settings");
+            nextClients=previous;
+            auto old=std::find_if(nextClients.begin(),nextClients.end(),[&](const auto& c){return c.id==updated.id;});
+            if(old==nextClients.end()) nextClients.push_back(std::move(updated));
+            else *old=std::move(updated);
         }
-
+        configManager.config.camClients=nextClients;
         if (!configManager.save()) {
+            configManager.config.camClients=previous;
             response["result"] = "error";
             response["error"] = "failed to save CAM client settings";
         } else {
