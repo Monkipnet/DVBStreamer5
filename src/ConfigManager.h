@@ -298,6 +298,7 @@ public:
     // Dedicated, atomic ticker storage; never rewrites the general config.
     bool saveTickerOverlays(const Json::Value& entries, std::string& error);
     Json::Value tickerOverlaysSnapshot();
+    bool savedCamClientsSnapshot(Json::Value& clients);
     std::filesystem::path configDirectory() const { return configPath.parent_path(); }
 
     AppConfig config;

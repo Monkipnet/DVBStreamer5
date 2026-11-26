@@ -1293,6 +1293,31 @@ bool ConfigManager::save() {
     return true;
 }
 
+bool ConfigManager::savedCamClientsSnapshot(Json::Value& clients) {
+    std::lock_guard<std::mutex> lock(fileMutex);
+    // Read the committed configuration, not runtime reader inventory.
+    // A missing/unreadable file must never look like an empty client list.
+    std::ifstream input(configPath);
+    if (!input) return false;
+    Json::CharReaderBuilder reader;
+    reader["failIfExtra"] = true;
+    reader["rejectDupKeys"] = true;
+    Json::Value root;
+    std::string errors;
+    if (!Json::parseFromStream(reader,input,&root,&errors)) return false;
+    Json::Value raw;
+    if (!camsettings::savedClients(root,raw)) return false;
+    Json::Value normalized(Json::arrayValue);
+    try {
+        for (const auto& item : raw)
+            normalized.append(CamClientConfig::fromJson(item).toJson());
+    } catch (const std::exception&) {
+        return false;
+    }
+    clients=std::move(normalized);
+    return true;
+}
+
 Json::Value ConfigManager::tickerOverlaysSnapshot() {
     std::lock_guard<std::mutex> lock(fileMutex);
     return config.tickerOverlays;

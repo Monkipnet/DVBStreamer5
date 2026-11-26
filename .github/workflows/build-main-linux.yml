@@ -221,6 +221,12 @@ jobs:
           /tmp/cam-settings-v634
           node tests/web/test_cam_settings_v634.js
 
+      - name: Verify independent saved CAM snapshot and editor (V638)
+        run: |
+          c++ -std=c++17 -UNDEBUG -Wall -Wextra -Isrc tests/test_cam_snapshot_v638.cpp -ljsoncpp -o /tmp/cam-snapshot-v638
+          /tmp/cam-snapshot-v638
+          node tests/web/test_cam_snapshot_v638.js
+
       - name: Verify external DVB frontend ownership and safe scanning
         run: |
           c++ -std=c++17 -Wall -Wextra -I. tests/test_dvb_frontend_owners.cpp -o /tmp/dvb-owner-test

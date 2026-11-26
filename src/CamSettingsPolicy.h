@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <set>
 #include <string>
 #include <utility>
 namespace camsettings {
@@ -57,6 +58,23 @@ inline bool merge(const std::string& backend,const Json::Value& raw,const Json::
         if(protocol=="CS378X") return true;
     }
     return out["des"].isString()&&hex(out["des"].asString(),28);
+}
+// A valid empty array is distinct from a missing or corrupted snapshot.
+inline bool savedClients(const Json::Value& root, Json::Value& out) {
+    if (!root.isObject() || !root["cam_clients"].isArray()) return false;
+    std::set<std::string> ids;
+    for (const auto& item : root["cam_clients"]) {
+        if (!item.isObject() || !item["id"].isString() ||
+            item["id"].asString().empty() || !ids.insert(item["id"].asString()).second)
+            return false;
+        if (item.isMember("name") && !item["name"].isString()) return false;
+        if (item.isMember("backend_id") && !item["backend_id"].isString()) return false;
+        if (item.isMember("max_services") && !bounded(item["max_services"],1,64)) return false;
+        Json::Value backend;
+        if (!decode(item.get("backend_config","{}"),backend)) return false;
+    }
+    out=root["cam_clients"];
+    return true;
 }
 inline bool readerChanged(const std::string& oldBackend,const std::string& oldConfig,const std::string& newBackend,const std::string& newConfig) {
     if(oldBackend!=newBackend) return true;

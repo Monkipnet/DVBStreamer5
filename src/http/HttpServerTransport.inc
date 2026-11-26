@@ -547,6 +547,26 @@ document.getElementById('loginForm').addEventListener('submit',async event=>{
             http::write(socket, res);
             return;
         }
+        // V638: lightweight saved CAM settings, independent of state polling
+        // and live backend locks. This route is after panel authentication.
+        if (target == "/api/cam-client-settings" && req.method()==http::verb::get) {
+            res.set(http::field::content_type,"application/json; charset=UTF-8");
+            res.set(http::field::cache_control,"no-store, private");
+            Json::Value reply(Json::objectValue), clients;
+            if (configManager.savedCamClientsSnapshot(clients)) {
+                reply["result"]="ok";
+                reply["cam_clients"]=std::move(clients);
+            } else {
+                res.result(http::status::service_unavailable);
+                reply["result"]="error";
+                reply["error"]="cam_settings_unavailable";
+            }
+            Json::StreamWriterBuilder writer;
+            res.body()=Json::writeString(writer,reply);
+            res.content_length(res.body().size());
+            http::write(socket,res);
+            return;
+        }
         // V383: independent metadata-only auth settings. Existing streaming
         // workers and output sessions are NOT restarted on save.
         if (target == "/api/stream-auth" && req.method()==http::verb::get) {

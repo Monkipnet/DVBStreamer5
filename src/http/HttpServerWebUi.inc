@@ -4222,6 +4222,8 @@ let dvbCapabilities = {dvbsrcAvailable:false, streamIdSupported:false, diseqcSou
 let camClientsLoaded = false;
 let caManagerState = {clients:[]};
 let camEditorClients = [];
+let camEditorLoaded = false;
+let camEditorLoading = false;
 let lastCaBackendInventory = null;
 let caManagerRefreshFailed = false;
 let streamActionBusy = new Set();
@@ -9593,6 +9595,10 @@ function collectNewcamdClients() {
   }).filter(client => client.id);
 }
 async function saveNewcamdSettings() {
+  if (!camEditorLoaded || camEditorLoading || !document.getElementById('newcamdRows')) {
+    uiError(caBackendUiText('Сначала загрузите сохранённые настройки CAM.','Load saved CAM settings first.','Prvo učitajte spremljene CAM postavke.','Zuerst gespeicherte CAM-Einstellungen laden.'));
+    return;
+  }
   const clients = collectNewcamdClients();
   if (clients.some(client => client.backend_id === 'biss2' &&
       ((client.backend_config.mode === 'biss2-1' &&
@@ -9615,6 +9621,8 @@ async function saveNewcamdSettings() {
     const data = await fetchJson('/api/cam-client-settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({clients})}, 15000);
     if (data.result !== 'ok') throw new Error(data.error==='invalid_cam_settings' ? caBackendUiText('Проверьте ID, логин, пароль, порт, ключ и остальные параметры CAM.','Check CAM ID, username, password, port, key and other settings.','Provjerite CAM ID, korisnika, lozinku, port, ključ i ostale postavke.','CAM-ID, Benutzer, Passwort, Port, Schlüssel und weitere Einstellungen prüfen.') : (data.error || 'Failed to save CAM clients'));
     applyCaManagerSnapshot(data);
+    camEditorLoaded = false;
+    camEditorClients = [];
     closeModal();
     fetchState();
     if(data.oscam_sync_ok === false) uiError(caBackendUiText('Настройки сохранены, но синхронизация OSCam-mini не удалась. Проверьте журнал.','Settings saved, but OSCam-mini synchronization failed. Check the log.','Postavke su spremljene, ali sinkronizacija OSCam-mini nije uspjela. Provjerite zapisnik.','Einstellungen gespeichert, aber OSCam-mini-Synchronisierung fehlgeschlagen. Protokoll prüfen.'));
@@ -9629,13 +9637,22 @@ function renderNewcamdRows(clients) {
   rows.innerHTML = clients.map((client,index)=>newcamdRowHtml(client,index)).join('');
 }
 async function openNewcamdModal() {
+  if (camEditorLoading) return;
+  camEditorLoading = true;
+  camEditorLoaded = false;
+  camEditorClients = [];
   try {
-    const saved = await fetchJson('/api/state', {cache:'no-store'}, 15000);
-    if(!Array.isArray(saved.cam_clients)) throw new Error('invalid CAM settings snapshot');
+    const saved = await fetchJson('/api/cam-client-settings', {cache:'no-store'}, 15000);
+    if(saved.result !== 'ok' || !Array.isArray(saved.cam_clients) ||
+       !saved.cam_clients.every(c => c && typeof c.id === 'string' && c.id.length > 0))
+      throw new Error('invalid CAM settings snapshot');
     camEditorClients = saved.cam_clients;
+    camEditorLoaded = true;
   } catch (_) {
-    uiError(caBackendUiText('Не удалось загрузить сохранённые настройки CAM.','Could not load saved CAM settings.','Nije moguće učitati spremljene CAM postavke.','Gespeicherte CAM-Einstellungen konnten nicht geladen werden.'));
+    uiError(caBackendUiText('Не удалось загрузить сохранённые настройки CAM. Изменения не сохранены.','Could not load saved CAM settings. No changes saved.','Nije moguće učitati spremljene CAM postavke. Promjene nisu spremljene.','Gespeicherte CAM-Einstellungen konnten nicht geladen werden. Keine Änderungen gespeichert.'));
     return;
+  } finally {
+    camEditorLoading = false;
   }
   const clients = newcamdSettingsClients();
   openModal(`
